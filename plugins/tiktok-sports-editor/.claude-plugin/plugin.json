@@ -1,0 +1,7 @@
+{
+  "name": "tiktok-sports-editor",
+  "version": "0.1.0",
+  "description": "Edit sports footage into vertical TikTok clips built for retention: highlight detection, 3-second hooks, 9:16 reframing, slow-mo replays, safe-zone captions, loudness-normalized export, and a posting plan.",
+  "author": { "name": "Landmark Agency Group" },
+  "keywords": ["tiktok", "sports", "video-editing", "ffmpeg", "short-form", "reels", "shorts", "highlights"]
+}

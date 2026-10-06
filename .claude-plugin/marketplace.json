@@ -1,0 +1,16 @@
+{
+  "name": "landmark-plugins",
+  "owner": {
+    "name": "Landmark Agency Group"
+  },
+  "metadata": {
+    "description": "Claude Code plugins from Landmark Agency Group."
+  },
+  "plugins": [
+    {
+      "name": "tiktok-sports-editor",
+      "source": "./plugins/tiktok-sports-editor",
+      "description": "Edit sports footage into vertical TikTok clips built for views."
+    }
+  ]
+}
