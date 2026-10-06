@@ -42,6 +42,8 @@ New dependencies: `zod` (runtime), `vitest` (dev).
    |---|---|---|
    | `AI_COMMAND_MODEL` | `gpt-4.1-mini` | OpenAI model for the operator (any tool-calling chat model your key can use) |
    | `AI_PROVIDER` | `openai` | Reserved for future adapters |
+   | `AGENT_WORKER_TOKEN` | unset | ≥32 random characters (`openssl rand -hex 24`). Put the same value in the worker's `.env.local` as `SUN_WORKER_TOKEN`, then remove `SUN_CONSOLE_PASSCODE` from it |
+   | `AUTOMATION_SECRET` | existing | Now actually used: the 15-minute follow-up scheduler was previously blocked by the login gate (SECURITY_PLAN S15). Production had 0 queued `interactions`, so nothing old will be sent |
 6. **Sign in** at `/login` → *Team account*. Open **AI Command Center**, create your agency workspace, then use **Organization → Import prospects** to bring the 63 existing businesses into the CRM.
 7. **Connect AI:** Settings → *OpenAI (AI Command Center & images)*. This is the same encrypted key used for images.
 8. **Smoke test:** ask the operator "Summarize my pipeline", then "Create a follow-up task to call Acme tomorrow at 10am". The task appears under *Needs approval*. Approve it and confirm it shows in CRM → Tasks and in the audit trail.
@@ -78,7 +80,9 @@ npm run build
 
 **Definition of done for every new feature:** loading, empty and error states; Zod validation; RBAC permission; organization-scoped queries; audit entries for mutations; RLS + SQL tests for new tables; unit tests for domain logic; "Integration not configured" with a settings link for missing providers; a mobile check; an AI tool when the feature is an action a user would delegate.
 
-## 4. Phase 1b backlog (next, in priority order)
+## 4. Phase 1b backlog
+
+Done in part 1 (patch `0003`): S5, S7, S9, S10, S11, S15; S6, S8 and S12 partially; CI (typecheck, unit, SQL tests, build, gitleaks). Remaining, in priority order:
 
 1. **S1/S2 secret rotation** (§6 runbook) — urgent
 2. Baseline migration of the live schema; CI drift check

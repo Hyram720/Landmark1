@@ -1,0 +1,1121 @@
+From e9633dea96093e85a2b34e8d98d4b071acfef664 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 15:10:22 +0000
+Subject: [PATCH 3/3] Phase 1b hardening: SSRF pinning, rate limits, roles,
+ worker token, CI
+
+- Outbound fetches to user-supplied URLs (site scanner, contact
+  enrichment) go through src/lib/net/public-network.ts: the private
+  address check runs inside undici's connect-time DNS lookup, closing the
+  DNS-rebinding window; blocklist now covers CGNAT, IPv4-mapped,
+  compatible, NAT64 and 6to4 IPv6, and non-web ports
+- DB-backed rate limiting shared across instances (login per IP and per
+  account, review feedback, report view/CTA counting), via the existing
+  atomic studio_take_limit(); in-memory fallback if the DB is down
+- Role checks for settings and provider-credential changes; settings
+  PATCH uses an allow-list schema (no mass assignment)
+- Review feedback requires an existing, active campaign
+- Scoped AGENT_WORKER_TOKEN for the local agent (six endpoints only);
+  worker and installer support it, passcode remains a fallback; bearer
+  API calls with bad tokens get a 401 instead of a login page
+- Fix: the follow-up scheduler endpoint was blocked by the login gate,
+  so scheduled follow-ups were never sent
+- Constant-time comparison for the automation secret; HSTS header
+- GitHub Actions CI: typecheck, unit tests, build, SQL security tests,
+  gitleaks
+- 83 unit tests (58 new)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ .github/workflows/ci.yml                     |  52 ++++++++
+ docs/architecture/IMPLEMENTATION_PLAN.md     |   6 +-
+ docs/architecture/PRODUCT_ROADMAP.md         |   2 +-
+ docs/architecture/SECURITY_PLAN.md           |  17 +++
+ local-agent-worker/.env.example              |   5 +-
+ local-agent-worker/worker.mjs                |   9 +-
+ next.config.mjs                              |   1 +
+ package-lock.json                            |   7 +-
+ package.json                                 |   1 +
+ public/local-agent/setup.ps1                 |  21 +++-
+ public/local-agent/worker.mjs                |   9 +-
+ src/app/api/automation/run/route.ts          |   3 +-
+ src/app/api/login/route.ts                   |  15 ++-
+ src/app/api/public/feedback/route.ts         |   9 ++
+ src/app/api/public/report-event/route.ts     |   5 +
+ src/app/api/settings/email-provider/route.ts |   5 +
+ src/app/api/settings/google-places/route.ts  |   5 +
+ src/app/api/settings/openai-image/route.ts   |   5 +
+ src/app/api/settings/route.ts                |   9 +-
+ src/lib/audit.ts                             |  31 ++---
+ src/lib/contact-enrichment.ts                |  37 ++----
+ src/lib/legacy-auth.ts                       |  36 ++++++
+ src/lib/net/public-network.ts                | 123 +++++++++++++++++++
+ src/lib/rate-limit.ts                        |  46 +++++++
+ src/lib/settings-schema.ts                   |  34 +++++
+ src/middleware.ts                            |  34 ++++-
+ tests/unit/hardening.test.ts                 |  37 ++++++
+ tests/unit/public-network.test.ts            |  76 ++++++++++++
+ 28 files changed, 559 insertions(+), 81 deletions(-)
+ create mode 100644 .github/workflows/ci.yml
+ create mode 100644 src/lib/legacy-auth.ts
+ create mode 100644 src/lib/net/public-network.ts
+ create mode 100644 src/lib/rate-limit.ts
+ create mode 100644 src/lib/settings-schema.ts
+ create mode 100644 tests/unit/hardening.test.ts
+ create mode 100644 tests/unit/public-network.test.ts
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..b4067a0
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,52 @@
++name: CI
++
++on:
++  pull_request:
++  push:
++    branches: [main]
++
++permissions:
++  contents: read
++
++concurrency:
++  group: ci-${{ github.ref }}
++  cancel-in-progress: true
++
++jobs:
++  app:
++    name: Typecheck, unit tests, build
++    runs-on: ubuntu-latest
++    timeout-minutes: 15
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++      - run: npm ci
++      - run: npm run typecheck
++      - run: npm test
++      - run: npm run build
++        env:
++          NEXT_TELEMETRY_DISABLED: "1"
++
++  database:
++    name: Database security tests
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    steps:
++      - uses: actions/checkout@v4
++      # PostgreSQL binaries ship with the Ubuntu runner image; the script
++      # starts a throwaway cluster and applies the migrations to it.
++      - run: npm run test:db
++
++  secrets:
++    name: Secret scan
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++      - uses: gitleaks/gitleaks-action@v2
++        env:
++          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+diff --git a/docs/architecture/IMPLEMENTATION_PLAN.md b/docs/architecture/IMPLEMENTATION_PLAN.md
+index 706233e..a185c08 100644
+--- a/docs/architecture/IMPLEMENTATION_PLAN.md
++++ b/docs/architecture/IMPLEMENTATION_PLAN.md
+@@ -42,6 +42,8 @@ New dependencies: `zod` (runtime), `vitest` (dev).
+    |---|---|---|
+    | `AI_COMMAND_MODEL` | `gpt-4.1-mini` | OpenAI model for the operator (any tool-calling chat model your key can use) |
+    | `AI_PROVIDER` | `openai` | Reserved for future adapters |
++   | `AGENT_WORKER_TOKEN` | unset | ≥32 random characters (`openssl rand -hex 24`). Put the same value in the worker's `.env.local` as `SUN_WORKER_TOKEN`, then remove `SUN_CONSOLE_PASSCODE` from it |
++   | `AUTOMATION_SECRET` | existing | Now actually used: the 15-minute follow-up scheduler was previously blocked by the login gate (SECURITY_PLAN S15). Production had 0 queued `interactions`, so nothing old will be sent |
+ 6. **Sign in** at `/login` → *Team account*. Open **AI Command Center**, create your agency workspace, then use **Organization → Import prospects** to bring the 63 existing businesses into the CRM.
+ 7. **Connect AI:** Settings → *OpenAI (AI Command Center & images)*. This is the same encrypted key used for images.
+ 8. **Smoke test:** ask the operator "Summarize my pipeline", then "Create a follow-up task to call Acme tomorrow at 10am". The task appears under *Needs approval*. Approve it and confirm it shows in CRM → Tasks and in the audit trail.
+@@ -78,7 +80,9 @@ npm run build
+ 
+ **Definition of done for every new feature:** loading, empty and error states; Zod validation; RBAC permission; organization-scoped queries; audit entries for mutations; RLS + SQL tests for new tables; unit tests for domain logic; "Integration not configured" with a settings link for missing providers; a mobile check; an AI tool when the feature is an action a user would delegate.
+ 
+-## 4. Phase 1b backlog (next, in priority order)
++## 4. Phase 1b backlog
++
++Done in part 1 (patch `0003`): S5, S7, S9, S10, S11, S15; S6, S8 and S12 partially; CI (typecheck, unit, SQL tests, build, gitleaks). Remaining, in priority order:
+ 
+ 1. **S1/S2 secret rotation** (§6 runbook) — urgent
+ 2. Baseline migration of the live schema; CI drift check
+diff --git a/docs/architecture/PRODUCT_ROADMAP.md b/docs/architecture/PRODUCT_ROADMAP.md
+index fd5ca18..e1e539a 100644
+--- a/docs/architecture/PRODUCT_ROADMAP.md
++++ b/docs/architecture/PRODUCT_ROADMAP.md
+@@ -7,7 +7,7 @@ Principle: **stable foundations before breadth.** Each phase ships behind the sa
+ | Phase | Theme | Lifecycle stage | Status |
+ |---|---|---|---|
+ | 1 | Core architecture, multi-tenancy, CRM, auth, AI Command Center foundation | Convert | **Implemented** (pending deploy) |
+-| 1b | Hardening: baseline schema, secret rotation, MFA, CI, JWKS | — | Next |
++| 1b | Hardening: baseline schema, secret rotation, MFA, CI, JWKS | — | **In progress** (part 1 implemented) |
+ | 2 | Communications: unified inbox, SMS/email/voice provider layer, AI voice agents | Convert | Planned |
+ | 3 | Reputation & Trust Center, calendars, workflow automation | Protect · Convert | Planned |
+ | 4 | Lead generation engine, audits at scale, AI prospecting | Acquire | Planned |
+diff --git a/docs/architecture/SECURITY_PLAN.md b/docs/architecture/SECURITY_PLAN.md
+index a5908d5..62a9968 100644
+--- a/docs/architecture/SECURITY_PLAN.md
++++ b/docs/architecture/SECURITY_PLAN.md
+@@ -20,6 +20,23 @@ Severity uses impact × likelihood for a multi-tenant SaaS holding customer PII
+ | S12 | Low | No Content-Security-Policy or HSTS (nosniff, frame-deny and referrer-policy are present) | Nonce-based CSP for console pages; HSTS at the host | 1b |
+ | S13 | Low | Middleware makes 1–2 network calls per request to Supabase (latency; outage amplification) | Verify JWTs locally via JWKS; cache staff membership in a short-lived signed claim | 1b |
+ | S14 | Info | 11 applied migrations (including the original policies) are not in the repository | Baseline pull (DATABASE_SCHEMA §1) so policies can be reviewed and tested | 1b |
++| S15 | Medium (reliability) | `/api/automation/run` was not exempt from the session gate, so the Netlify scheduler was redirected to `/login`. Its `fetch` followed the redirect and got a 200, so **scheduled follow-ups were silently never sent** | Exempted (the route authenticates with `AUTOMATION_SECRET`); bearer calls with bad tokens now get a 401 instead of a login page | ✅ fixed |
++
++### 1.1 Remediation status (Phase 1b, part 1)
++
++| ID | Status | What changed |
++|---|---|---|
++| S1, S2 | ⏳ owner action | Production change; runbook in IMPLEMENTATION_PLAN §6 |
++| S5 | ✅ | `takeLimit()` (`src/lib/rate-limit.ts`) shares limits across instances through the atomic `studio_take_limit()`: 30 attempts per IP and 10 per account per 15 minutes, keys hashed; falls back per instance if the DB is down |
++| S6 | 🟡 partial | `requireLegacyRole()`: settings and provider-credential changes now need owner/admin (passcode = owner). Remaining legacy routes are covered as each module migrates to `tenantRoute` |
++| S7 | ✅ | `src/lib/settings-schema.ts` allow-list; URLs normalized, non-http(s) schemes rejected |
++| S8 | 🟡 mostly | Feedback: campaign must exist and be active, 5 per IP per hour. Report events: one counted view (three CTA clicks) per visitor per report per hour. Atomic counter RPC still pending |
++| S9 | ✅ | `src/lib/net/public-network.ts`: the address check runs inside undici's connect-time DNS lookup (closes DNS rebinding); full blocklist incl. CGNAT, mapped/compatible/NAT64/6to4 IPv6; only ports 80/443/8080/8443; 52 tests incl. a real socket test |
++| S10 | ✅ | `AGENT_WORKER_TOKEN` (≥32 chars) lets the worker call only its 6 endpoints; the worker and installer support `SUN_WORKER_TOKEN`; the passcode still works as a fallback with a warning |
++| S11 | ✅ | Constant-time comparison |
++| S12 | 🟡 partial | HSTS added; nonce-based CSP pending |
++| S13, S14 | ⏳ | JWKS verification; baseline schema pull |
++| S4 | ⏳ | Passcode sessions still deterministic; retire after owner MFA |
+ 
+ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stripe webhooks, encrypted provider keys, SSRF guard on scanner and enrichment, no review gating, consent-gated follow-ups with `STOP` handling, `List-Unsubscribe`, secure headers, no secrets in client bundles (explicitly avoided in `next.config.mjs`), and fail-closed middleware.
+ 
+diff --git a/local-agent-worker/.env.example b/local-agent-worker/.env.example
+index fc1bbc6..eeca404 100644
+--- a/local-agent-worker/.env.example
++++ b/local-agent-worker/.env.example
+@@ -1,5 +1,8 @@
+ SUN_CONSOLE_URL=https://sun-marketing-console.netlify.app
+-SUN_CONSOLE_PASSCODE=enter_your_console_passcode_here
++# Recommended: a worker token (matches AGENT_WORKER_TOKEN on the console host).
++# It only allows the agent endpoints. The passcode is a legacy fallback.
++SUN_WORKER_TOKEN=
++SUN_CONSOLE_PASSCODE=
+ OLLAMA_URL=http://127.0.0.1:11434
+ OLLAMA_MODEL=hermes3:8b
+ WORKER_ID=sun-windows-worker
+diff --git a/local-agent-worker/worker.mjs b/local-agent-worker/worker.mjs
+index cbc80f1..c42cb47 100644
+--- a/local-agent-worker/worker.mjs
++++ b/local-agent-worker/worker.mjs
+@@ -4,12 +4,13 @@ import path from "node:path";
+ import { fileURLToPath } from "node:url";
+ const envPath=path.join(path.dirname(fileURLToPath(import.meta.url)),".env.local");
+ if(fs.existsSync(envPath))for(const line of fs.readFileSync(envPath,"utf8").split(/\r?\n/)){const m=line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^["']|["']$/g,"");}
+-const BASE=(process.env.SUN_CONSOLE_URL||"").replace(/\/$/,""), PASS=process.env.SUN_CONSOLE_PASSCODE||"";
++const BASE=(process.env.SUN_CONSOLE_URL||"").replace(/\/$/,""), PASS=process.env.SUN_CONSOLE_PASSCODE||"", TOKEN=process.env.SUN_WORKER_TOKEN||"";
+ const OLLAMA=(process.env.OLLAMA_URL||"http://127.0.0.1:11434").replace(/\/$/,""), MODEL=process.env.OLLAMA_MODEL||"hermes3:8b";
+ const WORKER=process.env.WORKER_ID||`sun-${os.hostname().toLowerCase().replace(/[^a-z0-9-]/g,"-")}`, POLL=Math.max(10,Number(process.env.POLL_SECONDS)||30);
+-if(!BASE||!PASS){console.error("Set SUN_CONSOLE_URL and SUN_CONSOLE_PASSCODE in .env.local");process.exit(1);}
++if(!BASE||(!TOKEN&&!PASS)){console.error("Set SUN_CONSOLE_URL and SUN_WORKER_TOKEN (recommended) or SUN_CONSOLE_PASSCODE in .env.local");process.exit(1);}
++if(!TOKEN)console.warn("Using the owner passcode. Ask your administrator for a worker token (SUN_WORKER_TOKEN) instead.");
+ let cookie="";
+-async function api(url,options={}){const r=await fetch(BASE+url,{...options,headers:{"Content-Type":"application/json",Cookie:cookie,...options.headers}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`${r.status} ${r.statusText}`);return data;}
++async function api(url,options={}){const r=await fetch(BASE+url,{...options,redirect:"manual",headers:{"Content-Type":"application/json",...(TOKEN?{Authorization:`Bearer ${TOKEN}`}:{Cookie:cookie}),...options.headers}});if(r.status>=300&&r.status<400)throw new Error(TOKEN?"The console rejected SUN_WORKER_TOKEN.":"Console session expired.");const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`${r.status} ${r.statusText}`);return data;}
+ async function login(){const r=await fetch(BASE+"/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({passcode:PASS})});if(!r.ok)throw new Error("Console login failed. Check your passcode.");const raw=r.headers.get("set-cookie")||"";const m=raw.match(/sm_session=[^;]+/);if(!m)throw new Error("Console did not return a worker session.");cookie=m[0];}
+ async function ollama(system,user){const r=await fetch(OLLAMA+"/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:MODEL,stream:false,format:"json",messages:[{role:"system",content:system},{role:"user",content:user}]})});if(!r.ok)throw new Error(`Ollama unavailable (${r.status})`);return JSON.parse((await r.json()).message.content);}
+ async function clientSearch(job){
+@@ -30,4 +31,4 @@ async function selfImprove(){
+ async function run(job){await api("/api/agents/worker",{method:"PATCH",body:JSON.stringify({worker_id:WORKER,job_id:job.id,status:"running"})});try{const result=job.agent_type==="client_search"?await clientSearch(job):await selfImprove();await api("/api/agents/worker",{method:"PATCH",body:JSON.stringify({worker_id:WORKER,job_id:job.id,status:"completed",result,logs:[`Completed locally with ${MODEL}`]})});console.log(new Date().toISOString(),"completed",job.agent_type);}catch(e){await api("/api/agents/worker",{method:"PATCH",body:JSON.stringify({worker_id:WORKER,job_id:job.id,status:"failed",error:e.message,logs:["No outreach was sent."]})});console.error(new Date().toISOString(),e.message);}}
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+ console.log(`Starting ${WORKER}; poll ${POLL}s; model ${MODEL}`);
+-for(;;){try{if(!cookie)await login();const {job}=await api(`/api/agents/worker?worker_id=${encodeURIComponent(WORKER)}`);if(job)await run(job);}catch(e){console.error(new Date().toISOString(),e.message);cookie="";}await sleep(POLL*1000);}
++for(;;){try{if(!TOKEN&&!cookie)await login();const {job}=await api(`/api/agents/worker?worker_id=${encodeURIComponent(WORKER)}`);if(job)await run(job);}catch(e){console.error(new Date().toISOString(),e.message);cookie="";}await sleep(POLL*1000);}
+diff --git a/next.config.mjs b/next.config.mjs
+index a024558..2d04f0e 100644
+--- a/next.config.mjs
++++ b/next.config.mjs
+@@ -11,6 +11,7 @@ const nextConfig = {
+         { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+         { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+         { key: "X-Frame-Options", value: "DENY" },
++        { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+       ],
+     }, {
+       source: "/bridge/:path*",
+diff --git a/package-lock.json b/package-lock.json
+index 4a8d842..31f1a7c 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -17,6 +17,7 @@
+         "react": "19.2.8",
+         "react-dom": "19.2.8",
+         "stripe": "22.4.0",
++        "undici": "^6.29.0",
+         "zod": "^4.6.5"
+       },
+       "devDependencies": {
+@@ -4418,9 +4419,9 @@
+       }
+     },
+     "node_modules/undici": {
+-      "version": "6.28.0",
+-      "resolved": "https://registry.npmjs.org/undici/-/undici-6.28.0.tgz",
+-      "integrity": "sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==",
++      "version": "6.29.0",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-6.29.0.tgz",
++      "integrity": "sha512-R+RODBqp6i2pPflGdq+xIOUkl+RNfGgHwoinecKu/JCuf2uO06cOKoDbI2P7Dn6KcswdKwrczbU6IYJ6K8X+wg==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=18.17"
+diff --git a/package.json b/package.json
+index a7cbd54..84b776f 100644
+--- a/package.json
++++ b/package.json
+@@ -20,6 +20,7 @@
+     "react": "19.2.8",
+     "react-dom": "19.2.8",
+     "stripe": "22.4.0",
++    "undici": "^6.29.0",
+     "zod": "^4.6.5"
+   },
+   "devDependencies": {
+diff --git a/public/local-agent/setup.ps1 b/public/local-agent/setup.ps1
+index b2d16c4..5149a7a 100644
+--- a/public/local-agent/setup.ps1
++++ b/public/local-agent/setup.ps1
+@@ -21,16 +21,25 @@ New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+ Invoke-WebRequest "$consoleUrl/local-agent/worker.mjs" -OutFile (Join-Path $installDir "worker.mjs") -UseBasicParsing
+ Invoke-WebRequest "$consoleUrl/local-agent/start-worker.bat" -OutFile (Join-Path $installDir "start-worker.bat") -UseBasicParsing
+ 
+-$secure = Read-Host "Enter your Sun Marketing Console passcode (it will remain hidden)" -AsSecureString
+-$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+-try { $passcode = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+-finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
++function Read-Secret([string]$prompt) {
++    $secure = Read-Host $prompt -AsSecureString
++    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
++    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
++    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
++}
+ 
+-if ([string]::IsNullOrWhiteSpace($passcode)) { throw "A console passcode is required." }
+-if ($passcode -match "[`r`n]") { throw "The passcode contains an unsupported line break." }
++$token = Read-Secret "Enter the agent worker token from your administrator (leave blank to use the console passcode)"
++$passcode = ""
++if ([string]::IsNullOrWhiteSpace($token)) {
++    $token = ""
++    $passcode = Read-Secret "Enter your Sun Marketing Console passcode (it will remain hidden)"
++    if ([string]::IsNullOrWhiteSpace($passcode)) { throw "A worker token or console passcode is required." }
++}
++if ($token -match "[`r`n]" -or $passcode -match "[`r`n]") { throw "The value contains an unsupported line break." }
+ 
+ $envText = @"
+ SUN_CONSOLE_URL=$consoleUrl
++SUN_WORKER_TOKEN=$token
+ SUN_CONSOLE_PASSCODE=$passcode
+ OLLAMA_URL=http://127.0.0.1:11434
+ OLLAMA_MODEL=hermes3:3b
+diff --git a/public/local-agent/worker.mjs b/public/local-agent/worker.mjs
+index cbc80f1..c42cb47 100644
+--- a/public/local-agent/worker.mjs
++++ b/public/local-agent/worker.mjs
+@@ -4,12 +4,13 @@ import path from "node:path";
+ import { fileURLToPath } from "node:url";
+ const envPath=path.join(path.dirname(fileURLToPath(import.meta.url)),".env.local");
+ if(fs.existsSync(envPath))for(const line of fs.readFileSync(envPath,"utf8").split(/\r?\n/)){const m=line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^["']|["']$/g,"");}
+-const BASE=(process.env.SUN_CONSOLE_URL||"").replace(/\/$/,""), PASS=process.env.SUN_CONSOLE_PASSCODE||"";
++const BASE=(process.env.SUN_CONSOLE_URL||"").replace(/\/$/,""), PASS=process.env.SUN_CONSOLE_PASSCODE||"", TOKEN=process.env.SUN_WORKER_TOKEN||"";
+ const OLLAMA=(process.env.OLLAMA_URL||"http://127.0.0.1:11434").replace(/\/$/,""), MODEL=process.env.OLLAMA_MODEL||"hermes3:8b";
+ const WORKER=process.env.WORKER_ID||`sun-${os.hostname().toLowerCase().replace(/[^a-z0-9-]/g,"-")}`, POLL=Math.max(10,Number(process.env.POLL_SECONDS)||30);
+-if(!BASE||!PASS){console.error("Set SUN_CONSOLE_URL and SUN_CONSOLE_PASSCODE in .env.local");process.exit(1);}
++if(!BASE||(!TOKEN&&!PASS)){console.error("Set SUN_CONSOLE_URL and SUN_WORKER_TOKEN (recommended) or SUN_CONSOLE_PASSCODE in .env.local");process.exit(1);}
++if(!TOKEN)console.warn("Using the owner passcode. Ask your administrator for a worker token (SUN_WORKER_TOKEN) instead.");
+ let cookie="";
+-async function api(url,options={}){const r=await fetch(BASE+url,{...options,headers:{"Content-Type":"application/json",Cookie:cookie,...options.headers}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`${r.status} ${r.statusText}`);return data;}
++async function api(url,options={}){const r=await fetch(BASE+url,{...options,redirect:"manual",headers:{"Content-Type":"application/json",...(TOKEN?{Authorization:`Bearer ${TOKEN}`}:{Cookie:cookie}),...options.headers}});if(r.status>=300&&r.status<400)throw new Error(TOKEN?"The console rejected SUN_WORKER_TOKEN.":"Console session expired.");const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`${r.status} ${r.statusText}`);return data;}
+ async function login(){const r=await fetch(BASE+"/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({passcode:PASS})});if(!r.ok)throw new Error("Console login failed. Check your passcode.");const raw=r.headers.get("set-cookie")||"";const m=raw.match(/sm_session=[^;]+/);if(!m)throw new Error("Console did not return a worker session.");cookie=m[0];}
+ async function ollama(system,user){const r=await fetch(OLLAMA+"/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:MODEL,stream:false,format:"json",messages:[{role:"system",content:system},{role:"user",content:user}]})});if(!r.ok)throw new Error(`Ollama unavailable (${r.status})`);return JSON.parse((await r.json()).message.content);}
+ async function clientSearch(job){
+@@ -30,4 +31,4 @@ async function selfImprove(){
+ async function run(job){await api("/api/agents/worker",{method:"PATCH",body:JSON.stringify({worker_id:WORKER,job_id:job.id,status:"running"})});try{const result=job.agent_type==="client_search"?await clientSearch(job):await selfImprove();await api("/api/agents/worker",{method:"PATCH",body:JSON.stringify({worker_id:WORKER,job_id:job.id,status:"completed",result,logs:[`Completed locally with ${MODEL}`]})});console.log(new Date().toISOString(),"completed",job.agent_type);}catch(e){await api("/api/agents/worker",{method:"PATCH",body:JSON.stringify({worker_id:WORKER,job_id:job.id,status:"failed",error:e.message,logs:["No outreach was sent."]})});console.error(new Date().toISOString(),e.message);}}
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+ console.log(`Starting ${WORKER}; poll ${POLL}s; model ${MODEL}`);
+-for(;;){try{if(!cookie)await login();const {job}=await api(`/api/agents/worker?worker_id=${encodeURIComponent(WORKER)}`);if(job)await run(job);}catch(e){console.error(new Date().toISOString(),e.message);cookie="";}await sleep(POLL*1000);}
++for(;;){try{if(!TOKEN&&!cookie)await login();const {job}=await api(`/api/agents/worker?worker_id=${encodeURIComponent(WORKER)}`);if(job)await run(job);}catch(e){console.error(new Date().toISOString(),e.message);cookie="";}await sleep(POLL*1000);}
+diff --git a/src/app/api/automation/run/route.ts b/src/app/api/automation/run/route.ts
+index 40fa4f8..a7eeb09 100644
+--- a/src/app/api/automation/run/route.ts
++++ b/src/app/api/automation/run/route.ts
+@@ -1,10 +1,11 @@
+ import { NextResponse } from "next/server";
+ import { db } from "@/lib/db";
+ import { deliverInteraction } from "@/lib/messaging";
++import { sameSecret } from "@/lib/rate-limit";
+ 
+ export async function POST(req: Request) {
+   const secret = process.env.AUTOMATION_SECRET;
+-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
++  if (!secret || !sameSecret(req.headers.get("authorization") || "", `Bearer ${secret}`)) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+   const c = db();
+   if (!c) return NextResponse.json({ error: "Database not configured." }, { status: 503 });
+   const { data, error } = await c.from("interactions").select("id").eq("status", "scheduled").lte("scheduled_at", new Date().toISOString()).in("channel", ["email", "sms", "text"]).limit(20);
+diff --git a/src/app/api/login/route.ts b/src/app/api/login/route.ts
+index b1d195d..0049b3f 100644
+--- a/src/app/api/login/route.ts
++++ b/src/app/api/login/route.ts
+@@ -3,24 +3,23 @@ import { COOKIE, expectedToken } from "@/lib/auth";
+ import { db } from "@/lib/db";
+ import { setSessionCookies } from "@/lib/session-cookies";
+ import { userClient } from "@/lib/tenant/session";
+-import { timingSafeEqual } from "crypto";
++import { clientIp, sameSecret, takeLimit } from "@/lib/rate-limit";
+ 
+ const attempts = new Map<string, { count: number; reset: number }>();
+ 
+-function sameSecret(a: string, b: string) {
+-  const left = Buffer.from(a);
+-  const right = Buffer.from(b);
+-  return left.length === right.length && timingSafeEqual(left, right);
+-}
+-
+ export async function POST(req: Request) {
+-  const ip = req.headers.get("x-nf-client-connection-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
++  const ip = clientIp(req);
+   const now = Date.now();
+   const prior = attempts.get(ip);
+   const state = !prior || prior.reset <= now ? { count: 0, reset: now + 15 * 60_000 } : prior;
+   if (state.count >= 10) return NextResponse.json({ ok: false, error: "Too many attempts. Try again later." }, { status: 429 });
+ 
++  // Shared across all server instances (the Map above only covers one).
++  if (!(await takeLimit("login-ip", ip, 30, 15 * 60))) return NextResponse.json({ ok: false, error: "Too many attempts. Try again later." }, { status: 429 });
+   const { passcode, email, password } = await req.json().catch(() => ({ passcode: "", email: "", password: "" }));
++  if (email && !(await takeLimit("login-account", String(email).trim().toLowerCase(), 10, 15 * 60))) {
++    return NextResponse.json({ ok: false, error: "Too many attempts for this account. Try again later." }, { status: 429 });
++  }
+   if (email && password) {
+     const url = process.env.SUPABASE_URL;
+     const key = process.env.SUPABASE_KEY;
+diff --git a/src/app/api/public/feedback/route.ts b/src/app/api/public/feedback/route.ts
+index b7ac202..554c924 100644
+--- a/src/app/api/public/feedback/route.ts
++++ b/src/app/api/public/feedback/route.ts
+@@ -1,5 +1,8 @@
+ import { NextResponse } from "next/server";
+ import { db } from "@/lib/db";
++import { clientIp, takeLimit } from "@/lib/rate-limit";
++
++const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+ export const dynamic = "force-dynamic";
+ 
+@@ -7,6 +10,12 @@ export async function POST(req: Request) {
+   const c = db();
+   const b = await req.json().catch(() => ({}));
+   if (!c) return NextResponse.json({ ok: true, stored: false });
++  if (!UUID.test(String(b.campaignId || ""))) return NextResponse.json({ ok: false, error: "Unknown review page." }, { status: 400 });
++  if (!(await takeLimit("review-feedback", clientIp(req), 5, 60 * 60))) {
++    return NextResponse.json({ ok: false, error: "Thanks — we already received your feedback. Please try again later." }, { status: 429 });
++  }
++  const { data: campaign } = await c.from("review_campaigns").select("id").eq("id", b.campaignId).eq("active", true).maybeSingle();
++  if (!campaign) return NextResponse.json({ ok: false, error: "This review page is no longer active." }, { status: 404 });
+   const rating = Math.max(1, Math.min(5, parseInt(String(b.rating || 0), 10) || 0));
+   const { error } = await c.from("review_feedback").insert({
+     campaign_id: b.campaignId,
+diff --git a/src/app/api/public/report-event/route.ts b/src/app/api/public/report-event/route.ts
+index a46d6da..38e56fb 100644
+--- a/src/app/api/public/report-event/route.ts
++++ b/src/app/api/public/report-event/route.ts
+@@ -1,5 +1,6 @@
+ import { NextResponse } from "next/server";
+ import { db } from "@/lib/db";
++import { clientIp, takeLimit } from "@/lib/rate-limit";
+ 
+ const ALLOWED = new Set(["view", "cta"]);
+ 
+@@ -9,6 +10,10 @@ export async function POST(req: Request) {
+   const body = await req.json().catch(() => ({}));
+   const event = String(body.event || "");
+   if (!body.auditId || !ALLOWED.has(event)) return NextResponse.json({ ok: false }, { status: 400 });
++  // One counted view/click per visitor per report per hour keeps the sales signal honest.
++  if (!(await takeLimit(`report-${event}`, `${clientIp(req)}:${String(body.auditId)}`, event === "view" ? 1 : 3, 60 * 60))) {
++    return NextResponse.json({ ok: true, counted: false });
++  }
+   const { data: audit } = await c.from("audits").select("id, shared, view_count, cta_clicks, first_viewed_at").eq("id", body.auditId).maybeSingle();
+   if (!audit?.shared) return NextResponse.json({ ok: false }, { status: 404 });
+   const now = new Date().toISOString();
+diff --git a/src/app/api/settings/email-provider/route.ts b/src/app/api/settings/email-provider/route.ts
+index 797153e..8736040 100644
+--- a/src/app/api/settings/email-provider/route.ts
++++ b/src/app/api/settings/email-provider/route.ts
+@@ -1,4 +1,5 @@
+ import { NextResponse } from "next/server";
++import { requireLegacyRole } from "@/lib/legacy-auth";
+ import { getEmailCredential, removeEmailCredential, saveEmailCredential } from "@/lib/email-provider";
+ 
+ export const dynamic = "force-dynamic";
+@@ -24,6 +25,8 @@ export async function GET() {
+ }
+ 
+ export async function POST(req: Request) {
++  const denied = await requireLegacyRole("admin");
++  if (denied) return denied;
+   const body = await req.json().catch(() => ({}));
+   const key = String(body.apiKey || "").trim();
+   if (!/^re_[A-Za-z0-9_\-]{12,300}$/.test(key)) return NextResponse.json({ error: "Enter a valid Resend API key beginning with re_." }, { status: 400 });
+@@ -36,6 +39,8 @@ export async function POST(req: Request) {
+ }
+ 
+ export async function DELETE() {
++  const denied = await requireLegacyRole("admin");
++  if (denied) return denied;
+   try {
+     await removeEmailCredential();
+     const fallback = await getEmailCredential();
+diff --git a/src/app/api/settings/google-places/route.ts b/src/app/api/settings/google-places/route.ts
+index 81bd64a..16314c4 100644
+--- a/src/app/api/settings/google-places/route.ts
++++ b/src/app/api/settings/google-places/route.ts
+@@ -1,4 +1,5 @@
+ import { NextResponse } from "next/server";
++import { requireLegacyRole } from "@/lib/legacy-auth";
+ import { getGooglePlacesCredential, removeGooglePlacesKey, saveGooglePlacesKey } from "@/lib/secrets";
+ 
+ export const dynamic = "force-dynamic";
+@@ -13,6 +14,8 @@ export async function GET() {
+ }
+ 
+ export async function POST(req: Request) {
++  const denied = await requireLegacyRole("admin");
++  if (denied) return denied;
+   const body = await req.json().catch(() => ({}));
+   const apiKey = String(body.apiKey || "").trim();
+   if (!/^AIza[\w-]{20,196}$/.test(apiKey)) {
+@@ -52,6 +55,8 @@ export async function POST(req: Request) {
+ }
+ 
+ export async function DELETE() {
++  const denied = await requireLegacyRole("admin");
++  if (denied) return denied;
+   try {
+     await removeGooglePlacesKey();
+     const fallback = await getGooglePlacesCredential();
+diff --git a/src/app/api/settings/openai-image/route.ts b/src/app/api/settings/openai-image/route.ts
+index d40f09c..2122d36 100644
+--- a/src/app/api/settings/openai-image/route.ts
++++ b/src/app/api/settings/openai-image/route.ts
+@@ -1,4 +1,5 @@
+ import { NextResponse } from "next/server";
++import { requireLegacyRole } from "@/lib/legacy-auth";
+ import { getOpenAIImageCredential, removeOpenAIImageKey, saveOpenAIImageKey } from "@/lib/secrets";
+ 
+ export const dynamic = "force-dynamic";
+@@ -34,6 +35,8 @@ export async function GET() {
+ }
+ 
+ export async function POST(req: Request) {
++  const denied = await requireLegacyRole("admin");
++  if (denied) return denied;
+   const body = await req.json().catch(() => ({}));
+   const key = String(body.apiKey || "").trim();
+   if (key.length < 20 || key.length > 500 || !/^sk-[A-Za-z0-9_-]+$/.test(key)) {
+@@ -49,6 +52,8 @@ export async function POST(req: Request) {
+ }
+ 
+ export async function DELETE() {
++  const denied = await requireLegacyRole("admin");
++  if (denied) return denied;
+   try {
+     await removeOpenAIImageKey();
+     const fallback = await getOpenAIImageCredential();
+diff --git a/src/app/api/settings/route.ts b/src/app/api/settings/route.ts
+index 5ccb0cd..bd8ce67 100644
+--- a/src/app/api/settings/route.ts
++++ b/src/app/api/settings/route.ts
+@@ -1,5 +1,7 @@
+ import { NextResponse } from "next/server";
+ import { db, getSettings } from "@/lib/db";
++import { requireLegacyRole } from "@/lib/legacy-auth";
++import { settingsPatch } from "@/lib/settings-schema";
+ 
+ export const dynamic = "force-dynamic";
+ 
+@@ -8,10 +10,13 @@ export async function GET() {
+ }
+ 
+ export async function PATCH(req: Request) {
++  const denied = await requireLegacyRole("admin");
++  if (denied) return denied;
++  const parsed = settingsPatch.safeParse(await req.json().catch(() => null));
++  if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message || "Invalid settings." }, { status: 422 });
++  const patch = parsed.data;
+   const c = db();
+   if (!c) return NextResponse.json({ error: "Database not configured." }, { status: 400 });
+-  const patch = await req.json();
+-  delete patch.id;
+   const { data, error } = await c.from("app_settings").update(patch).eq("id", 1).select("*").single();
+   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+   return NextResponse.json({ settings: data });
+diff --git a/src/lib/audit.ts b/src/lib/audit.ts
+index b1cabf5..98b5424 100644
+--- a/src/lib/audit.ts
++++ b/src/lib/audit.ts
+@@ -1,6 +1,5 @@
+ import * as cheerio from "cheerio";
+-import { lookup } from "dns/promises";
+-import { isIP } from "net";
++import { BlockedAddressError, publicFetch } from "./net/public-network";
+ import { AuditResult, CATS, CatKey, CategoryScore, Finding, Status, gradeFor } from "./audit-types";
+ 
+ const UA =
+@@ -9,28 +8,14 @@ const UA =
+ const MAX_PAGE_BYTES = 5 * 1024 * 1024;
+ const MAX_REDIRECTS = 5;
+ 
+-function blockedAddress(address: string) {
+-  const ip = address.toLowerCase();
+-  if (isIP(ip) === 4) {
+-    const [a, b] = ip.split(".").map(Number);
+-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
++async function safeFetch(raw: string, init: { signal?: AbortSignal; method?: string; headers?: Record<string, string> } = {}, redirects = 0): Promise<Response> {
++  let res: Response;
++  try {
++    res = await publicFetch(raw, init);
++  } catch (error) {
++    if (error instanceof BlockedAddressError) throw new Error("Private network addresses cannot be scanned.");
++    throw error;
+   }
+-  return ip === "::" || ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd") || ip.startsWith("fe8") || ip.startsWith("fe9") || ip.startsWith("fea") || ip.startsWith("feb") || ip.startsWith("ff") || ip.startsWith("::ffff:127.") || ip.startsWith("::ffff:10.") || ip.startsWith("::ffff:192.168.");
+-}
+-
+-async function assertPublicUrl(raw: string) {
+-  const url = new URL(raw);
+-  if (!(["http:", "https:"] as string[]).includes(url.protocol)) throw new Error("Only HTTP and HTTPS websites can be scanned.");
+-  if (url.username || url.password) throw new Error("Website addresses cannot contain credentials.");
+-  const host = url.hostname.toLowerCase();
+-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) throw new Error("Private network addresses cannot be scanned.");
+-  const addresses = isIP(host) ? [{ address: host }] : await lookup(host, { all: true, verbatim: true });
+-  if (!addresses.length || addresses.some(({ address }) => blockedAddress(address))) throw new Error("Private network addresses cannot be scanned.");
+-}
+-
+-async function safeFetch(raw: string, init: RequestInit = {}, redirects = 0): Promise<Response> {
+-  await assertPublicUrl(raw);
+-  const res = await fetch(raw, { ...init, redirect: "manual" });
+   if ([301, 302, 303, 307, 308].includes(res.status)) {
+     if (redirects >= MAX_REDIRECTS) throw new Error("Too many redirects.");
+     const location = res.headers.get("location");
+diff --git a/src/lib/contact-enrichment.ts b/src/lib/contact-enrichment.ts
+index 676cb70..7d4458f 100644
+--- a/src/lib/contact-enrichment.ts
++++ b/src/lib/contact-enrichment.ts
+@@ -1,6 +1,5 @@
+ import * as cheerio from "cheerio";
+-import { lookup } from "dns/promises";
+-import { isIP } from "net";
++import { BlockedAddressError, publicFetch } from "./net/public-network";
+ 
+ export type ContactEvidence = {
+   kind: "email" | "phone" | "social" | "contact_page" | "address" | "person";
+@@ -15,24 +14,6 @@ const MAX_BYTES = 1024 * 1024;
+ const MAX_PAGES = 5;
+ const SOCIAL_HOSTS = ["facebook.com", "instagram.com", "linkedin.com", "youtube.com", "tiktok.com", "x.com", "twitter.com", "yelp.com", "nextdoor.com"];
+ 
+-function blockedAddress(address: string) {
+-  const ip = address.toLowerCase();
+-  if (isIP(ip) === 4) {
+-    const [a, b] = ip.split(".").map(Number);
+-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
+-  }
+-  return ip === "::" || ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd") || /^fe[89ab]/.test(ip) || ip.startsWith("ff") || ip.startsWith("::ffff:127.") || ip.startsWith("::ffff:10.") || ip.startsWith("::ffff:192.168.");
+-}
+-
+-async function assertPublicUrl(raw: string) {
+-  const url = new URL(raw);
+-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Only public HTTP and HTTPS websites can be checked.");
+-  const host = url.hostname.toLowerCase();
+-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) throw new Error("Private network addresses cannot be checked.");
+-  const addresses = isIP(host) ? [{ address: host }] : await lookup(host, { all: true, verbatim: true });
+-  if (!addresses.length || addresses.some(({ address }) => blockedAddress(address))) throw new Error("Private network addresses cannot be checked.");
+-}
+-
+ async function readLimited(response: Response) {
+   const declared = Number(response.headers.get("content-length") || 0);
+   if (declared > MAX_BYTES) throw new Error("Page exceeds the enrichment size limit.");
+@@ -57,12 +38,16 @@ async function readLimited(response: Response) {
+ }
+ 
+ async function safeFetch(raw: string, redirects = 0): Promise<{ html: string; finalUrl: string }> {
+-  await assertPublicUrl(raw);
+-  const response = await fetch(raw, {
+-    redirect: "manual",
+-    signal: AbortSignal.timeout(9000),
+-    headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml;q=0.9" },
+-  });
++  let response: Response;
++  try {
++    response = await publicFetch(raw, {
++      signal: AbortSignal.timeout(9000),
++      headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml;q=0.9" },
++    });
++  } catch (error) {
++    if (error instanceof BlockedAddressError) throw new Error("Private network addresses cannot be checked.");
++    throw error;
++  }
+   if ([301, 302, 303, 307, 308].includes(response.status)) {
+     if (redirects >= 4) throw new Error("Too many redirects.");
+     const location = response.headers.get("location");
+diff --git a/src/lib/legacy-auth.ts b/src/lib/legacy-auth.ts
+new file mode 100644
+index 0000000..3802c2c
+--- /dev/null
++++ b/src/lib/legacy-auth.ts
+@@ -0,0 +1,36 @@
++import "server-only";
++import { NextResponse } from "next/server";
++import { cookies } from "next/headers";
++import { COOKIE, expectedToken, gateEnabled } from "./auth";
++import { db } from "./db";
++import { getUserSession } from "./tenant/session";
++import { sameSecret } from "./rate-limit";
++
++// Who is calling a legacy (single-tenant) route. Middleware already limits
++// these routes to passcode sessions and platform staff; this adds role checks
++// for sensitive operations.
++export type LegacyRole = "owner" | "admin" | "member";
++export type LegacyActor = { kind: "passcode"; role: "owner" } | { kind: "staff"; role: LegacyRole; userId: string };
++
++const RANK: Record<LegacyRole, number> = { member: 1, admin: 2, owner: 3 };
++
++export async function getLegacyActor(): Promise<LegacyActor | null> {
++  const token = (await cookies()).get(COOKIE)?.value;
++  if (gateEnabled() && token && sameSecret(token, expectedToken())) return { kind: "passcode", role: "owner" };
++  const session = await getUserSession();
++  const client = db();
++  if (!session || !client) return null;
++  const { data } = await client.from("team_members").select("role, active").eq("user_id", session.user.id).maybeSingle();
++  if (!data?.active || !(data.role in RANK)) return null;
++  return { kind: "staff", role: data.role as LegacyRole, userId: session.user.id };
++}
++
++// Returns a 401/403 response when the caller lacks the role, otherwise null.
++export async function requireLegacyRole(min: LegacyRole): Promise<NextResponse | null> {
++  const actor = await getLegacyActor();
++  if (!actor) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
++  if (RANK[actor.role] < RANK[min]) {
++    return NextResponse.json({ error: `This requires the ${min} role.` }, { status: 403 });
++  }
++  return null;
++}
+diff --git a/src/lib/net/public-network.ts b/src/lib/net/public-network.ts
+new file mode 100644
+index 0000000..2106131
+--- /dev/null
++++ b/src/lib/net/public-network.ts
+@@ -0,0 +1,123 @@
++import "server-only";
++import { lookup as dnsLookup, type LookupAddress } from "node:dns";
++import { isIP, type LookupFunction } from "node:net";
++import { Agent, fetch as undiciFetch } from "undici";
++
++// Outbound requests to user-supplied URLs (site scanner, contact enrichment)
++// must only reach the public internet. Addresses are checked inside the
++// socket's own DNS lookup, so the address that is validated is the address
++// that is connected to — a DNS-rebinding server cannot swap in a private IP
++// between a check and the request.
++
++export class BlockedAddressError extends Error {
++  constructor() {
++    super("Private network addresses cannot be reached.");
++  }
++}
++
++function v4Blocked(ip: string) {
++  const [a, b, c] = ip.split(".").map(Number);
++  return (
++    a === 0 || a === 10 || a === 127 || a >= 224 || // this-network, private, loopback, multicast/reserved/broadcast
++    (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
++    (a === 169 && b === 254) || // link-local, cloud metadata
++    (a === 172 && b >= 16 && b <= 31) ||
++    (a === 192 && b === 168) ||
++    (a === 192 && b === 0 && (c === 0 || c === 2)) || // IETF protocol assignments, TEST-NET-1
++    (a === 192 && b === 88 && c === 99) || // 6to4 relay
++    (a === 198 && (b === 18 || b === 19)) || // benchmarking
++    (a === 198 && b === 51 && c === 100) || // TEST-NET-2
++    (a === 203 && b === 0 && c === 113) // TEST-NET-3
++  );
++}
++
++// Expands an IPv6 address (including an embedded dotted IPv4 tail) to eight 16-bit groups.
++function v6Groups(ip: string): number[] | null {
++  let text = ip.toLowerCase().split("%")[0];
++  const dotted = text.match(/(\d+\.\d+\.\d+\.\d+)$/);
++  if (dotted) {
++    const [a, b, c, d] = dotted[1].split(".").map(Number);
++    text = text.slice(0, -dotted[1].length) + `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
++  }
++  const [head, tail] = text.split("::");
++  const parse = (s: string) => (s ? s.split(":").map((g) => parseInt(g, 16)) : []);
++  const h = parse(head);
++  const t = text.includes("::") ? parse(tail) : [];
++  const groups = text.includes("::") ? [...h, ...Array(8 - h.length - t.length).fill(0), ...t] : h;
++  return groups.length === 8 && groups.every((g) => Number.isInteger(g) && g >= 0 && g <= 0xffff) ? groups : null;
++}
++
++const v4From = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
++
++export function isBlockedAddress(address: string): boolean {
++  const kind = isIP(address.split("%")[0]);
++  if (kind === 4) return v4Blocked(address);
++  if (kind !== 6) return true; // not an IP literal: never connect to it
++  const g = v6Groups(address);
++  if (!g) return true;
++  const zeroPrefix = (n: number) => g.slice(0, n).every((x) => x === 0);
++  if (g.every((x) => x === 0)) return true; // ::
++  if (zeroPrefix(7) && g[7] === 1) return true; // ::1
++  if (zeroPrefix(5) && g[5] === 0xffff) return v4Blocked(v4From(g[6], g[7])); // ::ffff:a.b.c.d (mapped)
++  if (zeroPrefix(6)) return v4Blocked(v4From(g[6], g[7])); // ::a.b.c.d (compatible, deprecated)
++  if (g[0] === 0x64 && g[1] === 0xff9b) return v4Blocked(v4From(g[6], g[7])); // NAT64
++  if (g[0] === 0x2002) return v4Blocked(v4From(g[1], g[2])); // 6to4 embeds IPv4
++  if ((g[0] & 0xfe00) === 0xfc00) return true; // unique local fc00::/7
++  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
++  if ((g[0] & 0xff00) === 0xff00) return true; // multicast
++  if (g[0] === 0x2001 && g[1] === 0x0db8) return true; // documentation
++  return false;
++}
++
++type Resolver = (hostname: string, cb: (err: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void) => void;
++
++const systemResolver: Resolver = (hostname, cb) => dnsLookup(hostname, { all: true, verbatim: true }, cb);
++
++// A net.connect-compatible lookup that refuses to resolve to blocked addresses.
++export function createGuardedLookup(resolve: Resolver = systemResolver): LookupFunction {
++  return (hostname, options, callback) => {
++    resolve(hostname, (err, addresses) => {
++      if (err) return callback(err, "", 0);
++      if (!addresses.length || addresses.some((a) => isBlockedAddress(a.address))) {
++        return callback(new BlockedAddressError() as NodeJS.ErrnoException, "", 0);
++      }
++      const family = typeof options === "object" && options ? options.family : undefined;
++      const usable = family === 4 || family === 6 ? addresses.filter((a) => a.family === family) : addresses;
++      if (!usable.length) return callback(Object.assign(new Error(`No IPv${family} address for ${hostname}.`), { code: "ENOTFOUND" }), "", 0);
++      if (typeof options === "object" && options?.all) {
++        (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, usable);
++      } else {
++        callback(null, usable[0].address, usable[0].family);
++      }
++    });
++  };
++}
++
++const dispatcher = new Agent({ connect: { lookup: createGuardedLookup() } });
++
++// Fast, friendly validation before any network work. The connect-time guard
++// above is the real enforcement (it also covers hostnames and redirects).
++export function assertPublicUrl(raw: string) {
++  const url = new URL(raw);
++  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Only HTTP and HTTPS websites can be reached.");
++  if (url.username || url.password) throw new Error("Website addresses cannot contain credentials.");
++  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
++  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) throw new BlockedAddressError();
++  if (isIP(host) && isBlockedAddress(host)) throw new BlockedAddressError();
++  if (url.port && !["80", "443", "8080", "8443"].includes(url.port)) throw new Error("Only standard web ports can be reached.");
++  return url;
++}
++
++// fetch() for user-supplied URLs. Redirects are not followed automatically:
++// callers follow them manually so every hop is re-validated.
++export async function publicFetch(raw: string, init: { headers?: Record<string, string>; signal?: AbortSignal; method?: string } = {}): Promise<Response> {
++  assertPublicUrl(raw);
++  try {
++    const response = await undiciFetch(raw, { ...init, redirect: "manual", dispatcher });
++    return response as unknown as Response;
++  } catch (error) {
++    const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
++    if (cause instanceof BlockedAddressError) throw cause;
++    throw error;
++  }
++}
+diff --git a/src/lib/rate-limit.ts b/src/lib/rate-limit.ts
+new file mode 100644
+index 0000000..1bd5ed1
+--- /dev/null
++++ b/src/lib/rate-limit.ts
+@@ -0,0 +1,46 @@
++import "server-only";
++import { createHash, timingSafeEqual } from "crypto";
++import { db } from "./db";
++
++// Client IP as reported by the host's edge (Netlify first, then standard proxies).
++export function clientIp(req: Request) {
++  return (
++    req.headers.get("x-nf-client-connection-ip") ||
++    req.headers.get("x-real-ip") ||
++    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
++    "unknown"
++  );
++}
++
++const memory = new Map<string, { uses: number; reset: number }>();
++
++function memoryTake(key: string, limit: number, seconds: number) {
++  const now = Date.now();
++  const prior = memory.get(key);
++  const state = !prior || prior.reset <= now ? { uses: 0, reset: now + seconds * 1000 } : prior;
++  state.uses += 1;
++  memory.set(key, state);
++  if (memory.size > 5000) for (const [k, v] of memory) if (v.reset <= now) memory.delete(k);
++  return state.uses <= limit;
++}
++
++// Fixed-window limiter shared by every server instance, backed by the atomic
++// public.studio_take_limit() function. Keys are hashed so IPs and emails are
++// not stored in clear text. Falls back to a per-instance window if the
++// database is unavailable, so limits never silently disappear.
++export async function takeLimit(scope: string, subject: string, limit: number, seconds: number): Promise<boolean> {
++  const key = `${scope}:${createHash("sha256").update(subject).digest("hex").slice(0, 32)}`;
++  const client = db();
++  if (client) {
++    const { data, error } = await client.rpc("studio_take_limit", { p_key: key, p_limit: limit, p_seconds: seconds });
++    if (!error && typeof data === "boolean") return data;
++    console.error("[rate-limit] database limiter unavailable", error?.code);
++  }
++  return memoryTake(key, limit, seconds);
++}
++
++export function sameSecret(a: string, b: string) {
++  const left = createHash("sha256").update(a).digest();
++  const right = createHash("sha256").update(b).digest();
++  return timingSafeEqual(left, right) && a.length === b.length;
++}
+diff --git a/src/lib/settings-schema.ts b/src/lib/settings-schema.ts
+new file mode 100644
+index 0000000..c2cbe55
+--- /dev/null
++++ b/src/lib/settings-schema.ts
+@@ -0,0 +1,34 @@
++import { z } from "zod";
++
++const optionalText = (max: number) => z.string().trim().max(max).nullable().optional().transform((v) => (v === "" ? null : v));
++// Accepts "example.com" or full http(s) links; rejects other schemes (javascript:, data:, …).
++const optionalUrl = z
++  .string()
++  .trim()
++  .max(500)
++  .nullable()
++  .optional()
++  .transform((v, ctx) => {
++    if (!v) return v === undefined ? undefined : null;
++    const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : `https://${v}`;
++    try {
++      const url = new URL(withScheme);
++      if (url.protocol === "http:" || url.protocol === "https:") return url.toString();
++    } catch {
++      /* reported below */
++    }
++    ctx.addIssue({ code: "custom", message: "Enter a valid web address." });
++    return z.NEVER;
++  });
++
++// Only these columns can be changed (no mass assignment).
++export const settingsPatch = z.object({
++  agency_name: z.string().trim().min(1).max(120).optional(),
++  agency_tagline: z.string().trim().max(200).optional(),
++  agency_phone: optionalText(40),
++  agency_email: z.string().trim().max(254).refine((v) => v === "" || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), "Enter a valid email address").nullable().optional().transform((v) => (v === "" ? null : v)),
++  agency_site: optionalUrl,
++  accent: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Accent must be a hex color like #ff8112").optional(),
++  calendar_url: optionalUrl,
++  default_city: optionalText(100),
++}).strip();
+diff --git a/src/middleware.ts b/src/middleware.ts
+index 4c1f231..1aa5b3e 100644
+--- a/src/middleware.ts
++++ b/src/middleware.ts
+@@ -1,7 +1,8 @@
+ import { NextRequest, NextResponse } from "next/server";
+ import { AUTH_COOKIE, REFRESH_COOKIE, refreshSession, setSessionCookies } from "@/lib/session-cookies";
+ 
+-const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
++// /api/automation/run authenticates itself with AUTOMATION_SECRET (Netlify scheduler).
++const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/automation\/run$/, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
+ 
+ async function expected(pass: string): Promise<string> {
+   const buf = new TextEncoder().encode("sunmarketing::" + pass);
+@@ -19,6 +20,32 @@ const TENANT = [/^\/(command-center|crm|organization)(\/|$)/, /^\/api\/(crm|comm
+ 
+ type SessionUser = { id: string };
+ 
++// The local agent worker authenticates with AGENT_WORKER_TOKEN (Bearer) and
++// may call only these endpoints, so it never needs the owner passcode.
++const WORKER_ROUTES: [string, RegExp][] = [
++  ["GET", /^\/api\/agents\/worker$/],
++  ["PATCH", /^\/api\/agents\/worker$/],
++  ["GET", /^\/api\/agents\/metrics$/],
++  ["POST", /^\/api\/discover$/],
++  ["POST", /^\/api\/businesses$/],
++  ["POST", /^\/api\/businesses\/[0-9a-f-]{36}\/enrich$/i],
++];
++
++async function digest(value: string) {
++  return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
++}
++
++async function isWorkerRequest(req: NextRequest) {
++  const token = process.env.AGENT_WORKER_TOKEN;
++  const header = req.headers.get("authorization") || "";
++  if (!token || token.length < 32 || !header.startsWith("Bearer ")) return false;
++  if (!WORKER_ROUTES.some(([method, path]) => method === req.method && path.test(req.nextUrl.pathname))) return false;
++  const [a, b] = await Promise.all([digest(header.slice(7)), digest(token)]);
++  let diff = 0;
++  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
++  return diff === 0;
++}
++
+ async function currentUser(req: NextRequest, url: string, key: string) {
+   const accessToken = req.cookies.get(AUTH_COOKIE)?.value;
+   if (accessToken) {
+@@ -55,6 +82,7 @@ export async function middleware(req: NextRequest) {
+     url.searchParams.set("unconfigured", "1");
+     return NextResponse.redirect(url);
+   }
++  if (await isWorkerRequest(req)) return NextResponse.next();
+   const token = req.cookies.get("sm_session")?.value;
+   if (pass && token && token === (await expected(pass))) return NextResponse.next();
+ 
+@@ -79,6 +107,10 @@ export async function middleware(req: NextRequest) {
+       return response;
+     }
+   }
++  if (pathname.startsWith("/api/") && req.headers.get("authorization")?.startsWith("Bearer ")) {
++    // Machine clients (the agent worker) get a clear answer instead of a login page.
++    return NextResponse.json({ error: "Invalid or unauthorized token for this endpoint.", code: "unauthenticated" }, { status: 401 });
++  }
+   if (tenantPath && pathname.startsWith("/api/")) {
+     return NextResponse.json({ error: "Sign in with your team account to use this feature.", code: "unauthenticated" }, { status: 401 });
+   }
+diff --git a/tests/unit/hardening.test.ts b/tests/unit/hardening.test.ts
+new file mode 100644
+index 0000000..7752967
+--- /dev/null
++++ b/tests/unit/hardening.test.ts
+@@ -0,0 +1,37 @@
++import { describe, expect, it, vi } from "vitest";
++import { settingsPatch } from "@/lib/settings-schema";
++
++vi.mock("@/lib/db", () => ({ db: () => null }));
++const { takeLimit, sameSecret } = await import("@/lib/rate-limit");
++
++describe("settings allow-list", () => {
++  it("drops unknown columns (no mass assignment)", () => {
++    const r = settingsPatch.parse({ agency_name: "Sun", id: 99, is_admin: true, created_at: "x" });
++    expect(r).toEqual({ agency_name: "Sun" });
++  });
++  it("normalizes bare domains and blanks", () => {
++    const r = settingsPatch.parse({ agency_site: "sunmarketing.com", calendar_url: "", agency_phone: "" });
++    expect(r).toEqual({ agency_site: "https://sunmarketing.com/", calendar_url: null, agency_phone: null });
++  });
++  it("rejects dangerous or invalid values", () => {
++    expect(settingsPatch.safeParse({ calendar_url: "javascript:alert(1)" }).success).toBe(false);
++    expect(settingsPatch.safeParse({ agency_site: "data:text/html,hi" }).success).toBe(false);
++    expect(settingsPatch.safeParse({ accent: "red;background:url(x)" }).success).toBe(false);
++    expect(settingsPatch.safeParse({ agency_email: "nope" }).success).toBe(false);
++    expect(settingsPatch.safeParse({ agency_name: "" }).success).toBe(false);
++  });
++});
++
++describe("rate limiting", () => {
++  it("falls back to a per-instance window when the database is unavailable", async () => {
++    const results = [];
++    for (let i = 0; i < 4; i++) results.push(await takeLimit("test", "1.2.3.4", 3, 60));
++    expect(results).toEqual([true, true, true, false]);
++    expect(await takeLimit("test", "5.6.7.8", 3, 60)).toBe(true);
++  });
++  it("compares secrets safely", () => {
++    expect(sameSecret("Bearer abc", "Bearer abc")).toBe(true);
++    expect(sameSecret("Bearer abd", "Bearer abc")).toBe(false);
++    expect(sameSecret("", "Bearer abc")).toBe(false);
++  });
++});
+diff --git a/tests/unit/public-network.test.ts b/tests/unit/public-network.test.ts
+new file mode 100644
+index 0000000..06f5b4f
+--- /dev/null
++++ b/tests/unit/public-network.test.ts
+@@ -0,0 +1,76 @@
++import { describe, expect, it } from "vitest";
++import { createServer } from "node:http";
++import type { AddressInfo } from "node:net";
++import { Agent, fetch as undiciFetch } from "undici";
++import { assertPublicUrl, createGuardedLookup, isBlockedAddress, BlockedAddressError, publicFetch } from "@/lib/net/public-network";
++
++describe("isBlockedAddress", () => {
++  it.each([
++    "0.0.0.0", "10.1.2.3", "100.64.0.1", "100.127.255.254", "127.0.0.1", "169.254.169.254", "172.16.0.1", "172.31.255.255",
++    "192.0.0.8", "192.0.2.1", "192.88.99.1", "192.168.1.1", "198.18.0.1", "198.51.100.1", "203.0.113.9", "224.0.0.1", "255.255.255.255",
++    "::", "::1", "fc00::1", "fd12:3456::1", "fe80::1", "ff02::1", "2001:db8::1",
++    "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:172.16.0.1", "::ffff:169.254.169.254", "::ffff:a9fe:a9fe", "::ffff:7f00:1",
++    "::127.0.0.1", "64:ff9b::a9fe:a9fe", "2002:c0a8:0101::1", "fe80::1%eth0",
++    "not-an-ip", "",
++  ])("blocks %s", (ip) => expect(isBlockedAddress(ip)).toBe(true));
++
++  it.each(["8.8.8.8", "1.1.1.1", "100.63.255.255", "100.128.0.1", "172.15.0.1", "172.32.0.1", "2606:4700:4700::1111", "::ffff:8.8.8.8", "64:ff9b::808:808", "2002:0808:0808::1"])(
++    "allows public %s",
++    (ip) => expect(isBlockedAddress(ip)).toBe(false),
++  );
++});
++
++describe("assertPublicUrl", () => {
++  it("rejects non-web schemes, credentials, local names, private literals and odd ports", () => {
++    for (const url of ["ftp://example.com", "file:///etc/passwd", "http://user:pw@example.com", "http://localhost/", "http://printer.local", "http://metadata.google.internal", "http://169.254.169.254/latest", "http://[::1]/", "http://example.com:6379/"]) {
++      expect(() => assertPublicUrl(url), url).toThrow();
++    }
++  });
++  it("accepts normal public URLs", () => {
++    expect(assertPublicUrl("https://example.com/path").hostname).toBe("example.com");
++    expect(assertPublicUrl("http://example.com:8080/").port).toBe("8080");
++  });
++});
++
++describe("connect-time guard", () => {
++  const run = (addresses: { address: string; family: number }[], options: object = {}) =>
++    new Promise<{ err: Error | null; address: unknown; family?: number }>((resolve) => {
++      createGuardedLookup((_host, cb) => cb(null, addresses))("rebind.example", options as never, ((err: Error | null, address: unknown, family?: number) =>
++        resolve({ err, address, family })) as never);
++    });
++
++  it("refuses a hostname that resolves to a private address (DNS rebinding)", async () => {
++    const r = await run([{ address: "127.0.0.1", family: 4 }]);
++    expect(r.err).toBeInstanceOf(BlockedAddressError);
++  });
++  it("refuses if any resolved address is private", async () => {
++    const r = await run([{ address: "93.184.216.34", family: 4 }, { address: "10.0.0.5", family: 4 }]);
++    expect(r.err).toBeInstanceOf(BlockedAddressError);
++  });
++  it("returns public addresses, honoring family and all", async () => {
++    const addrs = [{ address: "2606:4700::1", family: 6 }, { address: "93.184.216.34", family: 4 }];
++    expect(await run(addrs, { family: 4 })).toMatchObject({ err: null, address: "93.184.216.34", family: 4 });
++    expect((await run(addrs, { all: true })).address).toEqual(addrs);
++  });
++
++  it("is enforced by undici at connect time: a hostname that resolves to loopback never reaches the server", async () => {
++    let hits = 0;
++    const server = createServer((_req, res) => { hits++; res.end("secret"); });
++    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
++    const port = (server.address() as AddressInfo).port;
++    const agent = new Agent({ connect: { lookup: createGuardedLookup((_h, cb) => cb(null, [{ address: "127.0.0.1", family: 4 }])) } });
++    try {
++      const error = await undiciFetch(`http://rebind.example:${port}/`, { dispatcher: agent }).catch((e) => e);
++      expect(error).toBeInstanceOf(TypeError);
++      expect((error as { cause?: unknown }).cause).toBeInstanceOf(BlockedAddressError);
++      expect(hits).toBe(0);
++    } finally {
++      await agent.close();
++      server.close();
++    }
++  });
++
++  it("publicFetch rejects private literals before any network work", async () => {
++    await expect(publicFetch("http://127.0.0.1/")).rejects.toBeInstanceOf(BlockedAddressError);
++  });
++});
+-- 
+2.43.0
+

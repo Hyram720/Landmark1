@@ -7,7 +7,7 @@ Principle: **stable foundations before breadth.** Each phase ships behind the sa
 | Phase | Theme | Lifecycle stage | Status |
 |---|---|---|---|
 | 1 | Core architecture, multi-tenancy, CRM, auth, AI Command Center foundation | Convert | **Implemented** (pending deploy) |
-| 1b | Hardening: baseline schema, secret rotation, MFA, CI, JWKS | — | Next |
+| 1b | Hardening: baseline schema, secret rotation, MFA, CI, JWKS | — | **In progress** (part 1 implemented) |
 | 2 | Communications: unified inbox, SMS/email/voice provider layer, AI voice agents | Convert | Planned |
 | 3 | Reputation & Trust Center, calendars, workflow automation | Protect · Convert | Planned |
 | 4 | Lead generation engine, audits at scale, AI prospecting | Acquire | Planned |

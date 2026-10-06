@@ -20,6 +20,23 @@ Severity uses impact × likelihood for a multi-tenant SaaS holding customer PII 
 | S12 | Low | No Content-Security-Policy or HSTS (nosniff, frame-deny and referrer-policy are present) | Nonce-based CSP for console pages; HSTS at the host | 1b |
 | S13 | Low | Middleware makes 1–2 network calls per request to Supabase (latency; outage amplification) | Verify JWTs locally via JWKS; cache staff membership in a short-lived signed claim | 1b |
 | S14 | Info | 11 applied migrations (including the original policies) are not in the repository | Baseline pull (DATABASE_SCHEMA §1) so policies can be reviewed and tested | 1b |
+| S15 | Medium (reliability) | `/api/automation/run` was not exempt from the session gate, so the Netlify scheduler was redirected to `/login`. Its `fetch` followed the redirect and got a 200, so **scheduled follow-ups were silently never sent** | Exempted (the route authenticates with `AUTOMATION_SECRET`); bearer calls with bad tokens now get a 401 instead of a login page | ✅ fixed |
+
+### 1.1 Remediation status (Phase 1b, part 1)
+
+| ID | Status | What changed |
+|---|---|---|
+| S1, S2 | ⏳ owner action | Production change; runbook in IMPLEMENTATION_PLAN §6 |
+| S5 | ✅ | `takeLimit()` (`src/lib/rate-limit.ts`) shares limits across instances through the atomic `studio_take_limit()`: 30 attempts per IP and 10 per account per 15 minutes, keys hashed; falls back per instance if the DB is down |
+| S6 | 🟡 partial | `requireLegacyRole()`: settings and provider-credential changes now need owner/admin (passcode = owner). Remaining legacy routes are covered as each module migrates to `tenantRoute` |
+| S7 | ✅ | `src/lib/settings-schema.ts` allow-list; URLs normalized, non-http(s) schemes rejected |
+| S8 | 🟡 mostly | Feedback: campaign must exist and be active, 5 per IP per hour. Report events: one counted view (three CTA clicks) per visitor per report per hour. Atomic counter RPC still pending |
+| S9 | ✅ | `src/lib/net/public-network.ts`: the address check runs inside undici's connect-time DNS lookup (closes DNS rebinding); full blocklist incl. CGNAT, mapped/compatible/NAT64/6to4 IPv6; only ports 80/443/8080/8443; 52 tests incl. a real socket test |
+| S10 | ✅ | `AGENT_WORKER_TOKEN` (≥32 chars) lets the worker call only its 6 endpoints; the worker and installer support `SUN_WORKER_TOKEN`; the passcode still works as a fallback with a warning |
+| S11 | ✅ | Constant-time comparison |
+| S12 | 🟡 partial | HSTS added; nonce-based CSP pending |
+| S13, S14 | ⏳ | JWKS verification; baseline schema pull |
+| S4 | ⏳ | Passcode sessions still deterministic; retire after owner MFA |
 
 Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stripe webhooks, encrypted provider keys, SSRF guard on scanner and enrichment, no review gating, consent-gated follow-ups with `STOP` handling, `List-Unsubscribe`, secure headers, no secrets in client bundles (explicitly avoided in `next.config.mjs`), and fail-closed middleware.
 
