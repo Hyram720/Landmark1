@@ -304,14 +304,22 @@ def main():
         plan = json.load(f)
     cfg = {**DEFAULTS, **{k: plan[k] for k in DEFAULTS if k in plan}}
     plan_dir = os.path.dirname(os.path.abspath(args.plan))
-    src = os.path.abspath(os.path.join(plan_dir, plan["input"]))
+    default_input = plan.get("input")
     out = os.path.abspath(os.path.join(plan_dir, plan.get("output", "tiktok_edit.mp4")))
-    if not os.path.exists(src):
-        sys.exit(f"error: input not found: {src}")
     if not plan.get("segments"):
         sys.exit("error: plan needs at least one segment")
 
-    src_audio = has_audio(src)
+    # each segment may pull from its own clip (multi-angle edits); "input" is the default
+    sources = {}
+    for i, seg in enumerate(plan["segments"]):
+        name = seg.get("input", default_input)
+        if not name:
+            sys.exit(f"error: segment {i} has no input (set top-level \"input\" or segment \"input\")")
+        path = os.path.abspath(os.path.join(plan_dir, name))
+        if not os.path.exists(path):
+            sys.exit(f"error: input not found: {path}")
+        if path not in sources:
+            sources[path] = has_audio(path)
     tmp = tempfile.mkdtemp(prefix="tt_edit_")
     W, H, fps = cfg["width"], cfg["height"], cfg["fps"]
     try:
@@ -330,6 +338,8 @@ def main():
                 sys.exit(f"error: unknown grade '{grade}' (choose from {sorted(GRADES)})")
             fx = norm_effects(seg, out_dur)
 
+            src = os.path.abspath(os.path.join(plan_dir, seg.get("input", default_input)))
+            src_audio = sources[src]
             # read extra source so crowd audio keeps rolling under a freeze frame
             read_dur = dur + freeze * speed
             cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start}", "-t", f"{read_dur}", "-i", src]
@@ -426,8 +436,13 @@ def main():
             run(["ffmpeg", "-y", "-v", "error", "-ss", f"{float(cover_at)}", "-i", out, "-frames:v", "1",
                  "-q:v", "2", cover], args.dry_run)
 
+        target = plan.get("target_duration")
+        if target and total < float(target):
+            print(f"warning: rendered {total:.1f}s, under the {float(target):.0f}s target", file=sys.stderr)
         print(json.dumps({"output": out, "duration_seconds": round(total, 2), "resolution": f"{W}x{H}",
-                          "fps": fps, "watermark": (wm.get("image") or wm.get("text")) if wm else None},
+                          "fps": fps, "watermark": (wm.get("image") or wm.get("text")) if wm else None,
+                          # TikTok Creator Rewards only pays on videos longer than one minute
+                          "creator_rewards_length_ok": total > 60.0},
                          indent=2))
     finally:
         if args.keep_temp:

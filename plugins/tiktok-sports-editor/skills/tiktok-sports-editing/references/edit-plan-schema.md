@@ -41,7 +41,8 @@ Relative paths resolve against the plan file's directory. All times are seconds.
 
 | Field | Default | Notes |
 |---|---|---|
-| `input` / `output` | required / `tiktok_edit.mp4` | Source and rendered MP4 |
+| `input` / `output` | required / `tiktok_edit.mp4` | Default source and rendered MP4. Segments can override `input` for multi-angle / multi-clip edits |
+| `target_duration` | none | Warns if the render comes out shorter. The payout format uses 62. The render output includes `creator_rewards_length_ok` (over 60s) |
 | `width` / `height` / `fps` | 1080 / 1920 / 30 | Use `fps: 60` only if the source is ≥ 50fps |
 | `reframe` | `blur` | `blur`: full-width video over a blurred fill. `crop`: fills the screen, cropped to the subject. `fit`: black bars. Can be overridden per segment |
 | `crop_center` | 0.5 | Horizontal focus for `crop` (0 = left, 1 = right). Can be overridden per segment to follow the action |
@@ -59,6 +60,7 @@ Relative paths resolve against the plan file's directory. All times are seconds.
 
 | Field | Default | Notes |
 |---|---|---|
+| `input` | top-level `input` | This segment's source clip (multi-angle edits, compilations) |
 | `start` / `end` | required | Source times. The same moment can appear more than once (real speed, then replays) |
 | `speed` | 1.0 | 0.2–0.5 = slow-mo replay, 1.5–2 = compress dead time. Audio is time-stretched |
 | `zoom` | 1.0 | Static punch-in (≥ 1) |

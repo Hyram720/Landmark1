@@ -1,6 +1,6 @@
 ---
 name: tiktok-sports-editing
-description: Find and edit basketball, football, boxing, college football (CFB), and college basketball (CBB / March Madness) clips (and other sports) into vertical TikTok / Reels / Shorts edits with pro-editor style — sport-tuned highlight detection across whole footage folders, sourcing clips you're allowed to use, 3-second hooks, 9:16 reframing, speed ramps, slow-mo replays, freeze frames, flash/shake/boom impact effects, zoom ramps, color grades, kinetic captions, beat-synced cuts, the Sun Custom Designs watermark, and a posting plan. Use whenever the user wants to find, cut, edit, clip, or repurpose game film, fights, highlights, mixtapes, or athlete content for short-form vertical video, or asks how to get more views on sports clips.
+description: Find and edit basketball, football, boxing, college football (CFB), and college basketball (CBB / March Madness) clips (and other sports) into vertical TikTok / Reels / Shorts edits with pro-editor style, defaulting to the 60+ second format that earns TikTok Creator Rewards payouts — sport-tuned highlight detection across whole footage folders, sourcing clips you're allowed to use, 3-second hooks, 9:16 reframing, speed ramps, slow-mo replays, freeze frames, flash/shake/boom impact effects, zoom ramps, color grades, kinetic captions, beat-synced cuts, the Sun Custom Designs watermark, and a posting plan. Use whenever the user wants to find, cut, edit, clip, or repurpose game film, fights, highlights, mixtapes, or athlete content for short-form vertical video, or asks how to get more views on sports clips.
 ---
 
 # TikTok Sports Editing
@@ -16,13 +16,23 @@ All scripts are in this skill's `scripts/` directory and need only `python3` + `
 | `analyze_footage.py PATHS... --sport basketball\|football\|boxing\|college_football\|college_basketball [--top 8]` | Scans files **or whole folders** and ranks highlight moments by crowd roar, impacts (punches, hits, rim slams), and motion bursts, tuned per sport. College profiles rank sudden crowd *surges*, because bands and student sections are loud all game |
 | `find_beats.py MUSIC` | BPM, beat grid, downbeats, and drops, for beat-synced cuts |
 | `fetch_clip.py URL --license ... --source-page ...` | Downloads a clip you're allowed to use and logs its credit/license in `CREDITS.json` |
+| `draft_plan.py ANALYSIS.json [--duration 62]` | Auto-drafts a render-ready 60+ second countdown edit (cold open → #5…#1 with replays) from the analysis |
 | `render_edit.py PLAN.json` | Renders the edit: reframe, grade, speed, freeze, effects, captions, watermark, music, loudness → 1080x1920 MP4 + cover |
 
 References (read the ones the task needs before writing a plan):
 - `references/sport-styles.md`: pro recipes for basketball, football, boxing, college football, and college basketball (**read for every edit**)
 - `references/edit-plan-schema.md`: every plan field, effect, caption style, and watermark option
+- `references/creator-rewards.md`: **the default payout format**: what earns, the 60s structures, RPM factors (**read for every edit**)
 - `references/viral-playbook.md`: hooks, captions, hashtags, sound, posting
 - `references/clip-sourcing.md`: where to find clips and what's safe to use
+
+## Default: the payout format
+Unless the user asks for something shorter, every edit is built to earn from TikTok's Creator Rewards
+Program: **62–75 seconds**, original (own, recreated, or licensed footage with a real edit), a hook that
+holds past 5 seconds (views under 5s don't count), a re-hook every 8–12s, the best moment last, the main
+keyword in the hook/caption/voiceover for search, and a question at the end. For highlights from
+analyzed footage, start from `draft_plan.py` (countdown structure) and refine it. If the user asks for a
+short clip, make it, and note it won't earn Creator Rewards.
 
 ## Workflow
 
@@ -52,7 +62,9 @@ Pick the matching recipe from `sport-styles.md` and adapt it to what's actually 
 - **Signature moves, used with restraint:** speed ramps, freeze + stamp, zoom ramps, B&W replays,
   kinetic captions. Use one or two per clip, done well. Effects must land on actions, never at random.
 - **Grade to the vibe:** `punchy`, `teal_orange`, `cinematic`, `gritty`, `cold`, `mono`.
-- **Length:** 7–15s for a single play, 15–30s for a mixtape. End right after the reaction so it loops.
+- **Length:** 62–75s by default (the payout format, see `creator-rewards.md`): countdown, breakdown,
+  recreation, or story structure. Use 7–30s only when the user asks for a teaser, and say it won't earn.
+  End on the payoff so it loops.
 - **Music edits:** run `find_beats.py`, make segment lengths whole beats, and land the payoff on a drop.
 
 ### 4. Reframe
@@ -81,6 +93,7 @@ ending. Check that the subject is in frame, effects land on the hit, text is rea
 and the watermark is visible but not covering the action. Fix the plan and re-render as needed.
 
 ### 9. Package the post
+Confirm `creator_rewards_length_ok: true` in the render output (re-edit if not).
 Deliver 3 hook variations, a caption ending in a question, 3–5 hashtags, the cover frame, any credits
 required by `CREDITS.json`, and the best posting window.
 

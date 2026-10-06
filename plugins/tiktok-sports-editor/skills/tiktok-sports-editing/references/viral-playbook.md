@@ -4,6 +4,12 @@ What the For You algorithm rewards, roughly in order: **completion rate → rewa
 → likes → follows from the video**. Early performance with a small test audience decides whether a
 video gets pushed wider, so the first 1–2 seconds and the first hour after posting matter most.
 
+## Length: 60+ seconds pays
+TikTok's Creator Rewards only pays on original videos **longer than one minute**, counting views watched
+**past 5 seconds** from the For You feed. The default is therefore **62–75s** with a re-hook every 8–12s.
+See `creator-rewards.md`. Shorter edits (7–30s) can get more full watches but earn nothing, so use them
+only as teasers that funnel viewers to the long version.
+
 ## Hook formulas (on-screen text, ≤ 7 words)
 Curiosity gap. The viewer has to keep watching to resolve it:
 - "Watch #12 on the left 👀" (directs the eye and promises something)

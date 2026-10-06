@@ -13,6 +13,13 @@ vertical TikToks with pro-editor style, every one branded with the **Sun Custom 
 | `highlight-scout` agent | Sifts full games, fight nights, or whole libraries and ranks moments with exact impact frames and an edit recipe |
 | `tiktok-sports-editing` skill | The pro editing playbook (also triggers on its own when you ask to edit sports clips) |
 
+## Built to get paid
+Every edit defaults to the **payout format** for TikTok's Creator Rewards Program: 62–75 seconds
+(Creator Rewards only pays on original videos over one minute), with a hook that holds past 5 seconds,
+a re-hook every 8–12 seconds, the best moment last, and searchable keywords. `draft_plan.py` auto-builds
+a 60+ second countdown edit from your footage, and every render reports whether it's long enough to
+earn.
+
 ## Pro editing toolkit
 - **Sport-tuned highlight detection**: basketball (dunks, blocks, threes), football (TDs, hits, catches),
   boxing (KOs, combos, counters), college football (`cfb`), and college basketball (`cbb`), from crowd
