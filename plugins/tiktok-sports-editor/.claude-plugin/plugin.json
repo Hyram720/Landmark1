@@ -1,7 +1,7 @@
 {
   "name": "tiktok-sports-editor",
-  "version": "0.2.0",
-  "description": "Find and edit basketball, football, and boxing clips into pro-style vertical TikToks: sport-tuned highlight detection, safe clip sourcing, hooks, speed ramps, slow-mo replays, impact effects, color grades, kinetic captions, beat sync, Sun Custom Designs watermark, and a posting plan.",
+  "version": "0.3.0",
+  "description": "Find and edit basketball, football, boxing, college football, and college basketball clips into pro-style vertical TikToks: sport-tuned highlight detection, safe clip sourcing, hooks, speed ramps, slow-mo replays, impact effects, color grades, kinetic captions, beat sync, Sun Custom Designs watermark, and a posting plan.",
   "author": { "name": "Landmark Agency Group" },
-  "keywords": ["basketball", "football", "boxing", "tiktok", "sports", "video-editing", "ffmpeg", "short-form", "reels", "shorts", "highlights"]
+  "keywords": ["basketball", "football", "boxing", "college-football", "college-basketball", "ncaa", "march-madness", "tiktok", "sports", "video-editing", "ffmpeg", "short-form", "reels", "shorts", "highlights"]
 }

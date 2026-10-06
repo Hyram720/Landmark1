@@ -1,6 +1,6 @@
 # tiktok-sports-editor
 
-A Claude Code plugin that **finds** basketball, football, and boxing clips and **edits** them into
+A Claude Code plugin that **finds** basketball, football, boxing, college football, and college basketball clips and **edits** them into
 vertical TikToks with pro-editor style, every one branded with the **Sun Custom Designs** watermark.
 
 ## Commands and agent
@@ -15,8 +15,9 @@ vertical TikToks with pro-editor style, every one branded with the **Sun Custom 
 
 ## Pro editing toolkit
 - **Sport-tuned highlight detection**: basketball (dunks, blocks, threes), football (TDs, hits, catches),
-  and boxing (KOs, combos, counters) from crowd roar, impact transients, and motion bursts, across whole
-  folders
+  boxing (KOs, combos, counters), college football (`cfb`), and college basketball (`cbb`), from crowd
+  roar, impact transients, and motion bursts, across whole folders. The college settings rank sudden
+  crowd *surges*, so the band and student section don't fool them
 - **Effects**: flash, camera shake, eased zoom ramps, black & white, RGB-split glitch, vignette, and
   synthesized **boom** (808 hit) and **whoosh** sounds
 - **Moves**: speed ramps, slow-mo replays (down to 0.2x), freeze frames (crowd audio keeps rolling),
@@ -48,9 +49,12 @@ text "SUN CUSTOM DESIGNS". Position, size, and opacity can be changed per edit (
 /find-clips boxing ~/Footage/fight-night "knockdowns and big combos"
 /sports-clip ~/Footage/varsity_vs_central.mp4 football "the 85-yard TD in the 4th"
 /sports-clip ~/Footage/aau/ basketball "best 3 dunks, mixtape style"
+/sports-clip ~/Footage/homecoming.mp4 college_football "the pick-six and the student section"
+/find-clips college_basketball "buzzer beaters and court storms"
 ```
 
 ## Rights
 Built for footage you filmed, have permission for, or that's licensed for reuse. It won't download or
-disguise NBA/NFL/NCAA/PPV broadcast footage to get around platform detection. It suggests
-transformative formats instead.
+disguise NBA/NFL/NCAA/March Madness/PPV broadcast footage to get around platform detection. It suggests
+transformative formats and, for college sports, legitimate paths such as athlete NIL content, school
+creative teams, and student media.

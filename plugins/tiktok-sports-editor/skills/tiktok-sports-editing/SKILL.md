@@ -1,6 +1,6 @@
 ---
 name: tiktok-sports-editing
-description: Find and edit basketball, football, and boxing clips (and other sports) into vertical TikTok / Reels / Shorts edits with pro-editor style — sport-tuned highlight detection across whole footage folders, sourcing clips you're allowed to use, 3-second hooks, 9:16 reframing, speed ramps, slow-mo replays, freeze frames, flash/shake/boom impact effects, zoom ramps, color grades, kinetic captions, beat-synced cuts, the Sun Custom Designs watermark, and a posting plan. Use whenever the user wants to find, cut, edit, clip, or repurpose game film, fights, highlights, mixtapes, or athlete content for short-form vertical video, or asks how to get more views on sports clips.
+description: Find and edit basketball, football, boxing, college football (CFB), and college basketball (CBB / March Madness) clips (and other sports) into vertical TikTok / Reels / Shorts edits with pro-editor style — sport-tuned highlight detection across whole footage folders, sourcing clips you're allowed to use, 3-second hooks, 9:16 reframing, speed ramps, slow-mo replays, freeze frames, flash/shake/boom impact effects, zoom ramps, color grades, kinetic captions, beat-synced cuts, the Sun Custom Designs watermark, and a posting plan. Use whenever the user wants to find, cut, edit, clip, or repurpose game film, fights, highlights, mixtapes, or athlete content for short-form vertical video, or asks how to get more views on sports clips.
 ---
 
 # TikTok Sports Editing
@@ -13,13 +13,13 @@ All scripts are in this skill's `scripts/` directory and need only `python3` + `
 
 | Script | What it does |
 |---|---|
-| `analyze_footage.py PATHS... --sport basketball\|football\|boxing [--top 8]` | Scans files **or whole folders** and ranks highlight moments by crowd roar, impacts (punches, hits, rim slams), and motion bursts, tuned per sport |
+| `analyze_footage.py PATHS... --sport basketball\|football\|boxing\|college_football\|college_basketball [--top 8]` | Scans files **or whole folders** and ranks highlight moments by crowd roar, impacts (punches, hits, rim slams), and motion bursts, tuned per sport. College profiles rank sudden crowd *surges*, because bands and student sections are loud all game |
 | `find_beats.py MUSIC` | BPM, beat grid, downbeats, and drops, for beat-synced cuts |
 | `fetch_clip.py URL --license ... --source-page ...` | Downloads a clip you're allowed to use and logs its credit/license in `CREDITS.json` |
 | `render_edit.py PLAN.json` | Renders the edit: reframe, grade, speed, freeze, effects, captions, watermark, music, loudness → 1080x1920 MP4 + cover |
 
 References (read the ones the task needs before writing a plan):
-- `references/sport-styles.md`: pro recipes for basketball, football, and boxing (**read for every edit**)
+- `references/sport-styles.md`: pro recipes for basketball, football, boxing, college football, and college basketball (**read for every edit**)
 - `references/edit-plan-schema.md`: every plan field, effect, caption style, and watermark option
 - `references/viral-playbook.md`: hooks, captions, hashtags, sound, posting
 - `references/clip-sourcing.md`: where to find clips and what's safe to use
@@ -90,7 +90,9 @@ When the user wants clips found for them, follow `references/clip-sourcing.md`:
 2. **Free-to-use stock:** search Pexels, Pixabay, Wikimedia Commons, and YouTube Creative Commons with the
    web tools. Download direct file links with `fetch_clip.py` so the license is logged.
 3. **Permission:** draft DMs to local teams, gyms, videographers, and promoters offering edits for footage.
-4. **Pro/college broadcast footage (NBA, NFL, NCAA, boxing PPV):** don't download or repost it. Offer the
+4. **College:** athletes' own NIL content, school creative teams, student media, footage shot from the
+   stands (check venue policy), and D2/D3/NAIA/JUCO programs. See the college section of `clip-sourcing.md`.
+5. **Pro/college broadcast footage (NBA, NFL, NCAA/March Madness, boxing PPV):** don't download or repost it. Offer the
    transformative formats in `clip-sourcing.md` instead.
 
 ## Rights and platform rules

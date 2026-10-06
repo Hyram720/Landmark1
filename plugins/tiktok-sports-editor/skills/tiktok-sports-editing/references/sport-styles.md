@@ -1,4 +1,4 @@
-# Pro editing recipes: basketball, football, boxing
+# Pro editing recipes: basketball, football, boxing, college football, college basketball
 
 Edit like a pro editor: every effect **lands on an action**. Flash, shake, and boom go on the exact
 impact frame (use `impacts_in_clip` from the analyzer, then confirm with frames). Never put effects on
@@ -53,6 +53,58 @@ walk-offs, staredowns, ring walks, training-camp grind.
 | **Slick defense** | 0.4x on the slip with `zoom_ramp`, `rgb_split` on the miss, then real speed on the counter + `flash` |
 | **Walk-off KO** | Freeze on the punch, unfreeze into the walk-off at real speed, `cinematic`, end on the walk (loops well) |
 | **Training montage** | Heavy bag, pads, and road work cut on the beat, `gritty`, kinetic hook "4:30AM WHILE YOU SLEEP" |
+
+---
+
+## 🏟️ College football (CFB)
+**Look for:** long TDs, pick-sixes, kick and punt return TDs, one-handed catches, blocked kicks,
+goal-line stands, 4th-down conversions, upsets, and especially the **atmosphere**: the student section
+erupting, the band hitting the fight song, the jump-around/sandstorm moments, field storming, and
+traditions (tunnel runs, mascot entrances, the rivalry trophy).
+
+**Grade:** `teal_orange` (Saturday afternoon), `cinematic` (night games, stadium lights), `gritty`
+(trenches, rivalry games).
+
+**Detection:** use `--sport college_football` (alias `cfb`). The band and student section keep the
+crowd loud all game, so this profile ranks sudden **surges** over sheer loudness.
+
+| Move | Recipe |
+|---|---|
+| **Upset / rivalry TD** | Score bug or a `top` caption with context ("UNRANKED vs #6 • 4TH QTR") → the play at real speed → 0.4x replay with `zoom_ramp` → cut to the student section at the surge with `flash` + `boom` → end on the band or the stands shaking |
+| **Return TD** | Catch at real speed → middle of the return at `speed: 1.5` → `freeze: 0.5` + `stamp` "NOBODY'S CATCHING HIM" on the last cut → real speed into the end zone → `whoosh` cut to the sideline mob |
+| **Pick-six** | Start on the QB's release, 0.35x replay on the jump with `zoom: 1.5`, `rgb_split` on the catch, then real speed for the run |
+| **Atmosphere edit** ("this is college football") | 6–10 shots cut **on the beat**: tunnel run, band, students, a play, the surge, the fight song. Kinetic `words: true` caption "THIS. IS. SATURDAY." `cinematic` grade. These travel far with alumni and fans |
+| **Field storm** | Final whistle at real speed → 0.5x as the first students hit the field → `bw` freeze on the crowd wave → color snaps back on a `boom` |
+| **Gameday / NIL vlog** | Athlete POV (locker room, walkout, warmups) filmed by or with the athlete, `top` caption "GAMEDAY VS [RIVAL]", fast cuts, `punchy` grade |
+
+## 🏀 College basketball (CBB / March Madness)
+**Look for:** buzzer beaters, upsets (especially 12-over-5 and Cinderella runs), posters, chase-down
+blocks, deep threes, the student section (cutouts, chants, the "airball" chant), court storming, the
+bench mob after a big play, walk-on/senior-night moments, and Selection Sunday reactions.
+
+**Grade:** `punchy` (arenas), `cinematic` (tournament runs), `mono` (the heartbreak or the final-shot
+replay).
+
+**Detection:** use `--sport college_basketball` (alias `cbb`). It ranks sudden surges, because the
+student section is loud even during free throws.
+
+| Move | Recipe |
+|---|---|
+| **Buzzer beater** | `top` caption with the clock ("0.8 LEFT • DOWN 2") → release at real speed → `freeze` at the top of the arc → swish with `flash` + `shake` + `boom` → court storm or bench mob at real speed → `bw` replay of the shot to end, which loops back to the start |
+| **Cinderella / upset** | Hook "A 15 SEED DID THIS", 3–4 best plays from the run cut on the beat, final-horn reaction, kinetic "DANCE. MARCH. REPEAT." |
+| **Poster in front of the student section** | Dunk at real speed → 0.35x replay with `zoom: 1.4` → `freeze` on the hang → `whoosh` cut to the student section going crazy (that reaction is what gets shared) |
+| **Student section moments** | Chants, cutouts, the "you can't do that" chant, and the free-throw distraction. Short (6–10s), funny, caption-driven. Great for comments |
+| **Senior night / walk-on bucket** | Emotional: `cinematic` grade, the bench reaction is the payoff, soft hook "HE WAITED 4 YEARS FOR THIS". These get huge shares |
+| **Bracket-season content** | "Rate this bracket-buster 1–10", or a side-by-side of a mid-major star's mixtape. Post during the tournament window, when search and For You demand peaks |
+
+## College-specific posting tips
+- **Timing is everything:** post within an hour of the final whistle on gameday. Search and fan demand
+  peak during Saturday games (CFB) and in March.
+- **Hashtags:** the school + the rival + the conference + a format tag, e.g.
+  `#[school]football #[rival] #secfootball #collegefootball` or `#marchmadness #[school]bball #collegehoops`.
+- **Tag the school, athlete, and conference accounts** (only when the footage is yours to post). Reposts
+  from official and athlete accounts are the biggest view multiplier in college sports.
+- **Rivalries drive comments:** a hook that takes a (good-natured) side gets both fan bases commenting.
 
 ---
 

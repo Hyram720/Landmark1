@@ -4,7 +4,7 @@ Claude Code plugin marketplace for Landmark Agency Group.
 
 ## Plugins
 
-- [`tiktok-sports-editor`](plugins/tiktok-sports-editor): find and edit basketball, football, and boxing clips into pro-style TikToks with the Sun Custom Designs watermark.
+- [`tiktok-sports-editor`](plugins/tiktok-sports-editor): find and edit basketball, football, boxing, college football, and college basketball clips into pro-style TikToks with the Sun Custom Designs watermark.
 
 ```
 /plugin marketplace add hyram720/landmark1

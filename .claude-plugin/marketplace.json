@@ -10,7 +10,7 @@
     {
       "name": "tiktok-sports-editor",
       "source": "./plugins/tiktok-sports-editor",
-      "description": "Find and edit basketball, football, and boxing clips into pro-style TikToks."
+      "description": "Find and edit basketball, football, boxing, college football, and college basketball clips into pro-style TikToks."
     }
   ]
 }

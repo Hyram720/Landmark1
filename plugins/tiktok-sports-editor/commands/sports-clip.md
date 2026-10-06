@@ -1,5 +1,5 @@
 ---
-description: Edit sports footage (basketball, football, boxing, ...) into a pro-style TikTok clip
+description: Edit sports footage (basketball, football, boxing, college football, college basketball, ...) into a pro-style TikTok clip
 argument-hint: <video-or-folder> [sport] [angle, e.g. "#23's dunk" or "the KO in round 3"]
 ---
 
@@ -8,7 +8,8 @@ Use the `tiktok-sports-editing` skill to edit this footage into a TikTok clip wi
 Footage, sport, and angle: $ARGUMENTS
 
 If the footage path is missing, ask for it. Infer the sport from the request or the frames if it isn't
-given. Follow the skill workflow end to end:
+given. Use `college_football` / `college_basketball` for NCAA-level games (band, student section, college
+courts and fields). Follow the skill workflow end to end:
 1. Run `analyze_footage.py` with the right `--sport` and confirm the moments by viewing frames.
 2. Pick the matching recipe in `references/sport-styles.md` and design the edit: hook, payoff, replay,
    and impact effects placed exactly on the hit frame.

@@ -11,13 +11,16 @@ Signals (all via ffmpeg, no extra Python packages):
   * scene cuts   - broadcast replays and camera switches cluster around key moments
 
 --sport tunes clip length, where the payoff sits in the clip, and how the
-signals are weighted (boxing leans on impacts, football on sustained crowd).
+signals are weighted (boxing leans on impacts, football on sustained crowd,
+college_football / college_basketball on sudden crowd surges, because bands
+and student sections keep college crowds loud all game).
 
 Output is JSON on stdout (or --out). Candidates are guesses: always confirm by
 viewing frames before cutting.
 
 Usage:
-  analyze_footage.py VIDEO_OR_DIR [...] [--sport basketball|football|boxing|generic]
+  analyze_footage.py VIDEO_OR_DIR [...] [--sport basketball|football|boxing|college_football|
+                     college_basketball|generic]  (aliases: cfb, cbb, ncaaf, ncaab)
                      [--top 8] [--clip-len SECONDS] [--out analysis.json] [--timeline]
 """
 import argparse
@@ -46,10 +49,23 @@ SPORTS = {
     "boxing": {"clip_len": 6.0, "peak_pos": 0.6, "smooth": 2,
                "weights": {"crowd": 0.35, "impacts": 0.4, "motion": 0.25},
                "look_for": "knockdowns, KOs, clean counters, flurries/combos, slick defense (slips, rolls), staredowns"},
+    # College crowds never sit still: bands, student-section chants, and fight songs keep the level
+    # high all game. These profiles lean on "surge" (a sudden jump over the previous 3s) instead.
+    "college_football": {"clip_len": 10.0, "peak_pos": 0.72, "smooth": 4,
+                         "weights": {"crowd": 0.15, "surge": 0.45, "impacts": 0.15, "motion": 0.25},
+                         "look_for": "long TDs, pick-sixes, one-handed catches, kick/punt returns, blocked kicks, "
+                                     "goal-line stands, upsets, student-section/band eruptions, field storming"},
+    "college_basketball": {"clip_len": 7.0, "peak_pos": 0.7, "smooth": 3,
+                           "weights": {"crowd": 0.15, "surge": 0.4, "impacts": 0.2, "motion": 0.25},
+                           "look_for": "buzzer beaters, March Madness upsets, posters, chase-down blocks, "
+                                       "deep threes, student-section reactions, court storming, bench mobs"},
     "generic": {"clip_len": 8.0, "peak_pos": 0.7, "smooth": 3,
                 "weights": {"crowd": 0.6, "impacts": 0.15, "motion": 0.25},
                 "look_for": "the loudest, fastest, most surprising moments"},
 }
+
+ALIASES = {"cfb": "college_football", "ncaaf": "college_football",
+           "cbb": "college_basketball", "ncaab": "college_basketball", "march_madness": "college_basketball"}
 
 
 def collect_videos(paths):
@@ -180,6 +196,9 @@ def analyze(path, profile, clip_len, threshold):
         signals["crowd"] = bucket(hop_levels, per, n, "mean")
         jumps = [0.0] + [max(0.0, b - a) for a, b in zip(hop_levels, hop_levels[1:])]
         signals["impacts"] = bucket(jumps, per, n, "max")
+        look = int(3 / WINDOW)
+        signals["surge"] = [max(0.0, c - sum(signals["crowd"][max(0, i - look):i]) / max(1, min(i, look)))
+                            if i else 0.0 for i, c in enumerate(signals["crowd"])]
         impact_threshold = sorted(jumps)[int(len(jumps) * 0.98)] if jumps else 99
         impact_times = [i * HOP for i, j in enumerate(jumps) if j >= max(impact_threshold, 6.0)]
     else:
@@ -191,7 +210,7 @@ def analyze(path, profile, clip_len, threshold):
 
     weights = {k: v for k, v in profile["weights"].items() if k in signals}
     total_w = sum(weights.values()) or 1.0
-    smoothing = {"crowd": profile["smooth"], "impacts": 1, "motion": 2}
+    smoothing = {"crowd": profile["smooth"], "surge": 1, "impacts": 1, "motion": 2}
     norm = {k: smooth(zscores(signals[k]), smoothing[k]) for k in weights}
     score = [sum(weights[k] * norm[k][i] for k in weights) / total_w for i in range(n)]
 
@@ -228,7 +247,7 @@ def analyze(path, profile, clip_len, threshold):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help="video files and/or folders")
-    ap.add_argument("--sport", choices=sorted(SPORTS), default="generic")
+    ap.add_argument("--sport", choices=sorted(SPORTS) + sorted(ALIASES), default="generic")
     ap.add_argument("--clip-len", type=float, help="override the sport's default clip length (seconds)")
     ap.add_argument("--top", type=int, default=8, help="max candidates across all files (default 8)")
     ap.add_argument("--scene-threshold", type=float, default=0.35)
@@ -236,6 +255,7 @@ def main():
     ap.add_argument("--out", help="write JSON here instead of stdout")
     args = ap.parse_args()
 
+    args.sport = ALIASES.get(args.sport, args.sport)
     profile = SPORTS[args.sport]
     clip_len = args.clip_len or profile["clip_len"]
     videos = collect_videos(args.paths)

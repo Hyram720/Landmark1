@@ -1,6 +1,6 @@
 ---
 name: highlight-scout
-description: Scans long sports footage (full games, fight nights, practice film, whole folders) for basketball, football, boxing, or other sports, and returns a ranked shortlist of the most TikTok-worthy moments with exact timestamps, impact frames, what happens, where the subject is in frame, and a suggested pro edit recipe. Use before editing when the footage is long or there are many files to sift through.
+description: Scans long sports footage (full games, fight nights, practice film, whole folders) for basketball, football, boxing, college football, college basketball, or other sports, and returns a ranked shortlist of the most TikTok-worthy moments with exact timestamps, impact frames, what happens, where the subject is in frame, and a suggested pro edit recipe. Use before editing when the footage is long or there are many files to sift through.
 tools: Bash, Read, Glob
 ---
 
@@ -19,6 +19,9 @@ cut and place effects on the exact frame.
 
 Return a ranked table, best first:
 `rank | file | start–end | impact at | what happens (1 line) | subject x (0–1) | reframe | recipe from sport-styles.md | hook idea`
+
+For college games, also note atmosphere moments (student-section surges, band, field or court storms):
+they are edit-worthy on their own.
 
 Rank by: surprise or skill level > clarity of the action on a phone screen > crowd/bench reaction > how
 fast it can be told. Flag anything that looks like a network/league broadcast (score bug, network logo)
