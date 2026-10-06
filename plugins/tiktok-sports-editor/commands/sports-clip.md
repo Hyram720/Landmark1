@@ -1,12 +1,16 @@
 ---
-description: Turn sports footage into a TikTok-ready vertical highlight clip
-argument-hint: <video-path> [angle, e.g. "#23's dunk" or "best 3 plays"]
+description: Edit sports footage (basketball, football, boxing, ...) into a pro-style TikTok clip
+argument-hint: <video-or-folder> [sport] [angle, e.g. "#23's dunk" or "the KO in round 3"]
 ---
 
-Use the `tiktok-sports-editing` skill to edit this footage into a TikTok clip built for views.
+Use the `tiktok-sports-editing` skill to edit this footage into a TikTok clip with pro-editor style.
 
-Footage and angle: $ARGUMENTS
+Footage, sport, and angle: $ARGUMENTS
 
-If the footage path is missing, ask for it. Otherwise follow the skill workflow end to end: analyze the
-footage, confirm the moment by viewing frames, write the edit plan, render, verify the output frames,
-and finish with the post package (hook variations, caption, hashtags, cover, posting window).
+If the footage path is missing, ask for it. Infer the sport from the request or the frames if it isn't
+given. Follow the skill workflow end to end:
+1. Run `analyze_footage.py` with the right `--sport` and confirm the moments by viewing frames.
+2. Pick the matching recipe in `references/sport-styles.md` and design the edit: hook, payoff, replay,
+   and impact effects placed exactly on the hit frame.
+3. Render (the Sun Custom Designs watermark is applied automatically), then verify the output frames.
+4. Finish with the post package: hook variations, caption, hashtags, cover, and posting window.

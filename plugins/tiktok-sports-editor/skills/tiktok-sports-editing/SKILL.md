@@ -1,100 +1,101 @@
 ---
 name: tiktok-sports-editing
-description: Edit sports footage into vertical TikTok / Reels / Shorts clips built for views — find the highlight, cut a 3-second hook, reframe 16:9 to 9:16, add slow-mo replays, punch-in zooms, bold captions inside the UI safe zone, normalize audio, and export a TikTok-ready MP4 plus the caption, hashtags, and posting plan. Use whenever the user wants to cut, edit, clip, or repurpose game film, highlights, practice footage, sports broadcasts, or athlete content for TikTok or other short-form vertical video, or asks how to get more views on sports clips.
+description: Find and edit basketball, football, and boxing clips (and other sports) into vertical TikTok / Reels / Shorts edits with pro-editor style — sport-tuned highlight detection across whole footage folders, sourcing clips you're allowed to use, 3-second hooks, 9:16 reframing, speed ramps, slow-mo replays, freeze frames, flash/shake/boom impact effects, zoom ramps, color grades, kinetic captions, beat-synced cuts, the Sun Custom Designs watermark, and a posting plan. Use whenever the user wants to find, cut, edit, clip, or repurpose game film, fights, highlights, mixtapes, or athlete content for short-form vertical video, or asks how to get more views on sports clips.
 ---
 
 # TikTok Sports Editing
 
-Turn raw sports footage into short vertical clips designed for retention, because on TikTok **retention is
-reach**: the For You feed pushes videos that people watch to the end, rewatch, share, and comment on.
-Every edit decision below serves one of those signals.
+Turn sports footage into short vertical clips edited like a pro, built for retention, because on TikTok
+**retention is reach**. Completion, rewatches, shares, and comments decide how far a video travels.
+Every decision below serves those signals.
 
-Scripts live in this skill's `scripts/` directory and need only `python3` + `ffmpeg`/`ffprobe`:
+All scripts are in this skill's `scripts/` directory and need only `python3` + `ffmpeg`/`ffprobe`:
 
 | Script | What it does |
 |---|---|
-| `scripts/analyze_footage.py VIDEO [--clip-len 8] [--top 5] [--out analysis.json]` | Metadata, scene cuts, and ranked highlight candidates from crowd/commentary audio spikes |
-| `scripts/render_edit.py PLAN.json [--dry-run]` | Renders the edit plan to a 1080x1920 H.264/AAC MP4 (and optional cover JPG) |
+| `analyze_footage.py PATHS... --sport basketball\|football\|boxing [--top 8]` | Scans files **or whole folders** and ranks highlight moments by crowd roar, impacts (punches, hits, rim slams), and motion bursts, tuned per sport |
+| `find_beats.py MUSIC` | BPM, beat grid, downbeats, and drops, for beat-synced cuts |
+| `fetch_clip.py URL --license ... --source-page ...` | Downloads a clip you're allowed to use and logs its credit/license in `CREDITS.json` |
+| `render_edit.py PLAN.json` | Renders the edit: reframe, grade, speed, freeze, effects, captions, watermark, music, loudness → 1080x1920 MP4 + cover |
 
-The edit-plan JSON format is in `references/edit-plan-schema.md`. Hook formulas, caption style, hashtag
-strategy, and posting cadence are in `references/viral-playbook.md`. Read both before writing a plan.
+References (read the ones the task needs before writing a plan):
+- `references/sport-styles.md`: pro recipes for basketball, football, and boxing (**read for every edit**)
+- `references/edit-plan-schema.md`: every plan field, effect, caption style, and watermark option
+- `references/viral-playbook.md`: hooks, captions, hashtags, sound, posting
+- `references/clip-sourcing.md`: where to find clips and what's safe to use
 
 ## Workflow
 
-### 1. Intake (ask only what you can't infer)
-- Footage path(s), the sport, and **whose** footage it is (their own filming, a team/school they work
-  with, or a licensed source). See *Rights* below.
-- The angle: one athlete's highlight? a single crazy play? a funny moment? a skills/training clip?
-- Who it's for: the athlete's recruiting page, a fan page, a brand, a local team.
+### 1. Intake
+Footage location (a file or a folder), the **sport**, whose footage it is, the angle (a single play,
+athlete mixtape, fight KO, training montage), and who it's for. If they have no footage, go to
+*Finding clips*.
 
-### 2. Find the moment
-Run `analyze_footage.py`. Candidates rank by crowd/commentator audio spikes (the payoff) with the clip
-positioned so the peak lands ~70% in. **Never trust a candidate blind**: pull frames around each peak and
-look at them to confirm what actually happens:
-
+### 2. Find the moments
 ```bash
-for t in 40 42 44 46; do ffmpeg -v error -y -ss $t -i game.mp4 -frames:v 1 -vf scale=640:-2 frame_$t.jpg; done
+python3 scripts/analyze_footage.py ~/Footage/ --sport boxing --top 10 --out analysis.json
 ```
+Each candidate has `peak`, `signals_at_peak` (which signal fired), and `impacts_in_clip` (sharp hits).
+**Never trust a candidate blind.** Extract frames around each peak and look at them:
+```bash
+for t in 41 42 43 44; do ffmpeg -v error -y -ss $t -i fight.mp4 -frames:v 1 -vf scale=640:-2 f_$t.jpg; done
+```
+Pin down the exact start of the action, the **impact frame** (where effects go), the end of the
+reaction, and the subject's horizontal position (for `crop_center`). For long footage or many files,
+delegate the scouting to the `highlight-scout` agent.
 
-Then Read the JPGs. Find the exact second the play starts, the payoff frame, and where the subject is
-horizontally in the frame (for `crop_center`). With no usable audio, rely on scene cuts plus frame review.
+### 3. Design the edit like a pro editor
+Pick the matching recipe from `sport-styles.md` and adapt it to what's actually in the frames.
+- **0–1.5s, the hook:** start in motion, with hook text that opens a curiosity gap.
+- **Payoff at real speed → slow-mo replay** with a punch-in. The hit-stack (`flash` + `shake` + `boom`)
+  goes exactly on the impact frame.
+- **Signature moves, used with restraint:** speed ramps, freeze + stamp, zoom ramps, B&W replays,
+  kinetic captions. Use one or two per clip, done well. Effects must land on actions, never at random.
+- **Grade to the vibe:** `punchy`, `teal_orange`, `cinematic`, `gritty`, `cold`, `mono`.
+- **Length:** 7–15s for a single play, 15–30s for a mixtape. End right after the reaction so it loops.
+- **Music edits:** run `find_beats.py`, make segment lengths whole beats, and land the payoff on a drop.
 
-### 3. Structure the edit (the retention blueprint)
-Target **7–15 seconds** for a single play and **15–30 seconds** for a multi-play highlight. Shorter edits
-get more full watches and rewatches.
+### 4. Reframe
+`crop` + `crop_center` when the action stays in one area (boxing in close, a dunk). `blur` when the full
+width matters (fast breaks, open-field runs, passes). Override `reframe`/`crop_center` per segment to
+follow the action.
 
-1. **0–1.5s, the hook.** Start *in motion*, never on a dead ball or a wide static shot. Overlay hook text
-   that opens a curiosity gap ("Watch #23 on the left 👀", "Nobody expected this pass"). Cut out every
-   second of setup the viewer doesn't need.
-2. **Build-up.** Keep only the setup that makes the payoff land.
-3. **Payoff at real speed**, then an immediate **slow-mo replay** (speed 0.4–0.5) with a punch-in
-   (zoom 1.3–1.6) on the key moment. This is the single most reliable sports-edit pattern.
-4. **Reaction or emphasis.** Crowd, bench, celebration, or an emphasis caption ("HE'S 15 YEARS OLD").
-5. **Loop-friendly ending.** End abruptly right after the reaction, or on a frame that flows back into the
-   opening, so autoplay replays feel seamless and count as rewatches. No outros, no logos, no "follow
-   for more" end card.
+### 5. Text
+Hook ≤ 7 words. Captions 2–5 words, in hype-commentator voice. Use `impact` for the payoff, `stamp` for
+freeze labels, `top` for score/clock/yardage, and `words: true` for punch counts and chants. Burned-in
+emoji render monochrome, so put emoji in the TikTok caption instead.
 
-### 4. Reframe for 9:16
-- `crop` when the action stays in one area: set `crop_center` from what you saw in the frames. Make a
-  separate segment with a different `crop_center` if the action moves.
-- `blur` (default) when the full width matters (fast breaks, full-field plays, passes across the field).
-  Use `zoom` on blur segments to fill more of the screen at the payoff.
-- Footage that is already vertical passes through cleanly in any mode.
+### 6. Branding: Sun Custom Designs watermark
+Every render is branded automatically (top-left, 85% opacity). It uses the logo at
+`plugins/tiktok-sports-editor/assets/watermark.png` if present, otherwise the text "SUN CUSTOM DESIGNS".
+Only change or disable it if the user asks. If the logo file is missing, mention once that they can add
+it.
 
-### 5. Text and captions
-- Hook text: ≤ 7 words, ALL CAPS or Title Case, on screen for the first ~2–2.5s.
-- Captions: 2–5 words each, timed on the **output** timeline (after speed changes). Use `emphasis: true`
-  for the payoff line.
-- The renderer keeps text out of TikTok's UI zones (top bar, right-side buttons, bottom caption area).
-- Burned-in emoji render monochrome. Put color emoji in the TikTok caption instead, or add them with
-  TikTok's text tool.
+### 7. Audio
+Keep the real crowd, commentary, and contact sounds. Add trending sounds **in the TikTok app**. Only use
+`music` for audio the user owns or has licensed. Output is loudness-normalized to −14 LUFS.
 
-### 6. Audio
-- Keep the real crowd and commentary. Authentic sound is a big part of why sports clips perform.
-- For trending sounds, tell the user to **add the sound inside TikTok** after uploading (set the original
-  audio low). That keeps the post eligible for the sound's discovery page and avoids music-licensing
-  problems. Only use the plan's `music` field for audio the user owns or has licensed.
-- Output is loudness-normalized to −14 LUFS.
+### 8. Render and verify
+Run `render_edit.py`, then ffprobe the output and look at frames for the hook, each impact, and the
+ending. Check that the subject is in frame, effects land on the hit, text is readable and unclipped,
+and the watermark is visible but not covering the action. Fix the plan and re-render as needed.
 
-### 7. Render and verify
-Write the plan JSON next to the footage, run `render_edit.py`, then **check the output**: ffprobe it, pull
-2–3 frames (hook, payoff, ending), and look at them. Confirm the subject is in frame, the text is readable
-and not clipped, and the duration matches. Fix the plan and re-render if anything is off.
+### 9. Package the post
+Deliver 3 hook variations, a caption ending in a question, 3–5 hashtags, the cover frame, any credits
+required by `CREDITS.json`, and the best posting window.
 
-### 8. Package the post
-Deliver with the video:
-- **3 hook-text variations** to A/B on later posts
-- **TikTok caption** (1 line plus a question to drive comments) and **3–5 hashtags** (see playbook)
-- **Cover frame** (`cover_at` in the plan): the payoff frame with the hook text
-- **Best posting window** and a note to reply to early comments within the first hour
+## Finding clips
+When the user wants clips found for them, follow `references/clip-sourcing.md`:
+1. **Their own library first:** run `analyze_footage.py` across their folders with `--sport`.
+2. **Free-to-use stock:** search Pexels, Pixabay, Wikimedia Commons, and YouTube Creative Commons with the
+   web tools. Download direct file links with `fetch_clip.py` so the license is logged.
+3. **Permission:** draft DMs to local teams, gyms, videographers, and promoters offering edits for footage.
+4. **Pro/college broadcast footage (NBA, NFL, NCAA, boxing PPV):** don't download or repost it. Offer the
+   transformative formats in `clip-sourcing.md` instead.
 
 ## Rights and platform rules
-- Prefer footage the user filmed or has permission to use (their own games, their athletes, their school
-  or club with consent). Pro and college broadcast footage is usually owned by leagues and networks, and
-  reposting it can get videos muted or removed and accounts struck.
-- Do **not** help disguise copyrighted footage to evade detection (mirroring, pitch-shifting, cropping or
-  overlays meant to beat Content ID). If the footage isn't theirs, say so plainly and suggest
-  alternatives: filming their own content, licensed clips, or commentary/reaction formats that add real
-  original value.
-- For minors, remind the user to have parent or guardian consent before posting identifiable clips.
-- Don't promise view counts. Frame advice as what tends to improve retention and reach.
+- Never help disguise copyrighted footage to evade detection (mirroring, pitch-shifting, crops, or
+  overlays meant to beat Content ID). Say plainly when footage isn't theirs to post.
+- Credit creators when the license requires it (`CREDITS.json`).
+- Minors: have parent or guardian consent before posting identifiable clips.
+- Don't glorify illegal or dangerous hits. Don't promise view counts.

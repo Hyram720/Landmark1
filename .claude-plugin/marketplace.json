@@ -10,7 +10,7 @@
     {
       "name": "tiktok-sports-editor",
       "source": "./plugins/tiktok-sports-editor",
-      "description": "Edit sports footage into vertical TikTok clips built for views."
+      "description": "Find and edit basketball, football, and boxing clips into pro-style TikToks."
     }
   ]
 }
