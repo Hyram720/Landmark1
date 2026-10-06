@@ -52,6 +52,20 @@
 
 Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are unchanged and remain platform-staff only.
 
+### Phase 2 endpoints (communications)
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET /api/inbox?status=open/closed/all&mine=1&unread=1` | crm.read | Conversation list |
+| `GET /api/inbox/:id` / `POST {action}` | crm.read / crm.write | Thread (marks read); close, reopen, assign |
+| `POST /api/messages` | crm.write | Send or schedule `{contact_id, channel, body, subject?, purpose?, scheduled_for?, idempotency_key?}` → `{outcome: sent/failed/scheduled/blocked/duplicate, …}`; a compliance block is a normal 200 result with the reason |
+| `POST /api/messages/check` | crm.read | Can this person be messaged now, and why not |
+| `POST /api/messages/:id {action:"cancel"}` | crm.write | Cancel a scheduled message |
+| `POST /api/crm/contacts/:id/opt-out` | crm.write | Record an opt-out the person gave verbally |
+| `GET/POST /api/channels`, `PATCH/DELETE/POST(test) /api/channels/:id`, `PUT /api/channels/settings` | org.read / org.manage | Provider accounts, credential test, time zone and texting hours |
+| `POST /api/webhooks/telnyx/sms`, `POST /api/webhooks/twilio/sms` | provider signature | Inbound texts, delivery receipts, STOP/START (service role) |
+| `POST /api/comms/dispatch` | `AUTOMATION_SECRET` | Sends due scheduled messages (called by the scheduler) |
+
 ## 4. Conventions for new endpoints
 
 - **Paths:** `/api/<module>/<resource>[/:id][/<sub-resource>]`; plural resource names.

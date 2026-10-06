@@ -40,6 +40,18 @@ Severity uses impact × likelihood for a multi-tenant SaaS holding customer PII 
 
 Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stripe webhooks, encrypted provider keys, SSRF guard on scanner and enrichment, no review gating, consent-gated follow-ups with `STOP` handling, `List-Unsubscribe`, secure headers, no secrets in client bundles (explicitly avoided in `next.config.mjs`), and fail-closed middleware.
 
+## 2a. Controls added in Phase 2 (communications)
+
+| Control | Implementation |
+|---|---|
+| Credential isolation | Provider credentials sealed with `APP_ENCRYPTION_KEY` (separate from the DB secret; key id detects mismatches); ciphertext column not selectable through the API; decrypted only inside adapters on the server |
+| Compliance gate on every send | `src/lib/comms/compliance.ts`: consent, opt-out list, do-not-contact, quiet hours in the business time zone, marketing opt-out text, SMS length; applied to people, the AI operator and the scheduler alike, and re-applied at dispatch time |
+| AI cannot bypass it | `send_message` runs the same gate after approval; blocked or failed sends mark the AI action failed with the reason |
+| Tamper-evident message log | DB trigger allows only forward status transitions; body frozen after sending; receipts and inbound only via verified webhooks |
+| Verified webhooks | Telnyx ed25519 with a 5-minute window; Twilio HMAC-SHA1 over the exact URL; nothing is written before verification; idempotent by provider event id |
+| Opt-out integrity | Suppressions written only by `apply_opt_out`/`clear_opt_out`; lifting one requires the person's START or an admin; all changes audited |
+| Multi-tenant routing | A number belongs to one organization (unique index); inbound is routed by the receiving number, then verified with that organization's credentials |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

@@ -117,7 +117,17 @@ Cross-tenant reads, writes and links are impossible; viewers can't write; manage
 
 ## 3. Planned schema by phase
 
-### Phase 2: Communications
+### Phase 2: Communications (part 1 implemented: `20261007120000_phase2_communications.sql`)
+
+| Table | Purpose | Key rules |
+|---|---|---|
+| `provider_accounts` | An organization's sending number/address per channel and provider | `address` unique among active accounts (inbound routing); one default per channel; `encrypted_credentials` not selectable via the API (column grants) and released only by `provider_secret()` to members+ |
+| `conversations` | One thread per contact per channel | unique (org, contact, channel); unread count and preview maintained by trigger |
+| `messages` | Every inbound/outbound message, including blocked and scheduled attempts | API users may only insert outbound `queued`/`scheduled`/`blocked` as themselves and walk `queued→sending→sent/failed`, `scheduled→cancelled/queued`; body frozen once sent; delivery and inbound only via service role; `(provider, provider_message_id)` unique; every insert lands on the timeline |
+| `suppressions` | Opted-out numbers/addresses | written only by `apply_opt_out()` (member or service role) and cleared by `clear_opt_out()` (admin or the person's own START text) |
+| `webhook_events` | Webhook idempotency log | unique (provider, event_id); service role only |
+
+Planned for the rest of Phase 2:
 - `provider_accounts (organization_id, capability, provider, encrypted_credentials, is_default, health jsonb)`, inherited from the parent agency when absent
 - `phone_numbers (e164, provider_account_id, capabilities, assigned_to, messaging_profile_id)`
 - `messaging_profiles` (10DLC brand/campaign IDs, status, use case)

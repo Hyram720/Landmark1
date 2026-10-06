@@ -1,7 +1,7 @@
 From e9633dea96093e85a2b34e8d98d4b071acfef664 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 6 Oct 2026 15:10:22 +0000
-Subject: [PATCH 3/3] Phase 1b hardening: SSRF pinning, rate limits, roles,
+Subject: [PATCH 3/4] Phase 1b hardening: SSRF pinning, rate limits, roles,
  worker token, CI
 
 - Outbound fetches to user-supplied URLs (site scanner, contact

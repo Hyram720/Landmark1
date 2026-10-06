@@ -100,7 +100,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 | 4 | CRM | 🟡→🆕 | Contacts, companies, pipelines, stages, deals, tasks, notes, tags, custom field definitions, activity history, drag-and-drop board, explainable lead scoring. **Missing:** custom objects UI, custom field editor UI, ownership routing, merge/dedupe UI, import/export UI |
 | 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
 | 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
-| 7 | SMS and messaging | 🟡 | Twilio (legacy) and Telnyx (studio) paths, `STOP` handling. **Missing:** unified inbox, provider abstraction, quiet hours, 10DLC registry |
+| 7 | SMS and messaging | 🆕 (Phase 2 part 1) | Provider layer (Telnyx, Twilio, Resend) with failover, unified inbox, scheduling, consent/opt-out/quiet-hours gate, verified webhooks, STOP/START. **Missing:** web chat, WhatsApp, 10DLC registry UI, bulk sends (Phase 3 campaigns) |
 | 8 | Reputation and Trust Center | 🟡 | Review pages, QR, private feedback. **Missing:** review monitoring/ingestion, AI responses, Reputation Health Score, competitor comparison, alerts |
 | 9 | Lead generation engine | 🟡 | Opportunity Radar + Site Scanner are strong. **Missing:** tenant scoping, Opportunity Score v2, audit-driven outreach campaigns |
 | 10 | Websites, funnels, forms | 🟡 | Website rebuild concepts, Puck builder, Campaign Studio funnels. **Missing:** hosted multi-tenant sites, forms/surveys builder, templates library |

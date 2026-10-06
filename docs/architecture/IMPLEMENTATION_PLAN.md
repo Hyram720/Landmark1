@@ -65,6 +65,22 @@ drop function if exists public.import_legacy_businesses(uuid), public.erase_cont
 commit;
 ```
 
+## 2b. Deploying Phase 2 (communications)
+
+1. Apply `supabase/migrations/20261007120000_phase2_communications.sql` (additive, one transaction).
+2. Set server environment variables:
+   | Variable | Purpose |
+   |---|---|
+   | `APP_ENCRYPTION_KEY` | 32+ random characters (`openssl rand -base64 48`). Seals provider credentials. Back it up: credentials saved with it cannot be read without it |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Lets verified webhooks and the scheduler write replies, receipts and opt-outs. Server-only |
+   | `PUBLIC_APP_URL` | e.g. `https://console.yourdomain.com`; used for delivery callbacks and Twilio signature checks |
+3. Redeploy. The existing 15-minute scheduler now also calls `/api/comms/dispatch`.
+4. In **Channels**, connect a number (Telnyx: API key + webhook public key; Twilio: Account SID + auth token) and press **Test**. Paste the shown webhook URL into the provider's inbound settings.
+5. US business texting requires an approved A2P 10DLC brand and campaign at the provider; register before sending at volume.
+6. Smoke test: record SMS consent on a test contact (yourself), send a text from **Conversations**, reply from your phone, then text STOP and confirm the inbox shows the reply and the contact's consent shows *Revoked*.
+
+Rollback: `drop table public.messages, public.conversations, public.suppressions, public.webhook_events, public.provider_accounts cascade;` then drop `provider_secret`, `apply_opt_out`, `clear_opt_out`, `tg_messages_guard`, `tg_messages_timeline`.
+
 ## 3. Development workflow
 
 ```bash
