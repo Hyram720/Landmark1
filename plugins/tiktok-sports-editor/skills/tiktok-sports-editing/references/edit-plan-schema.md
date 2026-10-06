@@ -28,7 +28,7 @@ Relative paths resolve against the plan file's directory. All times are seconds.
     {"start": 0.5, "end": 2.5, "text": "ROUND 3 • 0:47", "style": "top"}
   ],
 
-  "watermark": {"position": "top_left", "opacity": 0.85, "width": 200},
+  "watermark": {"position": "top_left", "opacity": 0.9, "width": 280},
 
   "music": {"path": "beat.mp3", "volume": 0.25, "original_volume": 1.0, "start": 12.5},
   "cover_at": 5.5,
@@ -97,8 +97,8 @@ Every render is branded automatically:
 | `image` | bundled logo | Path to a PNG (transparent background works best) |
 | `text` | `SUN CUSTOM DESIGNS` | Used when there's no image |
 | `position` | `top_left` | `top_left`, `top_right`, `bottom_left`, `center_left`. All clear TikTok's buttons and caption |
-| `opacity` | 0.85 | 0–1 |
-| `width` | 200 | Logo width in px (of 1080) |
+| `opacity` | 0.9 | 0–1 |
+| `width` | 280 | Logo width in px (of 1080). Use ~120 with `assets/sun-icon.png` |
 | `size` | 34 | Text watermark font size |
 
 `"watermark": false` turns it off; `"watermark": "other_logo.png"` swaps the image.

@@ -269,7 +269,7 @@ def watermark_config(plan):
         return None
     if isinstance(wm, str):
         wm = {"image": wm}
-    cfg = {"position": "top_left", "opacity": 0.85, "width": 200, "size": 34}
+    cfg = {"position": "top_left", "opacity": 0.9, "width": 280, "size": 34}
     cfg.update(wm)
     if not cfg.get("image") and not cfg.get("text"):
         if os.path.exists(BRAND_LOGO):

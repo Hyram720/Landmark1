@@ -1,9 +1,15 @@
-# Brand assets
+# Brand assets: Sun Custom Designs
 
-Put the **Sun Custom Designs** logo here as `watermark.png` and every edit will be branded with it
-automatically. Until then, renders use the text "SUN CUSTOM DESIGNS" as the watermark.
+| File | Use |
+|---|---|
+| `watermark.png` | Full logo (sunset sun + SUN / CUSTOM DESIGNS wordmark), transparent PNG, 1413x592. Applied to every edit automatically, top-left, 280px wide, 90% opacity |
+| `sun-icon.png` | Sun emblem only, square 564x564, transparent. For a smaller, cleaner watermark (`"watermark": {"image": ".../sun-icon.png", "width": 120}`) or a profile picture |
+| `source/make_logo.py` | Rebuilds the logo with ImageMagick: `python3 make_logo.py Anton-Regular.ttf watermark.png` |
 
-Logo tips:
-- PNG with a **transparent background** (a white or black box around the logo looks amateur)
-- At least 600px wide. It's scaled to 200px wide on a 1080x1920 video
-- If the logo is dark, add a white version (or a light outline/glow) so it reads on dark footage
+Design notes:
+- Colors: gold-to-orange gradient (#FFD84A → #FF6A00) with white "CUSTOM DESIGNS"
+- Font: [Anton](https://github.com/google/fonts/tree/main/ofl/anton) (SIL Open Font License, free for
+  commercial logo use)
+- A thin dark contour keeps it readable over bright footage as well as dark footage
+
+To use a different logo, replace `watermark.png` with any transparent PNG (600px+ wide) of the same name.

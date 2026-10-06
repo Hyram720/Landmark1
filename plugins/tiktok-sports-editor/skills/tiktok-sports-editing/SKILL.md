@@ -66,10 +66,10 @@ freeze labels, `top` for score/clock/yardage, and `words: true` for punch counts
 emoji render monochrome, so put emoji in the TikTok caption instead.
 
 ### 6. Branding: Sun Custom Designs watermark
-Every render is branded automatically (top-left, 85% opacity). It uses the logo at
-`plugins/tiktok-sports-editor/assets/watermark.png` if present, otherwise the text "SUN CUSTOM DESIGNS".
-Only change or disable it if the user asks. If the logo file is missing, mention once that they can add
-it.
+Every render is branded automatically with the Sun Custom Designs logo (`assets/watermark.png`,
+top-left, 280px wide, 90% opacity). A sun-only icon (`assets/sun-icon.png`, ~120px) is available for a
+subtler mark. Only change or disable the watermark if the user asks. If the logo file is ever missing,
+the renderer falls back to the text "SUN CUSTOM DESIGNS".
 
 ### 7. Audio
 Keep the real crowd, commentary, and contact sounds. Add trending sounds **in the TikTok app**. Only use

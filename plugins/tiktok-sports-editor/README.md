@@ -30,10 +30,11 @@ vertical TikToks with pro-editor style, every one branded with the **Sun Custom 
 - **Clip sourcing with license logging**: `fetch_clip.py` writes `CREDITS.json`
 
 ## Sun Custom Designs watermark
-Add your logo as **`plugins/tiktok-sports-editor/assets/watermark.png`** (transparent PNG, 600px+ wide)
-and commit it. Every edit will carry it top-left at 85% opacity. Until the file is there, edits use the
-text "SUN CUSTOM DESIGNS". Position, size, and opacity can be changed per edit (see
-`skills/tiktok-sports-editing/references/edit-plan-schema.md`).
+The Sun Custom Designs logo ships with the plugin (`assets/watermark.png`: a sunset sun plus the
+SUN / CUSTOM DESIGNS wordmark), and every edit carries it top-left. There's also a sun-only icon
+(`assets/sun-icon.png`) for a smaller mark or a profile picture. Position, size, and opacity can be
+changed per edit (see `skills/tiktok-sports-editing/references/edit-plan-schema.md`). To swap logos,
+replace `assets/watermark.png`.
 
 ## Requirements
 `python3` (3.8+) and `ffmpeg`/`ffprobe` with libass (standard on most distributions and in Homebrew).
