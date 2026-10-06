@@ -4,6 +4,7 @@
 |---|---|
 | `watermark.png` | Full logo (sunset sun + SUN / CUSTOM DESIGNS wordmark), transparent PNG, 1413x592. Applied to every edit automatically, top-left, 280px wide, 90% opacity |
 | `sun-icon.png` | Sun emblem only, square 564x564, transparent. For a smaller, cleaner watermark (`"watermark": {"image": ".../sun-icon.png", "width": 120}`) or a profile picture |
+| `fonts/Anton-Regular.ttf` | Anton (SIL Open Font License, see `fonts/OFL.txt`). The renderer loads it automatically, so set `"font": "Anton"` in any plan for pro-style lettering |
 | `source/make_logo.py` | Rebuilds the logo with ImageMagick: `python3 make_logo.py Anton-Regular.ttf watermark.png` |
 
 Design notes:

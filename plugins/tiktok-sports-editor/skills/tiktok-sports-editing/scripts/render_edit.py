@@ -28,6 +28,7 @@ import tempfile
 PLUGIN_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 BRAND_LOGO = os.path.join(PLUGIN_ROOT, "assets", "watermark.png")
 BRAND_TEXT = "SUN CUSTOM DESIGNS"
+FONTS_DIR = os.path.join(PLUGIN_ROOT, "assets", "fonts")   # bundled Anton (OFL) for "font": "Anton"
 
 DEFAULTS = {
     "width": 1080,
@@ -405,7 +406,7 @@ def main():
         fade_out = max(0.0, total - 0.3)
         af += f"loudnorm=I={cfg['loudness']}:TP=-1.0:LRA=11,afade=t=out:st={fade_out:.2f}:d=0.3[aout]"
 
-        vf = "[0:v]ass=overlay.ass[vt]"
+        vf = f"[0:v]ass=overlay.ass:fontsdir={FONTS_DIR}[vt]"
         wm = watermark_config(plan)
         if wm and wm.get("image"):
             logo = os.path.abspath(os.path.join(plan_dir, wm["image"]))
