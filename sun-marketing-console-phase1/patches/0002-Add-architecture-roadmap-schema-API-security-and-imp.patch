@@ -1,0 +1,1024 @@
+From df7f1405665f2d56c33670323e8c03cefa4480de Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 14:58:01 +0000
+Subject: [PATCH 2/2] Add architecture, roadmap, schema, API, security and
+ implementation docs
+
+docs/architecture/ captures the audit of the existing console (stack,
+feature inventory, live-schema drift, technical debt, reusable parts),
+the gap analysis against the AI Growth OS specification, the target
+architecture, the phased roadmap, schema and API references, a
+severity-ranked security plan with a secret-rotation runbook, Phase 1
+deployment steps, and the third-party credentials needed per phase.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ README.md                                |  18 ++
+ docs/architecture/API_ARCHITECTURE.md    | 130 ++++++++++++
+ docs/architecture/DATABASE_SCHEMA.md     | 160 ++++++++++++++
+ docs/architecture/IMPLEMENTATION_PLAN.md | 169 +++++++++++++++
+ docs/architecture/MASTER_ARCHITECTURE.md | 256 +++++++++++++++++++++++
+ docs/architecture/PRODUCT_ROADMAP.md     | 104 +++++++++
+ docs/architecture/SECURITY_PLAN.md       | 106 ++++++++++
+ 7 files changed, 943 insertions(+)
+ create mode 100644 docs/architecture/API_ARCHITECTURE.md
+ create mode 100644 docs/architecture/DATABASE_SCHEMA.md
+ create mode 100644 docs/architecture/IMPLEMENTATION_PLAN.md
+ create mode 100644 docs/architecture/MASTER_ARCHITECTURE.md
+ create mode 100644 docs/architecture/PRODUCT_ROADMAP.md
+ create mode 100644 docs/architecture/SECURITY_PLAN.md
+
+diff --git a/README.md b/README.md
+index c07ccfb..ebbf0d2 100644
+--- a/README.md
++++ b/README.md
+@@ -14,6 +14,24 @@ with a client-ready report card, fixing their local SEO, and running their revie
+ | **SEO Toolkit** | Per-client work plan, title/meta generator, LocalBusiness schema builder, local keyword builder, Google Business Profile checklist. |
+ | **Review Engine** | A branded review page per client with its own link + QR code, request templates for text and email, review reply templates, and a private-feedback inbox. |
+ 
++## AI Growth Operating System (Phase 1)
++
++The console is evolving into a multi-tenant, white-label **AI Growth Operating System**. Phase 1 adds:
++
++| Module | What it does |
++|---|---|
++| **AI Command Center** (`/command-center`) | Describe an outcome in plain English. The AI operator looks up CRM data and prepares changes under per-category permissions (Observe / Recommend / Ask approval / Act automatically). Every action is audited |
++| **CRM** (`/crm`) | Contacts with explainable lead scores, a drag-and-drop pipeline, tasks, and a contact timeline with consent and privacy controls |
++| **Organization** (`/organization`) | Agency workspace, client sub-accounts, team roles, import of the existing prospect list |
++
++These modules require a personal team sign-in (Supabase Auth); data is isolated per organization by row-level security.
++Architecture, roadmap, schema, API, security and deployment docs live in [`docs/architecture/`](docs/architecture/MASTER_ARCHITECTURE.md).
++
++```bash
++npm test          # unit tests
++npm run test:db   # database security tests (needs local PostgreSQL)
++```
++
+ ## Running it locally
+ 
+ ```bash
+diff --git a/docs/architecture/API_ARCHITECTURE.md b/docs/architecture/API_ARCHITECTURE.md
+new file mode 100644
+index 0000000..337b78e
+--- /dev/null
++++ b/docs/architecture/API_ARCHITECTURE.md
+@@ -0,0 +1,130 @@
++# API Architecture
++
++## 1. Principles
++
++- **Route handlers stay thin.** Validation → domain service → JSON. Business logic lives in `src/lib/<domain>/`, shared by the REST API and the AI operator's tools.
++- **One wrapper for tenant routes:** `tenantRoute(permission, handler)` in `src/lib/tenant/api.ts` provides:
++  - same-origin check for state-changing methods (CSRF defence on top of `SameSite=Lax` cookies)
++  - authentication (Supabase user session) and the active organization (cookie `sm_org`, validated against `my_organizations()`)
++  - RBAC permission check (`src/lib/tenant/rbac.ts`), mirrored by RLS in the database
++  - uniform errors: `{ error, code }` with the right HTTP status; Postgres errors mapped by `fromDb()` (42501 → 403, 23505 → 409, 23503 → 422, …); never internal details
++- **Validation with Zod** (`readJson(req, schema)` caps bodies at 64 KB). The same schemas generate the AI tool JSON Schemas.
++- **Every query is explicitly scoped by `organization_id`**, in addition to RLS.
++- **Mutations are audited** through `audit()` → `log_audit()`.
++- **No vendor names in domain code.** Integrations go through provider adapters.
++
++## 2. Authentication and sessions
++
++| Session | Cookie(s) | Grants |
++|---|---|---|
++| Team / tenant user | `sm_auth` (access token, ≤1 h), `sm_refresh` (rotating refresh token, 30 days), `sm_org` (active org) | Tenant modules for every member; legacy modules for platform staff (`team_members`) only |
++| Owner passcode (legacy) | `sm_session` | Legacy single-tenant modules only; tenant APIs return 401 |
++
++`middleware.ts`: public paths pass; otherwise passcode or Supabase session. Expired access tokens are refreshed with the refresh token, and the new token is forwarded to the same request. Non-staff users are redirected from legacy pages to `/command-center`. Unauthenticated tenant API calls get `401` JSON.
++
++## 3. Endpoint reference: Phase 1 (tenant)
++
++| Method & path | Permission | Purpose |
++|---|---|---|
++| `GET /api/tenant` | signed in | `{ signedIn, user, orgs, org, isPlatformStaff, ai }` |
++| `POST /api/tenant` | signed in | `{action:"switch", orgId}` or `{action:"create", name, kind, parentId?}` |
++| `GET /api/tenant/members` | org.read | Members of the active org |
++| `POST /api/tenant/members` | org.manage | `{email, role}`: add an existing user |
++| `PATCH /api/tenant/members` | org.manage | `{user_id, role?, status?}` |
++| `POST /api/tenant/import-legacy` | org.manage (+ staff in DB) | Copy legacy prospects into the CRM |
++| `GET /api/crm/contacts?q&offset&limit&sort` | crm.read | Search/list (score-sorted) with total |
++| `POST /api/crm/contacts` | crm.write | Create; returns `{contact, duplicate}` (dedupe on email/phone) |
++| `GET /api/crm/contacts/:id` | crm.read | Contact + timeline + tasks + deals + current consent |
++| `PATCH /api/crm/contacts/:id` | crm.write | Update fields, stage, tags, do-not-contact |
++| `POST /api/crm/contacts/:id` | crm.write / crm.erase | `{action:"rescore"}` or `{action:"erase"}` (admin) |
++| `POST /api/crm/contacts/:id/notes` | crm.write | Add note to timeline |
++| `POST /api/crm/contacts/:id/consent` | crm.write | Append consent change (channel, status, source, evidence) |
++| `GET /api/crm/pipeline?pipeline` | crm.read | Board: pipeline, stages, deals |
++| `POST /api/crm/opportunities` | crm.write | Create deal |
++| `PATCH /api/crm/opportunities/:id` | crm.write | `{stage_id}` move |
++| `GET/POST /api/crm/tasks`, `PATCH /api/crm/tasks/:id` | crm.read / crm.write | Open tasks; create; complete/cancel |
++| `GET /api/command[?conversation]` | ai.chat | Conversation list or messages |
++| `POST /api/command` | ai.chat | `{message, conversationId?}` → `{conversationId, reply, actions, toolsUsed}`; 8 requests/min per user (DB-backed); 503 `integration_not_configured` without a provider |
++| `GET /api/command/actions?status=a,b` | crm.read | AI actions |
++| `POST /api/command/actions/:id` | ai.chat (approve: ai.decide) | `{decision:"approve"|"reject"}`; approval executes immediately as the approver |
++| `GET/PUT /api/command/policies` | crm.read / ai.policies | AI permissions per category |
++| `GET /api/command/audit?before` | audit.read | Audit log, newest first, 100 per page |
++
++Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are unchanged and remain platform-staff only.
++
++## 4. Conventions for new endpoints
++
++- **Paths:** `/api/<module>/<resource>[/:id][/<sub-resource>]`; plural resource names.
++- **Pagination:** `limit` (≤200) + `offset` now; switch to keyset (`before` cursor) for append-only streams (audit, messages).
++- **Idempotency:** client-supplied `Idempotency-Key` header on create endpoints that trigger external effects (messages, payments, calls). Store it with a unique constraint per org.
++- **Errors:** `{ error: string (human), code: string (machine) }`. Codes in use: `unauthenticated`, `no_organization`, `forbidden`, `csrf`, `invalid`, `invalid_reference`, `conflict`, `not_found`, `too_large`, `rate_limited`, `integration_not_configured`, `server_error`.
++- **"Integration not configured"** is always a `503` with code `integration_not_configured` and a settings path. The UI shows it; nothing is ever simulated.
++- **Long-running work** (bulk sends, audits at scale, AI autonomous jobs) returns `202` with a job ID; progress through Supabase Realtime on the job row.
++
++## 5. Webhook ingress (standard from Phase 2)
++
++```
++POST /api/webhooks/<provider>/<capability>
++  1. Read the raw body (size cap) → verify signature with the provider adapter (ed25519, HMAC, or provider-signed JWT)
++  2. Reject on stale timestamps (>5 min); constant-time comparisons
++  3. Insert into webhook_events (provider, provider_event_id UNIQUE) → duplicates return 200 immediately
++  4. Resolve the organization from the provider resource (phone number, account ID); never trust IDs from the payload alone
++  5. Enqueue → return 200 fast; the worker processes idempotently with the service role scoped to that org
++```
++
++Existing verified handlers (Telnyx SMS, Vapi, Stripe) will be ported into this shape.
++
++## 6. Provider adapter interfaces
++
++```ts
++// src/lib/ai/types.ts (implemented)
++interface ChatModel { provider: string; model: string; complete(req: { messages: ChatMessage[]; tools: ToolSpec[] }): Promise<Completion> }
++
++// src/lib/telephony/types.ts (Phase 2)
++interface TelephonyProvider {
++  id: string;
++  placeCall(req: { from: string; to: string; agent: VoiceAgentRef; webhookUrl: string }, acct: ProviderAccount): Promise<{ callId: string }>;
++  transfer(callId: string, to: string, acct: ProviderAccount): Promise<void>;
++  sendSms(req: OutboundSms, acct: ProviderAccount): Promise<{ messageId: string; costMicros?: number }>;
++  verifyWebhook(req: Request, rawBody: string, acct: ProviderAccount): Promise<boolean>;
++  parseEvent(body: unknown): TelephonyEvent | null;
++}
++
++// src/lib/voice/types.ts (Phase 2)
++interface VoiceProvider { id: string; synthesizeStream(text: string, voice: VoiceRef): AsyncIterable<Uint8Array>; listVoices(acct: ProviderAccount): Promise<VoiceRef[]> }
++
++// src/lib/email/types.ts (Phase 2)
++interface EmailProvider { id: string; send(msg: OutboundEmail, acct: ProviderAccount): Promise<{ messageId: string }>; verifyDomain(domain: string, acct: ProviderAccount): Promise<DnsRecords> }
++
++// src/lib/payments/types.ts (Phase 6)
++interface PaymentProvider { id: string; createCheckout(req: CheckoutRequest): Promise<{ url: string; externalId: string }>; createSubscription(...): Promise<...>; refund(...): Promise<...>; verifyWebhook(...): Promise<boolean> }
++```
++
++**Router** (`src/lib/<capability>/router.ts`): resolve the org's provider account (org → parent agency → platform default), filter by capability and region, rank by health (rolling delivery or answer rate), then price; fail over on retryable errors; record the provider and cost on the resulting message or call.
++
++## 7. AI operator tool contract
++
++```ts
++type WriteTool = {
++  name: string;               // ^[a-z][a-z0-9_]{1,63}$, unique
++  category: AiCategory;       // decides the governing policy
++  description: string;        // shown to the model
++  input: ZodSchema;           // → JSON Schema for the model; runtime validation
++  validate(input): void;      // the domain service's own validation, before queueing
++  summarize(input): string;   // the human-readable line in approvals and audit
++  run(ctx, input): Promise<unknown>; // executes with the accountable user's RLS rights
++};
++```
++
++Phase 1 tools: `search_contacts`, `get_contact`, `pipeline_summary`, `list_deals`, `list_open_tasks` (read); `create_contact`, `update_contact`, `add_note`, `create_task`, `create_deal`, `move_deal` (write).
++
++## 8. Rate limiting
++
++- Login: per-IP attempt counter (in-memory; move to DB/Redis in Phase 1b).
++- AI: 8 operator requests per minute per user (counted from `ai_messages`).
++- Public endpoints (review feedback, report events, studio capture): DB-backed limiter (`studio_take_limit` pattern) to be applied uniformly in Phase 1b.
++- Outbound messaging (Phase 2): per-org and per-number throughput limits matching 10DLC throughput tiers.
++
++## 9. Public API (Phase 6+)
++
++Organization-scoped API keys (`api_keys (hash, prefix, scopes, last_used_at)`), the same handlers behind `/api/v1/*`, OpenAPI generated from the Zod schemas, and outbound webhooks signed with per-subscription secrets.
+diff --git a/docs/architecture/DATABASE_SCHEMA.md b/docs/architecture/DATABASE_SCHEMA.md
+new file mode 100644
+index 0000000..b4fd345
+--- /dev/null
++++ b/docs/architecture/DATABASE_SCHEMA.md
+@@ -0,0 +1,160 @@
++# Database Schema
++
++Postgres 17 on Supabase (project `sunsite-hub`). All tables live in `public` with RLS enabled.
++
++## Conventions (all new tables)
++
++- `id uuid primary key default gen_random_uuid()`
++- `organization_id uuid not null`, plus `unique (id, organization_id)` on any table others reference
++- **Composite foreign keys** `(child_id, organization_id) → parent(id, organization_id)`, so a row can only reference rows in the same tenant
++- `created_at` / `updated_at timestamptz` with the `tg_set_updated_at` trigger; `created_by uuid` where a person creates rows
++- Enumerations as `text` + `check` constraints (easy to extend in a migration)
++- Bounded text (`check (length(x) <= n)`) and `jsonb_typeof` checks on JSON columns
++- RLS policies call `public.org_rank(organization_id)`. Standard ladder: viewer reads (≥1), member writes (≥2), manager deletes (≥3), admin configures (≥4)
++- `revoke all … from anon`; explicit grants to `authenticated` and `service_role`
++- Security-definer functions use `set search_path = ''` and fully qualified names
++
++---
++
++## 1. Current live schema (audit)
++
++35 tables. RLS on all of them; every policy is `app_secret_ok()` (shared header secret), except `team_members`, which also lets a user read their own row.
++
++| Domain | Tables | Notes |
++|---|---|---|
++| Prospecting | `businesses` (63 rows), `audits`, `report_events`, `business_contact_evidence`, `seo_tasks` | Agency's own prospects; no tenant column |
++| Outreach | `interactions`, `proposals` | `interactions` sent by the 15-minute cron |
++| Reputation | `review_campaigns`, `review_feedback` | Public pages read through server routes |
++| Websites | `website_rebuilds` | Concept sites |
++| Lead marketplace | `leads`, `lead_partners`, `lead_offers`, `lead_wallet_transactions`, `lead_call_events` | `claim_lead()` row-locks atomically |
++| Receptionist | `receptionist_clients`, `receptionist_calls` | Vapi IDs stored per client |
++| Email | `email_contacts`, `email_templates`, `email_campaigns`, `email_deliveries` | |
++| Campaign Studio | `studio_workspaces`, `studio_campaigns`, `studio_contacts`, `studio_sessions`, `studio_events`, `studio_followups`, `studio_limits` | Workspace concept (1 row); provider routing by env var workspace ID |
++| Agents | `agent_jobs`, `agent_improvements`, `agent_workers` | Local Ollama worker |
++| Platform | `app_settings` (single row), `app_secrets` (encrypted provider keys), `team_members` (0 rows) | |
++
++**Functions:** `app_secret_ok()` (**contains the shared secret as a literal**, see SECURITY_PLAN S1), `claim_lead`, `studio_*` (4), `touch_updated_at`.
++
++**Drift:** 17 migrations are applied in production, but only 6 exist in `supabase/migrations/`. Missing from version control: `init_sunsite_schema`, `temp_test_policies`, `header_secret_policies`, `add_encrypted_app_secrets`, `add_website_rebuilds`, `expand_website_rebuilds_into_profession_improver`, `roofing_lead_engine_v1`, `roofing_lead_claim_function`, `create_site_drafts`, `drop_site_drafts_revert`, `add_agent_job_scheduling`. Several repository files also carry timestamps that differ from the applied versions.
++
++**Action (Phase 1b):** `supabase db pull` → `supabase/migrations/<ts>_baseline.sql`; mark it applied with `supabase migration repair`, then keep repository and production in lockstep (CI check).
++
++---
++
++## 2. Phase 1 schema (migration `20261006120000_phase1_tenancy_crm_ai.sql`)
++
++### 2.1 Entity relationships
++
++```mermaid
++erDiagram
++  organizations ||--o{ organizations : "parent (agency→client)"
++  organizations ||--o{ memberships : has
++  organizations ||--o{ locations : has
++  organizations ||--o{ companies : owns
++  organizations ||--o{ contacts : owns
++  companies ||--o{ contacts : employs
++  contacts ||--o{ consents : "consent history"
++  contacts ||--o{ activities : timeline
++  organizations ||--o{ pipelines : has
++  pipelines ||--o{ pipeline_stages : has
++  pipeline_stages ||--o{ opportunities : "current stage"
++  contacts ||--o{ opportunities : "buyer"
++  contacts ||--o{ tasks : "about"
++  opportunities ||--o{ activities : timeline
++  organizations ||--o{ ai_policies : "per category"
++  organizations ||--o{ ai_conversations : has
++  ai_conversations ||--o{ ai_messages : has
++  ai_conversations ||--o{ ai_actions : proposes
++  organizations ||--o{ audit_log : records
++```
++
++### 2.2 Tables
++
++| Table | Purpose | Key columns / constraints |
++|---|---|---|
++| `organizations` | Tenant | `kind` agency/client; client ⇒ `parent_id` required; `status` active/suspended/closed; `slug` unique; `branding`, `settings` jsonb; `plan` |
++| `locations` | Business locations | `organization_id`, `name`, `address` jsonb, `timezone` |
++| `memberships` | User ↔ org role | PK `(organization_id, user_id)`; `role` owner…viewer; `status` active/disabled; guard trigger |
++| `companies` | Accounts | `name`, `domain`, `industry`, `address`, `custom_fields`; `legacy_business_id` unique per org (import idempotency) |
++| `contacts` | People / leads / customers | names, validated `email`/`phone`, `source`, `owner_id`, `lifecycle_stage`, `lead_score` 0–100 + `score_factors` (explanations), `tags[]` (GIN), `custom_fields`, `do_not_contact`, `last_activity_at`, `erased_at` |
++| `custom_field_definitions` | Schema for `custom_fields` | `(organization_id, object_type, key)` unique; `field_type` text/number/date/boolean/select/url |
++| `consents` | **Append-only** consent ledger | `channel` sms/email/voice/whatsapp, `status` granted/revoked, `source`, `evidence`, `captured_by`, `captured_at`; newest row per channel wins; no update/delete policy |
++| `pipelines` | Sales pipelines | one `is_default` per org (partial unique index) |
++| `pipeline_stages` | Ordered stages | `position` unique per pipeline (deferrable), `probability`, `kind` open/won/lost |
++| `opportunities` | Deals | `stage_id` FK constrained to the same pipeline; `value_cents`, `currency`, `status` derived from stage kind; `stage_entered_at`, `closed_at` maintained by trigger |
++| `tasks` | Follow-ups | `status`, `priority`, `due_at`, `assignee_id`, links to contact/deal |
++| `activities` | Unified timeline (customer memory) | `kind` note/call/sms/email/chat/meeting/task/stage_change/form/review/payment/system/ai; `direction`; `sensitive` (hidden from AI); `actor_type` user/ai/system/contact |
++| `ai_policies` | AI permission per category | PK `(organization_id, category)`; `mode` observe/recommend/approve/auto |
++| `ai_conversations`, `ai_messages` | Operator chats | Private to their user (RLS) |
++| `ai_actions` | Every change the AI proposes | `tool`, `category`, `summary`, immutable `input`, `status`, `policy_mode`, `result`, `error`, `requested_by`, `decided_by/at`, `executed_at` |
++| `audit_log` | Append-only audit | identity PK; `actor_type` user/ai/system/api; immutable to every API role, including `service_role` |
++
++### 2.3 Functions and triggers
++
++| Function | Kind | Purpose |
++|---|---|---|
++| `org_rank(org)` | definer, stable | Effective rank 0–5 for `auth.uid()`: direct membership, or parent-agency membership capped at admin; suspended ⇒ ≤ viewer; closed ⇒ 0 |
++| `has_org_role(org, role)`, `role_rank(role)` | helpers | |
++| `can_manage_owners(org)` | definer | Owner of the org, or admin of its parent agency |
++| `my_organizations()` | definer | Org switcher list with effective role |
++| `create_organization(name, kind, parent)` | definer | Agencies: platform staff only; clients: agency admins. Seeds defaults and writes audit |
++| `seed_organization_defaults(org)` | definer, internal | Default 7-stage pipeline; conservative AI policies (crm/pipeline/tasks = approve, messaging/campaigns/workflows/reputation = recommend, billing = observe) |
++| `add_member_by_email(org, email, role)` | definer | Admin-only; bounded by the caller's own rank |
++| `log_audit(...)` | definer | Only way for users to write audit entries; actor is always `auth.uid()` |
++| `erase_contact(contact)` | definer | Admin-only right-to-erasure; revokes all consent; audited |
++| `import_legacy_businesses(org)` | definer | Platform staff + org admin; idempotent copy of `businesses` into companies/contacts |
++| `tg_memberships_guard` | trigger | No granting above own rank; owner changes by owner-managers only; never remove the last owner; identity immutable |
++| `tg_ai_actions_guard` | trigger | Insert status must match org policy; payload immutable; pending → approved/rejected by manager+; only the approver executes; no skipping states |
++| `tg_audit_immutable` | trigger | Blocks update/delete for API roles |
++| `tg_opportunity_stage`, `tg_opportunity_stage_activity` | triggers | Status/closed_at from stage; stage changes appended to timeline |
++| `tg_activity_touch_contact` | trigger | Maintains `contacts.last_activity_at` |
++
++### 2.4 Verified properties (supabase/tests/phase1_rls.test.sql, 54 assertions)
++
++Cross-tenant reads, writes and links are impossible; viewers can't write; managers can't self-promote or change AI policies; client owners can't see their parent agency; the AI cannot pre-approve, skip approval or alter a payload; the audit log is immutable even to `service_role`; erasure works and is admin-only; legacy import is idempotent and staff-only; suspended orgs are read-only, including their clients.
++
++---
++
++## 3. Planned schema by phase
++
++### Phase 2: Communications
++- `provider_accounts (organization_id, capability, provider, encrypted_credentials, is_default, health jsonb)`, inherited from the parent agency when absent
++- `phone_numbers (e164, provider_account_id, capabilities, assigned_to, messaging_profile_id)`
++- `messaging_profiles` (10DLC brand/campaign IDs, status, use case)
++- `conversations (contact_id, channel, status, assignee_id, last_message_at, unread_count)`
++- `messages (conversation_id, direction, channel, body, media, status, provider, provider_message_id unique, cost_micros, error)`; each message also written to `activities`
++- `calls (direction, from, to, agent_id, provider, duration_s, cost_micros, outcome, sentiment, intent, transcript, recording_path, appointment_id)`
++- `voice_agents (name, purpose, voice_provider, voice_id, llm, prompt_version_id, knowledge_scope, transfer_rules, hours)`
++- `suppression_list (organization_id, channel, address, reason)`, `quiet_hours` in `organizations.settings`
++- `domain_events` (outbox) and `webhook_events (provider, provider_event_id unique, payload, processed_at)`
++
++### Phase 3
++- Reputation: `review_sources`, `reviews (source, external_id unique, rating, body, author, published_at, sentiment, response, responded_at, response_by)`, `review_requests`, `reputation_snapshots (date, score, factors)`
++- Calendars: `calendars (type individual/round_robin/team/service/location)`, `calendar_members`, `availability_rules`, `appointments (status, contact_id, starts_at, ends_at, location_id, source)`, `waitlist_entries`, `external_calendar_links`
++- Workflows: `workflows`, `workflow_versions (graph jsonb, published)`, `workflow_runs`, `workflow_run_steps` (idempotency key per step)
++
++### Phase 4–5
++- `prospect_searches`, `prospects (org-scoped)`, `prospect_audits` (link to `audits`)
++- `sites`, `pages`, `forms`, `form_submissions`, `templates`
++- `knowledge_items (type, content, version, status draft/approved, approved_by)` with `pgvector` embeddings
++
++### Phase 6–8
++- `plans`, `subscriptions`, `usage_events`, `invoices`, `invoice_items`, `payments`, `refunds`, `price_overrides` (agency markup)
++- `domains (hostname unique, organization_id, verified_at)`, `sender_domains`
++- `metrics_daily`, `touchpoints`, `ad_accounts`, `ad_spend_daily`
++- `affiliates`, `referral_links`, `referrals`, `commission_rules`, `payouts`
++- `marketplace_listings`, `installs`, `bundles`
++
++---
++
++## 4. Legacy migration strategy
++
++Legacy tables move to tenancy one module at a time, without downtime:
++
++1. Add `organization_id uuid` (nullable) with a composite FK; backfill to the platform agency.
++2. Add RLS policies on `org_rank(organization_id)` **alongside** the existing `app_secret_ok()` policy (policies are OR-ed).
++3. Switch the module's routes to `tenantRoute` + `userClient`.
++4. Set `organization_id not null`; drop the `app_secret_ok()` policy.
++5. When no legacy policy remains, drop `app_secret_ok()` and the shared secret entirely.
++
++Order: email center → Campaign Studio (merge `studio_contacts` into `contacts`) → receptionist → reputation → prospecting → lead marketplace.
+diff --git a/docs/architecture/IMPLEMENTATION_PLAN.md b/docs/architecture/IMPLEMENTATION_PLAN.md
+new file mode 100644
+index 0000000..706233e
+--- /dev/null
++++ b/docs/architecture/IMPLEMENTATION_PLAN.md
+@@ -0,0 +1,169 @@
++# Implementation Plan
++
++## 1. Phase 1 — what was built
++
++Everything is **additive**. Existing pages, routes, tables and the passcode login keep working unchanged.
++
++| Area | Files |
++|---|---|
++| Database | `supabase/migrations/20261006120000_phase1_tenancy_crm_ai.sql` |
++| DB security tests | `supabase/tests/supabase_stub.sql`, `supabase/tests/phase1_rls.test.sql`, `scripts/test-db.sh` |
++| Sessions | `src/lib/session-cookies.ts`, `src/middleware.ts`, `src/app/api/login/route.ts`, `src/app/api/logout/route.ts` |
++| Tenant framework | `src/lib/tenant/{session,api,rbac,audit}.ts` |
++| CRM domain | `src/lib/crm/{service,scoring}.ts` |
++| AI layer | `src/lib/ai/{types,provider,openai}.ts` |
++| AI operator | `src/lib/command/{engine,tools,policy,actions}.ts` |
++| API | `src/app/api/tenant/**`, `src/app/api/crm/**`, `src/app/api/command/**` |
++| UI | `src/app/command-center`, `src/app/crm`, `src/app/crm/contacts/[id]`, `src/app/organization`, `src/components/tenant/*`, nav in `src/components/Shell.tsx`, AI key note in `src/app/settings/page.tsx` |
++| Unit tests | `tests/unit/*.test.ts`, `tests/support/*`, `vitest.config.mts` |
++
++New dependencies: `zod` (runtime), `vitest` (dev).
++
++## 2. Deploying Phase 1
++
++> Do these in order. Steps 2–4 take about 15 minutes.
++
++1. **Back up** the production database (Dashboard → Database → Backups), or confirm PITR is on.
++2. **Apply the migration.** It runs in one transaction and creates only new objects:
++   ```bash
++   supabase link --project-ref zsikcyixfvvepzqbgocw
++   supabase db push            # or paste the file into the SQL editor
++   ```
++   Then run Dashboard → Advisors → Security and confirm there are no new findings.
++3. **Configure Supabase Auth:** Authentication → Providers → Email: **disable public sign-ups** for now (accounts are invite-only until Phase 1b invitations). Set the JWT expiry to 3600 s (the default).
++4. **Create your owner account:** Authentication → Users → *Add user* (your email and a strong password). Then, in the SQL editor:
++   ```sql
++   insert into public.team_members (user_id, email, display_name, role, active)
++   select id, email, 'Owner', 'owner', true from auth.users where email = 'YOUR_EMAIL'
++   on conflict (user_id) do update set active = true, role = 'owner';
++   ```
++5. **Deploy the app** (merge to `main`; Netlify builds as usual). No new required environment variables. Optional:
++   | Variable | Default | Purpose |
++   |---|---|---|
++   | `AI_COMMAND_MODEL` | `gpt-4.1-mini` | OpenAI model for the operator (any tool-calling chat model your key can use) |
++   | `AI_PROVIDER` | `openai` | Reserved for future adapters |
++6. **Sign in** at `/login` → *Team account*. Open **AI Command Center**, create your agency workspace, then use **Organization → Import prospects** to bring the 63 existing businesses into the CRM.
++7. **Connect AI:** Settings → *OpenAI (AI Command Center & images)*. This is the same encrypted key used for images.
++8. **Smoke test:** ask the operator "Summarize my pipeline", then "Create a follow-up task to call Acme tomorrow at 10am". The task appears under *Needs approval*. Approve it and confirm it shows in CRM → Tasks and in the audit trail.
++9. **Client sub-account test:** Organization → *Client accounts* → create one; add a second test user as its owner; sign in as that user and confirm they see only that client.
++
++### Rollback
++The application change is safe to revert (the legacy modules don't depend on new tables). To remove the schema:
++```sql
++begin;
++drop table if exists public.ai_actions, public.ai_messages, public.ai_conversations, public.ai_policies,
++  public.activities, public.tasks, public.opportunities, public.pipeline_stages, public.pipelines,
++  public.consents, public.custom_field_definitions, public.contacts, public.companies,
++  public.audit_log, public.memberships, public.locations, public.organizations cascade;
++drop function if exists public.import_legacy_businesses(uuid), public.erase_contact(uuid),
++  public.add_member_by_email(uuid,text,text), public.create_organization(text,text,uuid),
++  public.seed_organization_defaults(uuid), public.log_audit(uuid,text,text,text,jsonb,text),
++  public.my_organizations(), public.can_manage_owners(uuid), public.has_org_role(uuid,text),
++  public.org_rank(uuid), public.role_rank(text), public.tg_set_updated_at() cascade;
++commit;
++```
++
++## 3. Development workflow
++
++```bash
++npm install
++npm run dev          # http://localhost:3000
++npm run typecheck
++npm test             # unit tests (vitest)
++npm run test:db      # applies migrations to a throwaway local PostgreSQL 15+ and runs the RLS tests
++npm run build
++```
++
++`test:db` needs PostgreSQL binaries (`apt install postgresql` or set `PGBIN`). It emulates Supabase's `anon`, `authenticated` and `service_role` roles and `auth.uid()`.
++
++**Definition of done for every new feature:** loading, empty and error states; Zod validation; RBAC permission; organization-scoped queries; audit entries for mutations; RLS + SQL tests for new tables; unit tests for domain logic; "Integration not configured" with a settings link for missing providers; a mobile check; an AI tool when the feature is an action a user would delegate.
++
++## 4. Phase 1b backlog (next, in priority order)
++
++1. **S1/S2 secret rotation** (§6 runbook) — urgent
++2. Baseline migration of the live schema; CI drift check
++3. `SUPABASE_SERVICE_ROLE_KEY` + `src/lib/supabase/system.ts` for jobs; worker token for the local agent (S10)
++4. GitHub Actions: typecheck, lint, unit, SQL tests, build; gitleaks
++5. MFA enrolment UI and `aal2` enforcement for admin actions
++6. JWKS verification in middleware (S13); DB-backed login limiter (S5)
++7. Legacy hardening: role checks (S6), settings allow-list (S7), public endpoint limits (S8), SSRF fixes (S9), constant-time compare (S11), CSP (S12)
++8. Member invitations by email; custom-field editor UI; CSV import/export for contacts
++9. Global dark-theme text color fix and mobile navigation redesign
++
++## 5. Phase 2 work breakdown (communications)
++
++| Step | Deliverable |
++|---|---|
++| 2.1 | `provider_accounts`, `phone_numbers`, `messaging_profiles`, `suppression_list`; Settings → Integrations per org with "Integration not configured" states |
++| 2.2 | `lib/telephony` + `lib/email` interfaces; Telnyx, Twilio and Resend adapters (port existing code); router with health and price ranking |
++| 2.3 | Compliance gate (`canSend(contact, channel, purpose)`): consent, quiet hours, suppression, 10DLC status, frequency caps; unit-tested exhaustively |
++| 2.4 | `conversations` / `messages`; webhook ingress standard; inbound → contact match → timeline |
++| 2.5 | Unified Inbox UI (assignment, templates, scheduling, AI-drafted replies) |
++| 2.6 | Operator tools `draft_message`, `send_message`, `schedule_message` under the `messaging` policy |
++| 2.7 | Voice: `voice_agents`, `calls`; Vapi adapter (existing) + direct Telnyx Call Control with ElevenLabs/Cartesia/OpenAI voice adapters; missed-call text-back; receptionist migration |
++| 2.8 | Outbox + queue workers; retire the Netlify cron; migrate `email_contacts`, `studio_contacts`, `interactions` |
++| 2.9 | Navigation restructure to the target IA |
++
++## 6. Runbook: rotate the shared DB secret (S1/S2)
++
++> Plan a 15-minute window. Legacy modules fail closed during steps 3–4.
++
++1. Generate two new random values: `NEW_DB_SECRET` and `APP_ENCRYPTION_KEY` (`openssl rand -base64 32`).
++2. Ship a code change that decrypts `app_secrets` with the old derivation and re-encrypts with `APP_ENCRYPTION_KEY` (ciphertext version `v2`), keeping `v1` read support.
++3. Store the new DB secret in Vault and change the function so the value is no longer in the schema:
++   ```sql
++   select vault.create_secret('<NEW_DB_SECRET>', 'app_db_secret');
++   create or replace function public.app_secret_ok() returns boolean
++   language sql stable security definer set search_path = '' as $$
++     select coalesce(nullif(current_setting('request.headers', true), '')::json ->> 'x-app-secret', '')
++          = (select decrypted_secret from vault.decrypted_secrets where name = 'app_db_secret')
++   $$;
++   revoke execute on function public.app_secret_ok() from public;
++   grant execute on function public.app_secret_ok() to anon, authenticated;
++   ```
++   Run this in the SQL editor, not as a committed migration, so the value never lands in a file or the migration history.
++   Policies written as `using (app_secret_ok())` may evaluate the function once per row; rewrite them as `using ((select public.app_secret_ok()))` (several already are) so the Vault lookup runs once per statement.
++4. Update `APP_DB_SECRET` in the host environment and redeploy.
++5. Run the re-encryption step; verify Settings shows each provider as connected.
++6. Rotate the provider keys stored in `app_secrets` (Google Places, OpenAI, Resend) at each provider, since the old encryption root was exposed.
++7. Rotate `APP_PASSCODE` (it is also on the agent-worker machine).
++
++## 7. Third-party services and credentials (now and later)
++
++| Service | Purpose | Credentials | Needed by | Status |
++|---|---|---|---|---|
++| Supabase | DB, Auth, Storage, Realtime, Vault, Queues | `SUPABASE_URL`, `SUPABASE_KEY` (anon), **`SUPABASE_SERVICE_ROLE_KEY`** (1b) | Now | Configured (service key to add) |
++| Netlify *or* Vercel | Hosting, env, cron (until queues) | Host account | Now | Netlify in use |
++| OpenAI | AI operator, images, voice (optional) | `OPENAI_API_KEY` or Settings; `AI_COMMAND_MODEL` | Phase 1 | Image key may exist; verify model access |
++| Additional LLM provider (e.g. Anthropic) | Model choice/failover | API key | Phase 2+ | Optional |
++| Telnyx | SMS/MMS, voice, numbers (primary) | API key, public key (webhooks), messaging profile, numbers | Phase 2 | Partially configured (Campaign Studio) |
++| Plivo | SMS/voice (secondary) | Auth ID + token | Phase 2 | — |
++| Twilio | Fallback SMS/voice | Account SID, auth token, numbers | Phase 2 | Legacy env vars |
++| The Campaign Registry (via CPaaS) | A2P 10DLC brand and campaign registration | Through Telnyx/Twilio | Phase 2 | — |
++| ElevenLabs | Voice synthesis | API key | Phase 2 | — |
++| Cartesia | Voice synthesis (low latency) | API key | Phase 2 | — |
++| Vapi | Existing voice orchestration (to be one adapter) | API key, assistant/phone IDs, webhook secret | Phase 2 | Configured |
++| Resend | Transactional and marketing email | API key, verified sending domains | Phase 2 | Configured |
++| Amazon SES or Postmark | Email (secondary) | Keys, domains | Phase 2 | — |
++| Google Business Profile API | Review monitoring and replies | OAuth client, approved API access | Phase 3 | — |
++| Meta Graph API | Facebook reviews, Pages, social posting, Ads | App ID/secret, approved permissions | Phase 3/7 | — |
++| Google Calendar API, Microsoft Graph | Calendar sync | OAuth clients | Phase 3 | — |
++| Google Places API | Lead Finder | API key | Phase 4 | Configured |
++| Yelp Fusion | Reputation and lead data | API key | Phase 4 | Optional |
++| PageSpeed Insights API | Speed audits at scale | API key | Phase 4 | — |
++| Stripe | Proposals now; Billing, Connect for rebilling | Secret/restricted key, webhook secret, Connect settings | Phase 6 | Configured for proposals |
++| Domain/SSL for white-label | Custom domains | Host domain API (Netlify/Vercel) or Cloudflare for SaaS | Phase 6 | — |
++| Google Ads API | Ads and attribution | Developer token, OAuth, MCC | Phase 7 | — |
++| Meta Marketing API | Ads and attribution | App + system user token | Phase 7 | — |
++| LinkedIn, TikTok, X, Instagram APIs | Social publishing | Per-platform app approval | Phase 7 | — |
++| Sentry | Error monitoring | DSN, auth token | Phase 1b | — |
++| Upstash Redis (optional) | Rate limiting / cache | REST URL + token | Phase 1b | Optional |
++| Inngest (optional, if not Supabase Queues) | Durable workflows/jobs | Event and signing keys | Phase 2 | Decide in 2.8 |
++
++## 8. Decisions needed from the owner
++
++1. **Hosting:** stay on Netlify (works today) or move to Vercel as the spec prefers. Recommendation: decide before Phase 2.8; nothing in Phase 1 depends on it.
++2. **Job runner:** Supabase Queues (fewer vendors) vs. Inngest (richer workflow tooling). Recommendation: Supabase Queues + a small worker for Phase 2; revisit for Phase 3 workflows.
++3. **Default AI model** and whether to enable zero-data-retention with the provider.
++4. **Primary telephony provider** for new numbers (recommend Telnyx: already integrated, cost-effective, ed25519-signed webhooks).
++5. **Legacy passcode sunset date** once owner MFA is in place.
+diff --git a/docs/architecture/MASTER_ARCHITECTURE.md b/docs/architecture/MASTER_ARCHITECTURE.md
+new file mode 100644
+index 0000000..d81f8c0
+--- /dev/null
++++ b/docs/architecture/MASTER_ARCHITECTURE.md
+@@ -0,0 +1,256 @@
++# Sun Marketing Console — Master Architecture
++
++> **Status:** Phase 1 foundation implemented (October 2026).
++> **Companion documents:** [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) · [DATABASE_SCHEMA](DATABASE_SCHEMA.md) · [API_ARCHITECTURE](API_ARCHITECTURE.md) · [SECURITY_PLAN](SECURITY_PLAN.md) · [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md)
++
++## 1. Product thesis
++
++Sun Marketing Console is becoming an **AI Business Growth Operating System**: a multi-tenant, white-label platform where an owner or agency describes an outcome in plain English and an **AI operator** carries it out across CRM, communications, reputation, websites, automation and analytics.
++
++The lifecycle every module serves is **Acquire → Convert → Retain → Protect**.
++
++| Stage | What the platform does | Modules |
++|---|---|---|
++| Acquire | Find and attract prospects | Lead Finder / Opportunity Radar, Site Scanner, websites and funnels, ads, social, SEO |
++| Convert | Turn prospects into customers fast | CRM and pipeline, AI voice receptionist, SMS/email follow-up, calendars, proposals and payments |
++| Retain | Increase lifetime value | Customer memory, campaigns, automations, referrals, client portal |
++| Protect | Guard and grow reputation | Reputation and Trust Center, complaint recovery, review velocity, compliance |
++
++**The differentiator:** traditional platforms give users tools; Sun Marketing Console gives businesses an operator that uses the tools together. The operator works under explicit permissions, and every action is audited.
++
++---
++
++## 2. Current-state assessment (audit of `Hyram720/sun-marketing-console` @ `767753c`)
++
++### 2.1 Stack and runtime
++
++| Concern | Current state |
++|---|---|
++| Framework | Next.js **16.3** App Router, React 19.2, TypeScript 5.9 (strict). No Tailwind: one hand-written `globals.css` (~400 lines) with a dark "console" theme scoped to `.shell` |
++| Hosting | **Netlify** (headers such as `x-nf-client-connection-ip`; Netlify scheduled function `follow-up-scheduler` runs every 15 minutes). Vercel was not in use; the code is host-portable |
++| Database | Supabase Postgres 17 (`sunsite-hub`), 35 tables, RLS on every table |
++| DB access pattern | Server routes use the **anon key plus a shared `x-app-secret` header**; every policy is `app_secret_ok()`. Effectively a service-role connection guarded by a shared string. No per-user or per-tenant row security |
++| Auth | (a) Owner **passcode** → deterministic SHA-256 cookie valid for one year; (b) "team login" via Supabase Auth password grant, gated on `team_members.active` (0 rows in production) |
++| Background work | Netlify cron → `/api/automation/run` (sends due `interactions`); a Windows/Ollama **local agent worker** polls `/api/agents/worker` |
++| Tests | No unit or integration test runner; five ad-hoc `scripts/verify-*.cjs` scripts. No CI |
++| Lint/format | None configured |
++
++### 2.2 Feature inventory (existing, working)
++
++| Module | Route(s) | What it does | Integrations |
++|---|---|---|---|
++| Dashboard | `/` | Pipeline KPIs and action center over `businesses` | — |
++| Opportunity Radar | `/discover` | Finds local businesses by city/category, scores opportunity | OpenStreetMap, Google Places (optional), Yelp (optional) |
++| Site Scanner + Report Cards | `/scan`, `/audits`, `/report/[token]` | ~50 live website checks graded A–F; shareable public report with view/CTA tracking and PDF | Direct fetch with SSRF guard |
++| Pipeline (prospects) | `/prospects`, `/prospects/[id]` | Agency prospect pipeline, enrichment, outreach templates, interactions | Public-source enrichment |
++| Website rebuilds / builder | `/prospects/[id]/rebuild`, `/website-builder`, `/rebuild/[token]` | Concept website generator; Puck visual editor | OpenAI Images |
++| Proposals | `/proposal/[token]` | Proposal acceptance and Stripe Checkout | Stripe |
++| SEO Toolkit | `/seo` | Work plans, meta/schema generators, GBP checklist | — |
++| Review Engine | `/reputation`, `/r/[slug]` | Branded review pages, QR codes, private feedback (no review gating) | QR |
++| Email Marketing | `/email-marketing` | Contacts, templates, approved campaigns, unsubscribe | Resend |
++| Campaign Studio | `/campaign-studio`, `/bridge/[id]` | Funnels with consent capture, AI chat/voice, scheduled follow-ups | OpenAI, Vapi, Telnyx SMS, Resend |
++| AI Receptionist | `/receptionists` | Receptionist configuration and prompt generator per client | Vapi |
++| Lead Marketplace | `/leads` | Roofing lead distribution to partners with wallets and atomic `claim_lead` | — |
++| Agent Center | `/agents` | Queue jobs for the local Ollama worker; human-approved prompt improvements | Ollama (local) |
++| Growth Engine, Video Prompt Studio | `/growth-engine`, `/video-prompts` | Integration readiness board; ad/video prompt authoring | Higgsfield/KIE (status only) |
++
++Strengths worth keeping: careful compliance instincts (no review gating, consent-gated follow-ups, `STOP` handling, `List-Unsubscribe`), verified webhooks (Telnyx ed25519, Stripe signatures), encrypted provider keys (AES-256-GCM), SSRF guards, and honest "not configured" states.
++
++### 2.3 Database (live) — summary
++
++35 tables in `public`. Only **6 of the 17 applied migrations** exist in the repository; the base schema (`businesses`, `audits`, `interactions`, `proposals`, `team_members`, `app_secrets`, lead marketplace tables, `receptionist_*`, `website_rebuilds`, and the `app_secret_ok()` function) **is not in version control**. See [DATABASE_SCHEMA §1](DATABASE_SCHEMA.md#1-current-live-schema-audit).
++
++### 2.4 Technical debt
++
++| # | Debt | Impact | Plan |
++|---|---|---|---|
++| T1 | Schema drift: 11 applied migrations missing from the repo | Cannot rebuild the database or review changes | `supabase db pull` into a baseline migration (Phase 1b) |
++| T2 | Single-tenant data model; no `organization_id` on legacy tables | Blocks SaaS | Phase 1 adds tenancy; legacy tables migrate module-by-module (Phases 2–5) |
++| T3 | Shared-secret DB access everywhere | One leaked string = full database | Move server jobs to a service-role key; user traffic to user JWT + RLS (started in Phase 1) |
++| T4 | No tests, lint or CI | Regressions ship silently | Vitest + SQL tests added in Phase 1; add ESLint + GitHub Actions in Phase 1b |
++| T5 | `middleware.ts` is deprecated in Next 16 (`proxy.ts`) | Future upgrade break | Rename once Netlify's Next runtime supports `proxy` (verify) |
++| T6 | Three separate "contact" models (`businesses`, `email_contacts`, `studio_contacts`) plus `leads` | Fragmented customer memory | Converge on `contacts` + `activities` (Phases 2–3) |
++| T7 | Three messaging code paths (Twilio in `messaging.ts`, Telnyx/Resend in Campaign Studio, Resend in email center) | Vendor lock-in, inconsistent compliance | Unified communications layer (Phase 2) |
++| T8 | Middleware performs 1–2 network calls per request | Latency and cost | Verify Supabase JWTs locally with JWKS (Phase 1b) |
++| T9 | Dark theme does not set `color` on `.shell`; mobile nav renders 20 items in 3 rows | Readability and usability | Global fix plus the navigation redesign in [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) |
++| T10 | Hand-rolled CSS; no component library | Slower UI work | Keep tokens; extract shared components (`Modal`, `Toast`, `TenantGate` started) |
++| T11 | Mixed code style (some routes minified onto single lines) | Hard to review | Add Prettier in Phase 1b |
++
++### 2.5 Reusable components
++
++- **`lib/audit.ts`** (1,181 lines): mature website auditor, the core of Lead Finder audits (Phase 4).
++- **`lib/secrets.ts`**: AES-GCM credential vault; generalize to per-tenant provider accounts (Phase 2).
++- **Campaign Studio** (`lib/campaign-studio/*`): consent capture, unsubscribe tokens, atomic follow-up claiming. These are the patterns for Phase 2 communications.
++- **Webhook verification** (Telnyx ed25519, Stripe, bearer for Vapi): move into `lib/webhooks/`.
++- **`claim_lead()`** atomic claim pattern, reusable for lead routing.
++- **Report cards, proposals, review pages**: public token pages with tracking, reused by the client portal.
++- **Local agent worker**: model for on-prem or offline agent execution in the marketplace era.
++
++---
++
++## 3. Gap analysis against the specification
++
++Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
++
++| # | Spec area | Status | Notes / gap |
++|---|---|---|---|
++| 1 | Positioning: AI growth OS | 🟡→🆕 | Navigation now leads with **AI operator**; messaging update pending |
++| 2 | AI Command Center with permission ladder and audit | 🆕 | Chat operator, 11 tools, observe/recommend/approve/auto per category, DB-enforced, audit trail. Creates/modifies CRM records, deals and tasks today; campaigns, workflows, pages and agents arrive with their modules |
++| 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. **Missing:** white-label domains/branding (Phase 6), billing/plans/limits (Phase 6), transfer, self-serve onboarding, invitations by email |
++| 4 | CRM | 🟡→🆕 | Contacts, companies, pipelines, stages, deals, tasks, notes, tags, custom field definitions, activity history, drag-and-drop board, explainable lead scoring. **Missing:** custom objects UI, custom field editor UI, ownership routing, merge/dedupe UI, import/export UI |
++| 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
++| 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
++| 7 | SMS and messaging | 🟡 | Twilio (legacy) and Telnyx (studio) paths, `STOP` handling. **Missing:** unified inbox, provider abstraction, quiet hours, 10DLC registry |
++| 8 | Reputation and Trust Center | 🟡 | Review pages, QR, private feedback. **Missing:** review monitoring/ingestion, AI responses, Reputation Health Score, competitor comparison, alerts |
++| 9 | Lead generation engine | 🟡 | Opportunity Radar + Site Scanner are strong. **Missing:** tenant scoping, Opportunity Score v2, audit-driven outreach campaigns |
++| 10 | Websites, funnels, forms | 🟡 | Website rebuild concepts, Puck builder, Campaign Studio funnels. **Missing:** hosted multi-tenant sites, forms/surveys builder, templates library |
++| 11 | Workflow automation | ❌ | Only a fixed 15-minute follow-up sender |
++| 12 | Calendars | ❌ | Only external calendar URLs |
++| 13 | Email marketing | 🟡 | Resend broadcasts with approval. **Missing:** sequences, A/B, tracking, segmentation, provider abstraction |
++| 14 | Social | ❌ | — |
++| 15 | Ads and attribution | ❌ | — |
++| 16 | Affiliates and referrals | ❌ | — |
++| 17 | Payments and billing | 🟡 | Stripe Checkout for proposals. **Missing:** invoices, estimates, subscriptions, SaaS billing, rebilling, payment abstraction |
++| 18 | Knowledge base | ❌ | Receptionist FAQs only |
++| 19 | Analytics and revenue intelligence | 🟡 | Dashboard KPIs; the AI can answer pipeline questions via `pipeline_summary`. **Missing:** metrics store, attribution, AI analyst over all data |
++| 20 | Industry modules | 🟡 | Industry lists in receptionist and radar. **Missing:** installable template bundles |
++| 21 | Marketplace | ❌ | Tool registry is the seed (see §6) |
++| 22 | Client portal | 🆕 (foundation) | Client sub-account users sign in and see only their CRM and Command Center. Portal-specific simplified views pending |
++| 23 | Security | 🟡→🆕 | See [SECURITY_PLAN](SECURITY_PLAN.md) |
++| 24 | Compliance | 🟡→🆕 | Consent ledger, erasure, append-only audit; messaging compliance in Phase 2 |
++| 25 | Technical architecture | 🟡 | Supabase, Next, TS in place; Tailwind not adopted (deliberate, see ADR-6); provider abstractions started with AI |
++| 26 | UX / navigation | 🟡 | New "AI operator" group; full IA restructure in Phase 2 |
++| 27 | Development documentation | 🆕 | This document set |
++| 28 | Quality requirements | 🆕 for new modules | Loading, empty and error states, validation, tests, "integration not configured" |
++
++---
++
++## 4. Target architecture
++
++```mermaid
++flowchart TB
++  subgraph Clients
++    WEB[Next.js App Router UI<br/>console · client portal · public pages]
++    EXT[Public API / webhooks callers]
++  end
++  subgraph Edge["Next.js server (Netlify or Vercel)"]
++    MW[proxy/middleware<br/>session refresh · tenant routing]
++    RT[Route handlers<br/>tenantRoute(): auth · RBAC · zod · CSRF]
++    WH[Webhook ingress<br/>signature verify · idempotency]
++  end
++  subgraph Domain["Domain services (src/lib)"]
++    CRM[crm/*]
++    CMD[command/*<br/>engine · tools · policy · actions]
++    COMMS[comms/* Phase 2]
++    REP[reputation/* Phase 3]
++    WF[workflows/* Phase 3]
++    BILL[billing/* Phase 6]
++  end
++  subgraph Providers["Provider adapters (no vendor in domain code)"]
++    AI[ai/: OpenAI · next providers]
++    VOICE[voice/: ElevenLabs · Cartesia · OpenAI]
++    TEL[telephony/: Telnyx · Plivo · Twilio]
++    MSG[email/: Resend · SES · Postmark]
++    PAY[payments/: Stripe · next]
++  end
++  subgraph Supabase
++    PG[(Postgres + RLS<br/>organization_id everywhere)]
++    AUTH[Auth + MFA]
++    STO[Storage]
++    RTM[Realtime]
++    Q[Queues / outbox → workers]
++  end
++  WEB --> MW --> RT --> Domain
++  EXT --> WH --> Q
++  Domain --> Providers
++  Domain -->|user JWT| PG
++  Q -->|service role, org-scoped| Domain
++  RT --> AUTH
++```
++
++### 4.1 Tenancy model
++
++- **Organization** is the tenant boundary. `kind = agency | client`; a client always has exactly one parent agency. Agencies are created by platform staff; clients by agency admins.
++- **Membership** grants a role per organization: `owner > admin > manager > member > viewer`. Agency members inherit access to their clients **capped at admin**; agency admins appoint client owners.
++- **Every tenant row carries `organization_id`.** RLS grants access through `public.org_rank(organization_id)`, a `security definer` function reading memberships for `auth.uid()`. Composite foreign keys `(id, organization_id)` make cross-tenant references impossible.
++- **Application code also scopes by the active organization**, because a person can belong to several organizations and RLS would return all of them.
++- **Locations** hang off an organization; location-level permissions are a Phase 3 refinement (calendars, territories).
++- **Platform staff** (`team_members`) keep access to the legacy single-tenant modules until those modules migrate.
++
++### 4.2 Two data-access modes
++
++| Mode | Used by | Security |
++|---|---|---|
++| **User mode**: anon key + the user's access token (`userClient()`) | All user-initiated reads and writes in tenant modules | RLS on `auth.uid()`; the shared secret is never sent |
++| **System mode**: service-role key | Webhooks, schedulers, queue workers | Bypasses RLS; must always filter by `organization_id`; only in server-only modules |
++| *Legacy mode*: anon key + `x-app-secret` | Existing single-tenant modules | To be retired (see SECURITY_PLAN S1–S3) |
++
++### 4.3 AI operator architecture (implemented)
++
++```
++User goal ──► /api/command ──► engine.runCommand()
++                                 │  system prompt: org, role, date, AI permissions, data-is-untrusted rule
++                                 ▼
++                     ChatModel (provider adapter) ◄──► tool specs (zod → JSON Schema)
++                                 │ tool calls
++              ┌──────────────────┴───────────────────┐
++         read tool                               write tool
++   runs now with the user's RLS     validate → ai_actions row with status from policy:
++                                    observe→blocked · recommend→recommended ·
++                                    approve→pending_approval · auto→approved→execute
++                                 │
++                     audit_log (ai.action.*) · outcome reported truthfully to the model
++```
++
++- **Tools are thin wrappers over the same domain services the UI uses** (`lib/crm/service.ts`), so the AI cannot do anything a user cannot do through the UI, and it passes the same validation.
++- **The database is the authority** on governance: `tg_ai_actions_guard` rejects statuses that don't match the organization policy, makes payloads immutable, requires a manager to approve, and lets only the approver execute.
++- **Execution happens with the approving human's RLS rights.** The AI never holds a service-role credential.
++- **Prompt-injection posture:** tool output is labelled untrusted; writes cannot exceed policy; sensitive timeline entries are redacted before reaching the model; there are caps of 6 steps and 10 writes per turn.
++- **Extending the operator** means registering a tool with `category`, `input` schema, `validate`, `summarize` and `run`. New modules (messaging, workflows, reputation) plug in without engine changes. The same registry is the seed of the marketplace (§6).
++
++### 4.4 Provider abstraction pattern
++
++Each capability gets an interface in `src/lib/<capability>/types.ts`, adapters per vendor, and a **router** that picks an adapter per organization and per request:
++
++```ts
++interface SmsProvider {
++  id: "telnyx" | "plivo" | "twilio";
++  send(msg: OutboundSms, account: ProviderAccount): Promise<{ providerMessageId: string; costMicros?: number }>;
++  verifyWebhook(req: Request, account: ProviderAccount): Promise<boolean>;
++  parseWebhook(body: unknown): InboundSmsEvent | DeliveryEvent | null;
++}
++// router: choose by org preference → region → health (rolling delivery rate) → price; fail over on retryable errors
++```
++
++Credentials live in a per-organization `provider_accounts` table, encrypted, with agency-level defaults (Phase 2). The AI layer already follows this pattern: `ai/types.ts`, `ai/openai.ts`, `ai/provider.ts`.
++
++### 4.5 Event-driven backbone (Phase 2)
++
++- **Transactional outbox:** domain writes insert `domain_events (organization_id, type, payload, created_at)` in the same transaction.
++- **Queue:** Supabase Queues (pgmq) or an external queue such as Inngest; workers run with the service role, scoped per organization, idempotent by event ID.
++- Workflows (Phase 3), lead scoring refresh, analytics rollups, webhooks out and AI "act automatically" jobs all consume events.
++- Inbound webhooks are verified and then written to `webhook_events` (unique provider event ID) before any processing.
++
++### 4.6 White-label (Phase 6)
++
++`organizations.branding` (logo, colors, product name) is in place. Custom domains map `host → organization` through a `domains` table checked in middleware; email sender domains are verified per organization via the email provider abstraction.
++
++---
++
++## 5. Key decisions (ADR summary)
++
++| ID | Decision | Rationale |
++|---|---|---|
++| ADR-1 | **Evolve the existing app; don't rebuild.** New multi-tenant modules sit beside legacy modules and absorb them one at a time | Keeps working revenue features alive; lower risk |
++| ADR-2 | **RLS on `auth.uid()` + composite FKs** for all new tables; the shared secret grants nothing on them | Database-enforced isolation that survives application bugs |
++| ADR-3 | **AI governance in the database** (policy-checked state machine) as well as the app | The UI and engine can have bugs; the DB guard is the last line |
++| ADR-4 | **AI acts with the accountable human's rights**, never with a service credential | Prevents privilege escalation via prompt injection |
++| ADR-5 | **Zod schemas as the single source** for API validation and AI tool JSON Schema | One definition, two enforcement points |
++| ADR-6 | **Keep the existing CSS design system** instead of introducing Tailwind mid-flight | Avoids a parallel styling system; revisit at the Phase 2 UI restructure |
++| ADR-7 | **Host-agnostic Next.js**; currently Netlify. Moving to Vercel is optional | Scheduled jobs move to the queue/worker layer in Phase 2, removing host-specific cron |
++| ADR-8 | **Provider adapters + router** for AI, voice, telephony, messaging, email and payments | Spec requirement; cost and reliability routing |
++| ADR-9 | **Deterministic, explainable lead scoring first**; ML scoring later on the same factor interface | Users and the AI can see why; no training data yet |
++
++## 6. Marketplace readiness
++
++Tool registry entries, pipeline templates (`seed_organization_defaults`), and policies are already data or code units that can be packaged. Phase 8 adds `marketplace_listings`, `installs`, and versioned bundles (`agents`, `workflows`, `funnels`, `industry configs`) with signed manifests and sandboxed tool permissions.
+diff --git a/docs/architecture/PRODUCT_ROADMAP.md b/docs/architecture/PRODUCT_ROADMAP.md
+new file mode 100644
+index 0000000..fd5ca18
+--- /dev/null
++++ b/docs/architecture/PRODUCT_ROADMAP.md
+@@ -0,0 +1,104 @@
++# Product Roadmap
++
++Principle: **stable foundations before breadth.** Each phase ships behind the same tenancy, RBAC, audit and AI-governance foundation from Phase 1. A phase is done only when its exit criteria hold in production. Every module also exposes its actions as AI operator tools, so the Command Center gains abilities as the platform grows.
++
++## Phase overview
++
++| Phase | Theme | Lifecycle stage | Status |
++|---|---|---|---|
++| 1 | Core architecture, multi-tenancy, CRM, auth, AI Command Center foundation | Convert | **Implemented** (pending deploy) |
++| 1b | Hardening: baseline schema, secret rotation, MFA, CI, JWKS | — | Next |
++| 2 | Communications: unified inbox, SMS/email/voice provider layer, AI voice agents | Convert | Planned |
++| 3 | Reputation & Trust Center, calendars, workflow automation | Protect · Convert | Planned |
++| 4 | Lead generation engine, audits at scale, AI prospecting | Acquire | Planned |
++| 5 | Websites, funnels, forms, landing pages, knowledge base | Acquire | Planned |
++| 6 | Billing, white-label SaaS, agency rebilling, plans and limits | — | Planned |
++| 7 | Analytics, attribution, AI revenue intelligence, ads | Retain · Acquire | Planned |
++| 8 | Marketplace, advanced autonomous agents, affiliates | — | Planned |
++
++---
++
++## Phase 1: Foundation ✅ implemented
++
++**Goal:** a business can sign in, work a real CRM, and direct an AI operator that is permissioned and audited, with tenant isolation enforced by the database.
++
++Delivered:
++- Organizations (agency → client), locations, memberships, five-role RBAC, suspension semantics
++- Unified CRM: contacts, companies, pipelines and stages, deals, tasks, notes, consent ledger, activity timeline, custom field definitions, explainable lead scoring
++- AI Command Center: conversational operator with 11 tools (5 read, 6 write), per-category permissions (Observe / Recommend / Ask approval / Act automatically), approval queue, recommendations, audit trail
++- Supabase Auth sessions with refresh, tenant routing, CSRF and validation framework
++- Privacy: erasure, do-not-contact, sensitive-entry redaction from the AI
++- 54 database security tests and 25 unit tests
++
++Exit criteria (verify after deploy):
++- [ ] Migration applied to production; the security advisor shows no new findings
++- [ ] Owner account bootstrapped; agency created; legacy prospects imported
++- [ ] One client sub-account created with its own owner, and isolation verified by signing in as that owner
++- [ ] Command Center answers pipeline questions and queues changes for approval with the OpenAI key configured
++
++## Phase 1b: Hardening (1–2 weeks)
++
++- Capture the live schema as a baseline migration (`supabase db pull`); remove drift
++- **Rotate `APP_DB_SECRET`**, remove the literal from `app_secret_ok()` (store it in Vault or a GUC), and split the credential-encryption key into `APP_ENCRYPTION_KEY` (see SECURITY_PLAN S1/S2)
++- Introduce `SUPABASE_SERVICE_ROLE_KEY` for schedulers and workers; stop using the shared secret for new work
++- MFA (TOTP) for owner and admin roles; require `aal2` on admin actions
++- Local JWT verification (JWKS) in middleware; remove per-request network calls
++- ESLint + Prettier + GitHub Actions (typecheck, unit, SQL tests, build)
++- Email invitations for members (Supabase `inviteUserByEmail` via the service role)
++- Sentry (or equivalent) error monitoring; structured logging with `organization_id`
++
++## Phase 2: Communications
++
++**Goal:** every conversation with a customer, on any channel, lands in one inbox and one timeline, and is sent through swappable providers under consent rules.
++
++- `provider_accounts` (encrypted, per org with agency defaults), `phone_numbers`, `messaging_profiles` (10DLC brand/campaign registry)
++- **Messaging layer:** SMS/MMS (Telnyx primary, Plivo, Twilio fallback), email (Resend, SES/Postmark), web chat widget, WhatsApp when available; router by price, region, health and delivery rate
++- **Unified inbox:** `conversations`, `messages`, assignment, snooze, templates, scheduling, AI-drafted replies (operator tool: `draft_reply`, `send_message` under the `messaging` policy)
++- **Compliance engine:** consent check before every send, quiet hours by recipient timezone, opt-out keywords on every provider, frequency caps, content checks
++- **AI voice:** `voice_agents` (provider per agent: ElevenLabs, Cartesia, OpenAI), `calls` (duration, cost, sentiment, transcript, outcome), inbound receptionist, missed-call text-back, after-hours, transfers, voicemail, callback scheduling; migrate Vapi receptionist configs
++- Domain events outbox + queue workers; retire the Netlify cron
++- Migrate `email_contacts`, `studio_contacts` and `interactions` into `contacts` and `activities`
++- Navigation restructure to the target IA (Dashboard, AI Command Center, CRM, Conversations, Calls, Calendar, Campaigns, Automations, Reputation, Websites, Lead Finder, Analytics, Payments, AI Agents, Settings), with legacy tools grouped under "Agency tools"
++
++## Phase 3: Reputation, calendars, workflows
++
++- **Reputation & Trust Center:** Google Business Profile review ingestion (and Facebook where permitted), review requests by SMS, email and QR, AI responses with approval or auto policy, negative-review alerts, complaint escalation into tasks, recovery workflows, widgets and testimonials, competitor comparison, trend charts
++- **Reputation Health Score** (0–100): weighted average rating, volume, 90-day velocity, negative frequency, response rate and speed, sentiment, unresolved complaints, trend. Factors are stored and explained like lead scores
++- Private feedback routes unhappy customers to resolution **without hiding the public review option** (no review gating)
++- **Calendars:** individual, round-robin, team, service and location calendars; Google and Microsoft sync; booking pages; reminders; reschedule and cancel; waitlists; no-show recovery; buffers; working hours; territories. Availability and booking exposed as AI and voice tools
++- **Workflow automation:** versioned workflow graphs; triggers on domain events (new lead, form, call, missed call, message, appointment states, stage change, payment, review, inactivity, tag, webhook, schedule); actions (send SMS/email, AI call, assign, move stage, create task, request review, book, update CRM, generate document, webhook, notify, start/stop agent or campaign). "Describe it in English" builds a draft workflow that runs only after approval
++
++## Phase 4: Lead generation engine
++
++- Tenant-scoped Lead Finder built on Opportunity Radar + `lib/audit.ts`
++- Filters: industry, geography, website quality, review score and count, missing site, speed, SEO, broken links, SSL, mobile, booking, chat, AI receptionist, reputation, social activity
++- **Opportunity Score** with explained factors; automated audits (website, SEO, reputation, conversion, missed-call risk, automation opportunities)
++- Personalized outreach generated from audits, sent only on compliant channels: email to business addresses with CAN-SPAM footer; no cold SMS or robocalls without consent
++
++## Phase 5: Websites and funnels
++
++- Multi-tenant hosted sites and funnels (Puck-based editor), templates by industry, forms, surveys, quizzes, appointment and thank-you pages, SEO metadata, A/B variants
++- "Build me a website for a roofing company": the AI asks only essential questions, then drafts structure, copy, forms, CTAs and SEO for approval
++- **Knowledge base:** versioned, approval-gated entries (services, pricing, hours, FAQs, policies, scripts, brand voice) consumed by every agent through retrieval
++
++## Phase 6: SaaS business layer
++
++- Plans, feature packages, limits and metering (`usage_events`), Stripe Billing behind a payments abstraction
++- Agency rebilling with markup on usage (messages, minutes, AI tokens), client invoices, estimates, deposits, payment links, refunds
++- White-label: custom domains, branding, sender domains, branded login, client onboarding wizard, account transfer, suspension, data export
++
++## Phase 7: Analytics and attribution
++
++- Metrics store (daily rollups per org), dashboards that answer questions, AI analyst tools over metrics
++- Meta Ads and Google Ads integration; spend, CPL, cost per appointment and customer, ROAS
++- First- and last-touch attribution with a touchpoint model ready for multi-touch
++
++## Phase 8: Marketplace and autonomy
++
++- Installable agents, workflows, funnels, templates and industry modules; creator payouts
++- Affiliate and referral system (links, tracking, commission rules, recurring commissions, payouts, fraud signals); agencies sell subscriptions through it
++- Long-running autonomous agents with goals, budgets and schedules, still bounded by policy, approvals and audit
++
++## Industry modules (delivered progressively from Phase 3)
++
++Roofing, solar, life insurance, real estate, home services, monuments/headstones, HVAC, plumbing, landscaping, dentists, attorneys, med spas, restaurants and automotive services each ship as a bundle: pipeline stages, forms, website template, receptionist script, qualification questions, follow-up sequence, review campaign and dashboard. Bundles install through `seed_organization_defaults`-style provisioning functions.
+diff --git a/docs/architecture/SECURITY_PLAN.md b/docs/architecture/SECURITY_PLAN.md
+new file mode 100644
+index 0000000..a5908d5
+--- /dev/null
++++ b/docs/architecture/SECURITY_PLAN.md
+@@ -0,0 +1,106 @@
++# Security Plan
++
++## 1. Audit findings (existing system)
++
++Severity uses impact × likelihood for a multi-tenant SaaS holding customer PII and provider credentials. **No secret values appear in this document.**
++
++| ID | Severity | Finding | Recommendation | Phase |
++|---|---|---|---|---|
++| **S1** | **Critical** | The live `public.app_secret_ok()` function compares the `x-app-secret` header to a **hardcoded string literal**. Anyone who can see the schema (dumps, `pg_proc`, the `supabase_migrations` history table, support exports, backups) learns the one secret that, with the anon key, grants read/write on every legacy table, including encrypted provider keys | **Rotate now.** Store the new value in Supabase Vault and have a `security definer` `app_secret_ok()` compare against `vault.decrypted_secrets`, or retire the header model (S3). Treat the old value as compromised. Check `supabase_migrations.schema_migrations` and old backups for copies | 1b (urgent) |
++| **S2** | High | `APP_DB_SECRET` is also the root of the AES-256-GCM key protecting `app_secrets` (provider API keys). One leaked string exposes both the database and the decryption key; rotating the DB secret silently breaks decryption | Introduce a separate `APP_ENCRYPTION_KEY` (32 random bytes, server-only), add a key ID to the ciphertext (`v2.<kid>.…`), and re-encrypt existing rows during rotation. Then rotate the stored provider keys themselves | 1b |
++| **S3** | High | Legacy data access = anon key + shared header. All authorization lives in application code, there is no per-user identity in the database, and there is no tenant isolation on legacy tables | Phase 1 pattern: user JWT + RLS for user traffic; `SUPABASE_SERVICE_ROLE_KEY` for jobs. Migrate legacy modules (DATABASE_SCHEMA §4) and finally drop `app_secret_ok()` | 1b–5 |
++| **S4** | High | Owner passcode session: a deterministic `sha256("sunmarketing::"+passcode)` cookie valid for one year. It cannot be revoked without changing the passcode, is shared by everyone who knows the code, has no attribution and no MFA | Make the passcode a break-glass path: off by default once an owner has a team account; random server-stored session IDs with expiry and revocation; audit every passcode login | 1b |
++| S5 | Medium | Login brute-force limiting is an in-memory `Map` per serverless instance | Move to a DB-backed limiter (`studio_take_limit` pattern) keyed by IP and account; rely on Supabase Auth's built-in limits for password logins | 1b |
++| S6 | Medium | Legacy routes have no role checks: any team member or passcode holder can change settings, send messages, or delete data | New modules use RBAC; legacy routes get `requireStaffRole()` until they migrate | 1b |
++| S7 | Medium | `PATCH /api/settings` passes the request body straight to `update()` (mass assignment within `app_settings`) | Zod schema allow-list | 1b |
++| S8 | Medium | Public endpoints without rate limits: `/api/public/feedback` (spam; `campaignId` unchecked) and `/api/public/report-event` (non-atomic read-modify-write counters; inflation) | DB limiter per IP + token; validate that the campaign exists and is active; atomic `update … set view_count = view_count + 1` via RPC | 1b |
++| S9 | Medium | Site Scanner SSRF guard: DNS is resolved, then `fetch` resolves again (DNS-rebinding window). `100.64.0.0/10` and some IPv4-mapped IPv6 ranges (`::ffff:172.16/12`, `::ffff:169.254/16`) are not blocked | Pin the resolved IP using an undici `Agent` with a custom `lookup`; complete the blocklist (CGNAT, benchmarking, mapped ranges); add unit tests | 1b |
++| S10 | Medium | The local agent worker authenticates with the **owner passcode** stored in a plaintext `.env.local` on a workstation; a passcode session can also post job results and improvement proposals | Dedicated worker token (hashed in the DB) scoped to `/api/agents/worker` only; rotate the passcode after rollout | 1b |
++| S11 | Low | `/api/automation/run` compares the bearer token with `!==` | `timingSafeEqual` | 1b |
++| S12 | Low | No Content-Security-Policy or HSTS (nosniff, frame-deny and referrer-policy are present) | Nonce-based CSP for console pages; HSTS at the host | 1b |
++| S13 | Low | Middleware makes 1–2 network calls per request to Supabase (latency; outage amplification) | Verify JWTs locally via JWKS; cache staff membership in a short-lived signed claim | 1b |
++| S14 | Info | 11 applied migrations (including the original policies) are not in the repository | Baseline pull (DATABASE_SCHEMA §1) so policies can be reviewed and tested | 1b |
++
++Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stripe webhooks, encrypted provider keys, SSRF guard on scanner and enrichment, no review gating, consent-gated follow-ups with `STOP` handling, `List-Unsubscribe`, secure headers, no secrets in client bundles (explicitly avoided in `next.config.mjs`), and fail-closed middleware.
++
++## 2. Controls implemented in Phase 1
++
++| Control | Implementation |
++|---|---|
++| Tenant isolation in the database | RLS on `org_rank(organization_id)` for 17 new tables; composite FKs block cross-tenant references; 54 SQL tests |
++| Least privilege | Five-role ladder; DB-enforced role grants (no granting above own rank, last-owner protection); agency staff capped at admin in clients |
++| No shared-secret expansion | New tables ignore `x-app-secret`; user traffic uses the user's JWT |
++| AI governance | Per-category policy; DB-enforced action state machine; immutable payloads; manager approval; execution with the approver's rights; step and write caps; sensitive-entry redaction; untrusted-data instruction in the system prompt |
++| Audit | Append-only `audit_log` (immutable even for `service_role`); actor fixed to `auth.uid()`; AI vs. user actor types |
++| Session security | httpOnly + Secure + SameSite=Lax cookies; ≤1 h access tokens with rotating refresh tokens; logout clears all session cookies |
++| CSRF | Same-origin check on state-changing tenant requests |
++| Input validation | Zod on every tenant endpoint; 64 KB body cap; PostgREST filter-syntax sanitizing in search; DB `check` constraints as a second layer |
++| Error hygiene | `fromDb()` maps database errors to safe messages; no stack traces or SQL in responses |
++| Abuse limits | DB-backed AI rate limit per user |
++| Privacy | `erase_contact()` (admin, audited), do-not-contact, consent ledger |
++| Secrets | AI provider key reuses the encrypted Settings vault; never sent to the client |
++
++## 3. Security architecture going forward
++
++### 3.1 Identity
++- Supabase Auth (email/password now; magic links and Google/Microsoft OAuth in Phase 2)
++- **MFA:** TOTP enrolment; require `aal2` for owner/admin sessions and for sensitive actions (AI policy → auto, erasure, billing, member roles)
++- SSO/SAML for enterprise agencies (Phase 6+)
++- Session revocation on role removal (refresh token revoke via the admin API)
++
++### 3.2 Secrets and keys
++- Server-only environment variables (Netlify/Vercel encrypted env); never `NEXT_PUBLIC_*` for secrets
++- Per-tenant provider credentials in `provider_accounts`, encrypted with `APP_ENCRYPTION_KEY` (with key IDs), decrypted only inside adapters
++- Quarterly rotation runbook; immediate rotation on staff departure
++- Secret scanning in CI (gitleaks)
++
++### 3.3 Data protection
++- TLS everywhere; Postgres encryption at rest (Supabase)
++- Storage buckets private by default; object paths `org/<organization_id>/…` with RLS on `storage.objects` using `org_rank`
++- Signed URLs with short TTLs for recordings and attachments
++- Field-level sensitivity: `activities.sensitive` today; classification tags on knowledge and custom fields later
++
++### 3.4 Webhooks
++Signature verification per provider, timestamp window, raw-body handling, idempotency table, organization resolved from provider resources, fast acknowledgement with queued processing (API_ARCHITECTURE §5).
++
++### 3.5 Monitoring and response
++- Error monitoring (Sentry) with PII scrubbing; structured logs with `organization_id`, `user_id`, `request_id`
++- Alerts: authentication failure spikes, RLS denials (42501) spikes, webhook verification failures, AI action failure rate, provider error rates
++- Supabase security and performance advisors run in CI after migrations
++- Incident runbook: contain (rotate keys, suspend org), assess (audit log), notify (per breach-notification law), remediate, postmortem
++
++### 3.6 Backups and continuity
++- Supabase PITR (Pro plan) plus a daily logical backup to separate cloud storage, encrypted with a separate key
++- Quarterly restore drill into a staging project; RPO ≤ 15 min, RTO ≤ 4 h targets
++- Per-organization data export (CSV/JSON) for portability and suspension/offboarding
++
++### 3.7 AI-specific threats (OWASP LLM Top 10 mapping)
++
++| Threat | Mitigation |
++|---|---|
++| Prompt injection (direct and via CRM data, messages, reviews) | Policy-bounded writes; human approval by default; tool output labelled untrusted; no tool can exceed user RLS; per-turn caps |
++| Excessive agency | Category policies default to approve/recommend/observe; `auto` requires an admin with explicit confirmation; every action audited |
++| Sensitive data disclosure | `sensitive` timeline redaction; conversations private per user; provider data-retention settings (zero-retention where available) |
++| Insecure output handling | Model output is rendered as text (no HTML); tool arguments validated twice (tool schema + service schema) |
++| Model denial of service and cost | Per-user rate limit; step caps; token usage captured (`Completion.usage`) for metering in Phase 6 |
++| Supply chain | Provider adapters isolated; models configurable; no plugins execute arbitrary code (marketplace bundles get signed manifests and scoped tool permissions in Phase 8) |
++
++## 4. Compliance design
++
++| Requirement | Design |
++|---|---|
++| **TCPA** | Prior express (written, for marketing) consent recorded per channel with source and evidence; no autodialed or AI-voice marketing calls or texts without it; quiet hours (8am–9pm recipient local time); immediate opt-out honoring; consent checked by the messaging layer on every send, not by callers |
++| **A2P 10DLC** | `messaging_profiles` registry (brand, campaign, use case, sample messages); numbers bound to registered campaigns; throughput per tier; sends blocked for unregistered numbers |
++| **CAN-SPAM** | Accurate headers; physical address footer; one-click `List-Unsubscribe`; opt-outs processed immediately (within the 10-business-day limit); suppression list per org |
++| **Privacy (CCPA/CPRA, state laws, GDPR where applicable)** | Erasure (`erase_contact`), export, retention settings per org, data processing agreements with subprocessors, privacy notice templates for client sites |
++| **Data deletion** | Erasure for contacts; organization closure → 30-day grace → hard delete with an audit record kept |
++| **Communication logs** | Every message and call stored with consent snapshot, provider, status and timestamps; audit log immutable |
++| **Review platform policies** | No review gating, no incentivized reviews, no fake reviews; AI responses never fabricate facts; private feedback offered alongside, never instead of, public review links |
++| **Anti-spam posture** | Lead Finder outreach only to business contacts via compliant channels; no purchased consumer lists; per-org send limits and complaint-rate monitoring with automatic pause |
++
++## 5. Immediate actions for the owner (before Phase 2)
++
++1. Rotate the shared DB secret and fix S1 (runbook in IMPLEMENTATION_PLAN §6).
++2. Create your personal Supabase Auth account, add it to `team_members`, enable MFA, and stop using the passcode for daily work.
++3. Rotate the owner passcode (it is stored on the agent-worker machine in plaintext).
++4. Turn on PITR backups.
+-- 
+2.43.0
+
