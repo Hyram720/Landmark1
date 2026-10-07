@@ -1,6 +1,6 @@
 # Sun Marketing Console — patch series (Phase 1, 1b, 2 part 1, 3 part 1, 4 part 1, 5 part 1, 6)
 
-The Sun Marketing Console code lives in **`Hyram720/sun-marketing-console`**. This session could read that repository but did not have permission to push to it, so the Phase 1 work is delivered here as a `git am`-ready patch series. It applies cleanly on top of `767753c` ("Add no-cost Opportunity Radar qualification (#50)"); the resulting tree was verified to be identical to the tested working copy.
+The Sun Marketing Console code lives in **`Hyram720/sun-marketing-console`**. The same commits are now also pushed to branch `claude/happy-wright-tyr5b2` of `Hyram720/sun-marketing-console` (push access was granted later); this patch series remains as a backup. It applies cleanly on top of `767753c` ("Add no-cost Opportunity Radar qualification (#50)"); the resulting tree was verified to be identical to the tested working copy.
 
 | Patch | Contents |
 |---|---|
@@ -17,6 +17,7 @@ The Sun Marketing Console code lives in **`Hyram720/sun-marketing-console`**. Th
 | `0011-Google-reviews-sync-replies-and-website-review-widge.patch` | Reputation connected to Google Business Profile (sign in with Google, choose the location, hourly review sync, post replies to Google from the app) and embeddable website review widgets that always show the true overall rating |
 | `0012-AI-receptionist-Vapi-call-log-booking-and-missed-cal.patch` | AI receptionist on your Vapi assistant: answers from approved knowledge, books into calendars, takes messages, transfers, texts back missed callers; Calls page with summaries, transcripts and recordings; call automations; home alerts for call-backs |
 | `0013-Website-AI-chat-widget-with-team-hand-off.patch` | Website AI chat: one-line embed, answers from approved knowledge, books appointments, takes messages, hands off to the team (staff replies in the app take over), every AI reply metered against the plan |
+| `0014-Make-the-AI-receptionist-easy-to-find-from-Home.patch` | Home gets an "AI receptionist" button and setup steps for the phone receptionist and website chat |
 
 ## Apply
 

@@ -1,0 +1,54 @@
+From 522157d472f5cd0ff00cf21827181c8c4b5d6ac7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 13:37:22 +0000
+Subject: [PATCH] Make the AI receptionist easy to find from Home
+
+Home gets an "AI receptionist" button and two setup steps: turn on the
+AI receptionist (phone) and add AI chat to the website.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ src/app/home/page.tsx   | 1 +
+ src/lib/home/service.ts | 6 ++++++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/src/app/home/page.tsx b/src/app/home/page.tsx
+index a8e6982..46beb47 100644
+--- a/src/app/home/page.tsx
++++ b/src/app/home/page.tsx
+@@ -50,6 +50,7 @@ function Dashboard({ org }: { org: Org }) {
+         <div><h2 style={{ fontSize: 22 }}>{data.greeting}</h2><div className="small muted">Here&apos;s what&apos;s happening at {data.organization} today.</div></div>
+         <div className="row home-actions">
+           <Link className="btn btn-sm btn-primary" href="/command-center">Ask the AI</Link>
++          <Link className="btn btn-sm" href="/calls">AI receptionist</Link>
+           <Link className="btn btn-sm" href="/crm?new=1">Add contact</Link>
+           <Link className="btn btn-sm" href="/inbox">Send a message</Link>
+           <Link className="btn btn-sm" href="/calendars">Book appointment</Link>
+diff --git a/src/lib/home/service.ts b/src/lib/home/service.ts
+index b5c1ada..1b8c0e0 100644
+--- a/src/lib/home/service.ts
++++ b/src/lib/home/service.ts
+@@ -87,6 +87,10 @@ export async function homeSummary(client: SupabaseClient, org: { id: string; kin
+     count(client.from("workflows").select("id", head).eq("organization_id", o).eq("status", "active")),
+     count(client.from("memberships").select("user_id", head).eq("organization_id", o).eq("status", "active")),
+   ]);
++  const [receptionist, chatWidget] = await Promise.all([
++    count(client.from("voice_agents").select("id", head).eq("organization_id", o).neq("status", "disabled")),
++    count(client.from("chat_widgets").select("id", head).eq("organization_id", o).eq("status", "active")),
++  ]);
+   const chats = await count(client.from("web_chats").select("id", head).eq("organization_id", o).eq("status", "open").eq("needs_human", true));
+   const callbacks = await count(client.from("calls").select("id", head).eq("organization_id", o).is("reviewed_at", null).in("outcome", ["missed", "message"]).gte("created_at", week));
+ 
+@@ -103,6 +107,8 @@ export async function homeSummary(client: SupabaseClient, org: { id: string; kin
+   const setup: SetupStep[] = [
+     { key: "sms", label: "Connect a texting number", done: smsAcct > 0, href: "/channels", why: "Text leads, send reminders and review requests." },
+     { key: "email", label: "Connect an email sender", done: emailAcct > 0, href: "/channels", why: "Send invoices, confirmations and follow-ups." },
++    { key: "receptionist", label: "Turn on your AI receptionist", done: receptionist > 0, href: "/calls", why: "Answer every call 24/7, book jobs and take messages." },
++    { key: "chat", label: "Add AI chat to your website", done: chatWidget > 0, href: "/calls?tab=chat", why: "Answer visitors instantly and capture leads." },
+     { key: "knowledge", label: "Add your business facts", done: knowledge > 0, href: "/knowledge", why: "Services, hours and prices the AI may use." },
+     { key: "calendar", label: "Create a booking calendar", done: calendars > 0, href: "/calendars", why: "Let customers book online." },
+     { key: "form", label: "Create a lead form", done: forms > 0, href: "/forms", why: "Capture leads from your website and ads." },
+-- 
+2.43.0
+
