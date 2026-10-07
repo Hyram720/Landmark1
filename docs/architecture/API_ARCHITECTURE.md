@@ -115,6 +115,26 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 | `GET/POST /api/knowledge`, `PATCH/DELETE /api/knowledge/:id` | crm.read / crm.write (approve: sites.manage) / crm.delete | Knowledge items |
 | `GET /s/:site/:page?`, `GET /f/:slug` | public | Live site pages (published copy only) and hosted forms |
 
+### Phase 6 endpoints (plans, invoices, payments, domains)
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET /api/billing` | org.read | Plan, status and usage; agencies also get their plans and client accounts with usage |
+| `POST /api/billing` | org.manage (agency) | Create or update an agency plan (price, limits per metric) |
+| `POST /api/billing/govern` | org.manage | `{org_id, plan?, status?}`; the database allows platform staff or the parent agency's admins only |
+| `GET/POST/DELETE /api/billing/stripe` | org.read / org.manage | The organization's own Stripe account: connect (key validated, webhook endpoint created automatically or secret pasted), status, disconnect |
+| `GET/PUT /api/organization/branding` | org.read / org.manage | Name, logo, color and support contacts shown on customer pages |
+| `GET /api/organization/export` | owner/admin of the org or its agency | Full JSON export; works while the account is suspended |
+| `GET/POST /api/invoices` | crm.read / crm.write | List (`kind`, `status`, `contact_id`) and create invoices or estimates |
+| `GET/PUT /api/invoices/:id`, `POST {action: send/void/accept/decline/convert/record_payment}` | crm.read / crm.write (manual payments, accept/decline: manager) | Detail with payments and customer link; edit drafts; lifecycle actions |
+| `POST /api/invoices/payments/:id {action: refund}` | manager | Refund a card payment through the business's Stripe account |
+| `POST /api/webhooks/stripe-account/:accountId` | Stripe signature (per-account secret) | `checkout.session.completed`, `charge.refunded`; idempotent |
+| `GET/POST /api/public/invoice/:token` | public, rate-limited | Customer view; `{action: pay}` returns a Stripe Checkout URL, `accept`/`decline` for estimates |
+| `GET/POST /api/sites/:id/domains`, `POST/DELETE /api/sites/domains/:domainId` | crm.read / sites.manage | Custom domains; `{action: verify}` checks the `_sun-verify` TXT record |
+| `GET /i/:token` | public | Customer invoice and estimate page |
+
+Plan limits surface as HTTP 402 with code `plan_limit`.
+
 Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>`. They are sent with `publicFetch`, so private and internal addresses are refused, and time out after 10 seconds.
 
 ## 4. Conventions for new endpoints
@@ -122,7 +142,7 @@ Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(
 - **Paths:** `/api/<module>/<resource>[/:id][/<sub-resource>]`; plural resource names.
 - **Pagination:** `limit` (≤200) + `offset` now; switch to keyset (`before` cursor) for append-only streams (audit, messages).
 - **Idempotency:** client-supplied `Idempotency-Key` header on create endpoints that trigger external effects (messages, payments, calls). Store it with a unique constraint per org.
-- **Errors:** `{ error: string (human), code: string (machine) }`. Codes in use: `unauthenticated`, `no_organization`, `forbidden`, `csrf`, `invalid`, `invalid_reference`, `conflict`, `not_found`, `too_large`, `rate_limited`, `integration_not_configured`, `server_error`.
+- **Errors:** `{ error: string (human), code: string (machine) }`. Codes in use: `unauthenticated`, `no_organization`, `forbidden`, `csrf`, `invalid`, `invalid_reference`, `conflict`, `not_found`, `too_large`, `rate_limited`, `plan_limit`, `integration_not_configured`, `server_error`.
 - **"Integration not configured"** is always a `503` with code `integration_not_configured` and a settings path. The UI shows it; nothing is ever simulated.
 - **Long-running work** (bulk sends, audits at scale, AI autonomous jobs) returns `202` with a job ID; progress through Supabase Realtime on the job row.
 

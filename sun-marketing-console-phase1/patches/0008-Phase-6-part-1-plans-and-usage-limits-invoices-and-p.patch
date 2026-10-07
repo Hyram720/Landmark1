@@ -1,0 +1,2489 @@
+From 5075dd9261d09efa278d69f429bc5ddbeef7bdf0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 03:36:16 +0000
+Subject: [PATCH] Phase 6 part 1: plans and usage limits, invoices and
+ payments, custom domains
+
+- Security fix: client admins could change their own organization's plan,
+  status or parent agency through the API. Those columns are now locked;
+  changes go through govern_organization (platform staff or the parent
+  agency's admins only).
+- Plans with per-metric limits, usage metering and limit enforcement in the
+  database (texts, emails, AI requests, outreach, contacts, team, websites).
+  Agencies define plans, assign them to clients, suspend or reactivate them.
+- Invoices and estimates with deposits, tax and database-computed totals;
+  customer page with card payment via the business's own Stripe account
+  (Checkout, signed per-account webhooks, refunds), estimate accept/decline,
+  convert to invoice, manual cash/check payments.
+- Custom domains for hosted sites, verified by DNS TXT record; middleware
+  serves only verified domains and falls through for unknown hosts.
+- Branding for customer pages, full data export (works while suspended),
+  Invoices and Plan & account screens, invoice and usage AI tools.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ docs/architecture/API_ARCHITECTURE.md         |  22 +-
+ docs/architecture/DATABASE_SCHEMA.md          |  20 +-
+ docs/architecture/IMPLEMENTATION_PLAN.md      |  11 +
+ docs/architecture/MASTER_ARCHITECTURE.md      |   8 +-
+ docs/architecture/PRODUCT_ROADMAP.md          |  17 +-
+ docs/architecture/SECURITY_PLAN.md            |  12 +
+ src/app/account/page.tsx                      | 145 ++++++
+ src/app/api/billing/govern/route.ts           |  13 +
+ src/app/api/billing/route.ts                  |  21 +
+ src/app/api/billing/stripe/route.ts           |  28 +
+ src/app/api/invoices/[id]/route.ts            |  37 ++
+ src/app/api/invoices/payments/[id]/route.ts   |  13 +
+ src/app/api/invoices/route.ts                 |  11 +
+ src/app/api/organization/branding/route.ts    |  28 +
+ src/app/api/organization/export/route.ts      |  38 ++
+ src/app/api/public/invoice/[token]/route.ts   |  46 ++
+ src/app/api/sites/[id]/domains/route.ts       |   8 +
+ src/app/api/sites/domains/[domainId]/route.ts |  17 +
+ .../api/webhooks/stripe-account/[id]/route.ts |  34 ++
+ src/app/i/[token]/page.tsx                    |  74 +++
+ src/app/invoices/page.tsx                     | 175 +++++++
+ src/app/sites/[id]/page.tsx                   |  44 +-
+ src/components/Shell.tsx                      |   3 +-
+ src/lib/billing/invoices.ts                   | 248 +++++++++
+ src/lib/billing/plans.ts                      |  78 +++
+ src/lib/command/tools.ts                      |  24 +
+ src/lib/payments/stripe-accounts.ts           |  62 +++
+ src/lib/sites/domains.ts                      |  62 +++
+ src/lib/tenant/api.ts                         |   1 +
+ src/middleware.ts                             |  44 +-
+ .../20261011120000_phase6_business_layer.sql  | 481 ++++++++++++++++++
+ supabase/tests/phase6_business.test.sql       | 162 ++++++
+ tests/unit/phase6-billing.test.ts             |  94 ++++
+ 33 files changed, 2064 insertions(+), 17 deletions(-)
+ create mode 100644 src/app/account/page.tsx
+ create mode 100644 src/app/api/billing/govern/route.ts
+ create mode 100644 src/app/api/billing/route.ts
+ create mode 100644 src/app/api/billing/stripe/route.ts
+ create mode 100644 src/app/api/invoices/[id]/route.ts
+ create mode 100644 src/app/api/invoices/payments/[id]/route.ts
+ create mode 100644 src/app/api/invoices/route.ts
+ create mode 100644 src/app/api/organization/branding/route.ts
+ create mode 100644 src/app/api/organization/export/route.ts
+ create mode 100644 src/app/api/public/invoice/[token]/route.ts
+ create mode 100644 src/app/api/sites/[id]/domains/route.ts
+ create mode 100644 src/app/api/sites/domains/[domainId]/route.ts
+ create mode 100644 src/app/api/webhooks/stripe-account/[id]/route.ts
+ create mode 100644 src/app/i/[token]/page.tsx
+ create mode 100644 src/app/invoices/page.tsx
+ create mode 100644 src/lib/billing/invoices.ts
+ create mode 100644 src/lib/billing/plans.ts
+ create mode 100644 src/lib/payments/stripe-accounts.ts
+ create mode 100644 src/lib/sites/domains.ts
+ create mode 100644 supabase/migrations/20261011120000_phase6_business_layer.sql
+ create mode 100644 supabase/tests/phase6_business.test.sql
+ create mode 100644 tests/unit/phase6-billing.test.ts
+
+diff --git a/docs/architecture/API_ARCHITECTURE.md b/docs/architecture/API_ARCHITECTURE.md
+index ca58000..559d02f 100644
+--- a/docs/architecture/API_ARCHITECTURE.md
++++ b/docs/architecture/API_ARCHITECTURE.md
+@@ -115,6 +115,26 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
+ | `GET/POST /api/knowledge`, `PATCH/DELETE /api/knowledge/:id` | crm.read / crm.write (approve: sites.manage) / crm.delete | Knowledge items |
+ | `GET /s/:site/:page?`, `GET /f/:slug` | public | Live site pages (published copy only) and hosted forms |
+ 
++### Phase 6 endpoints (plans, invoices, payments, domains)
++
++| Method & path | Permission | Purpose |
++|---|---|---|
++| `GET /api/billing` | org.read | Plan, status and usage; agencies also get their plans and client accounts with usage |
++| `POST /api/billing` | org.manage (agency) | Create or update an agency plan (price, limits per metric) |
++| `POST /api/billing/govern` | org.manage | `{org_id, plan?, status?}`; the database allows platform staff or the parent agency's admins only |
++| `GET/POST/DELETE /api/billing/stripe` | org.read / org.manage | The organization's own Stripe account: connect (key validated, webhook endpoint created automatically or secret pasted), status, disconnect |
++| `GET/PUT /api/organization/branding` | org.read / org.manage | Name, logo, color and support contacts shown on customer pages |
++| `GET /api/organization/export` | owner/admin of the org or its agency | Full JSON export; works while the account is suspended |
++| `GET/POST /api/invoices` | crm.read / crm.write | List (`kind`, `status`, `contact_id`) and create invoices or estimates |
++| `GET/PUT /api/invoices/:id`, `POST {action: send/void/accept/decline/convert/record_payment}` | crm.read / crm.write (manual payments, accept/decline: manager) | Detail with payments and customer link; edit drafts; lifecycle actions |
++| `POST /api/invoices/payments/:id {action: refund}` | manager | Refund a card payment through the business's Stripe account |
++| `POST /api/webhooks/stripe-account/:accountId` | Stripe signature (per-account secret) | `checkout.session.completed`, `charge.refunded`; idempotent |
++| `GET/POST /api/public/invoice/:token` | public, rate-limited | Customer view; `{action: pay}` returns a Stripe Checkout URL, `accept`/`decline` for estimates |
++| `GET/POST /api/sites/:id/domains`, `POST/DELETE /api/sites/domains/:domainId` | crm.read / sites.manage | Custom domains; `{action: verify}` checks the `_sun-verify` TXT record |
++| `GET /i/:token` | public | Customer invoice and estimate page |
++
++Plan limits surface as HTTP 402 with code `plan_limit`.
++
+ Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>`. They are sent with `publicFetch`, so private and internal addresses are refused, and time out after 10 seconds.
+ 
+ ## 4. Conventions for new endpoints
+@@ -122,7 +142,7 @@ Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(
+ - **Paths:** `/api/<module>/<resource>[/:id][/<sub-resource>]`; plural resource names.
+ - **Pagination:** `limit` (≤200) + `offset` now; switch to keyset (`before` cursor) for append-only streams (audit, messages).
+ - **Idempotency:** client-supplied `Idempotency-Key` header on create endpoints that trigger external effects (messages, payments, calls). Store it with a unique constraint per org.
+-- **Errors:** `{ error: string (human), code: string (machine) }`. Codes in use: `unauthenticated`, `no_organization`, `forbidden`, `csrf`, `invalid`, `invalid_reference`, `conflict`, `not_found`, `too_large`, `rate_limited`, `integration_not_configured`, `server_error`.
++- **Errors:** `{ error: string (human), code: string (machine) }`. Codes in use: `unauthenticated`, `no_organization`, `forbidden`, `csrf`, `invalid`, `invalid_reference`, `conflict`, `not_found`, `too_large`, `rate_limited`, `plan_limit`, `integration_not_configured`, `server_error`.
+ - **"Integration not configured"** is always a `503` with code `integration_not_configured` and a settings path. The UI shows it; nothing is ever simulated.
+ - **Long-running work** (bulk sends, audits at scale, AI autonomous jobs) returns `202` with a job ID; progress through Supabase Realtime on the job row.
+ 
+diff --git a/docs/architecture/DATABASE_SCHEMA.md b/docs/architecture/DATABASE_SCHEMA.md
+index dd91ff3..1e6818e 100644
+--- a/docs/architecture/DATABASE_SCHEMA.md
++++ b/docs/architecture/DATABASE_SCHEMA.md
+@@ -186,9 +186,23 @@ Verified by `supabase/tests/phase5_sites.test.sql` (22 assertions; 177 in total)
+ - `sites`, `pages`, `forms`, `form_submissions`, `templates`
+ - `knowledge_items (type, content, version, status draft/approved, approved_by)` with `pgvector` embeddings
+ 
+-### Phase 6–8
+-- `plans`, `subscriptions`, `usage_events`, `invoices`, `invoice_items`, `payments`, `refunds`, `price_overrides` (agency markup)
+-- `domains (hostname unique, organization_id, verified_at)`, `sender_domains`
++### Phase 6 (part 1 implemented: `20261011120000_phase6_business_layer.sql`)
++
++| Table / function | Purpose and key rules |
++|---|---|
++| `organizations` guard (fix) | The API can no longer change `kind`, `parent_id`, `slug`, `created_by`, `status` or `plan`; `govern_organization()` changes plan and status for platform staff or the parent agency's admins |
++| `plans` | Platform plans (`internal`, `starter`, `growth`, `pro`) and agency-owned plans; `limits` jsonb per metric; `organizations.plan` references it. New accounts default to `internal` (no limits) |
++| `usage_events`, `org_usage()` | Metered by triggers: texts and emails sent, AI requests, outreach sent. `check_plan_limit()` raises SQLSTATE 53400 before a message is queued, an AI request is made, outreach is sent, or a contact, member or site is added over the limit |
++| `payment_accounts` | The organization's own Stripe credentials, encrypted; column grants hide them; `payment_secret()` for managers (server use) |
++| `invoices` | Invoices and estimates; totals, tax and deposit computed in the database; numbers `INV-`/`EST-` per org; restricted status transitions; paid invoices cannot be edited; random public token |
++| `payments` | Card payments (service role, unique per provider id) and manual payments (managers); none on drafts, estimates or void invoices; a trigger recomputes amount paid and status |
++| `site_domains`, `site_slug_for_domain()` | Custom domains with a verification token; only the service role marks a domain verified; the lookup returns verified domains of published sites only |
++
++Verified by `supabase/tests/phase6_business.test.sql` (30 assertions; 207 in total).
++
++### Phase 6 (planned remainder) – 8
++- `subscriptions` (platform SaaS billing of agencies), `price_overrides` (agency markup on usage)
++- `sender_domains`
+ - `metrics_daily`, `touchpoints`, `ad_accounts`, `ad_spend_daily`
+ - `affiliates`, `referral_links`, `referrals`, `commission_rules`, `payouts`
+ - `marketplace_listings`, `installs`, `bundles`
+diff --git a/docs/architecture/IMPLEMENTATION_PLAN.md b/docs/architecture/IMPLEMENTATION_PLAN.md
+index e238db6..830ea92 100644
+--- a/docs/architecture/IMPLEMENTATION_PLAN.md
++++ b/docs/architecture/IMPLEMENTATION_PLAN.md
+@@ -119,6 +119,17 @@ Rollback: `drop table public.outreach_messages, public.prospect_audits, public.p
+ 
+ Rollback: `drop table public.form_submissions, public.forms, public.site_pages, public.sites, public.knowledge_items cascade;` then drop the function `search_knowledge`.
+ 
++## 2f. Deploying Phase 6 (plans, invoices, payments, domains)
++
++1. Apply `supabase/migrations/20261011120000_phase6_business_layer.sql`. It includes a **security fix**: before it, a client account's admin could change their own plan or status, or move the account under another agency.
++2. No new environment variables. `PUBLIC_APP_URL` (already required) is used for invoice links and the Stripe webhook address; `SUPABASE_SERVICE_ROLE_KEY` for customer pages, webhooks and domain verification.
++3. Every existing and new account starts on the `internal` plan (no limits) until an agency assigns a plan in **Plan & account**.
++4. Card payments: in **Plan & account**, paste a Stripe **test** secret key first (`sk_test_…`). The console creates the webhook endpoint in that Stripe account. With a restricted key that cannot create webhooks, add the endpoint shown on the page in Stripe (events `checkout.session.completed`, `charge.refunded`) and paste its signing secret.
++5. Custom domains: the client adds the TXT record shown in the site editor and presses Verify; point the domain at the console with a CNAME; then add the domain as a **domain alias** on the Netlify site so it gets a certificate. Unknown hosts keep serving the normal console.
++6. Smoke test: create an invoice with a deposit, send it, pay the deposit with Stripe's test card `4242 4242 4242 4242`, confirm the payment appears and the status becomes *partially paid*, then refund it. Accept an estimate from its customer link and convert it to an invoice.
++
++Rollback: `drop table public.site_domains, public.payments, public.invoices, public.payment_accounts, public.usage_events cascade;` drop the limit and metering triggers, then `alter table organizations drop constraint organizations_plan_fkey; drop table public.plans;`. Keep the organization guard fix.
++
+ ## 3. Development workflow
+ 
+ ```bash
+diff --git a/docs/architecture/MASTER_ARCHITECTURE.md b/docs/architecture/MASTER_ARCHITECTURE.md
+index d181b86..20068c8 100644
+--- a/docs/architecture/MASTER_ARCHITECTURE.md
++++ b/docs/architecture/MASTER_ARCHITECTURE.md
+@@ -1,6 +1,6 @@
+ # Sun Marketing Console — Master Architecture
+ 
+-> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) Phase 4 part 1 (Lead Finder) and Phase 5 part 1 (sites, forms, knowledge) implemented (October 2026).
++> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) Phase 4 part 1 (Lead Finder) Phase 5 part 1 (sites, forms, knowledge) and Phase 6 part 1 (plans and limits, invoices and payments, custom domains) implemented (October 2026).
+ > **Companion documents:** [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) · [DATABASE_SCHEMA](DATABASE_SCHEMA.md) · [API_ARCHITECTURE](API_ARCHITECTURE.md) · [SECURITY_PLAN](SECURITY_PLAN.md) · [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md)
+ 
+ ## 1. Product thesis
+@@ -96,21 +96,21 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
+ |---|---|---|---|
+ | 1 | Positioning: AI growth OS | 🟡→🆕 | Navigation now leads with **AI operator**; messaging update pending |
+ | 2 | AI Command Center with permission ladder and audit | 🆕 | Chat operator, 11 tools, observe/recommend/approve/auto per category, DB-enforced, audit trail. Creates/modifies CRM records, deals and tasks today; campaigns, workflows, pages and agents arrive with their modules |
+-| 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. **Missing:** white-label domains/branding (Phase 6), billing/plans/limits (Phase 6), transfer, self-serve onboarding, invitations by email |
++| 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. Phase 6 part 1 adds plans with database-enforced limits and metering, agency governance (plan, suspend), branding on customer pages, custom domains and full data export. **Missing:** branded login, SaaS subscription billing, transfer, self-serve onboarding, invitations by email |
+ | 4 | CRM | 🟡→🆕 | Contacts, companies, pipelines, stages, deals, tasks, notes, tags, custom field definitions, activity history, drag-and-drop board, explainable lead scoring. **Missing:** custom objects UI, custom field editor UI, ownership routing, merge/dedupe UI, import/export UI |
+ | 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
+ | 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
+ | 7 | SMS and messaging | 🆕 (Phase 2 part 1) | Provider layer (Telnyx, Twilio, Resend) with failover, unified inbox, scheduling, consent/opt-out/quiet-hours gate, verified webhooks, STOP/START. **Missing:** web chat, WhatsApp, 10DLC registry UI, bulk sends (Phase 3 campaigns) |
+ | 8 | Reputation and Trust Center | 🆕 (Phase 3 part 1) | Reviews (manual/CSV), reply drafts incl. AI, explained Reputation Health Score, non-gated review requests, complaint tasks. **Missing:** Google/Facebook sync, widgets, competitor comparison |
+ | 9 | Lead generation engine | 🆕 (Phase 4 part 1) | Tenant-scoped Lead Finder, audits at scale with business-email discovery, explained Opportunity Score, CAN-SPAM email outreach with one-click unsubscribe and volume limits, convert to CRM, AI tools. **Missing:** paid data providers (ratings), reply detection, sequences |
+-| 10 | Websites, funnels, forms | 🆕 (Phase 5 part 1) | Hosted multi-tenant sites on the Puck editor with industry templates, draft/publish by managers, forms builder with consent capture and automation trigger. **Missing:** custom domains, surveys/quizzes, A/B tests |
++| 10 | Websites, funnels, forms | 🆕 (Phase 5 part 1) | Hosted multi-tenant sites on the Puck editor with industry templates, draft/publish by managers, forms builder with consent capture and automation trigger. Custom domains (Phase 6). **Missing:** surveys/quizzes, A/B tests |
+ | 11 | Workflow automation | 🆕 (Phase 3 part 1) | Event-triggered, versioned automations with templates, AI drafting, compliance-gated messaging, signed webhooks, per-step run logs. **Missing:** branching graphs, queue faster than the 15-minute scheduler |
+ | 12 | Calendars | 🆕 (Phase 3 part 1) | Personal/round-robin/resource calendars, public booking, reminders, reschedule/cancel, no double booking, AI booking tools. **Missing:** Google/Microsoft sync, waitlists |
+ | 13 | Email marketing | 🟡 | Resend broadcasts with approval. **Missing:** sequences, A/B, tracking, segmentation, provider abstraction |
+ | 14 | Social | ❌ | — |
+ | 15 | Ads and attribution | ❌ | — |
+ | 16 | Affiliates and referrals | ❌ | — |
+-| 17 | Payments and billing | 🟡 | Stripe Checkout for proposals. **Missing:** invoices, estimates, subscriptions, SaaS billing, rebilling, payment abstraction |
++| 17 | Payments and billing | 🆕 (Phase 6 part 1) | Invoices and estimates with deposits and tax, customer pay/accept page, card payments into each business's own Stripe account with verified webhooks and refunds, manual payments. **Missing:** subscriptions, SaaS billing of agencies, rebilling with markup, other processors |
+ | 18 | Knowledge base | 🆕 (Phase 5 part 1) | Versioned, approval-gated facts with full-text search, used by the AI operator and AI site copy. **Missing:** vector search, receptionist integration |
+ | 19 | Analytics and revenue intelligence | 🟡 | Dashboard KPIs; the AI can answer pipeline questions via `pipeline_summary`. **Missing:** metrics store, attribution, AI analyst over all data |
+ | 20 | Industry modules | 🟡 | Industry lists in receptionist and radar. **Missing:** installable template bundles |
+diff --git a/docs/architecture/PRODUCT_ROADMAP.md b/docs/architecture/PRODUCT_ROADMAP.md
+index 3f3869e..fed3919 100644
+--- a/docs/architecture/PRODUCT_ROADMAP.md
++++ b/docs/architecture/PRODUCT_ROADMAP.md
+@@ -148,9 +148,20 @@ Exit criteria (verify after deploy):
+ 
+ ## Phase 6: SaaS business layer
+ 
+-- Plans, feature packages, limits and metering (`usage_events`), Stripe Billing behind a payments abstraction
+-- Agency rebilling with markup on usage (messages, minutes, AI tokens), client invoices, estimates, deposits, payment links, refunds
+-- White-label: custom domains, branding, sender domains, branded login, client onboarding wizard, account transfer, suspension, data export
++**Part 1 implemented (patch 0008):**
++- **Security fix:** client admins can no longer change their own plan or status or move their account to another agency; agencies govern their clients through a checked database function.
++- **Plans and limits:** platform and agency-defined plans with monthly limits (texts, emails, AI requests, outreach) and totals (contacts, team members, websites). Usage is metered and limits are enforced by the database, so no code path can skip them. Agencies assign plans and suspend or reactivate client accounts.
++- **Invoices and estimates:** line items, tax, deposits, due dates and notes. The customer gets a branded link to pay by card or accept/decline an estimate. Accepted estimates become invoices. Cash and check payments can be recorded; card payments can be refunded.
++- **Payments** go into each business's own Stripe account (Checkout), confirmed by a signed webhook per account. The platform never holds client money.
++- **Custom domains** for hosted sites, proven with a DNS TXT record.
++- **Branding** (name, logo, color, support contacts) on customer pages, and a **full data export** that works even while suspended.
++- **AI tools:** `invoice_summary`, `usage_summary` (read-only).
++
++**Remaining:**
++
++- Platform subscription billing of agencies (Stripe Billing) and feature packages
++- Agency rebilling with markup on usage (messages, minutes, AI tokens)
++- White-label: sender domains, branded login, client onboarding wizard, account transfer, automatic domain certificates through the host's API
+ 
+ ## Phase 7: Analytics and attribution
+ 
+diff --git a/docs/architecture/SECURITY_PLAN.md b/docs/architecture/SECURITY_PLAN.md
+index 17fbb01..326ba36 100644
+--- a/docs/architecture/SECURITY_PLAN.md
++++ b/docs/architecture/SECURITY_PLAN.md
+@@ -85,6 +85,18 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
+ | Contact matching | Exact email, or phone only when that contact has no different email, so strangers cannot attach submissions or consent to someone else's record |
+ | AI and facts | The operator and AI site copy use approved knowledge only; editing approved facts re-opens approval; AI-created knowledge is always a draft |
+ 
++## 2e. Controls added in Phase 6 (plans, payments, domains)
++
++| Control | Implementation |
++|---|---|
++| Organization governance (fix) | API changes to an organization's kind, parent, slug, creator, status and plan are refused by a trigger. `govern_organization()` lets only platform staff or admins of the parent agency change plan or status |
++| Plan limits | Checked in the database (definer triggers) before the action, so the API, AI operator, automations and webhooks are all covered; usage rows are written by triggers, not clients |
++| Payment credentials | Each business's Stripe key is encrypted with `APP_ENCRYPTION_KEY`; column privileges keep it out of API reads; only the last four characters are shown |
++| Payment integrity | Card payments are recorded only from a Stripe webhook verified with that account's own signing secret; amounts come from Stripe, not the browser; one row per Stripe payment; totals and paid status are computed in the database; paid invoices cannot be edited |
++| Customer pages | Random 144-bit tokens; drafts are never shown; closed accounts are hidden; only display fields leave the server (no internal ids or emails) |
++| Custom domains | Only the server marks a domain verified, after its own DNS lookup of the TXT token; only verified domains of published sites are routed, and only to that site's pages; unknown hosts fall through to the normal console |
++| Data portability | Owners and admins (and the managing agency's) can export everything, including while suspended |
++
+ ## 2. Controls implemented in Phase 1
+ 
+ | Control | Implementation |
+diff --git a/src/app/account/page.tsx b/src/app/account/page.tsx
+new file mode 100644
+index 0000000..eafe75e
+--- /dev/null
++++ b/src/app/account/page.tsx
+@@ -0,0 +1,145 @@
++"use client";
++import { useState } from "react";
++import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
++import { api, atLeast, Org, useResource } from "@/components/tenant/client";
++import { Copy, useToast } from "@/components/ui";
++
++type Use = { metric: string; used: number; limit: number | null; label?: string; period?: string };
++type Plan = { key: string; name: string; description?: string | null; price_cents?: number; limits: Record<string, number>; owner_org_id?: string | null };
++type Billing = { plan: Plan; status: string; usage: Use[]; agency: null | { plans: Plan[]; clients: { id: string; name: string; status: string; plan: string; usage: Use[] }[] } };
++const METRICS: [string, string][] = [["sms", "Texts / month"], ["email", "Emails / month"], ["ai_request", "AI requests / month"], ["outreach_email", "Outreach emails / month"], ["contacts", "Contacts"], ["users", "Team members"], ["sites", "Websites"]];
++const usd = (c?: number) => ((c ?? 0) / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
++
++function Meter({ u }: { u: Use }) {
++  const pct = u.limit ? Math.min(100, Math.round((u.used / u.limit) * 100)) : 0;
++  return (
++    <div className="stack" style={{ gap: 4 }}>
++      <div className="row small" style={{ justifyContent: "space-between" }}><span>{u.label}{u.period === "month" ? " this month" : ""}</span><span>{u.used.toLocaleString()} / {u.limit == null ? "unlimited" : u.limit.toLocaleString()}</span></div>
++      <div style={{ height: 6, borderRadius: 3, background: "var(--line)" }}><div style={{ width: `${u.limit == null ? 0 : pct}%`, height: 6, borderRadius: 3, background: pct >= 90 ? "var(--bad, #dc2626)" : "var(--accent, #f97316)" }} /></div>
++    </div>
++  );
++}
++
++function Agency({ b, reload, toast }: { b: NonNullable<Billing["agency"]>; reload: () => void; toast: (m: string) => void }) {
++  const [form, setForm] = useState({ key: "", name: "", price: "", limits: {} as Record<string, string> });
++  const govern = async (org_id: string, change: Record<string, string>, done: string) => { try { await api("/api/billing/govern", { body: { org_id, ...change } }); toast(done); reload(); } catch (e) { toast(e instanceof Error ? e.message : "That did not work."); } };
++  return (
++    <>
++      <div className="card">
++        <div className="card-head"><div><h3>Client accounts</h3><div className="sub">Assign plans and suspend or reactivate accounts. Suspended accounts can still export their data.</div></div></div>
++        {b.clients.length === 0 ? <div className="empty"><h3>No client accounts yet</h3></div> : <div className="table-wrap"><table><thead><tr><th>Client</th><th>Plan</th><th>Usage</th><th>Status</th></tr></thead><tbody>
++          {b.clients.map((c) => (
++            <tr key={c.id}>
++              <td className="small"><strong>{c.name}</strong></td>
++              <td><label className="sr-only" htmlFor={`pl-${c.id}`}>Plan for {c.name}</label><select id={`pl-${c.id}`} className="select" value={c.plan} onChange={(e) => govern(c.id, { plan: e.target.value }, "Plan changed.")}>
++                {c.plan === "internal" && <option value="internal">Unlimited (no plan)</option>}
++                {b.plans.map((p) => <option key={p.key} value={p.key}>{p.name} · {usd(p.price_cents)}/mo</option>)}
++              </select></td>
++              <td className="tiny muted">{c.usage.filter((u) => u.used > 0).map((u) => `${u.metric.replace("_", " ")} ${u.used}${u.limit != null ? `/${u.limit}` : ""}`).join(" · ") || "—"}</td>
++              <td><span className={`pill ${c.status === "active" ? "pill-ok" : "pill-bad"}`}>{c.status}</span>{" "}
++                {c.status === "active" ? <button className="btn btn-sm btn-ghost" onClick={() => { if (window.confirm(`Suspend ${c.name}? Their team loses access to the tools (data is kept).`)) govern(c.id, { status: "suspended" }, "Suspended."); }}>Suspend</button>
++                  : c.status === "suspended" ? <button className="btn btn-sm btn-ghost" onClick={() => govern(c.id, { status: "active" }, "Reactivated.")}>Reactivate</button> : null}</td>
++            </tr>
++          ))}
++        </tbody></table></div>}
++      </div>
++      <div className="card">
++        <div className="card-head"><div><h3>Your plans</h3><div className="sub">Define what clients get. Leave a limit blank for unlimited. Limits are enforced automatically.</div></div></div>
++        <div className="card-pad stack">
++          {b.plans.map((p) => <div key={p.key} className="small"><strong>{p.name}</strong> <span className="muted">({p.key}{p.owner_org_id ? "" : ", platform"}) · {usd(p.price_cents)}/mo · {Object.entries(p.limits).map(([k, v]) => `${k.replace("_", " ")} ${v.toLocaleString()}`).join(", ") || "unlimited"}</span></div>)}
++          <div className="field-grid">
++            <div className="field"><label htmlFor="np-key">Plan id</label><input id="np-key" className="input" placeholder="pro-plus" value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} /></div>
++            <div className="field"><label htmlFor="np-name">Name</label><input id="np-name" className="input" placeholder="Pro Plus" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
++            <div className="field"><label htmlFor="np-price">Monthly price ($)</label><input id="np-price" className="input" inputMode="decimal" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></div>
++            {METRICS.map(([k, label]) => <div key={k} className="field"><label htmlFor={`np-${k}`}>{label}</label><input id={`np-${k}`} className="input" inputMode="numeric" placeholder="unlimited" value={form.limits[k] ?? ""} onChange={(e) => setForm({ ...form, limits: { ...form.limits, [k]: e.target.value } })} /></div>)}
++          </div>
++          <div><button className="btn btn-primary btn-sm" disabled={!form.key || !form.name} onClick={async () => {
++            const limits = Object.fromEntries(Object.entries(form.limits).filter(([, v]) => v.trim() !== "").map(([k, v]) => [k, Math.max(0, Math.round(Number(v) || 0))]));
++            try { await api("/api/billing", { body: { key: form.key, name: form.name, price_cents: Math.round((Number(form.price) || 0) * 100), limits } }); toast("Plan saved."); setForm({ key: "", name: "", price: "", limits: {} }); reload(); }
++            catch (e) { toast(e instanceof Error ? e.message : "Could not save."); }
++          }}>Save plan</button></div>
++        </div>
++      </div>
++    </>
++  );
++}
++
++function Payments({ manage, toast }: { manage: boolean; toast: (m: string) => void }) {
++  const { data, reload } = useResource<{ account: { label: string | null; credential_hint: string | null; created_at: string } | null; webhook_url: string | null }>("/api/billing/stripe");
++  const [key, setKey] = useState("");
++  const [whsec, setWhsec] = useState("");
++  const [busy, setBusy] = useState(false);
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Card payments (Stripe)</h3><div className="sub">Customers pay invoices into your own Stripe account. The platform never holds your money.</div></div></div>
++      <div className="card-pad stack">
++        {data?.account ? <>
++          <div className="small"><span className="pill pill-ok">Connected</span> {data.account.label || "Stripe"} · key ending {data.account.credential_hint}</div>
++          {data.webhook_url && <div className="small" style={{ wordBreak: "break-all" }}>Webhook address: <span className="mono">{data.webhook_url}</span> <Copy text={data.webhook_url} /></div>}
++          {manage && <div><button className="btn btn-sm btn-ghost" onClick={async () => { if (!window.confirm("Disconnect Stripe? Customers will not be able to pay by card.")) return; try { await api("/api/billing/stripe", { method: "DELETE" }); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>Disconnect</button></div>}
++        </> : <>
++          <p className="notice notice-warn small"><strong>Integration not configured.</strong> Paste a Stripe secret key (or a restricted key with Checkout, Charges, Refunds and Webhook Endpoints access). Use a test key (sk_test_…) first.</p>
++          {manage ? <>
++            <div className="field"><label htmlFor="sk">Stripe secret key</label><input id="sk" className="input" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk_live_… or rk_live_…" /></div>
++            <div className="field"><label htmlFor="wh">Webhook signing secret (only if your key can&apos;t create webhooks)</label><input id="wh" className="input" type="password" autoComplete="off" value={whsec} onChange={(e) => setWhsec(e.target.value)} placeholder="whsec_… (optional)" /></div>
++            <div><button className="btn btn-primary btn-sm" disabled={busy || key.length < 10} onClick={async () => {
++              setBusy(true);
++              try { const r = await api<{ note?: string | null }>("/api/billing/stripe", { body: { secret_key: key, webhook_secret: whsec || undefined } }); setKey(""); setWhsec(""); toast(r.note || "Stripe connected."); reload(); }
++              catch (e) { toast(e instanceof Error ? e.message : "Could not connect."); } finally { setBusy(false); }
++            }}>{busy ? <span className="spin" /> : "Connect Stripe"}</button></div>
++          </> : <p className="small muted">Ask an admin to connect Stripe.</p>}
++        </>}
++      </div>
++    </div>
++  );
++}
++
++function Branding({ manage, toast }: { manage: boolean; toast: (m: string) => void }) {
++  const { data } = useResource<{ branding: Record<string, string> }>("/api/organization/branding");
++  const [b, setB] = useState<Record<string, string> | null>(null);
++  const v = b ?? data?.branding ?? {};
++  const set = (k: string, val: string) => setB({ ...v, [k]: val });
++  const fields: [string, string, string][] = [["display_name", "Business name shown to customers", "Smith Plumbing"], ["logo_url", "Logo image address (https)", "https://…/logo.png"], ["color", "Brand color", "#f97316"], ["support_email", "Support email", "hello@…"], ["support_phone", "Support phone", "(555) 555-0100"]];
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Branding</h3><div className="sub">Used on invoices, estimates and other customer pages.</div></div></div>
++      <div className="card-pad stack">
++        <div className="field-grid">{fields.map(([k, label, ph]) => <div key={k} className="field"><label htmlFor={`br-${k}`}>{label}</label><input id={`br-${k}`} className="input" disabled={!manage} placeholder={ph} value={v[k] ?? ""} onChange={(e) => set(k, e.target.value)} /></div>)}</div>
++        {manage && <div><button className="btn btn-sm btn-primary" disabled={!b} onClick={async () => {
++          const body = Object.fromEntries(Object.entries(v).filter(([, x]) => x && String(x).trim()));
++          try { await api("/api/organization/branding", { method: "PUT", body }); setB(null); toast("Branding saved."); } catch (e) { toast(e instanceof Error ? e.message : "Could not save."); }
++        }}>Save branding</button></div>}
++      </div>
++    </div>
++  );
++}
++
++function Account({ org }: { org: Org }) {
++  const { data, error, loading, reload } = useResource<Billing>("/api/billing");
++  const { toast, node } = useToast();
++  if (loading && !data) return <Loading />;
++  if (error) return <ErrorState message={error} onRetry={reload} />;
++  if (!data) return null;
++  const manage = atLeast(org.role, "admin");
++  return (
++    <div className="stack">
++      {data.status === "suspended" && <div className="notice notice-warn small"><strong>This account is suspended.</strong> Contact your provider to reactivate. You can still export your data below.</div>}
++      <div className="card">
++        <div className="card-head"><div><h3>Plan: {data.plan.key === "internal" ? "Unlimited" : data.plan.name}</h3><div className="sub">{data.plan.key === "internal" ? "No plan limits apply to this account." : `${usd(data.plan.price_cents)}/month. When a limit is reached, that action pauses until next month or a plan change.`}</div></div></div>
++        <div className="card-pad stack">{data.usage.map((u) => <Meter key={u.metric} u={u} />)}</div>
++      </div>
++      {data.agency && <Agency b={data.agency} reload={reload} toast={toast} />}
++      <Payments manage={manage} toast={toast} />
++      <Branding manage={manage} toast={toast} />
++      <div className="card card-pad row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
++        <div><strong>Export all data</strong><div className="small muted">Download every contact, conversation, invoice, page and record as JSON. Owners and admins only.</div></div>
++        <a className="btn btn-sm" href="/api/organization/export">Download export</a>
++      </div>
++      {node}
++    </div>
++  );
++}
++
++export default function AccountPage() {
++  return <TenantGate title="Plan & account" subtitle="Usage, client plans, payments, branding and data export.">{(info) => <Account org={info.org} />}</TenantGate>;
++}
+diff --git a/src/app/api/billing/govern/route.ts b/src/app/api/billing/govern/route.ts
+new file mode 100644
+index 0000000..b92bedb
+--- /dev/null
++++ b/src/app/api/billing/govern/route.ts
+@@ -0,0 +1,13 @@
++import { z } from "zod";
++import { readJson, scoped, tenantRoute } from "@/lib/tenant/api";
++import { govern } from "@/lib/billing/plans";
++
++export const dynamic = "force-dynamic";
++
++// Agency admins change a client account's plan or suspend/reactivate it.
++// The database decides who may (govern_organization).
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  const input = await readJson(req, z.object({ org_id: z.string().uuid(), status: z.enum(["active", "suspended", "closed"]).optional(), plan: z.string().max(41).optional() }));
++  await govern(scoped(ctx), input.org_id, { status: input.status, plan: input.plan });
++  return { ok: true };
++});
+diff --git a/src/app/api/billing/route.ts b/src/app/api/billing/route.ts
+new file mode 100644
+index 0000000..7dd0061
+--- /dev/null
++++ b/src/app/api/billing/route.ts
+@@ -0,0 +1,21 @@
++import { ApiError, readJson, scoped, tenantRoute } from "@/lib/tenant/api";
++import { availablePlans, clientAccounts, planInput, savePlan, usage } from "@/lib/billing/plans";
++import { can } from "@/lib/tenant/rbac";
++
++export const dynamic = "force-dynamic";
++
++// Plan and usage for the active organization; agencies also get their client
++// accounts and the plans they can assign.
++export const GET = tenantRoute("org.read", async (ctx) => {
++  const c = scoped(ctx);
++  const mine = await usage(c);
++  if (ctx.org.kind !== "agency" || !can(ctx.org.role, "org.manage")) return { ...mine, agency: null };
++  const [plans, clients] = await Promise.all([availablePlans(c, ctx.org.id), clientAccounts(c, ctx.org.id)]);
++  return { ...mine, agency: { plans, clients } };
++});
++
++// Agencies define their own plans (price and limits) for client accounts.
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  if (ctx.org.kind !== "agency") throw new ApiError("Only agencies create plans.", 403, "forbidden");
++  return { plan: await savePlan(scoped(ctx), ctx.org.id, await readJson(req, planInput)) };
++});
+diff --git a/src/app/api/billing/stripe/route.ts b/src/app/api/billing/stripe/route.ts
+new file mode 100644
+index 0000000..12c334a
+--- /dev/null
++++ b/src/app/api/billing/stripe/route.ts
+@@ -0,0 +1,28 @@
++import { z } from "zod";
++import { fromDb, readJson, tenantRoute } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { publicBaseUrl } from "@/lib/supabase/system";
++import { ACCOUNT_COLUMNS, connectStripe, webhookUrl } from "@/lib/payments/stripe-accounts";
++
++export const dynamic = "force-dynamic";
++
++export const GET = tenantRoute("org.read", async (ctx, req) => {
++  const { data, error } = await ctx.client.from("payment_accounts").select(ACCOUNT_COLUMNS).eq("organization_id", ctx.org.id).eq("status", "active").maybeSingle();
++  fromDb(error);
++  const base = publicBaseUrl(req);
++  return { account: data, webhook_url: data && base ? webhookUrl(base, data.id) : null };
++});
++
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  const input = await readJson(req, z.object({ secret_key: z.string().trim().min(10).max(300), webhook_secret: z.string().trim().max(300).optional(), label: z.string().trim().max(80).optional() }));
++  const r = await connectStripe(ctx.client, ctx.org.id, ctx.session.user.id, input, req);
++  await audit(ctx.client, ctx.org.id, "payments.connected", { type: "payment_account", id: r.account.id }, { webhook_ready: r.webhook_ready });
++  return r;
++});
++
++export const DELETE = tenantRoute("org.manage", async (ctx) => {
++  const { error } = await ctx.client.from("payment_accounts").update({ status: "disabled" }).eq("organization_id", ctx.org.id).eq("status", "active");
++  fromDb(error);
++  await audit(ctx.client, ctx.org.id, "payments.disconnected", null);
++  return { ok: true };
++});
+diff --git a/src/app/api/invoices/[id]/route.ts b/src/app/api/invoices/[id]/route.ts
+new file mode 100644
+index 0000000..2e8ad88
+--- /dev/null
++++ b/src/app/api/invoices/[id]/route.ts
+@@ -0,0 +1,37 @@
++import { z } from "zod";
++import { ApiError, readJson, scoped, tenantRoute, uuid } from "@/lib/tenant/api";
++import { can } from "@/lib/tenant/rbac";
++import { convertEstimate, invoiceDetail, invoiceInput, manualPaymentInput, recordManualPayment, sendInvoice, setStatus, updateDraft } from "@/lib/billing/invoices";
++
++export const dynamic = "force-dynamic";
++type P = { id: string };
++
++export const GET = tenantRoute<P>("crm.read", async (ctx, _req, { id }) => invoiceDetail(scoped(ctx), uuid.parse(id)));
++export const PUT = tenantRoute<P>("crm.write", async (ctx, req, { id }) => ({ invoice: await updateDraft(scoped(ctx), uuid.parse(id), await readJson(req, invoiceInput)) }));
++
++const action = z.discriminatedUnion("action", [
++  z.object({ action: z.literal("send") }),
++  z.object({ action: z.literal("void") }),
++  z.object({ action: z.literal("accept") }),
++  z.object({ action: z.literal("decline") }),
++  z.object({ action: z.literal("convert") }),
++  z.object({ action: z.literal("record_payment"), ...manualPaymentInput.shape }),
++]);
++
++export const POST = tenantRoute<P>("crm.write", async (ctx, req, { id }) => {
++  const input = await readJson(req, action);
++  const c = scoped(ctx);
++  const iid = uuid.parse(id);
++  switch (input.action) {
++    case "send": return sendInvoice(c, iid, req);
++    case "void": return { invoice: await setStatus(c, iid, "void") };
++    case "accept": case "decline":
++      if (!can(ctx.org.role, "crm.delete")) throw new ApiError("A manager records a customer's decision.", 403, "forbidden");
++      return { invoice: await setStatus(c, iid, input.action === "accept" ? "accepted" : "declined") };
++    case "convert": return { invoice: await convertEstimate(c, iid) };
++    case "record_payment":
++      if (!can(ctx.org.role, "crm.delete")) throw new ApiError("A manager records payments.", 403, "forbidden");
++      await recordManualPayment(c, iid, input);
++      return invoiceDetail(c, iid);
++  }
++});
+diff --git a/src/app/api/invoices/payments/[id]/route.ts b/src/app/api/invoices/payments/[id]/route.ts
+new file mode 100644
+index 0000000..57d04e3
+--- /dev/null
++++ b/src/app/api/invoices/payments/[id]/route.ts
+@@ -0,0 +1,13 @@
++import { z } from "zod";
++import { readJson, scoped, tenantRoute, uuid } from "@/lib/tenant/api";
++import { systemClient } from "@/lib/supabase/system";
++import { refundPayment } from "@/lib/billing/invoices";
++
++export const dynamic = "force-dynamic";
++
++// { action: "refund", amount_cents? } refunds a card payment (managers).
++export const POST = tenantRoute<{ id: string }>("crm.delete", async (ctx, req, { id }) => {
++  const input = await readJson(req, z.object({ action: z.literal("refund"), amount_cents: z.number().int().positive().optional() }));
++  await refundPayment(scoped(ctx), systemClient(), uuid.parse(id), input.amount_cents);
++  return { ok: true };
++});
+diff --git a/src/app/api/invoices/route.ts b/src/app/api/invoices/route.ts
+new file mode 100644
+index 0000000..feed77c
+--- /dev/null
++++ b/src/app/api/invoices/route.ts
+@@ -0,0 +1,11 @@
++import { readJson, scoped, tenantRoute } from "@/lib/tenant/api";
++import { createInvoice, invoiceInput, listInvoices } from "@/lib/billing/invoices";
++
++export const dynamic = "force-dynamic";
++
++export const GET = tenantRoute("crm.read", async (ctx, req) => {
++  const url = new URL(req.url);
++  return { invoices: await listInvoices(scoped(ctx), { kind: url.searchParams.get("kind") || undefined, status: url.searchParams.get("status") || undefined, contactId: url.searchParams.get("contact") || undefined }) };
++});
++
++export const POST = tenantRoute("crm.write", async (ctx, req) => ({ invoice: await createInvoice(scoped(ctx), await readJson(req, invoiceInput)) }));
+diff --git a/src/app/api/organization/branding/route.ts b/src/app/api/organization/branding/route.ts
+new file mode 100644
+index 0000000..d1c67bc
+--- /dev/null
++++ b/src/app/api/organization/branding/route.ts
+@@ -0,0 +1,28 @@
++import { z } from "zod";
++import { fromDb, readJson, tenantRoute } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++
++export const dynamic = "force-dynamic";
++
++const branding = z.object({
++  display_name: z.string().trim().max(120).optional(),
++  logo_url: z.string().trim().max(500).refine((v) => !v || v.startsWith("https://"), "Use an https:// image address.").optional(),
++  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a color like #f97316.").optional(),
++  support_email: z.string().trim().max(254).optional(),
++  support_phone: z.string().trim().max(40).optional(),
++});
++
++export const GET = tenantRoute("org.read", async (ctx) => {
++  const { data, error } = await ctx.client.from("organizations").select("branding").eq("id", ctx.org.id).single();
++  fromDb(error);
++  return { branding: data?.branding || {} };
++});
++
++// Shown on customer-facing pages (invoices, estimates) instead of the platform's name.
++export const PUT = tenantRoute("org.manage", async (ctx, req) => {
++  const input = await readJson(req, branding);
++  const { error } = await ctx.client.from("organizations").update({ branding: input }).eq("id", ctx.org.id);
++  fromDb(error);
++  await audit(ctx.client, ctx.org.id, "organization.branding", null);
++  return { branding: input };
++});
+diff --git a/src/app/api/organization/export/route.ts b/src/app/api/organization/export/route.ts
+new file mode 100644
+index 0000000..d89601a
+--- /dev/null
++++ b/src/app/api/organization/export/route.ts
+@@ -0,0 +1,38 @@
++import { NextResponse } from "next/server";
++import { ApiError, fromDb, tenantRoute } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++
++export const dynamic = "force-dynamic";
++export const maxDuration = 60;
++
++const TABLES = [
++  "companies", "contacts", "consents", "opportunities", "tasks", "activities", "conversations", "messages", "suppressions",
++  "calendars", "appointments", "reviews", "review_requests", "workflows", "workflow_versions", "prospects", "outreach_messages",
++  "forms", "form_submissions", "sites", "site_pages", "knowledge_items", "invoices", "payments",
++] as const;
++
++// Full data export for the organization's owners and admins (and the managing
++// agency's admins). Works while an account is suspended, so data is never held hostage.
++export const GET = tenantRoute("org.read", async (ctx) => {
++  const uid = ctx.session.user.id;
++  const { data: org } = await ctx.client.from("organizations").select("id, name, parent_id, plan, status, timezone, created_at").eq("id", ctx.org.id).single();
++  const { data: roles } = await ctx.client.from("memberships").select("organization_id, role").eq("user_id", uid).eq("status", "active")
++    .in("organization_id", [ctx.org.id, org?.parent_id].filter(Boolean) as string[]);
++  if (!(roles || []).some((r) => ["owner", "admin"].includes(r.role))) throw new ApiError("Only owners and admins can export all data.", 403, "forbidden");
++  const out: Record<string, unknown> = { exported_at: new Date().toISOString(), organization: org };
++  for (const t of TABLES) {
++    const rows: unknown[] = [];
++    for (let from = 0; from < 200_000; from += 1000) {
++      const { data, error } = await ctx.client.from(t).select("*").eq("organization_id", ctx.org.id).range(from, from + 999);
++      if (error?.code === "42501" || error?.code === "42P01") break;
++      fromDb(error);
++      rows.push(...(data || []));
++      if (!data || data.length < 1000) break;
++    }
++    out[t] = rows;
++  }
++  await audit(ctx.client, ctx.org.id, "organization.exported", null, { tables: TABLES.length });
++  return new NextResponse(JSON.stringify(out, null, 1), {
++    headers: { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="export-${(org?.name || "organization").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json"`, "Cache-Control": "no-store" },
++  });
++});
+diff --git a/src/app/api/public/invoice/[token]/route.ts b/src/app/api/public/invoice/[token]/route.ts
+new file mode 100644
+index 0000000..5ee2dce
+--- /dev/null
++++ b/src/app/api/public/invoice/[token]/route.ts
+@@ -0,0 +1,46 @@
++import { NextResponse } from "next/server";
++import { z } from "zod";
++import { systemClient } from "@/lib/supabase/system";
++import { clientIp, takeLimit } from "@/lib/rate-limit";
++import { ApiError, errorResponse, readJson } from "@/lib/tenant/api";
++import { checkoutUrl, decideEstimate, publicInvoice } from "@/lib/billing/invoices";
++
++export const dynamic = "force-dynamic";
++type P = { params: Promise<{ token: string }> };
++
++async function setup(req: Request) {
++  if (!(await takeLimit("invoice-public", clientIp(req), 60, 600))) throw new ApiError("Too many requests.", 429, "rate_limited");
++  const system = systemClient();
++  if (!system) throw new ApiError("This page is not available right now.", 503, "integration_not_configured");
++  return system;
++}
++
++export async function GET(req: Request, { params }: P) {
++  try {
++    const system = await setup(req);
++    const found = await publicInvoice(system, (await params).token);
++    if (!found) throw new ApiError("This invoice is not available.", 404, "not_found");
++    const { invoice: i } = found;
++    return NextResponse.json({
++      business: found.business, branding: { display_name: found.branding.display_name, logo_url: found.branding.logo_url, color: found.branding.color, support_email: found.branding.support_email, support_phone: found.branding.support_phone },
++      customer: found.customer ? { name: [found.customer.first_name, found.customer.last_name].filter(Boolean).join(" ") } : null,
++      invoice: { kind: i.kind, number: i.number, status: i.status, currency: i.currency, line_items: i.line_items, tax_rate_bp: i.tax_rate_bp, subtotal_cents: i.subtotal_cents, tax_cents: i.tax_cents, total_cents: i.total_cents, deposit_cents: i.deposit_cents, amount_paid_cents: i.amount_paid_cents, due_date: i.due_date, notes: i.notes, created_at: i.created_at },
++      amount_due: found.amount_due, can_pay: found.can_pay,
++    }, { headers: { "Cache-Control": "no-store" } });
++  } catch (e) {
++    return errorResponse(e);
++  }
++}
++
++export async function POST(req: Request, { params }: P) {
++  try {
++    const system = await setup(req);
++    const token = (await params).token;
++    const { action } = await readJson(req, z.object({ action: z.enum(["pay", "accept", "decline"]) }));
++    if (action === "pay") return NextResponse.json({ url: await checkoutUrl(system, token, req) });
++    await decideEstimate(system, token, action === "accept" ? "accepted" : "declined");
++    return NextResponse.json({ ok: true });
++  } catch (e) {
++    return errorResponse(e);
++  }
++}
+diff --git a/src/app/api/sites/[id]/domains/route.ts b/src/app/api/sites/[id]/domains/route.ts
+new file mode 100644
+index 0000000..41319f6
+--- /dev/null
++++ b/src/app/api/sites/[id]/domains/route.ts
+@@ -0,0 +1,8 @@
++import { readJson, scoped, tenantRoute, uuid } from "@/lib/tenant/api";
++import { addDomain, domainInput, listDomains } from "@/lib/sites/domains";
++
++export const dynamic = "force-dynamic";
++type P = { id: string };
++
++export const GET = tenantRoute<P>("crm.read", async (ctx, _req, { id }) => ({ domains: await listDomains(scoped(ctx), uuid.parse(id)) }));
++export const POST = tenantRoute<P>("sites.manage", async (ctx, req, { id }) => ({ domain: await addDomain(scoped(ctx), uuid.parse(id), await readJson(req, domainInput)) }));
+diff --git a/src/app/api/sites/domains/[domainId]/route.ts b/src/app/api/sites/domains/[domainId]/route.ts
+new file mode 100644
+index 0000000..f1dacc6
+--- /dev/null
++++ b/src/app/api/sites/domains/[domainId]/route.ts
+@@ -0,0 +1,17 @@
++import { z } from "zod";
++import { readJson, scoped, tenantRoute, uuid } from "@/lib/tenant/api";
++import { systemClient } from "@/lib/supabase/system";
++import { removeDomain, verifyDomain } from "@/lib/sites/domains";
++
++export const dynamic = "force-dynamic";
++type P = { domainId: string };
++
++export const POST = tenantRoute<P>("sites.manage", async (ctx, req, { domainId }) => {
++  await readJson(req, z.object({ action: z.literal("verify") }));
++  return verifyDomain(scoped(ctx), systemClient(), uuid.parse(domainId));
++});
++
++export const DELETE = tenantRoute<P>("sites.manage", async (ctx, _req, { domainId }) => {
++  await removeDomain(scoped(ctx), uuid.parse(domainId));
++  return { ok: true };
++});
+diff --git a/src/app/api/webhooks/stripe-account/[id]/route.ts b/src/app/api/webhooks/stripe-account/[id]/route.ts
+new file mode 100644
+index 0000000..d466769
+--- /dev/null
++++ b/src/app/api/webhooks/stripe-account/[id]/route.ts
+@@ -0,0 +1,34 @@
++import { NextResponse } from "next/server";
++import { systemClient } from "@/lib/supabase/system";
++import { openJson } from "@/lib/crypto/vault";
++import { stripeFor, type StripeCreds } from "@/lib/payments/stripe-accounts";
++import { handleStripeEvent } from "@/lib/billing/invoices";
++
++export const dynamic = "force-dynamic";
++
++// Payment events from one organization's own Stripe account, verified with
++// that account's signing secret. Idempotent (payments are unique per intent).
++export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
++  const id = (await params).id;
++  if (!/^[0-9a-f-]{36}$/.test(id)) return NextResponse.json({ error: "Unknown account." }, { status: 404 });
++  const system = systemClient();
++  if (!system) return NextResponse.json({ error: "Not configured." }, { status: 503 });
++  const { data: acct } = await system.from("payment_accounts").select("id, organization_id, encrypted_credentials").eq("id", id).maybeSingle();
++  if (!acct) return NextResponse.json({ error: "Unknown account." }, { status: 404 });
++  let creds: StripeCreds;
++  try { creds = openJson(acct.encrypted_credentials) as StripeCreds; } catch { return NextResponse.json({ error: "Not configured." }, { status: 503 }); }
++  const signature = req.headers.get("stripe-signature");
++  if (!creds.webhook_secret || !signature) return NextResponse.json({ error: "Webhook not configured." }, { status: 400 });
++  const raw = await req.text();
++  if (raw.length > 512_000) return NextResponse.json({ error: "Too large." }, { status: 413 });
++  let event;
++  try { event = stripeFor(creds.secret_key).webhooks.constructEvent(raw, signature, creds.webhook_secret); }
++  catch { return NextResponse.json({ error: "Invalid signature." }, { status: 400 }); }
++  try {
++    const result = await handleStripeEvent(system, acct.organization_id, event);
++    return NextResponse.json({ received: true, result });
++  } catch (e) {
++    console.error("[stripe-account webhook]", id, e);
++    return NextResponse.json({ error: "Processing failed." }, { status: 500 });
++  }
++}
+diff --git a/src/app/i/[token]/page.tsx b/src/app/i/[token]/page.tsx
+new file mode 100644
+index 0000000..7b6c281
+--- /dev/null
++++ b/src/app/i/[token]/page.tsx
+@@ -0,0 +1,74 @@
++"use client";
++import { use, useEffect, useState } from "react";
++import "@/components/public/public.css";
++
++type Data = {
++  business: string; branding: { display_name?: string; logo_url?: string; color?: string; support_email?: string; support_phone?: string };
++  customer: { name: string } | null;
++  invoice: { kind: string; number: string; status: string; currency: string; line_items: { description: string; quantity: number; unit_cents: number }[]; tax_rate_bp: number; subtotal_cents: number; tax_cents: number; total_cents: number; deposit_cents: number | null; amount_paid_cents: number; due_date: string | null; notes: string | null; created_at: string };
++  amount_due: number; can_pay: boolean;
++};
++const fmt = (c: number, cur: string) => (c / 100).toLocaleString("en-US", { style: "currency", currency: cur.toUpperCase() });
++
++export default function PublicInvoice({ params }: { params: Promise<{ token: string }> }) {
++  const { token } = use(params);
++  const [d, setD] = useState<Data | null>(null);
++  const [error, setError] = useState("");
++  const [busy, setBusy] = useState(false);
++  const [msg, setMsg] = useState("");
++  const [paidReturn, setPaidReturn] = useState(false);
++  const load = () => fetch(`/api/public/invoice/${token}`, { cache: "no-store" }).then(async (r) => { const j = await r.json(); if (!r.ok) throw new Error(j.error || "Not available."); setD(j); }).catch((e) => setError(e.message));
++  useEffect(() => { setPaidReturn(new URLSearchParams(window.location.search).has("paid")); load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
++  const post = async (action: string) => {
++    setBusy(true); setMsg("");
++    try {
++      const r = await fetch(`/api/public/invoice/${token}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
++      const j = await r.json();
++      if (!r.ok) throw new Error(j.error || "That did not work.");
++      if (j.url) { window.location.href = j.url; return; }
++      setMsg(action === "accept" ? "Thank you! We'll be in touch to schedule the work." : "Thanks for letting us know."); await load();
++    } catch (e) { setMsg(e instanceof Error ? e.message : "That did not work."); }
++    finally { setBusy(false); }
++  };
++  if (error) return <div className="pub"><div className="pub-card narrow"><h1>Not available</h1><p className="lead">{error}</p></div></div>;
++  if (!d) return <div className="pub"><div className="pub-card narrow"><p className="lead">Loading…</p></div></div>;
++  const i = d.invoice;
++  const name = d.branding.display_name || d.business;
++  const est = i.kind === "estimate";
++  const accent = d.branding.color || "#f97316";
++  return (
++    <div className="pub">
++      <div className="pub-card">
++        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
++          <div>{d.branding.logo_url ? <img src={d.branding.logo_url} alt={name} style={{ maxHeight: 48, maxWidth: 180 }} /> : <strong style={{ fontSize: 18 }}>{name}</strong>}
++            <div className="lead" style={{ marginBottom: 0, fontSize: 13 }}>{[d.branding.support_phone, d.branding.support_email].filter(Boolean).join(" · ")}</div></div>
++          <div style={{ textAlign: "right" }}><h1 style={{ marginBottom: 2 }}>{est ? "Estimate" : "Invoice"} {i.number}</h1>
++            <div className="lead" style={{ marginBottom: 0, fontSize: 13 }}>{new Date(i.created_at).toLocaleDateString("en-US")}{i.due_date ? ` · Due ${i.due_date}` : ""}{d.customer?.name ? ` · For ${d.customer.name}` : ""}</div></div>
++        </div>
++        <table style={{ width: "100%", borderCollapse: "collapse", margin: "18px 0", fontSize: 14 }}>
++          <thead><tr style={{ textAlign: "left", color: "#7a7266", fontSize: 12 }}><th style={{ padding: "6px 0" }}>Description</th><th>Qty</th><th style={{ textAlign: "right" }}>Amount</th></tr></thead>
++          <tbody>{i.line_items.map((l, k) => <tr key={k} style={{ borderTop: "1px solid #eee" }}><td style={{ padding: "8px 0" }}>{l.description}</td><td>{l.quantity}</td><td style={{ textAlign: "right" }}>{fmt(Math.round(l.quantity * l.unit_cents), i.currency)}</td></tr>)}</tbody>
++        </table>
++        <div style={{ marginLeft: "auto", maxWidth: 260, fontSize: 14, display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
++          <span>Subtotal</span><span>{fmt(i.subtotal_cents, i.currency)}</span>
++          {i.tax_cents > 0 && <><span>Tax ({i.tax_rate_bp / 100}%)</span><span>{fmt(i.tax_cents, i.currency)}</span></>}
++          <strong>Total</strong><strong>{fmt(i.total_cents, i.currency)}</strong>
++          {!est && i.amount_paid_cents > 0 && <><span>Paid</span><span>{fmt(i.amount_paid_cents, i.currency)}</span></>}
++          {!est && i.status !== "paid" && i.status !== "void" && <><strong>Due now</strong><strong>{fmt(d.amount_due, i.currency)}</strong></>}
++        </div>
++        {i.notes && <p className="lead" style={{ whiteSpace: "pre-wrap", marginTop: 16, fontSize: 14 }}>{i.notes}</p>}
++        <div className="stack" style={{ marginTop: 18 }}>
++          {i.status === "paid" && <p className="notice" role="status">Paid in full. Thank you!</p>}
++          {i.status === "void" && <p className="notice">This {est ? "estimate" : "invoice"} was cancelled.</p>}
++          {paidReturn && i.status !== "paid" && !est && <p className="notice" role="status">Thanks! Your payment is being confirmed; this page will show it shortly.</p>}
++          {d.can_pay && d.amount_due > 0 && <button className="btn btn-primary" style={{ background: accent, borderColor: accent }} disabled={busy} onClick={() => post("pay")}>{busy ? "Opening secure payment…" : `Pay ${fmt(d.amount_due, i.currency)}${i.deposit_cents && i.amount_paid_cents === 0 && d.amount_due < i.total_cents ? " deposit" : ""} by card`}</button>}
++          {!est && !d.can_pay && ["sent", "partially_paid"].includes(i.status) && <p className="lead" style={{ fontSize: 13 }}>Online payment isn&apos;t available for this invoice. Please contact {name} to pay.</p>}
++          {est && i.status === "sent" && <div className="row" style={{ justifyContent: "center", flexWrap: "wrap" }}><button className="btn btn-primary" style={{ background: accent, borderColor: accent }} disabled={busy} onClick={() => post("accept")}>Accept estimate</button><button className="btn" disabled={busy} onClick={() => post("decline")}>Decline</button></div>}
++          {est && ["accepted", "declined"].includes(i.status) && <p className="notice">You {i.status} this estimate.</p>}
++          {msg && <p className="lead" role="status">{msg}</p>}
++        </div>
++      </div>
++      <p className="foot">Payments are processed securely by Stripe on behalf of {name}.</p>
++    </div>
++  );
++}
+diff --git a/src/app/invoices/page.tsx b/src/app/invoices/page.tsx
+new file mode 100644
+index 0000000..6efe0bd
+--- /dev/null
++++ b/src/app/invoices/page.tsx
+@@ -0,0 +1,175 @@
++"use client";
++import { useEffect, useState } from "react";
++import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
++import ContactPicker, { type PickedContact } from "@/components/tenant/ContactPicker";
++import { api, atLeast, Org, personName, relativeTime, useResource } from "@/components/tenant/client";
++import { Copy, useToast } from "@/components/ui";
++
++type Line = { description: string; quantity: number; unit_cents: number };
++type Inv = {
++  id: string; kind: "invoice" | "estimate"; number: string; contact_id: string | null; status: string; currency: string; line_items: Line[]; tax_rate_bp: number;
++  subtotal_cents: number; tax_cents: number; total_cents: number; deposit_cents: number | null; amount_paid_cents: number; due_date: string | null; notes: string | null;
++  created_at: string; contacts?: { first_name: string | null; last_name: string | null; email: string | null } | null;
++};
++type Detail = { invoice: Inv; payments: { id: string; amount_cents: number; refunded_cents: number; method: string; note: string | null; created_at: string }[]; contact: PickedContact | null; public_path: string; amount_due: number };
++const fmt = (c: number, cur = "usd") => (c / 100).toLocaleString("en-US", { style: "currency", currency: cur.toUpperCase() });
++const PILL: Record<string, string> = { draft: "pill-neutral", sent: "pill-info", partially_paid: "pill-warn", paid: "pill-ok", void: "pill-neutral", accepted: "pill-ok", declined: "pill-bad" };
++const totals = (items: Line[], bp: number) => { const s = items.reduce((a, i) => a + Math.round(i.quantity * i.unit_cents), 0); const t = Math.round((s * bp) / 10000); return { s, t, total: s + t }; };
++
++function Editor({ initial, kind, onSaved, onCancel }: { initial: Detail | null; kind: "invoice" | "estimate"; onSaved: (id: string) => void; onCancel: () => void }) {
++  const inv = initial?.invoice;
++  const [contact, setContact] = useState<PickedContact | null>(initial?.contact ?? null);
++  const [lines, setLines] = useState<{ description: string; quantity: string; price: string }[]>(inv?.line_items.map((l) => ({ description: l.description, quantity: String(l.quantity), price: (l.unit_cents / 100).toFixed(2) })) ?? [{ description: "", quantity: "1", price: "" }]);
++  const [tax, setTax] = useState(inv ? String(inv.tax_rate_bp / 100) : "0");
++  const [deposit, setDeposit] = useState(inv?.deposit_cents ? (inv.deposit_cents / 100).toFixed(2) : "");
++  const [due, setDue] = useState(inv?.due_date ?? "");
++  const [notes, setNotes] = useState(inv?.notes ?? "");
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
++  const items: Line[] = lines.filter((l) => l.description.trim()).map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity) || 0, unit_cents: Math.round((Number(l.price) || 0) * 100) }));
++  const bp = Math.round((Number(tax) || 0) * 100);
++  const t = totals(items, bp);
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>{inv ? `Edit ${inv.number}` : `New ${kind}`}</h3><div className="sub">Totals are calculated for you. Drafts can be edited until sent.</div></div></div>
++      <div className="card-pad stack">
++        <div className="field"><label htmlFor="iv-contact">Customer</label><ContactPicker id="iv-contact" value={contact} onChange={setContact} /></div>
++        <div className="table-wrap"><table>
++          <thead><tr><th>Description</th><th style={{ width: 90 }}>Qty</th><th style={{ width: 120 }}>Price</th><th style={{ width: 110 }}>Amount</th><th /></tr></thead>
++          <tbody>{lines.map((l, i) => (
++            <tr key={i}>
++              <td><input className="input" aria-label="Description" value={l.description} maxLength={300} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))} /></td>
++              <td><input className="input" aria-label="Quantity" inputMode="decimal" value={l.quantity} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} /></td>
++              <td><input className="input" aria-label="Price" inputMode="decimal" placeholder="0.00" value={l.price} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, price: e.target.value } : x)))} /></td>
++              <td className="small">{fmt(Math.round((Number(l.quantity) || 0) * Math.round((Number(l.price) || 0) * 100)))}</td>
++              <td><button type="button" className="btn btn-sm btn-ghost" aria-label="Remove line" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button></td>
++            </tr>
++          ))}</tbody>
++        </table></div>
++        <div><button type="button" className="btn btn-sm" onClick={() => setLines([...lines, { description: "", quantity: "1", price: "" }])}>Add line</button></div>
++        <div className="field-grid">
++          <div className="field"><label htmlFor="iv-tax">Tax rate (%)</label><input id="iv-tax" className="input" inputMode="decimal" value={tax} onChange={(e) => setTax(e.target.value)} /></div>
++          <div className="field"><label htmlFor="iv-dep">Deposit due first (optional)</label><input id="iv-dep" className="input" inputMode="decimal" placeholder="0.00" value={deposit} onChange={(e) => setDeposit(e.target.value)} /></div>
++          <div className="field"><label htmlFor="iv-due">Due date</label><input id="iv-due" type="date" className="input" value={due} onChange={(e) => setDue(e.target.value)} /></div>
++        </div>
++        <div className="field"><label htmlFor="iv-notes">Notes for the customer</label><textarea id="iv-notes" className="textarea" rows={2} maxLength={4000} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Payment terms, warranty, thank you…" /></div>
++        <div className="kv small" style={{ maxWidth: 320, marginLeft: "auto" }}><dt>Subtotal</dt><dd>{fmt(t.s)}</dd><dt>Tax</dt><dd>{fmt(t.t)}</dd><dt><strong>Total</strong></dt><dd><strong>{fmt(t.total)}</strong></dd></div>
++        {error && <p className="form-error" role="alert">{error}</p>}
++        <div className="row"><button className="btn btn-primary" disabled={busy || !items.length} onClick={async () => {
++          setBusy(true); setError("");
++          try {
++            const body = { kind, contact_id: contact?.id ?? null, line_items: items, tax_rate_bp: bp, deposit_cents: deposit ? Math.round(Number(deposit) * 100) : null, due_date: due || null, notes: notes.trim() || null };
++            const r = inv ? await api<{ invoice: Inv }>(`/api/invoices/${inv.id}`, { method: "PUT", body }) : await api<{ invoice: Inv }>("/api/invoices", { body });
++            onSaved(r.invoice.id);
++          } catch (e) { setError(e instanceof Error ? e.message : "Could not save."); }
++          finally { setBusy(false); }
++        }}>{busy ? <span className="spin" /> : "Save draft"}</button><button className="btn btn-ghost" onClick={onCancel}>Cancel</button></div>
++      </div>
++    </div>
++  );
++}
++
++function View({ id, org, onEdit, onChanged, toast }: { id: string; org: Org; onEdit: (d: Detail) => void; onChanged: (id?: string) => void; toast: (m: string) => void }) {
++  const { data, error, loading, reload } = useResource<Detail>(`/api/invoices/${id}`);
++  const [origin, setOrigin] = useState("");
++  const [payAmount, setPayAmount] = useState("");
++  useEffect(() => setOrigin(window.location.origin), []);
++  if (loading && !data) return <Loading />;
++  if (error) return <ErrorState message={error} onRetry={reload} />;
++  if (!data) return null;
++  const i = data.invoice;
++  const manager = atLeast(org.role, "manager");
++  const act = async (body: Record<string, unknown>, done: string) => {
++    try { const r = await api<{ invoice?: { id: string }; delivery?: { sent: boolean; reason: string | null } }>(`/api/invoices/${id}`, { body }); toast(r.delivery && !r.delivery.sent ? `${done} Email not sent: ${r.delivery.reason || "check Channels"}. Copy the link instead.` : done); reload(); onChanged(r.invoice?.id); }
++    catch (e) { toast(e instanceof Error ? e.message : "That did not work."); }
++  };
++  const link = `${origin}${data.public_path}`;
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>{i.number} <span className={`pill ${PILL[i.status]}`}>{i.status.replace("_", " ")}</span></h3><div className="sub">{data.contact ? personName(data.contact) : "No customer"} · created {relativeTime(i.created_at)}{i.due_date ? ` · due ${i.due_date}` : ""}</div></div>
++        <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
++          {i.status === "draft" && <button className="btn btn-sm" onClick={() => onEdit(data)}>Edit</button>}
++          {i.status === "draft" && <button className="btn btn-sm btn-primary" onClick={() => act({ action: "send" }, "Sent.")}>Send to customer</button>}
++          {["sent", "partially_paid"].includes(i.status) && <button className="btn btn-sm" onClick={() => act({ action: "send" }, "Sent again.")}>Resend</button>}
++          {i.kind === "estimate" && i.status === "accepted" && <button className="btn btn-sm btn-primary" onClick={() => act({ action: "convert" }, "Invoice created from the estimate.")}>Create invoice</button>}
++          {manager && i.kind === "estimate" && i.status === "sent" && <><button className="btn btn-sm" onClick={() => act({ action: "accept" }, "Marked accepted.")}>Accepted</button><button className="btn btn-sm" onClick={() => act({ action: "decline" }, "Marked declined.")}>Declined</button></>}
++          {["draft", "sent"].includes(i.status) && i.amount_paid_cents === 0 && <button className="btn btn-sm btn-ghost" onClick={() => { if (window.confirm(`Void ${i.number}?`)) act({ action: "void" }, "Voided."); }}>Void</button>}
++        </div></div>
++      <div className="card-pad stack">
++        {i.status !== "draft" && <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><span className="small muted">Customer link</span><a className="link small mono" style={{ wordBreak: "break-all", minWidth: 0 }} href={data.public_path} target="_blank" rel="noreferrer">{data.public_path}</a><Copy text={link} /></div>}
++        <div className="table-wrap"><table><thead><tr><th>Description</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>
++          {i.line_items.map((l, k) => <tr key={k}><td className="small">{l.description}</td><td className="small">{l.quantity}</td><td className="small">{fmt(l.unit_cents, i.currency)}</td><td className="small">{fmt(Math.round(l.quantity * l.unit_cents), i.currency)}</td></tr>)}
++        </tbody></table></div>
++        <div className="kv small" style={{ maxWidth: 320, marginLeft: "auto" }}>
++          <dt>Subtotal</dt><dd>{fmt(i.subtotal_cents, i.currency)}</dd><dt>Tax ({i.tax_rate_bp / 100}%)</dt><dd>{fmt(i.tax_cents, i.currency)}</dd>
++          <dt><strong>Total</strong></dt><dd><strong>{fmt(i.total_cents, i.currency)}</strong></dd>
++          {i.deposit_cents ? <><dt>Deposit</dt><dd>{fmt(i.deposit_cents, i.currency)}</dd></> : null}
++          {i.kind === "invoice" && <><dt>Paid</dt><dd>{fmt(i.amount_paid_cents, i.currency)}</dd><dt>Due now</dt><dd>{fmt(data.amount_due, i.currency)}</dd></>}
++        </div>
++        {i.notes && <p className="small" style={{ whiteSpace: "pre-wrap" }}>{i.notes}</p>}
++        {i.kind === "invoice" && <div className="stack" style={{ gap: 6 }}>
++          <strong className="small">Payments</strong>
++          {data.payments.length === 0 ? <span className="small muted">None yet.</span> : data.payments.map((p) => (
++            <div key={p.id} className="row small" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
++              <span>{fmt(p.amount_cents, i.currency)} · {p.method === "stripe" ? "card" : "recorded by hand"}{p.note ? ` · ${p.note}` : ""} · {relativeTime(p.created_at)}{p.refunded_cents ? <span className="pill pill-warn" style={{ marginLeft: 6 }}>refunded {fmt(p.refunded_cents, i.currency)}</span> : null}</span>
++              {manager && p.method === "stripe" && p.refunded_cents < p.amount_cents && <button className="btn btn-sm btn-ghost" onClick={async () => { if (!window.confirm(`Refund ${fmt(p.amount_cents - p.refunded_cents, i.currency)} to the customer's card?`)) return; try { await api(`/api/invoices/payments/${p.id}`, { body: { action: "refund" } }); toast("Refunded."); reload(); onChanged(); } catch (e) { toast(e instanceof Error ? e.message : "Refund failed."); } }}>Refund</button>}
++            </div>
++          ))}
++          {manager && ["sent", "partially_paid"].includes(i.status) && <div className="row"><label className="sr-only" htmlFor="mp">Amount received</label><input id="mp" className="input" style={{ maxWidth: 140 }} inputMode="decimal" placeholder="Amount" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
++            <button className="btn btn-sm" disabled={!Number(payAmount)} onClick={async () => { await act({ action: "record_payment", amount_cents: Math.round(Number(payAmount) * 100), note: "Recorded by hand" }, "Payment recorded."); setPayAmount(""); }}>Record cash/check payment</button></div>}
++        </div>}
++      </div>
++    </div>
++  );
++}
++
++function Invoices({ org }: { org: Org }) {
++  const [kind, setKind] = useState<"invoice" | "estimate">("invoice");
++  const { data, error, loading, reload } = useResource<{ invoices: Inv[] }>(`/api/invoices?kind=${kind}`);
++  const stripe = useResource<{ account: { label: string } | null }>("/api/billing/stripe");
++  const [open, setOpen] = useState<string | null>(null);
++  const [editing, setEditing] = useState<Detail | "new" | null>(null);
++  const { toast, node } = useToast();
++  if (loading && !data) return <Loading />;
++  if (error) return <ErrorState message={error} onRetry={reload} />;
++  const rows = data?.invoices || [];
++  const outstanding = rows.filter((i) => ["sent", "partially_paid"].includes(i.status)).reduce((s, i) => s + i.total_cents - i.amount_paid_cents, 0);
++  return (
++    <div className="stack">
++      {stripe.data && !stripe.data.account && <div className="notice notice-warn small"><strong>Online card payments: integration not configured.</strong> Connect your Stripe account in <a className="link" href="/account">Account</a>. You can still send invoices and record cash or check payments.</div>}
++      <div className="row" style={{ flexWrap: "wrap" }}>
++        <button className={`chip ${kind === "invoice" ? "on" : ""}`} onClick={() => { setKind("invoice"); setOpen(null); setEditing(null); }}>Invoices</button>
++        <button className={`chip ${kind === "estimate" ? "on" : ""}`} onClick={() => { setKind("estimate"); setOpen(null); setEditing(null); }}>Estimates</button>
++        <span style={{ flex: 1 }} />
++        {kind === "invoice" && <span className="small muted">Outstanding: <strong>{fmt(outstanding)}</strong></span>}
++        <button className="btn btn-primary btn-sm" onClick={() => { setEditing("new"); setOpen(null); }}>New {kind}</button>
++      </div>
++      <div className="split">
++        <div className="card">
++          {rows.length === 0 ? <div className="empty"><h3>No {kind}s yet</h3></div> : (
++            <div className="table-wrap"><table><thead><tr><th>Number</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>
++              {rows.map((i) => (
++                <tr key={i.id} className={`lf-row ${open === i.id ? "on" : ""}`} onClick={() => { setOpen(i.id); setEditing(null); }}>
++                  <td className="small"><strong>{i.number}</strong><div className="tiny muted">{relativeTime(i.created_at)}</div></td>
++                  <td className="small">{i.contacts ? personName(i.contacts) : "—"}</td>
++                  <td className="small">{fmt(i.total_cents, i.currency)}{i.kind === "invoice" && i.amount_paid_cents > 0 && i.status !== "paid" ? <div className="tiny muted">{fmt(i.total_cents - i.amount_paid_cents, i.currency)} left</div> : null}</td>
++                  <td><span className={`pill ${PILL[i.status]}`}>{i.status.replace("_", " ")}</span></td>
++                </tr>
++              ))}
++            </tbody></table></div>
++          )}
++        </div>
++        <div>
++          {editing ? <Editor key={editing === "new" ? "new" : editing.invoice.id} initial={editing === "new" ? null : editing} kind={kind} onCancel={() => setEditing(null)} onSaved={(id) => { setEditing(null); setOpen(id); reload(); toast("Saved."); }} />
++            : open ? <View key={open} id={open} org={org} toast={toast} onEdit={(d) => setEditing(d)} onChanged={(id) => { reload(); if (id && id !== open) setOpen(id); }} />
++            : <div className="card card-pad small muted">Select an {kind} or create a new one. Customers get a secure link to view{kind === "invoice" ? " and pay" : " and accept"} it.</div>}
++        </div>
++      </div>
++      {node}
++    </div>
++  );
++}
++
++export default function InvoicesPage() {
++  return <TenantGate title="Invoices" subtitle="Estimates, invoices, deposits and payments.">{(info) => <Invoices org={info.org} />}</TenantGate>;
++}
+diff --git a/src/app/sites/[id]/page.tsx b/src/app/sites/[id]/page.tsx
+index 6382925..6572163 100644
+--- a/src/app/sites/[id]/page.tsx
++++ b/src/app/sites/[id]/page.tsx
+@@ -1,9 +1,9 @@
+ "use client";
+-import { use, useRef, useState } from "react";
++import { use, useEffect, useRef, useState } from "react";
+ import { Puck, type Data } from "@puckeditor/core";
+ import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
+ import { api, atLeast, Org, relativeTime, useResource } from "@/components/tenant/client";
+-import { useToast } from "@/components/ui";
++import { Copy, useToast } from "@/components/ui";
+ import { tenantSiteConfig } from "@/lib/sites/config";
+ 
+ type Page = { id: string; path: string; title: string; meta_description: string | null; published_at: string | null; updated_at: string };
+@@ -63,6 +63,45 @@ function PageEditor({ pageId, canPublish, onChanged, toast }: { pageId: string;
+   );
+ }
+ 
++type Domain = { id: string; domain: string; verification_token: string; status: string; verified_at: string | null; last_checked_at: string | null };
++function Domains({ siteId, canManage, toast }: { siteId: string; canManage: boolean; toast: (m: string) => void }) {
++  const { data, reload } = useResource<{ domains: Domain[] }>(`/api/sites/${siteId}/domains`);
++  const [open, setOpen] = useState(false);
++  const [domain, setDomain] = useState("");
++  const [host, setHost] = useState("");
++  useEffect(() => setHost(window.location.host), []);
++  const list = data?.domains || [];
++  return (
++    <div className="card card-pad stack">
++      <div className="row" style={{ justifyContent: "space-between" }}>
++        <div><strong>Custom domain</strong><div className="small muted">{list.length ? list.map((d) => `${d.domain} (${d.status})`).join(", ") : "Serve this site at your own address, like www.yourbusiness.com."}</div></div>
++        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "Hide" : "Manage"}</button>
++      </div>
++      {open && <>
++        {list.map((d) => (
++          <div key={d.id} className="stack" style={{ gap: 6, borderTop: "1px solid var(--line)", paddingTop: 10 }}>
++            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
++              <span><strong>{d.domain}</strong> <span className={`pill ${d.status === "verified" ? "pill-ok" : "pill-warn"}`}>{d.status === "verified" ? "verified" : "waiting for DNS"}</span></span>
++              {canManage && <span className="row" style={{ gap: 6 }}>
++                {d.status !== "verified" && <button className="btn btn-sm btn-primary" onClick={async () => { try { const r = await api<{ verified: boolean; message: string }>(`/api/sites/domains/${d.id}`, { body: { action: "verify" } }); toast(r.message); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Check failed."); } }}>Verify</button>}
++                <button className="btn btn-sm btn-ghost" onClick={async () => { if (!window.confirm(`Disconnect ${d.domain}?`)) return; try { await api(`/api/sites/domains/${d.id}`, { method: "DELETE" }); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>Remove</button>
++              </span>}
++            </div>
++            <ol className="small" style={{ margin: 0, paddingLeft: 18, overflowWrap: "anywhere" }}>
++              <li>At your domain provider, add a <strong>TXT</strong> record named <span className="mono">_sun-verify.{d.domain}</span> with value <span className="mono">{d.verification_token}</span> <Copy text={d.verification_token} />, then press Verify.</li>
++              <li>Point the domain at the console: a <strong>CNAME</strong> from <span className="mono">{d.domain}</span> to <span className="mono">{host || "your console address"}</span> (for a bare domain, use your host&apos;s ALIAS/ANAME option).</li>
++              <li>Your hosting administrator adds {d.domain} as a domain alias on the hosting account so it gets an HTTPS certificate.</li>
++            </ol>
++            {d.last_checked_at && d.status !== "verified" && <span className="tiny muted">Last checked {new Date(d.last_checked_at).toLocaleString()}. DNS changes can take up to an hour.</span>}
++          </div>
++        ))}
++        {canManage && <div className="row"><label className="sr-only" htmlFor="dom">Domain</label><input id="dom" className="input" placeholder="www.yourbusiness.com" value={domain} onChange={(e) => setDomain(e.target.value)} style={{ maxWidth: 260 }} />
++          <button className="btn btn-sm" disabled={!domain.trim()} onClick={async () => { try { await api(`/api/sites/${siteId}/domains`, { body: { domain } }); setDomain(""); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Could not add."); } }}>Add domain</button></div>}
++      </>}
++    </div>
++  );
++}
++
+ function SiteEditor({ id, org }: { id: string; org: Org }) {
+   const { data, error, loading, reload } = useResource<SiteDetail>(`/api/sites/${id}`);
+   const [pageId, setPageId] = useState<string | null>(null);
+@@ -102,6 +141,7 @@ function SiteEditor({ id, org }: { id: string; org: Org }) {
+           )}
+         </div>
+       </div>
++      <Domains siteId={id} canManage={canPublish} toast={toast} />
+       {current && <PageEditor key={current} pageId={current} canPublish={canPublish} onChanged={reload} toast={toast} />}
+       {node}
+     </div>
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index b70dac5..6a6e87e 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -37,11 +37,12 @@ const NAV = [
+   { g: "Find work", items: [{ href: "/lead-finder", label: "Lead Finder", i: I.radar }, { href: "/", label: "Dashboard", i: I.home }, { href: "/discover", label: "Opportunity Radar", i: I.radar }, { href: "/scan", label: "Site Scanner", i: I.radar }, { href: "/prospects", label: "Pipeline", i: I.users }] },
+   { g: "Generate revenue", items: [{ href: "/campaign-studio", label: "Campaign Studio", i: I.engine }, { href: "/growth-engine", label: "Growth Engine", i: I.engine }, { href: "/agents", label: "Agent Center", i: I.bot }, { href: "/email-marketing", label: "Email Marketing", i: I.mail }, { href: "/video-prompts", label: "Video Prompt Studio", i: I.star }, { href: "/receptionists", label: "AI Receptionist", i: I.phone }, { href: "/leads", label: "Lead Marketplace", i: I.phone }] },
+   { g: "Websites", items: [{ href: "/sites", label: "Sites", i: I.org }, { href: "/forms", label: "Forms", i: I.report }, { href: "/knowledge", label: "Knowledge base", i: I.crm }] },
++  { g: "Money", items: [{ href: "/invoices", label: "Invoices", i: I.report }, { href: "/account", label: "Plan & account", i: I.gear }] },
+   { g: "Deliver", items: [{ href: "/website-builder", label: "Website Builder", i: I.star }, { href: "/audits", label: "Report Cards", i: I.report }, { href: "/seo", label: "SEO Toolkit", i: I.seo }, { href: "/reputation", label: "Review Engine", i: I.star }] },
+   { g: "", items: [{ href: "/organization", label: "Organization", i: I.org }, { href: "/channels", label: "Channels", i: I.plug }, { href: "/settings", label: "Settings", i: I.gear }] },
+ ];
+ 
+-const BARE = [/^\/login/, /^\/report\//, /^\/proposal\//, /^\/r\//, /^\/bridge\//, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//];
++const BARE = [/^\/login/, /^\/report\//, /^\/proposal\//, /^\/r\//, /^\/bridge\//, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//];
+ 
+ export default function Shell({ children, agency }: { children: React.ReactNode; agency: string }) {
+   const path = usePathname() || "/";
+diff --git a/src/lib/billing/invoices.ts b/src/lib/billing/invoices.ts
+new file mode 100644
+index 0000000..c5a673c
+--- /dev/null
++++ b/src/lib/billing/invoices.ts
+@@ -0,0 +1,248 @@
++import "server-only";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import type Stripe from "stripe";
++import { z } from "zod";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { systemAudit } from "@/lib/tenant/system-audit";
++import type { CrmContext } from "@/lib/crm/service";
++import { sendMessage } from "@/lib/comms/service";
++import { openJson } from "@/lib/crypto/vault";
++import { publicBaseUrl } from "@/lib/supabase/system";
++import { activeStripe, stripeFor, type StripeCreds } from "@/lib/payments/stripe-accounts";
++
++// Invoices and estimates. Totals and paid amounts are computed by the
++// database; this module drafts, sends, collects and refunds.
++export const INVOICE_COLUMNS =
++  "id, organization_id, kind, number, contact_id, status, currency, line_items, tax_rate_bp, subtotal_cents, tax_cents, total_cents, deposit_cents, amount_paid_cents, due_date, notes, source_estimate_id, sent_at, paid_at, decided_at, created_at, updated_at";
++export type Invoice = {
++  id: string; organization_id: string; kind: "invoice" | "estimate"; number: string; contact_id: string | null; status: string; currency: string;
++  line_items: { description: string; quantity: number; unit_cents: number }[]; tax_rate_bp: number; subtotal_cents: number; tax_cents: number; total_cents: number;
++  deposit_cents: number | null; amount_paid_cents: number; due_date: string | null; notes: string | null; source_estimate_id: string | null;
++  sent_at: string | null; paid_at: string | null; decided_at: string | null; created_at: string;
++};
++
++const line = z.object({ description: z.string().trim().min(1).max(300), quantity: z.number().positive().max(100000), unit_cents: z.number().int().min(0).max(100_000_000) });
++export const invoiceInput = z.object({
++  kind: z.enum(["invoice", "estimate"]).default("invoice"),
++  contact_id: z.string().uuid().nullable().optional(),
++  line_items: z.array(line).min(1, "Add at least one line.").max(100),
++  tax_rate_bp: z.number().int().min(0).max(5000).default(0),
++  deposit_cents: z.number().int().min(0).nullable().optional(),
++  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
++  notes: z.string().trim().max(4000).nullable().optional(),
++});
++
++// Same arithmetic as the database, for previews.
++export function computeTotals(items: { quantity: number; unit_cents: number }[], taxBp: number) {
++  const subtotal = items.reduce((s, i) => s + Math.round(i.quantity * i.unit_cents), 0);
++  const tax = Math.round((subtotal * taxBp) / 10000);
++  return { subtotal, tax, total: subtotal + tax };
++}
++
++// What the customer owes right now: the deposit first if one is set and
++// nothing is paid yet, otherwise the balance.
++export function amountDue(inv: Pick<Invoice, "total_cents" | "amount_paid_cents" | "deposit_cents">) {
++  const balance = Math.max(0, inv.total_cents - inv.amount_paid_cents);
++  if (inv.deposit_cents && inv.amount_paid_cents === 0) return Math.min(inv.deposit_cents, balance);
++  return balance;
++}
++
++export const money = (cents: number, currency = "usd") => (cents / 100).toLocaleString("en-US", { style: "currency", currency: currency.toUpperCase() });
++
++export async function listInvoices(ctx: CrmContext, opts: { kind?: string; status?: string; contactId?: string } = {}) {
++  let q = ctx.client.from("invoices").select(`${INVOICE_COLUMNS}, contacts(first_name, last_name, email)`).eq("organization_id", ctx.orgId);
++  if (opts.kind) q = q.eq("kind", opts.kind);
++  if (opts.status) q = q.eq("status", opts.status);
++  if (opts.contactId) q = q.eq("contact_id", opts.contactId);
++  const { data, error } = await q.order("created_at", { ascending: false }).limit(300);
++  fromDb(error);
++  return data || [];
++}
++
++export async function getInvoice(client: SupabaseClient, orgId: string, id: string) {
++  const { data, error } = await client.from("invoices").select(INVOICE_COLUMNS).eq("organization_id", orgId).eq("id", id).maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("Invoice not found.", 404, "not_found");
++  return data as Invoice;
++}
++
++export async function invoiceDetail(ctx: CrmContext, id: string) {
++  const invoice = await getInvoice(ctx.client, ctx.orgId, id);
++  const [{ data: payments }, { data: contact }, { data: token }] = await Promise.all([
++    ctx.client.from("payments").select("id, amount_cents, refunded_cents, method, note, created_at").eq("organization_id", ctx.orgId).eq("invoice_id", id).order("created_at"),
++    invoice.contact_id ? ctx.client.from("contacts").select("id, first_name, last_name, email, phone").eq("organization_id", ctx.orgId).eq("id", invoice.contact_id).maybeSingle() : Promise.resolve({ data: null }),
++    ctx.client.from("invoices").select("public_token").eq("organization_id", ctx.orgId).eq("id", id).single(),
++  ]);
++  return { invoice, payments: payments || [], contact, public_path: `/i/${token?.public_token}`, amount_due: amountDue(invoice) };
++}
++
++export async function createInvoice(ctx: CrmContext, input: z.infer<typeof invoiceInput>, from?: Invoice) {
++  const { data, error } = await ctx.client.from("invoices").insert({
++    organization_id: ctx.orgId, kind: input.kind, contact_id: input.contact_id ?? null, line_items: input.line_items, tax_rate_bp: input.tax_rate_bp,
++    deposit_cents: input.deposit_cents ?? null, due_date: input.due_date ?? null, notes: input.notes ?? null, source_estimate_id: from?.id ?? null,
++  }).select(INVOICE_COLUMNS).single();
++  fromDb(error);
++  await audit(ctx.client, ctx.orgId, `${input.kind}.created`, { type: "invoice", id: data!.id }, { total_cents: data!.total_cents });
++  return data as Invoice;
++}
++
++export async function updateDraft(ctx: CrmContext, id: string, input: z.infer<typeof invoiceInput>) {
++  const { kind: _kind, ...patch } = input;
++  const { data, error } = await ctx.client.from("invoices").update(patch).eq("organization_id", ctx.orgId).eq("id", id).eq("status", "draft").select(INVOICE_COLUMNS).maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("Only drafts can be edited.", 409, "conflict");
++  return data as Invoice;
++}
++
++export async function setStatus(ctx: CrmContext, id: string, status: "sent" | "void" | "accepted" | "declined") {
++  const { data, error } = await ctx.client.from("invoices").update({ status }).eq("organization_id", ctx.orgId).eq("id", id).select(INVOICE_COLUMNS).maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("Invoice not found.", 404, "not_found");
++  await audit(ctx.client, ctx.orgId, `invoice.${status}`, { type: "invoice", id });
++  return data as Invoice;
++}
++
++// Marks sent and emails the customer a link (transactional; the gate applies).
++export async function sendInvoice(ctx: CrmContext, id: string, req?: Request) {
++  const inv = await getInvoice(ctx.client, ctx.orgId, id);
++  if (!inv.contact_id) throw new ApiError("Choose a customer before sending.", 422, "invalid");
++  const base = publicBaseUrl(req);
++  if (!base) throw new ApiError("Integration not configured: set PUBLIC_APP_URL so the invoice link works.", 503, "integration_not_configured");
++  const { data: tok } = await ctx.client.from("invoices").select("public_token").eq("organization_id", ctx.orgId).eq("id", id).single();
++  const { data: org } = await ctx.client.from("organizations").select("name").eq("id", ctx.orgId).single();
++  const updated = inv.status === "draft" ? await setStatus(ctx, id, "sent") : inv;
++  const url = `${base}/i/${tok!.public_token}`;
++  const what = inv.kind === "estimate" ? "estimate" : "invoice";
++  const body = inv.kind === "estimate"
++    ? `Hello,\n\nHere is your estimate ${inv.number} from ${org!.name} for ${money(inv.total_cents, inv.currency)}. You can review and accept it here:\n\n${url}\n\nThank you,\n${org!.name}`
++    : `Hello,\n\nHere is invoice ${inv.number} from ${org!.name} for ${money(inv.total_cents, inv.currency)}${inv.due_date ? `, due ${inv.due_date}` : ""}. You can view and pay it securely here:\n\n${url}\n\nThank you,\n${org!.name}`;
++  const r = await sendMessage(ctx, { contact_id: inv.contact_id, channel: "email", purpose: "transactional", subject: `${what === "estimate" ? "Estimate" : "Invoice"} ${inv.number} from ${org!.name}`, body, idempotency_key: `inv-${id}-${Date.now()}` }, { req });
++  return { invoice: updated, delivery: r.outcome === "blocked" ? { sent: false, reason: r.reason } : { sent: r.outcome === "sent", reason: r.outcome === "failed" ? r.message.error : null }, url };
++}
++
++export async function convertEstimate(ctx: CrmContext, id: string) {
++  const est = await getInvoice(ctx.client, ctx.orgId, id);
++  if (est.kind !== "estimate" || est.status !== "accepted") throw new ApiError("Only accepted estimates become invoices.", 409, "conflict");
++  return createInvoice(ctx, { kind: "invoice", contact_id: est.contact_id, line_items: est.line_items, tax_rate_bp: est.tax_rate_bp, deposit_cents: est.deposit_cents, notes: est.notes }, est);
++}
++
++export const manualPaymentInput = z.object({ amount_cents: z.number().int().positive().max(100_000_000), note: z.string().trim().max(500).optional() });
++
++export async function recordManualPayment(ctx: CrmContext, id: string, input: z.infer<typeof manualPaymentInput>) {
++  const inv = await getInvoice(ctx.client, ctx.orgId, id);
++  if (input.amount_cents > inv.total_cents - inv.amount_paid_cents) throw new ApiError("That is more than the balance.", 422, "invalid");
++  const { error } = await ctx.client.from("payments").insert({ organization_id: ctx.orgId, invoice_id: id, amount_cents: input.amount_cents, method: "manual", note: input.note ?? null });
++  fromDb(error);
++  await audit(ctx.client, ctx.orgId, "payment.recorded", { type: "invoice", id }, { amount_cents: input.amount_cents });
++}
++
++// Refunds a card payment in the organization's Stripe account (managers).
++// The webhook records the refund; we also record it immediately.
++export async function refundPayment(ctx: CrmContext, system: SupabaseClient | null, paymentId: string, amountCents?: number) {
++  const { data: pay, error } = await ctx.client.from("payments").select("id, invoice_id, amount_cents, refunded_cents, method, provider_payment_id").eq("organization_id", ctx.orgId).eq("id", paymentId).maybeSingle();
++  fromDb(error);
++  if (!pay) throw new ApiError("Payment not found.", 404, "not_found");
++  if (pay.method !== "stripe" || !pay.provider_payment_id) throw new ApiError("Only card payments can be refunded here. Record manual refunds with your bank.", 409, "conflict");
++  const remaining = pay.amount_cents - pay.refunded_cents;
++  const amount = amountCents ?? remaining;
++  if (amount <= 0 || amount > remaining) throw new ApiError("Nothing left to refund.", 409, "conflict");
++  if (!system) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY is needed to record refunds.", 503, "integration_not_configured");
++  const { data: acct } = await ctx.client.from("payment_accounts").select("id").eq("organization_id", ctx.orgId).eq("status", "active").maybeSingle();
++  if (!acct) throw new ApiError("Integration not configured: connect Stripe first.", 503, "integration_not_configured");
++  const { data: secret, error: sErr } = await ctx.client.rpc("payment_secret", { p_account: acct.id });
++  fromDb(sErr);
++  const creds = openJson(String(secret)) as StripeCreds;
++  try {
++    await stripeFor(creds.secret_key).refunds.create({ payment_intent: pay.provider_payment_id, amount }, { idempotencyKey: `refund-${paymentId}-${pay.refunded_cents + amount}` });
++  } catch (e) {
++    throw new ApiError(`Stripe refused the refund: ${e instanceof Error ? e.message : "unknown error"}`, 502, "provider_error");
++  }
++  const { error: uErr } = await system.from("payments").update({ refunded_cents: pay.refunded_cents + amount }).eq("organization_id", ctx.orgId).eq("id", paymentId);
++  fromDb(uErr);
++  await audit(ctx.client, ctx.orgId, "payment.refunded", { type: "payment", id: paymentId }, { amount_cents: amount });
++}
++
++// ----------------------------------------------------------- public side
++export async function publicInvoice(system: SupabaseClient, token: string) {
++  if (!/^[0-9a-f]{36}$/.test(token)) return null;
++  const { data } = await system.from("invoices").select(`${INVOICE_COLUMNS}, public_token`).eq("public_token", token).maybeSingle();
++  if (!data || data.status === "draft") return null;
++  const [{ data: org }, { data: contact }, stripe] = await Promise.all([
++    system.from("organizations").select("name, status, branding").eq("id", data.organization_id).maybeSingle(),
++    data.contact_id ? system.from("contacts").select("first_name, last_name, email").eq("organization_id", data.organization_id).eq("id", data.contact_id).maybeSingle() : Promise.resolve({ data: null }),
++    system.from("payment_accounts").select("id").eq("organization_id", data.organization_id).eq("status", "active").maybeSingle(),
++  ]);
++  if (!org || org.status === "closed") return null;
++  const inv = data as Invoice;
++  return { invoice: inv, business: org.name as string, branding: (org.branding || {}) as Record<string, string>, customer: contact, can_pay: inv.kind === "invoice" && !!stripe.data && ["sent", "partially_paid"].includes(inv.status) && org.status === "active", amount_due: amountDue(inv) };
++}
++
++export async function checkoutUrl(system: SupabaseClient, token: string, req?: Request) {
++  const found = await publicInvoice(system, token);
++  if (!found) throw new ApiError("This invoice is not available.", 404, "not_found");
++  if (!found.can_pay) throw new ApiError("Online payment is not available for this invoice.", 409, "conflict");
++  const due = found.amount_due;
++  if (due < 50) throw new ApiError("Nothing is due on this invoice.", 409, "conflict");
++  const stripe = await activeStripe(system, found.invoice.organization_id);
++  if (!stripe) throw new ApiError("Online payment is not set up.", 503, "integration_not_configured");
++  const base = publicBaseUrl(req);
++  const inv = found.invoice;
++  const label = inv.deposit_cents && inv.amount_paid_cents === 0 && due < inv.total_cents ? `Deposit for invoice ${inv.number}` : `Invoice ${inv.number}`;
++  const session = await stripeFor(stripe.creds.secret_key).checkout.sessions.create({
++    mode: "payment",
++    line_items: [{ quantity: 1, price_data: { currency: inv.currency, unit_amount: due, product_data: { name: `${label} — ${found.business}` } } }],
++    customer_email: found.customer?.email || undefined,
++    metadata: { invoice_id: inv.id, organization_id: inv.organization_id },
++    payment_intent_data: { metadata: { invoice_id: inv.id, organization_id: inv.organization_id } },
++    success_url: `${base}/i/${token}?paid=1`,
++    cancel_url: `${base}/i/${token}`,
++  }, { idempotencyKey: `checkout-${inv.id}-${inv.amount_paid_cents}-${due}-${Math.floor(Date.now() / 600_000)}` });
++  if (!session.url) throw new ApiError("Stripe did not return a payment page.", 502, "provider_error");
++  return session.url;
++}
++
++export async function decideEstimate(system: SupabaseClient, token: string, decision: "accepted" | "declined") {
++  const found = await publicInvoice(system, token);
++  if (!found || found.invoice.kind !== "estimate" || found.invoice.status !== "sent") throw new ApiError("This estimate can no longer be changed.", 409, "conflict");
++  const { error } = await system.from("invoices").update({ status: decision }).eq("organization_id", found.invoice.organization_id).eq("id", found.invoice.id).eq("status", "sent");
++  fromDb(error);
++  if (found.invoice.contact_id) {
++    await system.from("activities").insert({ organization_id: found.invoice.organization_id, contact_id: found.invoice.contact_id, kind: "payment", direction: "inbound", subject: `Estimate ${found.invoice.number} ${decision}`, actor_type: "contact", metadata: { invoice_id: found.invoice.id } });
++  }
++  if (decision === "accepted") {
++    await system.from("tasks").insert({ organization_id: found.invoice.organization_id, contact_id: found.invoice.contact_id, title: `Estimate ${found.invoice.number} accepted — schedule the work and invoice`, priority: "high", due_at: new Date(Date.now() + 86_400_000).toISOString() });
++  }
++  await systemAudit(system, found.invoice.organization_id, `estimate.${decision}`, { type: "invoice", id: found.invoice.id });
++}
++
++// Stripe webhook for one organization's account. Verified with that
++// account's signing secret; the event must refer to the same organization.
++export async function handleStripeEvent(system: SupabaseClient, accountOrg: string, event: Stripe.Event) {
++  if (event.type === "checkout.session.completed") {
++    const s = event.data.object as Stripe.Checkout.Session;
++    if (s.payment_status !== "paid" || s.metadata?.organization_id !== accountOrg || !s.metadata?.invoice_id) return "ignored";
++    const pi = typeof s.payment_intent === "string" ? s.payment_intent : s.payment_intent?.id;
++    if (!pi || !s.amount_total) return "ignored";
++    const { error } = await system.from("payments").insert({ organization_id: accountOrg, invoice_id: s.metadata.invoice_id, amount_cents: s.amount_total, method: "stripe", provider_payment_id: pi });
++    if (error?.code === "23505") return "duplicate";
++    fromDb(error);
++    const inv = await getInvoice(system, accountOrg, s.metadata.invoice_id);
++    if (inv.contact_id) {
++      await system.from("activities").insert({ organization_id: accountOrg, contact_id: inv.contact_id, kind: "payment", direction: "inbound", subject: `Paid ${money(s.amount_total, inv.currency)} on ${inv.number}`, actor_type: "contact", metadata: { invoice_id: inv.id } });
++    }
++    await systemAudit(system, accountOrg, "payment.received", { type: "invoice", id: inv.id }, { amount_cents: s.amount_total });
++    return "recorded";
++  }
++  if (event.type === "charge.refunded") {
++    const c = event.data.object as Stripe.Charge;
++    const pi = typeof c.payment_intent === "string" ? c.payment_intent : c.payment_intent?.id;
++    if (!pi) return "ignored";
++    const { data: pay } = await system.from("payments").select("id, refunded_cents").eq("organization_id", accountOrg).eq("method", "stripe").eq("provider_payment_id", pi).maybeSingle();
++    if (!pay || pay.refunded_cents === c.amount_refunded) return "ignored";
++    const { error } = await system.from("payments").update({ refunded_cents: Math.min(c.amount_refunded, c.amount) }).eq("organization_id", accountOrg).eq("id", pay.id);
++    fromDb(error);
++    return "refund_recorded";
++  }
++  return "ignored";
++}
+diff --git a/src/lib/billing/plans.ts b/src/lib/billing/plans.ts
+new file mode 100644
+index 0000000..4e2fd88
+--- /dev/null
++++ b/src/lib/billing/plans.ts
+@@ -0,0 +1,78 @@
++import "server-only";
++import { z } from "zod";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import type { CrmContext } from "@/lib/crm/service";
++
++// Plans, limits and usage. Limits are enforced by the database; this module
++// shows them and lets agencies manage plans for their client accounts.
++export const METRICS = {
++  sms: { label: "Text messages", period: "month" },
++  email: { label: "Emails", period: "month" },
++  ai_request: { label: "AI requests", period: "month" },
++  outreach_email: { label: "Outreach emails", period: "month" },
++  contacts: { label: "Contacts", period: "total" },
++  users: { label: "Team members", period: "total" },
++  sites: { label: "Websites", period: "total" },
++} as const;
++export type Metric = keyof typeof METRICS;
++
++export const planInput = z.object({
++  key: z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9-]{1,40}$/, "Use lowercase letters, numbers and dashes."),
++  name: z.string().trim().min(1).max(80),
++  description: z.string().trim().max(500).optional(),
++  price_cents: z.number().int().min(0).max(100_000_00),
++  limits: z.partialRecord(z.enum(Object.keys(METRICS) as [Metric, ...Metric[]]), z.number().int().min(0).max(10_000_000)).default({}),
++  active: z.boolean().default(true),
++});
++
++export async function usage(ctx: CrmContext) {
++  const [u, org] = await Promise.all([
++    ctx.client.rpc("org_usage", { p_org: ctx.orgId }),
++    ctx.client.from("organizations").select("plan, status, kind, parent_id").eq("id", ctx.orgId).maybeSingle(),
++  ]);
++  fromDb(u.error);
++  fromDb(org.error);
++  const { data: plan } = await ctx.client.from("plans").select("key, name, description, price_cents, currency, limits, owner_org_id").eq("key", org.data?.plan ?? "internal").maybeSingle();
++  return {
++    plan: plan ?? { key: org.data?.plan, name: org.data?.plan, limits: {} },
++    status: org.data?.status,
++    usage: ((u.data || []) as { metric: Metric; used: number; limit: number | null }[]).map((r) => ({ ...r, label: METRICS[r.metric].label, period: METRICS[r.metric].period })),
++  };
++}
++
++// Plans an agency may assign to its clients: platform plans plus its own.
++export async function availablePlans(ctx: CrmContext, agencyId: string) {
++  const { data, error } = await ctx.client.from("plans").select("key, name, description, price_cents, currency, limits, owner_org_id, active")
++    .or(`owner_org_id.is.null,owner_org_id.eq.${agencyId}`).eq("active", true).order("price_cents");
++  fromDb(error);
++  return (data || []).filter((p) => p.key !== "internal");
++}
++
++export async function savePlan(ctx: CrmContext, agencyId: string, input: z.infer<typeof planInput>) {
++  const key = `${input.key}`;
++  const { data: existing } = await ctx.client.from("plans").select("key, owner_org_id").eq("key", key).maybeSingle();
++  if (existing && existing.owner_org_id !== agencyId) throw new ApiError("That plan key is taken. Choose another.", 409, "conflict");
++  const row = { ...input, owner_org_id: agencyId };
++  const { error } = existing ? await ctx.client.from("plans").update(row).eq("key", key) : await ctx.client.from("plans").insert(row);
++  fromDb(error);
++  await audit(ctx.client, agencyId, existing ? "plan.updated" : "plan.created", { type: "plan", id: key }, { price_cents: input.price_cents });
++  return row;
++}
++
++// Client accounts of an agency with plan, status and current usage.
++export async function clientAccounts(ctx: CrmContext, agencyId: string) {
++  const { data, error } = await ctx.client.from("organizations").select("id, name, status, plan, created_at").eq("parent_id", agencyId).order("name");
++  fromDb(error);
++  const rows = [];
++  for (const o of data || []) {
++    const { data: u } = await ctx.client.rpc("org_usage", { p_org: o.id });
++    rows.push({ ...o, usage: (u || []) as { metric: Metric; used: number; limit: number | null }[] });
++  }
++  return rows;
++}
++
++export async function govern(ctx: CrmContext, orgId: string, change: { status?: "active" | "suspended" | "closed"; plan?: string }) {
++  const { error } = await ctx.client.rpc("govern_organization", { p_org: orgId, p_status: change.status ?? null, p_plan: change.plan ?? null });
++  fromDb(error);
++}
+diff --git a/src/lib/command/tools.ts b/src/lib/command/tools.ts
+index a7c01c5..9336c7e 100644
+--- a/src/lib/command/tools.ts
++++ b/src/lib/command/tools.ts
+@@ -14,6 +14,8 @@ import { ALLOWED_CATEGORIES } from "@/lib/leads/directory";
+ import * as kb from "@/lib/knowledge/service";
+ import { listForms } from "@/lib/forms/service";
+ import { listSites } from "@/lib/sites/service";
++import { listInvoices, money as formatMoney } from "@/lib/billing/invoices";
++import { usage } from "@/lib/billing/plans";
+ import type { AiCategory } from "./policy";
+ import type { ToolSpec } from "@/lib/ai/provider";
+ 
+@@ -470,6 +472,28 @@ const TOOLS: Tool[] = [
+       };
+     },
+   }),
++  readTool({
++    name: "invoice_summary",
++    description: "Recent invoices and estimates with status and amounts, plus the total still owed by customers.",
++    input: z.object({ kind: z.enum(["invoice", "estimate"]).default("invoice") }),
++    async run(ctx, input) {
++      const rows = await listInvoices(ctx, { kind: input.kind });
++      const owed = rows.filter((i) => ["sent", "partially_paid"].includes(i.status)).reduce((s, i) => s + i.total_cents - i.amount_paid_cents, 0);
++      return {
++        outstanding: formatMoney(owed, "usd"),
++        items: rows.slice(0, 25).map((i) => ({ number: i.number, status: i.status, total: formatMoney(i.total_cents, i.currency), paid: formatMoney(i.amount_paid_cents, i.currency), due_date: i.due_date, link: "/invoices" })),
++      };
++    },
++  }),
++  readTool({
++    name: "usage_summary",
++    description: "The organization's plan and how much of each limit (texts, emails, AI requests, contacts, team members, websites) has been used.",
++    input: z.object({}),
++    async run(ctx) {
++      const u = await usage(ctx);
++      return { plan: u.plan.key === "internal" ? "Unlimited" : u.plan.name, status: u.status, usage: u.usage.map((r) => ({ what: r.label, used: r.used, limit: r.limit ?? "unlimited", period: r.period })) };
++    },
++  }),
+ ];
+ 
+ const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+diff --git a/src/lib/payments/stripe-accounts.ts b/src/lib/payments/stripe-accounts.ts
+new file mode 100644
+index 0000000..757f0b8
+--- /dev/null
++++ b/src/lib/payments/stripe-accounts.ts
+@@ -0,0 +1,62 @@
++import "server-only";
++import Stripe from "stripe";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { hintFor, openJson, sealJson, vaultReady } from "@/lib/crypto/vault";
++import { publicBaseUrl } from "@/lib/supabase/system";
++
++// Each organization takes payments into its OWN Stripe account (its secret
++// key, sealed with APP_ENCRYPTION_KEY). The platform never holds client funds.
++export const API_VERSION = "2026-07-29.dahlia" as const;
++export const ACCOUNT_COLUMNS = "id, organization_id, provider, label, credential_hint, status, created_at";
++export type StripeCreds = { secret_key: string; webhook_secret?: string };
++
++export function stripeFor(key: string) {
++  return new Stripe(key, { apiVersion: API_VERSION, maxNetworkRetries: 1, timeout: 15_000 });
++}
++
++export function webhookUrl(base: string, accountId: string) {
++  return `${base}/api/webhooks/stripe-account/${accountId}`;
++}
++
++// Connects a Stripe account: checks the key, then registers our webhook in
++// that account (or accepts a signing secret pasted by the owner).
++export async function connectStripe(client: SupabaseClient, orgId: string, userId: string, input: { secret_key: string; webhook_secret?: string; label?: string }, req?: Request) {
++  if (!vaultReady()) throw new ApiError("Integration not configured: the server's APP_ENCRYPTION_KEY is not set.", 503, "integration_not_configured");
++  if (!/^(sk|rk)_(live|test)_[A-Za-z0-9]{10,}$/.test(input.secret_key)) throw new ApiError("Paste a Stripe secret or restricted key (sk_… or rk_…).", 422, "invalid");
++  const base = publicBaseUrl(req);
++  if (!base?.startsWith("https://")) throw new ApiError("Integration not configured: set PUBLIC_APP_URL to your https address so Stripe can confirm payments.", 503, "integration_not_configured");
++  const stripe = stripeFor(input.secret_key);
++  try {
++    await stripe.balance.retrieve();
++  } catch {
++    throw new ApiError("Stripe rejected that key. Check it in Stripe → Developers → API keys.", 422, "invalid");
++  }
++  const { data: existing } = await client.from("payment_accounts").select("id").eq("organization_id", orgId).eq("status", "active").maybeSingle();
++  if (existing) await client.from("payment_accounts").update({ status: "disabled" }).eq("organization_id", orgId).eq("id", existing.id);
++  const { data: row, error } = await client.from("payment_accounts").insert({
++    organization_id: orgId, provider: "stripe", label: input.label || (input.secret_key.includes("_test_") ? "Stripe (test mode)" : "Stripe"),
++    encrypted_credentials: sealJson({ secret_key: input.secret_key }), credential_hint: hintFor(input.secret_key), created_by: userId,
++  }).select(ACCOUNT_COLUMNS).single();
++  fromDb(error);
++  let webhookSecret = input.webhook_secret?.trim() || "";
++  let note = "";
++  if (!webhookSecret) {
++    try {
++      const endpoint = await stripe.webhookEndpoints.create({ url: webhookUrl(base, row!.id), enabled_events: ["checkout.session.completed", "charge.refunded"], description: "Sun Marketing Console invoices" });
++      webhookSecret = endpoint.secret || "";
++    } catch {
++      note = "This key can't create webhooks. In Stripe, add an endpoint for the address shown and paste its signing secret.";
++    }
++  }
++  const { error: e2 } = await client.from("payment_accounts").update({ encrypted_credentials: sealJson({ secret_key: input.secret_key, ...(webhookSecret ? { webhook_secret: webhookSecret } : {}) }) })
++    .eq("organization_id", orgId).eq("id", row!.id);
++  fromDb(e2);
++  return { account: row!, webhook_url: webhookUrl(base, row!.id), webhook_ready: !!webhookSecret, note };
++}
++
++export async function activeStripe(system: SupabaseClient, orgId: string) {
++  const { data } = await system.from("payment_accounts").select("id, encrypted_credentials").eq("organization_id", orgId).eq("provider", "stripe").eq("status", "active").maybeSingle();
++  if (!data) return null;
++  return { id: data.id as string, creds: openJson(data.encrypted_credentials) as StripeCreds };
++}
+diff --git a/src/lib/sites/domains.ts b/src/lib/sites/domains.ts
+new file mode 100644
+index 0000000..67f3e6e
+--- /dev/null
++++ b/src/lib/sites/domains.ts
+@@ -0,0 +1,62 @@
++import "server-only";
++import { resolveTxt } from "node:dns/promises";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { z } from "zod";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import type { CrmContext } from "@/lib/crm/service";
++
++// Custom domains for hosted sites. Ownership is proven with a DNS TXT record
++// at _sun-verify.<domain>; only the server (service role) marks a domain
++// verified, after it has looked the record up itself.
++export const domainInput = z.object({
++  domain: z.string().trim().toLowerCase().transform((v) => v.replace(/^https?:\/\//, "").replace(/\/.*$/, ""))
++    .pipe(z.string().regex(/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, "Enter a domain like www.yourbusiness.com.").max(253)),
++});
++
++const RESERVED = /(^|\.)(netlify\.app|netlify\.live|localhost|supabase\.co|vercel\.app)$/;
++
++export async function listDomains(ctx: CrmContext, siteId: string) {
++  const { data, error } = await ctx.client.from("site_domains").select("id, domain, verification_token, status, verified_at, last_checked_at, created_at")
++    .eq("organization_id", ctx.orgId).eq("site_id", siteId).order("created_at");
++  fromDb(error);
++  return data || [];
++}
++
++export async function addDomain(ctx: CrmContext, siteId: string, input: z.infer<typeof domainInput>) {
++  if (RESERVED.test(input.domain)) throw new ApiError("Use a domain you own.", 422, "invalid");
++  const { data, error } = await ctx.client.from("site_domains").insert({ organization_id: ctx.orgId, site_id: siteId, domain: input.domain })
++    .select("id, domain, verification_token, status").single();
++  if (error?.code === "23505") throw new ApiError("That domain is already connected to a site.", 409, "conflict");
++  fromDb(error);
++  await audit(ctx.client, ctx.orgId, "site.domain_added", { type: "site", id: siteId }, { domain: input.domain });
++  return data!;
++}
++
++export async function removeDomain(ctx: CrmContext, id: string) {
++  const { error } = await ctx.client.from("site_domains").delete().eq("organization_id", ctx.orgId).eq("id", id);
++  fromDb(error);
++}
++
++export type TxtLookup = (name: string) => Promise<string[][]>;
++
++export async function verifyDomain(ctx: CrmContext, system: SupabaseClient | null, id: string, lookup: TxtLookup = resolveTxt) {
++  const { data: d, error } = await ctx.client.from("site_domains").select("id, site_id, domain, verification_token, status").eq("organization_id", ctx.orgId).eq("id", id).maybeSingle();
++  fromDb(error);
++  if (!d) throw new ApiError("Domain not found.", 404, "not_found");
++  if (d.status === "verified") return { verified: true, message: "Already verified." };
++  if (!system) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY is needed to verify domains.", 503, "integration_not_configured");
++  let records: string[] = [];
++  try {
++    records = (await lookup(`_sun-verify.${d.domain}`)).map((parts) => parts.join(""));
++  } catch {
++    records = [];
++  }
++  const ok = records.includes(d.verification_token);
++  await system.from("site_domains").update({ last_checked_at: new Date().toISOString(), ...(ok ? { status: "verified", verified_at: new Date().toISOString() } : {}) })
++    .eq("organization_id", ctx.orgId).eq("id", id);
++  if (ok) await audit(ctx.client, ctx.orgId, "site.domain_verified", { type: "site", id: d.site_id }, { domain: d.domain });
++  return ok
++    ? { verified: true, message: "Verified. Point the domain at the console (see the DNS steps) and it will serve your published site." }
++    : { verified: false, message: records.length ? "A TXT record was found but it doesn't match. Check the value and try again." : "No TXT record found yet. DNS changes can take up to an hour." };
++}
+diff --git a/src/lib/tenant/api.ts b/src/lib/tenant/api.ts
+index 4156589..8b97da4 100644
+--- a/src/lib/tenant/api.ts
++++ b/src/lib/tenant/api.ts
+@@ -41,6 +41,7 @@ export function fromDb(error: { code?: string; message?: string } | null, fallba
+   if (error.code === "23503") throw new ApiError("A related record was not found in this organization.", 422, "invalid_reference");
+   if (error.code === "23514" || error.code === "22023" || error.code === "22P02") throw new ApiError("Some values are not valid.", 422, "invalid");
+   if (error.code === "P0002") throw new ApiError(error.message || "Not found.", 404, "not_found");
++  if (error.code === "53400") throw new ApiError(error.message || "Plan limit reached.", 402, "plan_limit");
+   console.error("[db]", error.code, error.message);
+   throw new ApiError(fallback, 500, "server_error");
+ }
+diff --git a/src/middleware.ts b/src/middleware.ts
+index 02017ef..30c9443 100644
+--- a/src/middleware.ts
++++ b/src/middleware.ts
+@@ -4,7 +4,7 @@ import { AUTH_COOKIE, REFRESH_COOKIE, refreshSession, setSessionCookies } from "
+ // Public pages /book, /appointment and /review are customer-facing (token or slug).
+ // /api/automation/run, /api/comms/dispatch and /api/jobs/tick authenticate with AUTOMATION_SECRET (scheduler);
+ // /api/webhooks/* verify each provider's signature.
+-const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/automation\/run$/, /^\/api\/webhooks\//, /^\/api\/comms\/dispatch$/, /^\/api\/jobs\/tick$/, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
++const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/automation\/run$/, /^\/api\/webhooks\//, /^\/api\/comms\/dispatch$/, /^\/api\/jobs\/tick$/, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
+ 
+ async function expected(pass: string): Promise<string> {
+   const buf = new TextEncoder().encode("sunmarketing::" + pass);
+@@ -19,8 +19,8 @@ async function expected(pass: string): Promise<string> {
+ // decided per organization by RLS. Everything else is the legacy single-tenant
+ // console, which reads agency-wide data and is limited to platform staff.
+ const TENANT = [
+-  /^\/(command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge)(\/|$)/,
+-  /^\/api\/(crm|command|tenant|inbox|messages|channels|reputation|calendars|appointments|workflows|prospecting|forms|sites|knowledge)(\/|$)/,
++  /^\/(command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge|invoices|account)(\/|$)/,
++  /^\/api\/(crm|command|tenant|inbox|messages|channels|reputation|calendars|appointments|workflows|prospecting|forms|sites|knowledge|invoices|billing|organization)(\/|$)/,
+ ];
+ 
+ type SessionUser = { id: string };
+@@ -73,11 +73,49 @@ async function isPlatformStaff(userId: string, url: string, key: string, appSecr
+   return !!r?.ok && ((await r.json()) as unknown[]).length > 0;
+ }
+ 
++// ---- Custom domains: a verified client domain serves only that client's
++// published site (plus the public assets and endpoints it needs).
++const APP_HOSTS = new Set(
++  [process.env.PUBLIC_APP_URL, process.env.URL, process.env.DEPLOY_PRIME_URL]
++    .map((u) => { try { return u ? new URL(u).host.toLowerCase() : ""; } catch { return ""; } })
++    .filter(Boolean),
++);
++const domainCache = new Map<string, { slug: string | null; until: number }>();
++const SITE_PATH = /^\/$|^\/[a-z0-9][a-z0-9-]{0,62}$/;
++const DOMAIN_PASSTHROUGH = [/^\/_next\//, /^\/favicon/, /^\/images\//, /^\/api\/public\//, /^\/book\//, /^\/appointment\//, /^\/f\//, /^\/review\//, /^\/optout\//, /^\/i\//, /^\/robots\.txt$/];
++
++function isAppHost(host: string) {
++  return !host || APP_HOSTS.has(host) || host.startsWith("localhost") || host.startsWith("127.0.0.1") || host.endsWith(".netlify.app") || host.endsWith(".netlify.live");
++}
++
++async function slugForDomain(host: string, url: string, key: string) {
++  const cached = domainCache.get(host);
++  if (cached && cached.until > Date.now()) return cached.slug;
++  const r = await fetch(`${url}/rest/v1/rpc/site_slug_for_domain`, {
++    method: "POST", headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ p_domain: host }),
++  }).catch(() => null);
++  const slug = r?.ok ? ((await r.json()) as string | null) : null;
++  if (domainCache.size > 2000) domainCache.clear();
++  domainCache.set(host, { slug, until: Date.now() + 60_000 });
++  return slug;
++}
++
+ export async function middleware(req: NextRequest) {
+   const pass = process.env.APP_PASSCODE;
+   const supabaseUrl = process.env.SUPABASE_URL;
+   const supabaseKey = process.env.SUPABASE_KEY;
+   const { pathname } = req.nextUrl;
++  const host = (req.headers.get("x-forwarded-host") || req.headers.get("host") || "").toLowerCase().split(":")[0];
++  // Unknown hosts fall through to the normal app, so a missing PUBLIC_APP_URL
++  // can never take the console offline; only verified client domains are rerouted.
++  const clientSite = !isAppHost(host) && supabaseUrl && supabaseKey ? await slugForDomain(host, supabaseUrl, supabaseKey) : null;
++  if (clientSite) {
++    if (DOMAIN_PASSTHROUGH.some((r) => r.test(pathname))) return NextResponse.next();
++    if (!SITE_PATH.test(pathname)) return new NextResponse("Not found", { status: 404 });
++    const url = req.nextUrl.clone();
++    url.pathname = `/s/${clientSite}${pathname === "/" ? "" : pathname}`;
++    return NextResponse.rewrite(url);
++  }
+   if (PUBLIC.some((r) => r.test(pathname))) return NextResponse.next();
+   if (!pass && !(supabaseUrl && supabaseKey)) {
+     // Fail closed: with no sign-in method configured the console would
+diff --git a/supabase/migrations/20261011120000_phase6_business_layer.sql b/supabase/migrations/20261011120000_phase6_business_layer.sql
+new file mode 100644
+index 0000000..fabf67c
+--- /dev/null
++++ b/supabase/migrations/20261011120000_phase6_business_layer.sql
+@@ -0,0 +1,481 @@
++-- Phase 6 (part 1): the SaaS business layer.
++--
++--   * Organization governance (security fix): an organization's kind,
++--     parent, slug, plan and status can no longer be changed through the
++--     API by its own admins. Plan and status are set by the parent agency's
++--     admins (for client accounts) or platform staff, via
++--     govern_organization().
++--   * Plans with limits, usage metering and enforcement. Usage events are
++--     recorded by triggers, and limits are checked before the work happens
++--     (messages, AI requests, outreach, contacts, users, sites), for people,
++--     the AI and automations alike.
++--   * Client billing: invoices and estimates with database-computed totals,
++--     deposits, payments (Stripe through each organization's own account, or
++--     recorded manually), refunds, and a public invoice page.
++--   * Custom domains for hosted sites, verified by DNS on the server.
++begin;
++
++-- ---------------------------------------------------------------- staff
++create or replace function public.is_platform_staff() returns boolean
++language sql stable security definer set search_path = '' as $$
++  select exists (select 1 from public.team_members t where t.user_id = auth.uid() and t.active)
++$$;
++
++-- ----------------------------------------------------------------- plans
++create table public.plans (
++  key text primary key check (key ~ '^[a-z0-9][a-z0-9-]{1,40}$'),
++  name text not null check (length(btrim(name)) between 1 and 80),
++  description text check (length(description) <= 500),
++  -- null: a platform plan. Otherwise an agency's own plan for its clients.
++  owner_org_id uuid references public.organizations(id) on delete cascade,
++  price_cents integer not null default 0 check (price_cents >= 0),
++  currency text not null default 'usd' check (currency ~ '^[a-z]{3}$'),
++  -- Monthly: sms, email, ai_request, outreach_email. Totals: contacts, users, sites.
++  -- A missing key means unlimited.
++  limits jsonb not null default '{}'::jsonb check (jsonb_typeof(limits) = 'object'),
++  features jsonb not null default '[]'::jsonb check (jsonb_typeof(features) = 'array'),
++  active boolean not null default true,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now()
++);
++create trigger plans_updated before update on public.plans for each row execute function public.tg_set_updated_at();
++
++insert into public.plans(key, name, description, price_cents, limits) values
++  ('internal', 'Internal', 'No limits. For the platform owner''s own accounts.', 0, '{}'),
++  ('starter', 'Starter', 'For a single small business getting started.', 9700,
++   '{"contacts": 2500, "users": 3, "sites": 1, "sms": 1000, "email": 5000, "ai_request": 300, "outreach_email": 300}'),
++  ('growth', 'Growth', 'For growing teams with more volume.', 29700,
++   '{"contacts": 15000, "users": 10, "sites": 3, "sms": 5000, "email": 25000, "ai_request": 1500, "outreach_email": 1500}'),
++  ('pro', 'Pro', 'High volume, many locations.', 49700,
++   '{"contacts": 100000, "users": 50, "sites": 10, "sms": 20000, "email": 100000, "ai_request": 6000, "outreach_email": 5000}')
++on conflict (key) do nothing;
++update public.organizations set plan = 'internal' where plan not in (select key from public.plans);
++alter table public.organizations add constraint organizations_plan_fk foreign key (plan) references public.plans(key) on update cascade;
++
++-- --------------------------------------------- organization governance
++create or replace function public.tg_organizations_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if current_user not in ('authenticated', 'anon') then return new; end if;
++  if new.kind <> old.kind or new.parent_id is distinct from old.parent_id or new.slug <> old.slug or new.created_by is distinct from old.created_by then
++    raise exception 'An organization''s type, parent and address cannot be changed.' using errcode = '42501';
++  end if;
++  if new.status <> old.status or new.plan <> old.plan then
++    raise exception 'Plan and status are changed by the managing agency.' using errcode = '42501';
++  end if;
++  return new;
++end $$;
++create trigger organizations_guard before update on public.organizations
++  for each row execute function public.tg_organizations_guard();
++
++-- Agency admins govern their client accounts; platform staff govern agencies.
++create or replace function public.govern_organization(p_org uuid, p_status text default null, p_plan text default null) returns void
++language plpgsql security definer set search_path = '' as $$
++declare v_org public.organizations; v_plan public.plans; v_allowed boolean;
++begin
++  select * into v_org from public.organizations where id = p_org;
++  if not found then raise exception 'Organization not found.' using errcode = 'P0002'; end if;
++  v_allowed := public.is_platform_staff() or (v_org.kind = 'client' and exists (
++    select 1 from public.memberships m where m.organization_id = v_org.parent_id and m.user_id = auth.uid() and m.status = 'active' and public.role_rank(m.role) >= 4));
++  if not v_allowed then raise exception 'Only the managing agency''s admins can change this.' using errcode = '42501'; end if;
++  if p_status is not null and p_status not in ('active', 'suspended', 'closed') then raise exception 'Unknown status.' using errcode = '22023'; end if;
++  if p_plan is not null then
++    select * into v_plan from public.plans where key = p_plan and active;
++    if not found or (v_plan.owner_org_id is not null and v_plan.owner_org_id is distinct from v_org.parent_id) then
++      raise exception 'That plan is not available for this account.' using errcode = '22023';
++    end if;
++    if v_plan.key = 'internal' and not public.is_platform_staff() then
++      raise exception 'Only platform staff assign the internal plan.' using errcode = '42501';
++    end if;
++  end if;
++  update public.organizations set status = coalesce(p_status, status), plan = coalesce(p_plan, plan) where id = p_org;
++  insert into public.audit_log(organization_id, actor_type, actor_id, action, metadata)
++  values (p_org, 'user', auth.uid(), 'organization.governed', jsonb_build_object('status', p_status, 'plan', p_plan, 'previous_status', v_org.status, 'previous_plan', v_org.plan));
++end $$;
++
++-- ------------------------------------------------------------- metering
++create table public.usage_events (
++  id bigint generated always as identity primary key,
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  metric text not null check (metric in ('sms', 'email', 'ai_request', 'outreach_email')),
++  quantity integer not null default 1 check (quantity > 0),
++  ref text,
++  occurred_at timestamptz not null default now()
++);
++create index usage_events_org_metric_idx on public.usage_events(organization_id, metric, occurred_at);
++
++create or replace function public.month_start() returns timestamptz
++language sql stable set search_path = '' as $$ select date_trunc('month', now() at time zone 'UTC') at time zone 'UTC' $$;
++
++-- Raises 53400 when adding p_add would exceed the organization's plan.
++create or replace function public.check_plan_limit(p_org uuid, p_metric text, p_add integer default 1) returns void
++language plpgsql security definer set search_path = '' as $$
++declare v_limit bigint; v_used bigint; v_label text;
++begin
++  select (p.limits ->> p_metric)::bigint into v_limit
++    from public.organizations o join public.plans p on p.key = o.plan where o.id = p_org;
++  if v_limit is null then return; end if;
++  v_used := case p_metric
++    when 'contacts' then (select count(*) from public.contacts where organization_id = p_org and erased_at is null)
++    when 'users' then (select count(*) from public.memberships where organization_id = p_org and status = 'active')
++    when 'sites' then (select count(*) from public.sites where organization_id = p_org and status <> 'archived')
++    else (select coalesce(sum(quantity), 0) from public.usage_events where organization_id = p_org and metric = p_metric and occurred_at >= public.month_start())
++  end;
++  if v_used + p_add > v_limit then
++    v_label := case p_metric when 'sms' then 'text messages this month' when 'email' then 'emails this month' when 'ai_request' then 'AI requests this month'
++      when 'outreach_email' then 'outreach emails this month' when 'contacts' then 'contacts' when 'users' then 'team members' when 'sites' then 'websites' else p_metric end;
++    raise exception 'Plan limit reached: % of % %. Ask your agency to upgrade the plan.', v_used, v_limit, v_label using errcode = '53400';
++  end if;
++end $$;
++
++create or replace function public.tg_limit_messages() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if new.direction = 'outbound' and new.status in ('queued', 'scheduled') and (tg_op = 'INSERT' or old.status = 'scheduled') then
++    perform public.check_plan_limit(new.organization_id, new.channel);
++  end if;
++  return new;
++end $$;
++create trigger messages_plan_limit before insert or update of status on public.messages
++  for each row execute function public.tg_limit_messages();
++
++create or replace function public.tg_meter_messages() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if new.direction = 'outbound' and new.status = 'sent' and old.status is distinct from 'sent' then
++    insert into public.usage_events(organization_id, metric, ref) values (new.organization_id, new.channel, new.id::text);
++  end if;
++  return null;
++end $$;
++create trigger messages_meter after update of status on public.messages
++  for each row execute function public.tg_meter_messages();
++
++create or replace function public.tg_limit_meter_ai() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if new.role = 'user' then
++    perform public.check_plan_limit(new.organization_id, 'ai_request');
++    insert into public.usage_events(organization_id, metric, ref) values (new.organization_id, 'ai_request', new.conversation_id::text);
++  end if;
++  return new;
++end $$;
++create trigger ai_messages_plan before insert on public.ai_messages
++  for each row execute function public.tg_limit_meter_ai();
++
++create or replace function public.tg_limit_meter_outreach() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if old.status = 'draft' and new.status = 'sending' then
++    perform public.check_plan_limit(new.organization_id, 'outreach_email');
++  elsif old.status = 'sending' and new.status = 'sent' then
++    insert into public.usage_events(organization_id, metric, ref) values (new.organization_id, 'outreach_email', new.id::text);
++  end if;
++  return new;
++end $$;
++create trigger outreach_plan before update of status on public.outreach_messages
++  for each row execute function public.tg_limit_meter_outreach();
++
++create or replace function public.tg_limit_totals() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if tg_table_name = 'contacts' then perform public.check_plan_limit(new.organization_id, 'contacts');
++  elsif tg_table_name = 'memberships' and new.status = 'active' and (tg_op = 'INSERT' or old.status <> 'active') then perform public.check_plan_limit(new.organization_id, 'users');
++  elsif tg_table_name = 'sites' then perform public.check_plan_limit(new.organization_id, 'sites');
++  end if;
++  return new;
++end $$;
++create trigger contacts_plan_limit before insert on public.contacts for each row execute function public.tg_limit_totals();
++create trigger memberships_plan_limit before insert or update of status on public.memberships for each row execute function public.tg_limit_totals();
++create trigger sites_plan_limit before insert on public.sites for each row execute function public.tg_limit_totals();
++
++-- Usage against limits, for members of the organization.
++create or replace function public.org_usage(p_org uuid)
++returns table (metric text, used bigint, "limit" bigint)
++language plpgsql stable security definer set search_path = '' as $$
++declare v_limits jsonb;
++begin
++  if public.org_rank(p_org) < 1 then raise exception 'Not allowed.' using errcode = '42501'; end if;
++  select p.limits into v_limits from public.organizations o join public.plans p on p.key = o.plan where o.id = p_org;
++  return query
++  select m.metric,
++    case m.metric
++      when 'contacts' then (select count(*) from public.contacts c where c.organization_id = p_org and c.erased_at is null)
++      when 'users' then (select count(*) from public.memberships x where x.organization_id = p_org and x.status = 'active')
++      when 'sites' then (select count(*) from public.sites s where s.organization_id = p_org and s.status <> 'archived')
++      else (select coalesce(sum(u.quantity), 0)::bigint from public.usage_events u where u.organization_id = p_org and u.metric = m.metric and u.occurred_at >= public.month_start())
++    end,
++    (v_limits ->> m.metric)::bigint
++  from unnest(array['sms', 'email', 'ai_request', 'outreach_email', 'contacts', 'users', 'sites']) as m(metric);
++end $$;
++
++-- ----------------------------------------------------- payment accounts
++create table public.payment_accounts (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  provider text not null default 'stripe' check (provider in ('stripe')),
++  label text not null check (length(btrim(label)) between 1 and 80),
++  encrypted_credentials text not null check (length(encrypted_credentials) between 20 and 8000),
++  credential_hint text check (length(credential_hint) <= 12),
++  status text not null default 'active' check (status in ('active', 'disabled')),
++  created_by uuid,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  unique (id, organization_id)
++);
++create unique index payment_accounts_one_active on public.payment_accounts(organization_id, provider) where status = 'active';
++create trigger payment_accounts_updated before update on public.payment_accounts for each row execute function public.tg_set_updated_at();
++
++-- Ciphertext for refunds, to managers of the organization only.
++create or replace function public.payment_secret(p_account uuid) returns text
++language plpgsql stable security definer set search_path = '' as $$
++declare v public.payment_accounts;
++begin
++  select * into v from public.payment_accounts where id = p_account and status = 'active';
++  if not found or public.org_rank(v.organization_id) < 3 then raise exception 'Payment account not available.' using errcode = '42501'; end if;
++  return v.encrypted_credentials;
++end $$;
++
++-- ----------------------------------------------------------- invoices
++create table public.invoices (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  kind text not null default 'invoice' check (kind in ('invoice', 'estimate')),
++  seq integer not null default 0,
++  number text,
++  contact_id uuid,
++  status text not null default 'draft' check (status in ('draft', 'sent', 'partially_paid', 'paid', 'void', 'accepted', 'declined')),
++  currency text not null default 'usd' check (currency ~ '^[a-z]{3}$'),
++  line_items jsonb not null check (jsonb_typeof(line_items) = 'array' and jsonb_array_length(line_items) between 1 and 100),
++  tax_rate_bp integer not null default 0 check (tax_rate_bp between 0 and 5000),
++  subtotal_cents bigint not null default 0,
++  tax_cents bigint not null default 0,
++  total_cents bigint not null default 0,
++  deposit_cents bigint check (deposit_cents >= 0),
++  amount_paid_cents bigint not null default 0,
++  due_date date,
++  notes text check (length(notes) <= 4000),
++  source_estimate_id uuid,
++  public_token text not null unique default encode(extensions.gen_random_bytes(18), 'hex'),
++  sent_at timestamptz,
++  paid_at timestamptz,
++  decided_at timestamptz,
++  created_by uuid,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  unique (id, organization_id),
++  unique (organization_id, kind, seq),
++  foreign key (contact_id, organization_id) references public.contacts(id, organization_id) on delete set null (contact_id),
++  check (deposit_cents is null or deposit_cents <= total_cents)
++);
++create index invoices_org_idx on public.invoices(organization_id, created_at desc);
++create trigger invoices_updated before update on public.invoices for each row execute function public.tg_set_updated_at();
++
++-- Totals are always computed here from the line items; the client never
++-- supplies them. Paid amounts come only from payments.
++create or replace function public.tg_invoices_guard() returns trigger
++language plpgsql set search_path = '' as $$
++declare v_api boolean := current_user in ('authenticated', 'anon'); v_item jsonb; v_sub numeric := 0;
++begin
++  for v_item in select * from jsonb_array_elements(new.line_items) loop
++    if jsonb_typeof(v_item) <> 'object' or length(coalesce(v_item ->> 'description', '')) not between 1 and 300
++       or (v_item ->> 'quantity')::numeric <= 0 or (v_item ->> 'quantity')::numeric > 100000
++       or (v_item ->> 'unit_cents')::numeric < 0 or (v_item ->> 'unit_cents')::numeric > 100000000 then
++      raise exception 'Each line needs a description, a positive quantity and a price.' using errcode = '22023';
++    end if;
++    v_sub := v_sub + round((v_item ->> 'quantity')::numeric * (v_item ->> 'unit_cents')::numeric);
++  end loop;
++  if tg_op = 'INSERT' then
++    perform pg_advisory_xact_lock(hashtext(new.organization_id::text || new.kind));
++    select coalesce(max(seq), 0) + 1 into new.seq from public.invoices where organization_id = new.organization_id and kind = new.kind;
++    new.number := case new.kind when 'estimate' then 'EST-' else 'INV-' end || lpad(new.seq::text, 4, '0');
++    if v_api then
++      new.status := 'draft'; new.amount_paid_cents := 0; new.paid_at := null; new.sent_at := null; new.decided_at := null; new.created_by := auth.uid();
++      new.public_token := encode(extensions.gen_random_bytes(18), 'hex');
++    end if;
++  else
++    if new.organization_id <> old.organization_id or new.kind <> old.kind or new.seq <> old.seq or new.number <> old.number or new.public_token <> old.public_token then
++      raise exception 'Invoice identity is immutable.' using errcode = '42501';
++    end if;
++    if old.status <> 'draft' and (new.line_items <> old.line_items or new.tax_rate_bp <> old.tax_rate_bp or new.deposit_cents is distinct from old.deposit_cents
++       or new.contact_id is distinct from old.contact_id or new.currency <> old.currency) then
++      raise exception 'Only drafts can be edited. Void it and create a new one.' using errcode = '42501';
++    end if;
++    if v_api then
++      if new.amount_paid_cents <> old.amount_paid_cents or new.paid_at is distinct from old.paid_at then
++        raise exception 'Payments are recorded as payments.' using errcode = '42501';
++      end if;
++      if new.status <> old.status and not (
++           (old.status = 'draft' and new.status in ('sent', 'void'))
++        or (old.status in ('sent', 'partially_paid') and new.status = 'void' and new.amount_paid_cents = 0)
++        or (new.kind = 'estimate' and old.status = 'sent' and new.status in ('accepted', 'declined'))) then
++        raise exception 'Invalid invoice change % -> %.', old.status, new.status using errcode = '42501';
++      end if;
++      if new.status in ('accepted', 'declined') and old.status <> new.status and public.org_rank(new.organization_id) < 3 then
++        raise exception 'Customers accept estimates on the estimate page; managers can record a decision.' using errcode = '42501';
++      end if;
++    end if;
++    if new.status = 'sent' and old.status = 'draft' then new.sent_at := now(); end if;
++    if new.status in ('accepted', 'declined') and old.status <> new.status then new.decided_at := now(); end if;
++  end if;
++  new.subtotal_cents := v_sub;
++  new.tax_cents := round(v_sub * new.tax_rate_bp / 10000.0);
++  new.total_cents := new.subtotal_cents + new.tax_cents;
++  if new.deposit_cents is not null and new.deposit_cents > new.total_cents then
++    raise exception 'The deposit cannot exceed the total.' using errcode = '22023';
++  end if;
++  return new;
++end $$;
++create trigger invoices_guard before insert or update on public.invoices
++  for each row execute function public.tg_invoices_guard();
++
++create table public.payments (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null,
++  invoice_id uuid not null,
++  amount_cents bigint not null check (amount_cents > 0),
++  refunded_cents bigint not null default 0 check (refunded_cents >= 0),
++  method text not null check (method in ('stripe', 'manual')),
++  provider_payment_id text,
++  note text check (length(note) <= 500),
++  recorded_by uuid,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  unique (method, provider_payment_id),
++  foreign key (invoice_id, organization_id) references public.invoices(id, organization_id) on delete cascade,
++  check (refunded_cents <= amount_cents)
++);
++create index payments_invoice_idx on public.payments(invoice_id);
++create trigger payments_updated before update on public.payments for each row execute function public.tg_set_updated_at();
++
++create or replace function public.tg_payments_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if tg_op = 'INSERT' and exists (select 1 from public.invoices i where i.id = new.invoice_id and (i.kind = 'estimate' or i.status in ('draft', 'void', 'declined'))) then
++    raise exception 'Payments apply to sent invoices only.' using errcode = '22023';
++  end if;
++  if current_user not in ('authenticated', 'anon') then return new; end if;
++  if tg_op = 'INSERT' then
++    if new.method <> 'manual' or public.org_rank(new.organization_id) < 3 then
++      raise exception 'Managers record manual payments; card payments come from the payment provider.' using errcode = '42501';
++    end if;
++    new.recorded_by := auth.uid(); new.refunded_cents := 0; new.provider_payment_id := null;
++    return new;
++  end if;
++  raise exception 'Payments cannot be edited.' using errcode = '42501';
++end $$;
++create trigger payments_guard before insert or update on public.payments
++  for each row execute function public.tg_payments_guard();
++
++-- Keeps the invoice's paid amount and status in step with its payments.
++create or replace function public.tg_payments_apply() returns trigger
++language plpgsql security definer set search_path = '' as $$
++declare v_inv uuid := coalesce(new.invoice_id, old.invoice_id); v_paid bigint; v_total bigint; v_status text;
++begin
++  select coalesce(sum(amount_cents - refunded_cents), 0) into v_paid from public.payments where invoice_id = v_inv;
++  select total_cents, status into v_total, v_status from public.invoices where id = v_inv;
++  update public.invoices set amount_paid_cents = v_paid,
++         status = case when v_status in ('void', 'declined') then v_status
++                       when v_paid >= v_total and v_total > 0 then 'paid'
++                       when v_paid > 0 then 'partially_paid'
++                       when v_status in ('paid', 'partially_paid') then 'sent' else v_status end,
++         paid_at = case when v_paid >= v_total and v_total > 0 then coalesce(paid_at, now()) else null end
++   where id = v_inv;
++  return null;
++end $$;
++create trigger payments_apply after insert or update on public.payments
++  for each row execute function public.tg_payments_apply();
++
++-- ---------------------------------------------------------- site domains
++create table public.site_domains (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null,
++  site_id uuid not null,
++  domain text not null check (domain ~ '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$' and length(domain) <= 253),
++  verification_token text not null default encode(extensions.gen_random_bytes(16), 'hex'),
++  status text not null default 'pending' check (status in ('pending', 'verified')),
++  verified_at timestamptz,
++  last_checked_at timestamptz,
++  created_by uuid,
++  created_at timestamptz not null default now(),
++  foreign key (site_id, organization_id) references public.sites(id, organization_id) on delete cascade
++);
++create unique index site_domains_domain on public.site_domains(domain);
++
++-- Verification is done by the server after a DNS check; people cannot mark a domain verified.
++create or replace function public.tg_site_domains_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if current_user not in ('authenticated', 'anon') then return new; end if;
++  if tg_op = 'INSERT' then
++    new.status := 'pending'; new.verified_at := null; new.created_by := auth.uid();
++    new.verification_token := encode(extensions.gen_random_bytes(16), 'hex');
++    return new;
++  end if;
++  raise exception 'Domains are verified by the server.' using errcode = '42501';
++end $$;
++create trigger site_domains_guard before insert or update on public.site_domains
++  for each row execute function public.tg_site_domains_guard();
++
++-- Host-name routing for the public site renderer (callable without login).
++create or replace function public.site_slug_for_domain(p_domain text) returns text
++language sql stable security definer set search_path = '' as $$
++  select s.slug from public.site_domains d
++    join public.sites s on s.id = d.site_id and s.status = 'published'
++    join public.organizations o on o.id = d.organization_id and o.status = 'active'
++   where d.domain = lower(btrim(p_domain)) and d.status = 'verified'
++   limit 1
++$$;
++
++-- --------------------------------------------------------------------- RLS
++alter table public.plans enable row level security;
++alter table public.usage_events enable row level security;
++alter table public.payment_accounts enable row level security;
++alter table public.invoices enable row level security;
++alter table public.payments enable row level security;
++alter table public.site_domains enable row level security;
++
++create policy plans_read on public.plans for select to authenticated using (
++  owner_org_id is null or public.org_rank(owner_org_id) >= 1
++  or exists (select 1 from public.organizations o where o.plan = plans.key and public.org_rank(o.id) >= 1));
++create policy plans_write_agency on public.plans for all to authenticated
++  using ((owner_org_id is not null and public.org_rank(owner_org_id) >= 4) or (owner_org_id is null and public.is_platform_staff()))
++  with check ((owner_org_id is not null and public.org_rank(owner_org_id) >= 4
++               and exists (select 1 from public.organizations o where o.id = owner_org_id and o.kind = 'agency'))
++              or (owner_org_id is null and public.is_platform_staff()));
++
++create policy usage_read on public.usage_events for select to authenticated using (public.org_rank(organization_id) >= 1);
++
++create policy payment_accounts_read on public.payment_accounts for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy payment_accounts_write on public.payment_accounts for all to authenticated
++  using (public.org_rank(organization_id) >= 4) with check (public.org_rank(organization_id) >= 4);
++
++create policy invoices_read on public.invoices for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy invoices_insert on public.invoices for insert to authenticated with check (public.org_rank(organization_id) >= 2);
++create policy invoices_update on public.invoices for update to authenticated
++  using (public.org_rank(organization_id) >= 2) with check (public.org_rank(organization_id) >= 2);
++create policy invoices_delete on public.invoices for delete to authenticated using (public.org_rank(organization_id) >= 3 and status = 'draft');
++
++create policy payments_read on public.payments for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy payments_insert on public.payments for insert to authenticated with check (public.org_rank(organization_id) >= 3);
++
++create policy site_domains_read on public.site_domains for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy site_domains_insert on public.site_domains for insert to authenticated with check (public.org_rank(organization_id) >= 3);
++create policy site_domains_delete on public.site_domains for delete to authenticated using (public.org_rank(organization_id) >= 3);
++
++revoke all on public.plans, public.usage_events, public.payment_accounts, public.invoices, public.payments, public.site_domains from anon, authenticated;
++grant all on public.plans, public.usage_events, public.payment_accounts, public.invoices, public.payments, public.site_domains to service_role;
++grant select, insert, update, delete on public.plans, public.invoices to authenticated;
++grant select on public.usage_events to authenticated;
++grant select, insert on public.payments to authenticated;
++grant select, insert, delete on public.site_domains to authenticated;
++grant select (id, organization_id, provider, label, credential_hint, status, created_by, created_at, updated_at) on public.payment_accounts to authenticated;
++grant insert, update, delete on public.payment_accounts to authenticated;
++
++revoke execute on function public.is_platform_staff(), public.govern_organization(uuid, text, text), public.check_plan_limit(uuid, text, integer),
++  public.org_usage(uuid), public.payment_secret(uuid), public.site_slug_for_domain(text), public.month_start() from public, anon;
++grant execute on function public.is_platform_staff(), public.govern_organization(uuid, text, text), public.org_usage(uuid), public.payment_secret(uuid), public.month_start()
++  to authenticated, service_role;
++grant execute on function public.check_plan_limit(uuid, text, integer) to service_role;
++grant execute on function public.site_slug_for_domain(text) to anon, authenticated, service_role;
++
++commit;
+diff --git a/supabase/tests/phase6_business.test.sql b/supabase/tests/phase6_business.test.sql
+new file mode 100644
+index 0000000..f755e9e
+--- /dev/null
++++ b/supabase/tests/phase6_business.test.sql
+@@ -0,0 +1,162 @@
++-- Phase 6 security tests: governance, plans and limits, invoices and payments, domains.
++-- Run with scripts/test-db.sh.
++\set ON_ERROR_STOP 1
++set client_min_messages = notice;
++
++create or replace function pg_temp.as_user(p_uid uuid) returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, false);
++  execute 'set role authenticated';
++end $$;
++create or replace function pg_temp.as_service() returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', '{"role":"service_role"}', false);
++  execute 'set role service_role';
++end $$;
++create or replace function pg_temp.reset_user() returns void language plpgsql as $$
++begin
++  execute 'reset role';
++  perform set_config('request.jwt.claims', '', false);
++end $$;
++create or replace function pg_temp.expect_error(p_sql text, p_label text) returns void language plpgsql as $$
++begin
++  begin execute p_sql; exception when others then raise notice 'ok   (denied) %', p_label; return; end;
++  raise exception 'FAIL expected an error: %', p_label;
++end $$;
++create or replace function pg_temp.expect(p_ok boolean, p_label text) returns void language plpgsql as $$
++begin
++  if not coalesce(p_ok, false) then raise exception 'FAIL %', p_label; end if;
++  raise notice 'ok   %', p_label;
++end $$;
++
++-- 1 = owner of agency X (staff), 2 = member of client C, 3 = owner/admin of client C (not staff), 4 = owner of agency Y (staff), 5 = manager of C
++insert into auth.users values
++  ('60000000-0000-0000-0000-000000000001', 'owner@p6x.test'), ('60000000-0000-0000-0000-000000000002', 'member@p6c.test'),
++  ('60000000-0000-0000-0000-000000000003', 'admin@p6c.test'), ('60000000-0000-0000-0000-000000000004', 'owner@p6y.test'),
++  ('60000000-0000-0000-0000-000000000005', 'manager@p6c.test'), ('60000000-0000-0000-0000-000000000006', 'admin@p6y.test');
++insert into public.team_members(user_id, email, active) values
++  ('60000000-0000-0000-0000-000000000001', 'owner@p6x.test', true), ('60000000-0000-0000-0000-000000000004', 'owner@p6y.test', true);
++create temp table ids (k text primary key, v uuid);
++grant all on ids to authenticated, service_role, anon;
++select pg_temp.as_user('60000000-0000-0000-0000-000000000001');
++insert into ids select 'x', public.create_organization('Agency P6X', 'agency');
++insert into ids select 'c', public.create_organization('Client P6C', 'client', (select v from ids where k = 'x'));
++select public.add_member_by_email((select v from ids where k = 'c'), 'admin@p6c.test', 'owner');
++select public.add_member_by_email((select v from ids where k = 'c'), 'member@p6c.test', 'member');
++select public.add_member_by_email((select v from ids where k = 'c'), 'manager@p6c.test', 'manager');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000004');
++insert into ids select 'y', public.create_organization('Agency P6Y', 'agency');
++select public.add_member_by_email((select v from ids where k = 'y'), 'admin@p6y.test', 'admin');
++select pg_temp.reset_user();
++
++-- 1. Governance (security fix)
++select pg_temp.as_user('60000000-0000-0000-0000-000000000003');
++select pg_temp.expect_error($$update public.organizations set parent_id = (select v from ids where k = 'y') where id = (select v from ids where k = 'c')$$,
++  'a client admin cannot move the account to another agency');
++select pg_temp.expect_error($$update public.organizations set plan = 'pro' where id = (select v from ids where k = 'c')$$, 'a client admin cannot change their own plan');
++select pg_temp.expect_error($$select public.govern_organization((select v from ids where k = 'c'), null, 'pro')$$, 'a client owner cannot govern their own account');
++update public.organizations set timezone = 'America/Chicago' where id = (select v from ids where k = 'c');
++select pg_temp.expect(true, 'client admins can still change ordinary settings');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000006');
++select pg_temp.expect_error($$select public.govern_organization((select v from ids where k = 'c'), 'suspended')$$, 'another agency''s admin cannot govern the client');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000001');
++select public.govern_organization((select v from ids where k = 'c'), null, 'starter');
++select pg_temp.expect((select plan = 'starter' from public.organizations where id = (select v from ids where k = 'c')), 'the managing agency sets the client plan');
++select pg_temp.reset_user();
++
++-- 2. Limits and metering (starter: 3 users already reached? owner+member+manager = 3)
++select pg_temp.as_user('60000000-0000-0000-0000-000000000001');
++select pg_temp.expect_error($$select public.add_member_by_email((select v from ids where k = 'c'), 'owner@p6y.test', 'viewer')$$, 'user limit is enforced');
++update public.plans set limits = limits || '{"contacts": 2, "sms": 1}' where key = 'starter';
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000002');
++insert into public.contacts(organization_id, first_name, phone) values ((select v from ids where k = 'c'), 'A', '+18565550101'), ((select v from ids where k = 'c'), 'B', '+18565550102');
++select pg_temp.expect_error($$insert into public.contacts(organization_id, first_name) values ((select v from ids where k = 'c'), 'C')$$, 'contact limit is enforced');
++update public.plans set limits = '{}' where key = 'starter';
++select pg_temp.expect((select limits ? 'contacts' from public.plans where key = 'starter'), 'clients cannot edit platform plans');
++select pg_temp.expect((select count(*) = 7 from public.org_usage((select v from ids where k = 'c'))), 'members can see their usage');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++with cv as (insert into public.conversations(organization_id, contact_id, channel) values ((select v from ids where k = 'c'), (select id from public.contacts where first_name = 'A' and organization_id = (select v from ids where k = 'c')), 'sms') returning id)
++insert into ids select 'conv', id from cv;
++with m as (insert into public.messages(organization_id, conversation_id, contact_id, channel, direction, body, status)
++  values ((select v from ids where k = 'c'), (select v from ids where k = 'conv'), (select id from public.contacts where first_name = 'A' and organization_id = (select v from ids where k = 'c')), 'sms', 'outbound', 'Hi', 'queued') returning id)
++insert into ids select 'msg', id from m;
++update public.messages set status = 'sending' where id = (select v from ids where k = 'msg');
++update public.messages set status = 'sent' where id = (select v from ids where k = 'msg');
++select pg_temp.expect((select count(*) = 1 from public.usage_events where organization_id = (select v from ids where k = 'c') and metric = 'sms'), 'sent texts are metered');
++select pg_temp.expect_error($$insert into public.messages(organization_id, conversation_id, contact_id, channel, direction, body, status)
++  values ((select v from ids where k = 'c'), (select v from ids where k = 'conv'), (select id from public.contacts where first_name = 'A' and organization_id = (select v from ids where k = 'c')), 'sms', 'outbound', 'Again', 'queued')$$,
++  'monthly text limit is enforced, even for automations');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000001');
++update public.plans set limits = limits - 'contacts' - 'sms' where key = 'starter';
++select pg_temp.reset_user();
++
++-- 3. Invoices and payments
++select pg_temp.as_user('60000000-0000-0000-0000-000000000002');
++with i as (insert into public.invoices(organization_id, line_items, tax_rate_bp, status, amount_paid_cents, total_cents)
++  values ((select v from ids where k = 'c'), '[{"description":"Roof repair","quantity":2,"unit_cents":15000},{"description":"Permit","quantity":1,"unit_cents":5000}]', 650, 'paid', 999999, 1) returning id)
++insert into ids select 'inv', id from i;
++select pg_temp.expect((select status = 'draft' and amount_paid_cents = 0 and subtotal_cents = 35000 and tax_cents = 2275 and total_cents = 37275 and number = 'INV-0001'
++  from public.invoices where id = (select v from ids where k = 'inv')), 'totals and numbers come from the database, not the client');
++select pg_temp.expect_error($$insert into public.invoices(organization_id, line_items) values ((select v from ids where k = 'c'), '[{"description":"Free money","quantity":-1,"unit_cents":100}]')$$,
++  'negative quantities are rejected');
++select pg_temp.expect_error($$update public.invoices set amount_paid_cents = 37275 where id = (select v from ids where k = 'inv')$$, 'staff cannot mark an invoice paid by editing it');
++select pg_temp.expect_error($$insert into public.payments(organization_id, invoice_id, amount_cents, method) values ((select v from ids where k = 'c'), (select v from ids where k = 'inv'), 100, 'manual')$$,
++  'members cannot record payments');
++update public.invoices set status = 'sent' where id = (select v from ids where k = 'inv');
++select pg_temp.expect_error($$update public.invoices set line_items = '[{"description":"x","quantity":1,"unit_cents":1}]' where id = (select v from ids where k = 'inv')$$, 'sent invoices cannot be edited');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000005');
++select pg_temp.expect_error($$insert into public.payments(organization_id, invoice_id, amount_cents, method, provider_payment_id) values ((select v from ids where k = 'c'), (select v from ids where k = 'inv'), 100, 'stripe', 'pi_fake')$$,
++  'card payments cannot be faked through the API');
++insert into public.payments(organization_id, invoice_id, amount_cents, method, note) values ((select v from ids where k = 'c'), (select v from ids where k = 'inv'), 10000, 'manual', 'Check #1001');
++select pg_temp.expect((select status = 'partially_paid' and amount_paid_cents = 10000 from public.invoices where id = (select v from ids where k = 'inv')), 'a partial payment marks the invoice partially paid');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++insert into public.payments(organization_id, invoice_id, amount_cents, method, provider_payment_id) values ((select v from ids where k = 'c'), (select v from ids where k = 'inv'), 27275, 'stripe', 'pi_123');
++select pg_temp.expect_error($$insert into public.payments(organization_id, invoice_id, amount_cents, method, provider_payment_id) values ((select v from ids where k = 'c'), (select v from ids where k = 'inv'), 27275, 'stripe', 'pi_123')$$,
++  'a provider payment is recorded once (webhook replays)');
++select pg_temp.expect((select status = 'paid' and paid_at is not null from public.invoices where id = (select v from ids where k = 'inv')), 'full payment marks it paid');
++update public.payments set refunded_cents = 27275 where provider_payment_id = 'pi_123';
++select pg_temp.expect((select status = 'partially_paid' and paid_at is null and amount_paid_cents = 10000 from public.invoices where id = (select v from ids where k = 'inv')), 'a refund reopens the balance');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000004');
++select pg_temp.expect((select count(*) = 0 from public.invoices) and (select count(*) = 0 from public.payments), 'other tenants see no invoices or payments');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000002');
++select pg_temp.expect_error($$select public.payment_secret(gen_random_uuid())$$, 'payment credentials are not available to members');
++select pg_temp.reset_user();
++
++-- 4. Custom domains
++select pg_temp.as_user('60000000-0000-0000-0000-000000000005');
++with s as (insert into public.sites(organization_id, name, slug) values ((select v from ids where k = 'c'), 'C site', 'p6c-site') returning id) insert into ids select 'site', id from s;
++with d as (insert into public.site_domains(organization_id, site_id, domain, status) values ((select v from ids where k = 'c'), (select v from ids where k = 'site'), 'www.p6c.test', 'verified') returning id)
++insert into ids select 'dom', id from d;
++select pg_temp.expect((select status = 'pending' from public.site_domains where id = (select v from ids where k = 'dom')), 'domains start unverified');
++select pg_temp.expect_error($$update public.site_domains set status = 'verified' where id = (select v from ids where k = 'dom')$$, 'people cannot mark a domain verified');
++select pg_temp.reset_user();
++select pg_temp.as_user('60000000-0000-0000-0000-000000000004');
++select pg_temp.expect_error($$insert into public.site_domains(organization_id, site_id, domain) values ((select v from ids where k = 'y'), (select v from ids where k = 'site'), 'evil.test')$$,
++  'domains cannot be attached to another tenant''s site');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++update public.site_domains set status = 'verified', verified_at = now() where id = (select v from ids where k = 'dom');
++update public.sites set status = 'published' where id = (select v from ids where k = 'site');
++select pg_temp.reset_user();
++set role anon;
++select pg_temp.expect(public.site_slug_for_domain('WWW.P6C.TEST') = 'p6c-site', 'verified domains route to their published site');
++select pg_temp.expect(public.site_slug_for_domain('unknown.test') is null, 'unknown domains route nowhere');
++reset role;
++select pg_temp.as_user('60000000-0000-0000-0000-000000000001');
++select public.govern_organization((select v from ids where k = 'c'), 'suspended');
++select pg_temp.reset_user();
++set role anon;
++select pg_temp.expect(public.site_slug_for_domain('www.p6c.test') is null, 'suspended accounts'' domains stop serving');
++reset role;
++
++\echo 'ALL PHASE 6 TESTS PASSED'
+diff --git a/tests/unit/phase6-billing.test.ts b/tests/unit/phase6-billing.test.ts
+new file mode 100644
+index 0000000..117d8fd
+--- /dev/null
++++ b/tests/unit/phase6-billing.test.ts
+@@ -0,0 +1,94 @@
++import { describe, expect, it } from "vitest";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import type Stripe from "stripe";
++import { FakeDb } from "../support/fake-supabase";
++import { amountDue, computeTotals, handleStripeEvent, invoiceInput } from "@/lib/billing/invoices";
++import { domainInput, verifyDomain } from "@/lib/sites/domains";
++import { planInput } from "@/lib/billing/plans";
++
++const ORG = "11111111-1111-4111-8111-111111111111";
++const OTHER = "99999999-9999-4999-8999-999999999999";
++const INV = "44444444-4444-4444-8444-444444444444";
++
++describe("invoice math", () => {
++  it("matches the database's rounding", () => {
++    expect(computeTotals([{ quantity: 2, unit_cents: 15000 }, { quantity: 1, unit_cents: 5000 }], 650)).toEqual({ subtotal: 35000, tax: 2275, total: 37275 });
++    expect(computeTotals([{ quantity: 1.5, unit_cents: 333 }], 0)).toEqual({ subtotal: 500, tax: 0, total: 500 });
++  });
++  it("asks for the deposit first, then the balance", () => {
++    expect(amountDue({ total_cents: 100000, amount_paid_cents: 0, deposit_cents: 25000 })).toBe(25000);
++    expect(amountDue({ total_cents: 100000, amount_paid_cents: 25000, deposit_cents: 25000 })).toBe(75000);
++    expect(amountDue({ total_cents: 100000, amount_paid_cents: 100000, deposit_cents: null })).toBe(0);
++  });
++  it("validates input", () => {
++    expect(invoiceInput.safeParse({ line_items: [] }).success).toBe(false);
++    expect(invoiceInput.safeParse({ line_items: [{ description: "Work", quantity: 0, unit_cents: 100 }] }).success).toBe(false);
++    expect(invoiceInput.safeParse({ line_items: [{ description: "Work", quantity: 1, unit_cents: 100 }], tax_rate_bp: 6000 }).success).toBe(false);
++    expect(planInput.safeParse({ key: "Gold Plan", name: "Gold", price_cents: 100 }).success).toBe(false);
++    expect(planInput.safeParse({ key: "gold", name: "Gold", price_cents: 100, limits: { sms: 500, bogus: 1 } }).success).toBe(false);
++  });
++});
++
++function db() {
++  const d = new FakeDb();
++  d.tables.invoices = [{ id: INV, organization_id: ORG, number: "INV-0001", currency: "usd", contact_id: "c1", status: "sent", kind: "invoice" }];
++  d.tables.payments = [];
++  d.tables.activities = [];
++  d.tables.audit_log = [];
++  d.onInsert = (table, row) => {
++    if (table === "payments" && d.table("payments").some((p) => p.method === row.method && p.provider_payment_id === row.provider_payment_id)) return Object.assign(new Error("dup"), { code: "23505" });
++    return row;
++  };
++  return d;
++}
++const session = (org: string, extra: Partial<Stripe.Checkout.Session> = {}) => ({
++  type: "checkout.session.completed",
++  data: { object: { payment_status: "paid", metadata: { organization_id: org, invoice_id: INV }, payment_intent: "pi_1", amount_total: 37275, ...extra } },
++}) as unknown as Stripe.Event;
++
++describe("Stripe events", () => {
++  it("records a paid checkout once, on the right organization", async () => {
++    const d = db();
++    expect(await handleStripeEvent(d as unknown as SupabaseClient, ORG, session(ORG))).toBe("recorded");
++    expect(await handleStripeEvent(d as unknown as SupabaseClient, ORG, session(ORG))).toBe("duplicate");
++    expect(d.table("payments")).toHaveLength(1);
++    expect(d.table("payments")[0]).toMatchObject({ amount_cents: 37275, method: "stripe", provider_payment_id: "pi_1", organization_id: ORG });
++    expect(d.table("activities")[0].subject).toBe("Paid $372.75 on INV-0001");
++  });
++  it("ignores events that name another organization or are unpaid", async () => {
++    const d = db();
++    expect(await handleStripeEvent(d as unknown as SupabaseClient, ORG, session(OTHER))).toBe("ignored");
++    expect(await handleStripeEvent(d as unknown as SupabaseClient, ORG, session(ORG, { payment_status: "unpaid" }))).toBe("ignored");
++    expect(d.table("payments")).toHaveLength(0);
++  });
++  it("records refunds made in Stripe", async () => {
++    const d = db();
++    d.tables.payments = [{ id: "p1", organization_id: ORG, invoice_id: INV, method: "stripe", provider_payment_id: "pi_1", amount_cents: 37275, refunded_cents: 0 }];
++    const ev = { type: "charge.refunded", data: { object: { payment_intent: "pi_1", amount: 37275, amount_refunded: 10000 } } } as unknown as Stripe.Event;
++    expect(await handleStripeEvent(d as unknown as SupabaseClient, ORG, ev)).toBe("refund_recorded");
++    expect(d.table("payments")[0].refunded_cents).toBe(10000);
++    expect(await handleStripeEvent(d as unknown as SupabaseClient, ORG, ev)).toBe("ignored");
++  });
++});
++
++describe("custom domains", () => {
++  it("normalizes and validates domains", () => {
++    expect(domainInput.parse({ domain: " HTTPS://www.Acme-Roofing.com/about " }).domain).toBe("www.acme-roofing.com");
++    expect(domainInput.safeParse({ domain: "not a domain" }).success).toBe(false);
++    expect(domainInput.safeParse({ domain: "localhost" }).success).toBe(false);
++  });
++  it("is verified only when the TXT record matches, by the server", async () => {
++    const d = new FakeDb();
++    d.tables.site_domains = [{ id: "d1", organization_id: ORG, site_id: "s1", domain: "www.acme.test", verification_token: "tok123", status: "pending" }];
++    const ctx = { client: d as unknown as SupabaseClient, orgId: ORG, userId: "u1" };
++    const wrong = await verifyDomain(ctx, d as unknown as SupabaseClient, "d1", async () => [["other"]]);
++    expect(wrong.verified).toBe(false);
++    expect(d.table("site_domains")[0].status).toBe("pending");
++    const asked: string[] = [];
++    const right = await verifyDomain(ctx, d as unknown as SupabaseClient, "d1", async (name) => { asked.push(name); return [["tok", "123"]]; });
++    expect(asked).toEqual(["_sun-verify.www.acme.test"]);
++    expect(right.verified).toBe(true);
++    expect(d.table("site_domains")[0].status).toBe("verified");
++    await expect(verifyDomain(ctx, null, "nope")).rejects.toMatchObject({ status: 404 });
++  });
++});
+-- 
+2.43.0
+

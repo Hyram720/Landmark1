@@ -148,9 +148,20 @@ Exit criteria (verify after deploy):
 
 ## Phase 6: SaaS business layer
 
-- Plans, feature packages, limits and metering (`usage_events`), Stripe Billing behind a payments abstraction
-- Agency rebilling with markup on usage (messages, minutes, AI tokens), client invoices, estimates, deposits, payment links, refunds
-- White-label: custom domains, branding, sender domains, branded login, client onboarding wizard, account transfer, suspension, data export
+**Part 1 implemented (patch 0008):**
+- **Security fix:** client admins can no longer change their own plan or status or move their account to another agency; agencies govern their clients through a checked database function.
+- **Plans and limits:** platform and agency-defined plans with monthly limits (texts, emails, AI requests, outreach) and totals (contacts, team members, websites). Usage is metered and limits are enforced by the database, so no code path can skip them. Agencies assign plans and suspend or reactivate client accounts.
+- **Invoices and estimates:** line items, tax, deposits, due dates and notes. The customer gets a branded link to pay by card or accept/decline an estimate. Accepted estimates become invoices. Cash and check payments can be recorded; card payments can be refunded.
+- **Payments** go into each business's own Stripe account (Checkout), confirmed by a signed webhook per account. The platform never holds client money.
+- **Custom domains** for hosted sites, proven with a DNS TXT record.
+- **Branding** (name, logo, color, support contacts) on customer pages, and a **full data export** that works even while suspended.
+- **AI tools:** `invoice_summary`, `usage_summary` (read-only).
+
+**Remaining:**
+
+- Platform subscription billing of agencies (Stripe Billing) and feature packages
+- Agency rebilling with markup on usage (messages, minutes, AI tokens)
+- White-label: sender domains, branded login, client onboarding wizard, account transfer, automatic domain certificates through the host's API
 
 ## Phase 7: Analytics and attribution
 

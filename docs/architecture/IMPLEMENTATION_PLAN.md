@@ -119,6 +119,17 @@ Rollback: `drop table public.outreach_messages, public.prospect_audits, public.p
 
 Rollback: `drop table public.form_submissions, public.forms, public.site_pages, public.sites, public.knowledge_items cascade;` then drop the function `search_knowledge`.
 
+## 2f. Deploying Phase 6 (plans, invoices, payments, domains)
+
+1. Apply `supabase/migrations/20261011120000_phase6_business_layer.sql`. It includes a **security fix**: before it, a client account's admin could change their own plan or status, or move the account under another agency.
+2. No new environment variables. `PUBLIC_APP_URL` (already required) is used for invoice links and the Stripe webhook address; `SUPABASE_SERVICE_ROLE_KEY` for customer pages, webhooks and domain verification.
+3. Every existing and new account starts on the `internal` plan (no limits) until an agency assigns a plan in **Plan & account**.
+4. Card payments: in **Plan & account**, paste a Stripe **test** secret key first (`sk_test_…`). The console creates the webhook endpoint in that Stripe account. With a restricted key that cannot create webhooks, add the endpoint shown on the page in Stripe (events `checkout.session.completed`, `charge.refunded`) and paste its signing secret.
+5. Custom domains: the client adds the TXT record shown in the site editor and presses Verify; point the domain at the console with a CNAME; then add the domain as a **domain alias** on the Netlify site so it gets a certificate. Unknown hosts keep serving the normal console.
+6. Smoke test: create an invoice with a deposit, send it, pay the deposit with Stripe's test card `4242 4242 4242 4242`, confirm the payment appears and the status becomes *partially paid*, then refund it. Accept an estimate from its customer link and convert it to an invoice.
+
+Rollback: `drop table public.site_domains, public.payments, public.invoices, public.payment_accounts, public.usage_events cascade;` drop the limit and metering triggers, then `alter table organizations drop constraint organizations_plan_fkey; drop table public.plans;`. Keep the organization guard fix.
+
 ## 3. Development workflow
 
 ```bash

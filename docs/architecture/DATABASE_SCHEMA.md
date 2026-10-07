@@ -186,9 +186,23 @@ Verified by `supabase/tests/phase5_sites.test.sql` (22 assertions; 177 in total)
 - `sites`, `pages`, `forms`, `form_submissions`, `templates`
 - `knowledge_items (type, content, version, status draft/approved, approved_by)` with `pgvector` embeddings
 
-### Phase 6–8
-- `plans`, `subscriptions`, `usage_events`, `invoices`, `invoice_items`, `payments`, `refunds`, `price_overrides` (agency markup)
-- `domains (hostname unique, organization_id, verified_at)`, `sender_domains`
+### Phase 6 (part 1 implemented: `20261011120000_phase6_business_layer.sql`)
+
+| Table / function | Purpose and key rules |
+|---|---|
+| `organizations` guard (fix) | The API can no longer change `kind`, `parent_id`, `slug`, `created_by`, `status` or `plan`; `govern_organization()` changes plan and status for platform staff or the parent agency's admins |
+| `plans` | Platform plans (`internal`, `starter`, `growth`, `pro`) and agency-owned plans; `limits` jsonb per metric; `organizations.plan` references it. New accounts default to `internal` (no limits) |
+| `usage_events`, `org_usage()` | Metered by triggers: texts and emails sent, AI requests, outreach sent. `check_plan_limit()` raises SQLSTATE 53400 before a message is queued, an AI request is made, outreach is sent, or a contact, member or site is added over the limit |
+| `payment_accounts` | The organization's own Stripe credentials, encrypted; column grants hide them; `payment_secret()` for managers (server use) |
+| `invoices` | Invoices and estimates; totals, tax and deposit computed in the database; numbers `INV-`/`EST-` per org; restricted status transitions; paid invoices cannot be edited; random public token |
+| `payments` | Card payments (service role, unique per provider id) and manual payments (managers); none on drafts, estimates or void invoices; a trigger recomputes amount paid and status |
+| `site_domains`, `site_slug_for_domain()` | Custom domains with a verification token; only the service role marks a domain verified; the lookup returns verified domains of published sites only |
+
+Verified by `supabase/tests/phase6_business.test.sql` (30 assertions; 207 in total).
+
+### Phase 6 (planned remainder) – 8
+- `subscriptions` (platform SaaS billing of agencies), `price_overrides` (agency markup on usage)
+- `sender_domains`
 - `metrics_daily`, `touchpoints`, `ad_accounts`, `ad_spend_daily`
 - `affiliates`, `referral_links`, `referrals`, `commission_rules`, `payouts`
 - `marketplace_listings`, `installs`, `bundles`

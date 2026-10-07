@@ -85,6 +85,18 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Contact matching | Exact email, or phone only when that contact has no different email, so strangers cannot attach submissions or consent to someone else's record |
 | AI and facts | The operator and AI site copy use approved knowledge only; editing approved facts re-opens approval; AI-created knowledge is always a draft |
 
+## 2e. Controls added in Phase 6 (plans, payments, domains)
+
+| Control | Implementation |
+|---|---|
+| Organization governance (fix) | API changes to an organization's kind, parent, slug, creator, status and plan are refused by a trigger. `govern_organization()` lets only platform staff or admins of the parent agency change plan or status |
+| Plan limits | Checked in the database (definer triggers) before the action, so the API, AI operator, automations and webhooks are all covered; usage rows are written by triggers, not clients |
+| Payment credentials | Each business's Stripe key is encrypted with `APP_ENCRYPTION_KEY`; column privileges keep it out of API reads; only the last four characters are shown |
+| Payment integrity | Card payments are recorded only from a Stripe webhook verified with that account's own signing secret; amounts come from Stripe, not the browser; one row per Stripe payment; totals and paid status are computed in the database; paid invoices cannot be edited |
+| Customer pages | Random 144-bit tokens; drafts are never shown; closed accounts are hidden; only display fields leave the server (no internal ids or emails) |
+| Custom domains | Only the server marks a domain verified, after its own DNS lookup of the TXT token; only verified domains of published sites are routed, and only to that site's pages; unknown hosts fall through to the normal console |
+| Data portability | Owners and admins (and the managing agency's) can export everything, including while suspended |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |
