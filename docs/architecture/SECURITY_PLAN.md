@@ -116,6 +116,17 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Replies | Posting publicly needs a confirmation in the UI, is audited, and only works for Google reviews with an active connection |
 | Widgets | Only `/w/*` may be framed (`frame-ancestors *`); every other page keeps `X-Frame-Options: DENY`. Widgets show first names only and always the true overall rating, with a note and a link to all reviews when filtered by rating |
 
+## 2h. Controls added for the AI receptionist
+
+| Control | Implementation |
+|---|---|
+| Webhook authenticity | Each agent has its own random secret, sent by Vapi in `x-sun-agent-secret` and compared in constant time; unknown or disconnected agents get 404 |
+| Provider key | Encrypted with `APP_ENCRYPTION_KEY`, column privileges keep it out of API reads, only the last characters are shown |
+| What the voice AI can do | Facts only from approved knowledge; booking only at times the calendar actually offers (re-checked at booking and by the database's no-double-booking rule); messages become tasks; at most 5 tool calls per request; while paused, tools only offer to take a message |
+| Call records | Written only by the server; immutable except review status, note and linked contact |
+| Texting callers | Missed-call text-back is one transactional text, once per call, through the same compliance gate (opt-outs, do-not-contact, quiet hours) |
+| Recording disclosure | The app warns when the assistant records calls but its greeting doesn't say so |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

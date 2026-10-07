@@ -1,0 +1,1387 @@
+From ade6655dd03330751762dc4482a5cb30d3bc57b8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 13:12:31 +0000
+Subject: [PATCH] AI receptionist (Vapi): call log, booking and missed-call
+ text-back
+
+- Connect a Vapi assistant with its private key and dashboard link. The
+  assistant keeps its voice and prompt; this platform adds sun_* tools and
+  a per-agent authenticated webhook, and restores them on disconnect.
+- Tools: answers from approved knowledge only, open times and booking into
+  the business's calendar (re-checked, no double booking), messages as
+  high-priority call-back tasks, optional transfer to a person.
+- Calls page: every call with outcome, summary, transcript and recording;
+  mark done and add notes. Unknown callers become contacts; calls go on the
+  contact timeline and start "Phone call ended" automations.
+- Missed-call text-back: one transactional text per missed call through the
+  compliance gate (a call counts like an inbound text for 24 hours).
+- Home shows callers who need a call back; the AI assistant can list calls.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ docs/architecture/API_ARCHITECTURE.md         |  10 +
+ docs/architecture/DATABASE_SCHEMA.md          |  11 +
+ docs/architecture/MASTER_ARCHITECTURE.md      |   2 +-
+ docs/architecture/SECURITY_PLAN.md            |  11 +
+ src/app/api/calls/[id]/route.ts               |  15 +
+ src/app/api/calls/route.ts                    |  16 +
+ src/app/api/voice/[id]/route.ts               |  28 ++
+ src/app/api/voice/route.ts                    |  26 ++
+ src/app/api/webhooks/voice/[agentId]/route.ts |  29 ++
+ src/app/calls/page.tsx                        | 164 ++++++++++
+ src/app/workflows/page.tsx                    |   1 +
+ src/components/Shell.tsx                      |   2 +-
+ src/lib/command/tools.ts                      |  11 +
+ src/lib/comms/service.ts                      |   9 +-
+ src/lib/home/service.ts                       |   6 +-
+ src/lib/voice/service.ts                      | 308 ++++++++++++++++++
+ src/lib/voice/vapi.ts                         | 102 ++++++
+ src/lib/workflows/definition.ts               |   3 +
+ src/middleware.ts                             |   4 +-
+ .../20261014120000_voice_receptionist.sql     | 138 ++++++++
+ supabase/tests/voice_receptionist.test.sql    |  92 ++++++
+ tests/unit/voice.test.ts                      | 113 +++++++
+ 22 files changed, 1094 insertions(+), 7 deletions(-)
+ create mode 100644 src/app/api/calls/[id]/route.ts
+ create mode 100644 src/app/api/calls/route.ts
+ create mode 100644 src/app/api/voice/[id]/route.ts
+ create mode 100644 src/app/api/voice/route.ts
+ create mode 100644 src/app/api/webhooks/voice/[agentId]/route.ts
+ create mode 100644 src/app/calls/page.tsx
+ create mode 100644 src/lib/voice/service.ts
+ create mode 100644 src/lib/voice/vapi.ts
+ create mode 100644 supabase/migrations/20261014120000_voice_receptionist.sql
+ create mode 100644 supabase/tests/voice_receptionist.test.sql
+ create mode 100644 tests/unit/voice.test.ts
+
+diff --git a/docs/architecture/API_ARCHITECTURE.md b/docs/architecture/API_ARCHITECTURE.md
+index cc78fb7..23b9194 100644
+--- a/docs/architecture/API_ARCHITECTURE.md
++++ b/docs/architecture/API_ARCHITECTURE.md
+@@ -135,6 +135,16 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
+ 
+ Plan limits surface as HTTP 402 with code `plan_limit`.
+ 
++### AI receptionist and calls
++
++| Method & path | Permission | Purpose |
++|---|---|---|
++| `GET /api/voice` | crm.read | Connected receptionist (never the key), calendars, readiness |
++| `POST /api/voice` | org.manage | Connect a Vapi assistant `{api_key, assistant (ID or dashboard link), calendar_id?, transfer_number?, take_messages, missed_call_text, missed_call_message?}`; adds `sun_*` tools and the webhook to the assistant |
++| `PATCH /api/voice/:id`, `DELETE /api/voice/:id` | org.manage | Change settings (re-applied to the assistant), pause/resume; disconnect restores the assistant's previous tools and webhook |
++| `POST /api/webhooks/voice/:agentId` | per-agent secret header (`x-sun-agent-secret`) | Vapi `tool-calls` (business_info, check_availability, book_appointment, take_message), `status-update`, `end-of-call-report` |
++| `GET /api/calls?filter=review|missed|booked|message`, `PATCH /api/calls/:id {reviewed, note}` | crm.read / crm.write | Call log; mark done, add a note |
++
+ ### Reputation: Google and widgets
+ 
+ | Method & path | Permission | Purpose |
+diff --git a/docs/architecture/DATABASE_SCHEMA.md b/docs/architecture/DATABASE_SCHEMA.md
+index 0a13415..7c56faf 100644
+--- a/docs/architecture/DATABASE_SCHEMA.md
++++ b/docs/architecture/DATABASE_SCHEMA.md
+@@ -223,6 +223,17 @@ Verified by `supabase/tests/phase6b_agency.test.sql` (40 assertions; 247 in tota
+ 
+ Verified by `supabase/tests/reputation_google.test.sql` (20 assertions; 267 in total).
+ 
++### AI receptionist (`20261014120000_voice_receptionist.sql`)
++
++| Table | Purpose and key rules |
++|---|---|
++| `voice_agents` | A provider assistant (Vapi) per business: encrypted API key and webhook secret (not readable through the API), settings (calendar, transfer number, messages, missed-call text), the assistant's previous tools for restoring; one business per assistant |
++| `calls` | Written only by the server from verified webhooks; one row per provider call; people can only mark reviewed, add a note or relink the contact; managers delete. Finished calls go on the contact timeline and emit `call.completed` (automation trigger with an outcome filter) |
++
++Also: an inbound call from a contact now counts like an inbound text for the 24-hour transactional reply rule (missed-call text-back), never for marketing.
++
++Verified by `supabase/tests/voice_receptionist.test.sql` (17 assertions; 284 in total).
++
+ ### Phase 7–8 (planned)
+ - `price_overrides` (per-client price overrides beyond the current rates)
+ - `sender_domains`
+diff --git a/docs/architecture/MASTER_ARCHITECTURE.md b/docs/architecture/MASTER_ARCHITECTURE.md
+index 103a56c..1424e5d 100644
+--- a/docs/architecture/MASTER_ARCHITECTURE.md
++++ b/docs/architecture/MASTER_ARCHITECTURE.md
+@@ -99,7 +99,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
+ | 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. Phase 6 part 1 adds plans with database-enforced limits and metering, agency governance (plan, suspend), branding on customer pages, custom domains and full data export. Phase 6 part 2 adds platform subscriptions for agencies, client rebilling, email invitations, guided client setup, consent-based account transfer and branded sign-in on an agency's own domain. **Missing:** self-serve onboarding, invitations by email |
+ | 4 | CRM | 🟡→🆕 | Contacts, companies, pipelines, stages, deals, tasks, notes, tags, custom field definitions, activity history, drag-and-drop board, explainable lead scoring. **Missing:** custom objects UI, custom field editor UI, ownership routing, merge/dedupe UI, import/export UI |
+ | 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
+-| 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
++| 6 | AI voice platform | 🆕 | AI receptionist per business on the owner's Vapi assistant: approved-knowledge answers, call-time booking into calendars, messages as call-back tasks, transfers, missed-call text-back, call log with summary, transcript and recording, `call.completed` automations. **Missing:** outbound AI calling, power dialer, IVR, call tracking numbers, other voice providers |
+ | 7 | SMS and messaging | 🆕 (Phase 2 part 1) | Provider layer (Telnyx, Twilio, Resend) with failover, unified inbox, scheduling, consent/opt-out/quiet-hours gate, verified webhooks, STOP/START. **Missing:** web chat, WhatsApp, 10DLC registry UI, bulk sends (Phase 3 campaigns) |
+ | 8 | Reputation and Trust Center | 🆕 | Reviews (Google sync every hour, manual/CSV), replies drafted by AI and posted to Google from the app, explained Reputation Health Score, non-gated review requests, complaint tasks, embeddable review widgets. **Missing:** Facebook/Yelp sync, competitor comparison |
+ | 9 | Lead generation engine | 🆕 (Phase 4 part 1) | Tenant-scoped Lead Finder, audits at scale with business-email discovery, explained Opportunity Score, CAN-SPAM email outreach with one-click unsubscribe and volume limits, convert to CRM, AI tools. **Missing:** paid data providers (ratings), reply detection, sequences |
+diff --git a/docs/architecture/SECURITY_PLAN.md b/docs/architecture/SECURITY_PLAN.md
+index d78cbf6..1174fbd 100644
+--- a/docs/architecture/SECURITY_PLAN.md
++++ b/docs/architecture/SECURITY_PLAN.md
+@@ -116,6 +116,17 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
+ | Replies | Posting publicly needs a confirmation in the UI, is audited, and only works for Google reviews with an active connection |
+ | Widgets | Only `/w/*` may be framed (`frame-ancestors *`); every other page keeps `X-Frame-Options: DENY`. Widgets show first names only and always the true overall rating, with a note and a link to all reviews when filtered by rating |
+ 
++## 2h. Controls added for the AI receptionist
++
++| Control | Implementation |
++|---|---|
++| Webhook authenticity | Each agent has its own random secret, sent by Vapi in `x-sun-agent-secret` and compared in constant time; unknown or disconnected agents get 404 |
++| Provider key | Encrypted with `APP_ENCRYPTION_KEY`, column privileges keep it out of API reads, only the last characters are shown |
++| What the voice AI can do | Facts only from approved knowledge; booking only at times the calendar actually offers (re-checked at booking and by the database's no-double-booking rule); messages become tasks; at most 5 tool calls per request; while paused, tools only offer to take a message |
++| Call records | Written only by the server; immutable except review status, note and linked contact |
++| Texting callers | Missed-call text-back is one transactional text, once per call, through the same compliance gate (opt-outs, do-not-contact, quiet hours) |
++| Recording disclosure | The app warns when the assistant records calls but its greeting doesn't say so |
++
+ ## 2. Controls implemented in Phase 1
+ 
+ | Control | Implementation |
+diff --git a/src/app/api/calls/[id]/route.ts b/src/app/api/calls/[id]/route.ts
+new file mode 100644
+index 0000000..ee7e813
+--- /dev/null
++++ b/src/app/api/calls/[id]/route.ts
+@@ -0,0 +1,15 @@
++import { z } from "zod";
++import { ApiError, fromDb, readJson, tenantRoute, uuid } from "@/lib/tenant/api";
++
++export const dynamic = "force-dynamic";
++
++export const PATCH = tenantRoute<{ id: string }>("crm.write", async (ctx, req, { id }) => {
++  const input = await readJson(req, z.object({ reviewed: z.boolean().optional(), note: z.string().trim().max(2000).nullable().optional() }));
++  const patch: Record<string, unknown> = {};
++  if (input.reviewed !== undefined) patch.reviewed_at = input.reviewed ? new Date().toISOString() : null;
++  if (input.note !== undefined) patch.note = input.note || null;
++  const { data, error } = await ctx.client.from("calls").update(patch).eq("organization_id", ctx.org.id).eq("id", uuid.parse(id)).select("id, reviewed_at, note").maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("Call not found.", 404, "not_found");
++  return { call: data };
++});
+diff --git a/src/app/api/calls/route.ts b/src/app/api/calls/route.ts
+new file mode 100644
+index 0000000..c704276
+--- /dev/null
++++ b/src/app/api/calls/route.ts
+@@ -0,0 +1,16 @@
++import { fromDb, tenantRoute } from "@/lib/tenant/api";
++
++export const dynamic = "force-dynamic";
++const COLUMNS = "id, direction, from_number, to_number, contact_id, status, outcome, started_at, ended_at, duration_seconds, ended_reason, summary, transcript, recording_url, appointment_id, text_back_sent, reviewed_at, note, created_at, contacts(first_name, last_name, phone, email)";
++
++export const GET = tenantRoute("crm.read", async (ctx, req) => {
++  const f = new URL(req.url).searchParams.get("filter");
++  let q = ctx.client.from("calls").select(COLUMNS).eq("organization_id", ctx.org.id);
++  if (f === "missed") q = q.eq("outcome", "missed");
++  else if (f === "booked") q = q.eq("outcome", "booked");
++  else if (f === "message") q = q.eq("outcome", "message");
++  else if (f === "review") q = q.is("reviewed_at", null).in("outcome", ["missed", "message"]);
++  const { data, error } = await q.order("created_at", { ascending: false }).limit(100);
++  fromDb(error);
++  return { calls: data || [] };
++});
+diff --git a/src/app/api/voice/[id]/route.ts b/src/app/api/voice/[id]/route.ts
+new file mode 100644
+index 0000000..ee61cc5
+--- /dev/null
++++ b/src/app/api/voice/[id]/route.ts
+@@ -0,0 +1,28 @@
++import { z } from "zod";
++import { ApiError, readJson, tenantRoute, uuid } from "@/lib/tenant/api";
++import { publicBaseUrl, systemClient } from "@/lib/supabase/system";
++import { disconnectAgent, settingsInput, updateAgent } from "@/lib/voice/service";
++
++export const dynamic = "force-dynamic";
++export const maxDuration = 60;
++type P = { id: string };
++
++function setup(req: Request) {
++  const system = systemClient();
++  const base = publicBaseUrl(req);
++  if (!system || !base) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY and PUBLIC_APP_URL are needed for phone calls.", 503, "integration_not_configured");
++  return { system, base };
++}
++
++// Settings change (re-applies the tools on the assistant), pause/resume.
++export const PATCH = tenantRoute<P>("org.manage", async (ctx, req, { id }) => {
++  const input = await readJson(req, settingsInput.extend({ status: z.enum(["active", "paused"]).optional() }));
++  const { system, base } = setup(req);
++  return updateAgent(ctx.client, system, ctx.org.id, uuid.parse(id), input, base);
++});
++
++// Removes this platform's tools from the assistant and disconnects it.
++export const DELETE = tenantRoute<P>("org.manage", async (ctx, req, { id }) => {
++  const { system } = setup(req);
++  return disconnectAgent(ctx.client, system, ctx.org.id, uuid.parse(id));
++});
+diff --git a/src/app/api/voice/route.ts b/src/app/api/voice/route.ts
+new file mode 100644
+index 0000000..aba3104
+--- /dev/null
++++ b/src/app/api/voice/route.ts
+@@ -0,0 +1,26 @@
++import { ApiError, fromDb, readJson, tenantRoute } from "@/lib/tenant/api";
++import { publicBaseUrl, systemClient } from "@/lib/supabase/system";
++import { AGENT_COLUMNS, connectAgent, connectInput } from "@/lib/voice/service";
++
++export const dynamic = "force-dynamic";
++export const maxDuration = 60;
++
++export const GET = tenantRoute("crm.read", async (ctx) => {
++  const [agents, calendars] = await Promise.all([
++    ctx.client.from("voice_agents").select(AGENT_COLUMNS).eq("organization_id", ctx.org.id).neq("status", "disabled").order("created_at"),
++    ctx.client.from("calendars").select("id, name, status").eq("organization_id", ctx.org.id).order("name"),
++  ]);
++  fromDb(agents.error);
++  return { agents: agents.data || [], calendars: calendars.data || [], ready: { service_role: !!systemClient(), public_url: !!process.env.PUBLIC_APP_URL } };
++});
++
++// Connects a Vapi assistant: validates the key, adds this platform's tools
++// and webhook to the assistant, and lists its phone numbers.
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  const input = await readJson(req, connectInput);
++  const system = systemClient();
++  const base = publicBaseUrl(req);
++  if (!system || !base) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY and PUBLIC_APP_URL are needed for phone calls.", 503, "integration_not_configured");
++  if (!base.startsWith("https://")) throw new ApiError("The console must be reachable over https:// for Vapi to send calls to it (PUBLIC_APP_URL).", 422, "invalid");
++  return connectAgent(ctx.client, system, ctx.org.id, input, base);
++});
+diff --git a/src/app/api/webhooks/voice/[agentId]/route.ts b/src/app/api/webhooks/voice/[agentId]/route.ts
+new file mode 100644
+index 0000000..8807b49
+--- /dev/null
++++ b/src/app/api/webhooks/voice/[agentId]/route.ts
+@@ -0,0 +1,29 @@
++import { NextResponse } from "next/server";
++import { systemClient } from "@/lib/supabase/system";
++import { handleVoiceEvent, loadAgent, SECRET_HEADER, verifySecret } from "@/lib/voice/service";
++
++export const dynamic = "force-dynamic";
++export const maxDuration = 30;
++
++// Events and tool calls from the voice provider, authenticated with the
++// per-agent secret header this platform set on the assistant.
++export async function POST(req: Request, { params }: { params: Promise<{ agentId: string }> }) {
++  const id = (await params).agentId;
++  if (!/^[0-9a-f-]{36}$/.test(id)) return NextResponse.json({ error: "Unknown agent." }, { status: 404 });
++  const system = systemClient();
++  if (!system) return NextResponse.json({ error: "Not configured." }, { status: 503 });
++  const agent = await loadAgent(system, id);
++  if (!agent || agent.status === "disabled") return NextResponse.json({ error: "Unknown agent." }, { status: 404 });
++  if (!verifySecret(agent, req.headers.get(SECRET_HEADER))) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
++  const raw = await req.text();
++  if (raw.length > 2_000_000) return NextResponse.json({ error: "Too large." }, { status: 413 });
++  let body: { message?: Record<string, unknown> };
++  try { body = JSON.parse(raw); } catch { return NextResponse.json({ error: "Invalid JSON." }, { status: 400 }); }
++  try {
++    return NextResponse.json(await handleVoiceEvent(system, agent, body as never));
++  } catch (e) {
++    console.error("[voice webhook]", id, e);
++    await system.from("voice_agents").update({ last_error: "An event could not be processed." }).eq("id", id);
++    return NextResponse.json({ error: "Processing failed." }, { status: 500 });
++  }
++}
+diff --git a/src/app/calls/page.tsx b/src/app/calls/page.tsx
+new file mode 100644
+index 0000000..4d44893
+--- /dev/null
++++ b/src/app/calls/page.tsx
+@@ -0,0 +1,164 @@
++"use client";
++import { useEffect, useState } from "react";
++import Link from "next/link";
++import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
++import { api, atLeast, Org, personName, relativeTime, useResource } from "@/components/tenant/client";
++import { useToast } from "@/components/ui";
++
++type Call = {
++  id: string; direction: string; from_number: string | null; to_number: string | null; contact_id: string | null; status: string; outcome: "none" | "booked" | "message" | "transferred" | "info" | "missed";
++  started_at: string | null; duration_seconds: number | null; ended_reason: string | null; summary: string | null; transcript: string | null; recording_url: string | null;
++  appointment_id: string | null; text_back_sent: boolean; reviewed_at: string | null; note: string | null; created_at: string;
++  contacts: { first_name: string | null; last_name: string | null; phone: string | null; email: string | null } | null;
++};
++type Agent = { id: string; name: string; credential_hint: string | null; external_assistant_id: string; phone_numbers: string[]; calendar_id: string | null; transfer_number: string | null; take_messages: boolean; missed_call_text: boolean; missed_call_message: string | null; status: "active" | "paused"; last_event_at: string | null; last_error: string | null };
++type VoiceData = { agents: Agent[]; calendars: { id: string; name: string; status: string }[]; ready: { service_role: boolean; public_url: boolean } };
++
++const OUTCOME: Record<Call["outcome"], { label: string; pill: string }> = {
++  booked: { label: "Booked", pill: "pill-ok" }, message: { label: "Message", pill: "pill-warn" }, transferred: { label: "Transferred", pill: "pill-info" },
++  info: { label: "Answered", pill: "pill-neutral" }, missed: { label: "Missed", pill: "pill-bad" }, none: { label: "In progress", pill: "pill-info" },
++};
++const dur = (s: number | null) => (s == null ? "" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
++const fmtPhone = (p: string | null) => { const m = p?.match(/^\+1(\d{3})(\d{3})(\d{4})$/); return m ? `(${m[1]}) ${m[2]}-${m[3]}` : p || "Unknown number"; };
++
++function Setup({ data, admin, reload, toast }: { data: VoiceData; admin: boolean; reload: () => void; toast: (m: string) => void }) {
++  const agent = data.agents[0];
++  const [f, setF] = useState({ api_key: "", assistant: "", calendar_id: "", transfer_number: "", take_messages: true, missed_call_text: false, missed_call_message: "" });
++  const [busy, setBusy] = useState(false);
++  const [warn, setWarn] = useState<string[]>([]);
++  useEffect(() => {
++    if (agent) setF((x) => ({ ...x, calendar_id: agent.calendar_id ?? "", transfer_number: agent.transfer_number ?? "", take_messages: agent.take_messages, missed_call_text: agent.missed_call_text, missed_call_message: agent.missed_call_message ?? "" }));
++  }, [agent?.id]); // eslint-disable-line react-hooks/exhaustive-deps
++  const settings = { calendar_id: f.calendar_id || null, transfer_number: f.transfer_number.trim(), take_messages: f.take_messages, missed_call_text: f.missed_call_text, missed_call_message: f.missed_call_message.trim() || null };
++  const run = async (fn: () => Promise<{ warnings?: string[]; numbers?: string[]; restored?: boolean } | void>, done: string) => {
++    setBusy(true);
++    try { const r = await fn(); if (r && "warnings" in r && r.warnings) setWarn(r.warnings); toast(done); reload(); }
++    catch (e) { toast(e instanceof Error ? e.message : "That did not work."); }
++    finally { setBusy(false); }
++  };
++  const fields = (
++    <>
++      <div className="field-grid">
++        <div className="field"><label htmlFor="vr-cal">Book appointments into</label><select id="vr-cal" className="select" disabled={!admin} value={f.calendar_id} onChange={(e) => setF({ ...f, calendar_id: e.target.value })}>
++          <option value="">{data.calendars.length ? "First active calendar" : "No calendars yet (no booking)"}</option>{data.calendars.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status !== "active" ? " (inactive)" : ""}</option>)}</select></div>
++        <div className="field"><label htmlFor="vr-tr">Transfer calls to (optional)</label><input id="vr-tr" className="input" disabled={!admin} inputMode="tel" placeholder="(856) 555-0100" value={f.transfer_number} onChange={(e) => setF({ ...f, transfer_number: e.target.value })} /></div>
++      </div>
++      <label className="row small" style={{ gap: 6 }}><input type="checkbox" disabled={!admin} checked={f.take_messages} onChange={(e) => setF({ ...f, take_messages: e.target.checked })} /> Take messages (creates a call-back task)</label>
++      <label className="row small" style={{ gap: 6 }}><input type="checkbox" disabled={!admin} checked={f.missed_call_text} onChange={(e) => setF({ ...f, missed_call_text: e.target.checked })} /> Text back callers who hang up before talking</label>
++      {f.missed_call_text && <div className="field"><label htmlFor="vr-msg">Missed-call text (optional)</label><textarea id="vr-msg" className="textarea" rows={2} maxLength={300} disabled={!admin} placeholder="Hi, this is Acme Roofing. Sorry we missed your call! How can we help? Reply here and we'll get right back to you." value={f.missed_call_message} onChange={(e) => setF({ ...f, missed_call_message: e.target.value })} />
++        <span className="hint">Sent once, only as a reply to their call, from your texting number in Phone &amp; email.</span></div>}
++    </>
++  );
++  if (!data.ready.service_role || !data.ready.public_url) {
++    return <div className="card card-pad"><p className="notice notice-warn small"><strong>Integration not configured.</strong> The AI receptionist needs SUPABASE_SERVICE_ROLE_KEY and PUBLIC_APP_URL (an https address Vapi can reach).</p></div>;
++  }
++  if (!agent) {
++    return (
++      <div className="card">
++        <div className="card-head"><div><h3>Connect your Vapi assistant</h3><div className="sub">Your assistant keeps its voice and personality. We add tools so it can look up your business facts, book into your calendar, take messages and transfer calls, and every call lands here.</div></div></div>
++        {admin ? <div className="card-pad stack">
++          <div className="field"><label htmlFor="vr-key">Vapi private API key</label><input id="vr-key" className="input" type="password" autoComplete="off" value={f.api_key} onChange={(e) => setF({ ...f, api_key: e.target.value })} placeholder="From Vapi → Organization → API Keys (private)" /></div>
++          <div className="field"><label htmlFor="vr-asst">Assistant link or ID</label><input id="vr-asst" className="input" value={f.assistant} onChange={(e) => setF({ ...f, assistant: e.target.value })} placeholder="https://dashboard.vapi.ai/assistants/…" /></div>
++          {fields}
++          <div><button className="btn btn-primary" disabled={busy || f.api_key.length < 20 || !f.assistant.trim()} onClick={() => run(() => api("/api/voice", { body: { api_key: f.api_key.trim(), assistant: f.assistant.trim(), ...settings } }), "Receptionist connected.")}>{busy ? <span className="spin" /> : "Connect"}</button></div>
++          <p className="hint">Connecting changes your Vapi assistant: it adds tools named sun_… and points its webhook here. Disconnecting puts it back.</p>
++        </div> : <div className="card-pad small muted">An admin can connect the AI receptionist.</div>}
++      </div>
++    );
++  }
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>{agent.name}</h3><div className="sub">Vapi assistant {agent.external_assistant_id.slice(0, 8)}… · key ending {agent.credential_hint}</div></div>
++        <span className={`pill ${agent.status === "active" ? "pill-ok" : "pill-warn"}`}>{agent.status === "active" ? "Answering" : "Paused"}</span></div>
++      <div className="card-pad stack">
++        <div className="small">{agent.phone_numbers.length ? <>Answers <strong>{agent.phone_numbers.map(fmtPhone).join(", ")}</strong></> : <span className="muted">No phone number is attached to this assistant in Vapi yet. Buy or import one in Vapi → Phone Numbers and assign this assistant.</span>}</div>
++        <div className="tiny muted">{agent.last_event_at ? `Last call activity ${relativeTime(agent.last_event_at)}` : "No calls yet. Call the number to test it."}</div>
++        {agent.last_error && <p className="notice notice-warn small">{agent.last_error}</p>}
++        {warn.map((w) => <p key={w} className="notice notice-warn small">{w}</p>)}
++        {fields}
++        {admin && <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
++          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => run(() => api(`/api/voice/${agent.id}`, { method: "PATCH", body: settings }), "Saved and applied to your assistant.")}>{busy ? <span className="spin" /> : "Save"}</button>
++          <button className="btn btn-sm" disabled={busy} onClick={() => run(() => api(`/api/voice/${agent.id}`, { method: "PATCH", body: { status: agent.status === "active" ? "paused" : "active" } }), agent.status === "active" ? "Paused: tools will tell callers to leave a message." : "Answering again.")}>{agent.status === "active" ? "Pause" : "Resume"}</button>
++          <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => { if (window.confirm("Disconnect? Your Vapi assistant's tools and webhook are restored to how they were.")) run(() => api(`/api/voice/${agent.id}`, { method: "DELETE" }), "Disconnected."); }}>Disconnect</button>
++        </div>}
++      </div>
++    </div>
++  );
++}
++
++function CallDetail({ c, canWrite, onChanged, toast }: { c: Call; canWrite: boolean; onChanged: () => void; toast: (m: string) => void }) {
++  const [note, setNote] = useState(c.note ?? "");
++  const [showT, setShowT] = useState(false);
++  const save = async (body: Record<string, unknown>, done: string) => { try { await api(`/api/calls/${c.id}`, { method: "PATCH", body }); toast(done); onChanged(); } catch (e) { toast(e instanceof Error ? e.message : "Could not save."); } };
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>{c.contacts ? personName(c.contacts) : fmtPhone(c.from_number)}</h3><div className="sub">{fmtPhone(c.from_number)} · {relativeTime(c.started_at || c.created_at)} · {dur(c.duration_seconds)}</div></div>
++        <span className={`pill ${OUTCOME[c.outcome].pill}`}>{OUTCOME[c.outcome].label}</span></div>
++      <div className="card-pad stack">
++        {c.summary ? <p className="small" style={{ whiteSpace: "pre-wrap" }}>{c.summary}</p> : <p className="small muted">{c.outcome === "missed" ? "The caller hung up before talking." : "No summary."}</p>}
++        <div className="row small" style={{ flexWrap: "wrap", gap: 6 }}>
++          {c.contact_id && <Link className="btn btn-sm" href={`/crm/contacts/${c.contact_id}`}>Open contact</Link>}
++          {c.contact_id && <Link className="btn btn-sm" href={`/inbox?contact=${c.contact_id}&channel=sms`}>Text them</Link>}
++          {c.appointment_id && <Link className="btn btn-sm" href="/calendars">See appointment</Link>}
++          {c.text_back_sent && <span className="pill pill-info">Missed-call text sent</span>}
++        </div>
++        {c.recording_url && <audio controls preload="none" src={c.recording_url} style={{ width: "100%" }} aria-label="Call recording" />}
++        {c.transcript && <div>
++          <button className="btn btn-sm btn-ghost" onClick={() => setShowT(!showT)}>{showT ? "Hide transcript" : "Show transcript"}</button>
++          {showT && <pre className="small" style={{ whiteSpace: "pre-wrap", maxHeight: 340, overflow: "auto", background: "var(--panel-2)", padding: 10, borderRadius: 8 }}>{c.transcript}</pre>}
++        </div>}
++        {canWrite && <div className="stack" style={{ gap: 6 }}>
++          <label className="sr-only" htmlFor={`cn-${c.id}`}>Note</label>
++          <textarea id={`cn-${c.id}`} className="textarea" rows={2} maxLength={2000} placeholder="Note for the team (e.g. called back, quoted $450)" value={note} onChange={(e) => setNote(e.target.value)} />
++          <div className="row" style={{ gap: 6 }}>
++            <button className="btn btn-sm" disabled={note === (c.note ?? "")} onClick={() => save({ note }, "Note saved.")}>Save note</button>
++            <button className="btn btn-sm btn-primary" onClick={() => save({ reviewed: !c.reviewed_at }, c.reviewed_at ? "Marked not done." : "Marked done.")}>{c.reviewed_at ? "Reopen" : "Done"}</button>
++          </div>
++        </div>}
++      </div>
++    </div>
++  );
++}
++
++function Calls({ org }: { org: Org }) {
++  const [filter, setFilter] = useState("all");
++  const [open, setOpen] = useState<string | null>(null);
++  const voice = useResource<VoiceData>("/api/voice");
++  const { data, error, loading, reload } = useResource<{ calls: Call[] }>(`/api/calls${filter === "all" ? "" : `?filter=${filter}`}`);
++  const { toast, node } = useToast();
++  useEffect(() => { const f = new URLSearchParams(window.location.search).get("filter"); if (f) setFilter(f); }, []);
++  useEffect(() => { const t = setInterval(reload, 20000); return () => clearInterval(t); }, [reload]);
++  if ((loading && !data) || (voice.loading && !voice.data)) return <Loading />;
++  if (error) return <ErrorState message={error} onRetry={reload} />;
++  const calls = data?.calls || [];
++  const current = calls.find((c) => c.id === open);
++  return (
++    <div className="split">
++      <div className="stack">
++        <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
++          {[["all", "All calls"], ["review", "Need a call back"], ["missed", "Missed"], ["booked", "Booked"], ["message", "Messages"]].map(([k, l]) => <button key={k} className={`chip ${filter === k ? "on" : ""}`} onClick={() => { setFilter(k); setOpen(null); }}>{l}</button>)}
++        </div>
++        <div className="card">
++          {calls.length === 0 ? <div className="empty"><h3>No calls here yet</h3><p className="small">Calls answered by your AI receptionist appear here with a summary, transcript and recording.</p></div> : (
++            <div className="home-list">{calls.map((c) => (
++              <button key={c.id} className={`home-item lf-row ${open === c.id ? "on" : ""}`} style={{ background: "none", border: 0, borderTop: "1px solid var(--line)", textAlign: "left", width: "100%", font: "inherit", color: "inherit", cursor: "pointer" }} onClick={() => setOpen(c.id)}>
++                <span className={`pill ${OUTCOME[c.outcome].pill}`}>{OUTCOME[c.outcome].label}</span>
++                <span className="small" style={{ minWidth: 0 }}><strong>{c.contacts ? personName(c.contacts) : fmtPhone(c.from_number)}</strong> <span className="muted home-preview">{c.summary || (c.outcome === "missed" ? "Hung up before talking" : "")}</span></span>
++                <span className="tiny muted" style={{ textAlign: "right" }}>{relativeTime(c.started_at || c.created_at)}{c.reviewed_at ? " · done" : ""}</span>
++              </button>
++            ))}</div>
++          )}
++        </div>
++      </div>
++      <div className="stack">
++        {current ? <CallDetail key={current.id} c={current} canWrite={atLeast(org.role, "member")} onChanged={reload} toast={toast} /> : null}
++        {voice.data && <Setup data={voice.data} admin={atLeast(org.role, "admin")} reload={voice.reload} toast={toast} />}
++      </div>
++      {node}
++    </div>
++  );
++}
++
++export default function CallsPage() {
++  return <TenantGate title="Calls & AI receptionist" subtitle="Every call your AI receptionist answers: what they wanted, what it did, and who needs a call back.">{(info) => <Calls org={info.org} />}</TenantGate>;
++}
+diff --git a/src/app/workflows/page.tsx b/src/app/workflows/page.tsx
+index e19878e..ba7cf99 100644
+--- a/src/app/workflows/page.tsx
++++ b/src/app/workflows/page.tsx
+@@ -128,6 +128,7 @@ function Editor({ draft, canManage, onSaved, onCancel, toast }: { draft: Draft;
+             {(trig.filters as readonly string[]).includes("lifecycle_stage") && <select className="select" aria-label="New stage" value={filters.lifecycle_stage ?? ""} onChange={(e) => setFilter("lifecycle_stage", e.target.value)}><option value="">any stage</option>{STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
+             {(trig.filters as readonly string[]).includes("channel") && <select className="select" aria-label="Channel" value={filters.channel ?? ""} onChange={(e) => setFilter("channel", e.target.value)}><option value="">text or email</option><option value="sms">text</option><option value="email">email</option></select>}
+             {(trig.filters as readonly string[]).includes("form_id") && <select className="select" aria-label="Form" value={filters.form_id ?? ""} onChange={(e) => setFilter("form_id", e.target.value)}><option value="">any form</option>{forms.data?.forms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>}
++            {(trig.filters as readonly string[]).includes("call_outcome") && <select className="select" aria-label="Call outcome" value={filters.call_outcome ?? ""} onChange={(e) => setFilter("call_outcome", e.target.value || undefined)}><option value="">any call</option><option value="missed">missed calls</option><option value="booked">booked an appointment</option><option value="message">left a message</option><option value="transferred">transferred</option><option value="info">answered a question</option></select>}
+             {(trig.filters as readonly string[]).includes("rating_max") && <select className="select" aria-label="Rating" value={filters.rating_max ?? ""} onChange={(e) => setFilter("rating_max", e.target.value ? Number(e.target.value) : undefined)}><option value="">any rating</option>{[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n} star{n > 1 ? "s" : ""} or lower</option>)}</select>}
+           </div>}
+         </div>
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index 01c01fd..a519424 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -45,7 +45,7 @@ const admin = (c: NavContext) => atLeast(c.role ?? undefined, "admin");
+ // that only platform staff (or the owner passcode) see.
+ const NAV: Group[] = [
+   { g: "", items: [{ href: "/home", label: "Home", i: I.home }] },
+-  { g: "Customers", items: [{ href: "/inbox", label: "Conversations", i: I.chat }, { href: "/crm", label: "Contacts & deals", i: I.crm }, { href: "/calendars", label: "Calendars", i: I.calendar }, { href: "/trust", label: "Reputation", i: I.star }] },
++  { g: "Customers", items: [{ href: "/inbox", label: "Conversations", i: I.chat }, { href: "/crm", label: "Contacts & deals", i: I.crm }, { href: "/calls", label: "Calls & AI receptionist", i: I.phone }, { href: "/calendars", label: "Calendars", i: I.calendar }, { href: "/trust", label: "Reputation", i: I.star }] },
+   { g: "Marketing", items: [{ href: "/workflows", label: "Automations", i: I.flow }, { href: "/sites", label: "Websites", i: I.org }, { href: "/forms", label: "Forms", i: I.report }, { href: "/lead-finder", label: "Lead Finder", i: I.radar, show: (c) => c.kind !== "client" }] },
+   { g: "AI", items: [{ href: "/command-center", label: "AI assistant", i: I.spark }, { href: "/knowledge", label: "Knowledge base", i: I.crm }] },
+   { g: "Money", items: [{ href: "/invoices", label: "Invoices", i: I.report }, { href: "/account", label: "Plan & account", i: I.gear, show: admin }, { href: "/agency", label: "Agency", i: I.org, show: (c) => c.kind === "agency" && admin(c) }] },
+diff --git a/src/lib/command/tools.ts b/src/lib/command/tools.ts
+index 9336c7e..b9c64b4 100644
+--- a/src/lib/command/tools.ts
++++ b/src/lib/command/tools.ts
+@@ -485,6 +485,17 @@ const TOOLS: Tool[] = [
+       };
+     },
+   }),
++  readTool({
++    name: "recent_calls",
++    description: "Recent phone calls answered by the AI receptionist: who called, what happened (booked, message, missed, transferred) and the summary. Use it for 'who called today' or 'who needs a call back'.",
++    input: z.object({ needs_callback: z.boolean().default(false) }),
++    async run(ctx, input) {
++      let q = ctx.client.from("calls").select("from_number, outcome, summary, duration_seconds, reviewed_at, created_at, contacts(first_name, last_name)").eq("organization_id", ctx.orgId);
++      if (input.needs_callback) q = q.is("reviewed_at", null).in("outcome", ["missed", "message"]);
++      const { data } = await q.order("created_at", { ascending: false }).limit(20);
++      return { calls: (data || []).map((c) => ({ caller: c.from_number, outcome: c.outcome, summary: c.summary, minutes: c.duration_seconds ? Math.round(c.duration_seconds / 6) / 10 : 0, done: !!c.reviewed_at, at: c.created_at })), link: "/calls" };
++    },
++  }),
+   readTool({
+     name: "usage_summary",
+     description: "The organization's plan and how much of each limit (texts, emails, AI requests, contacts, team members, websites) has been used.",
+diff --git a/src/lib/comms/service.ts b/src/lib/comms/service.ts
+index f5ac964..6e370c8 100644
+--- a/src/lib/comms/service.ts
++++ b/src/lib/comms/service.ts
+@@ -68,6 +68,13 @@ export async function loadGateContext(client: SupabaseClient, orgId: string, con
+       .eq("direction", "inbound").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+   ]);
+   for (const r of [contact, org, consent, inbound]) fromDb(r.error);
++  // A phone call from the person counts like a text from them: a one-off
++  // transactional reply (e.g. "sorry we missed your call") is allowed.
++  const call = channel === "sms"
++    ? await client.from("calls").select("created_at").eq("organization_id", orgId).eq("contact_id", contactId).eq("direction", "inbound")
++      .order("created_at", { ascending: false }).limit(1).maybeSingle()
++    : { data: null, error: null };
++  const latest = [inbound.data?.created_at, call.error ? null : call.data?.created_at].filter(Boolean).sort().pop() as string | undefined;
+   if (!contact.data) throw new ApiError("Contact not found.", 404, "not_found");
+   const address = normalizeAddress(channel, channel === "sms" ? contact.data.phone : contact.data.email);
+   let suppressed = false;
+@@ -82,7 +89,7 @@ export async function loadGateContext(client: SupabaseClient, orgId: string, con
+     contact: contact.data,
+     consent: (consent.data?.status as "granted" | "revoked" | undefined) ?? null,
+     suppressed,
+-    lastInboundAt: inbound.data ? new Date(inbound.data.created_at) : null,
++    lastInboundAt: latest ? new Date(latest) : null,
+     timezone: org.data?.timezone || "America/New_York",
+     quietHours: qh && Number.isInteger(qh.start) && Number.isInteger(qh.end) ? { start: qh.start!, end: qh.end! } : DEFAULT_QUIET_HOURS,
+     orgName: org.data?.name || "our team",
+diff --git a/src/lib/home/service.ts b/src/lib/home/service.ts
+index 19bb6e9..d44ab94 100644
+--- a/src/lib/home/service.ts
++++ b/src/lib/home/service.ts
+@@ -21,11 +21,12 @@ export function greeting(hour: number) {
+ }
+ 
+ // Pure: turns counts into an ordered "needs attention" list (most urgent first).
+-export function attentionList(c: { unread: number; overdueTasks: number; dueToday: number; negativeUnanswered: number; unansweredReviews: number; approvals: number; overdueInvoices: number; nearLimits: string[] }): Attention[] {
++export function attentionList(c: { unread: number; overdueTasks: number; dueToday: number; negativeUnanswered: number; unansweredReviews: number; approvals: number; overdueInvoices: number; nearLimits: string[]; callbacks?: number }): Attention[] {
+   const out: Attention[] = [];
+   const s = (n: number, one: string, many: string) => (n === 1 ? one : many);
+   if (c.negativeUnanswered) out.push({ key: "negative", tone: "bad", count: c.negativeUnanswered, href: "/trust", text: `${c.negativeUnanswered} unhappy ${s(c.negativeUnanswered, "review needs", "reviews need")} a reply` });
+   if (c.unread) out.push({ key: "unread", tone: "bad", count: c.unread, href: "/inbox", text: `${c.unread} ${s(c.unread, "conversation is", "conversations are")} waiting for a reply` });
++  if (c.callbacks) out.push({ key: "callbacks", tone: "bad", count: c.callbacks, href: "/calls?filter=review", text: `${c.callbacks} ${s(c.callbacks, "caller needs", "callers need")} a call back` });
+   if (c.overdueTasks) out.push({ key: "overdue", tone: "warn", count: c.overdueTasks, href: "/crm?view=tasks", text: `${c.overdueTasks} overdue ${s(c.overdueTasks, "task", "tasks")}` });
+   if (c.approvals) out.push({ key: "approvals", tone: "warn", count: c.approvals, href: "/command-center", text: `${c.approvals} AI ${s(c.approvals, "action waits", "actions wait")} for approval` });
+   if (c.overdueInvoices) out.push({ key: "invoices", tone: "warn", count: c.overdueInvoices, href: "/invoices", text: `${c.overdueInvoices} ${s(c.overdueInvoices, "invoice is", "invoices are")} past due` });
+@@ -85,6 +86,7 @@ export async function homeSummary(client: SupabaseClient, org: { id: string; kin
+     count(client.from("workflows").select("id", head).eq("organization_id", o).eq("status", "active")),
+     count(client.from("memberships").select("user_id", head).eq("organization_id", o).eq("status", "active")),
+   ]);
++  const callbacks = await count(client.from("calls").select("id", head).eq("organization_id", o).is("reviewed_at", null).in("outcome", ["missed", "message"]).gte("created_at", week));
+ 
+   const ratings = ((reviewsRes.data || []) as { rating: number }[]).map((r) => r.rating);
+   const today = now.toISOString().slice(0, 10);
+@@ -120,7 +122,7 @@ export async function homeSummary(client: SupabaseClient, org: { id: string; kin
+       reviews_90d: ratings.length,
+       outstanding_cents: outstanding,
+     },
+-    attention: attentionList({ unread, overdueTasks, dueToday, negativeUnanswered, unansweredReviews, approvals, overdueInvoices, nearLimits }),
++    attention: attentionList({ unread, overdueTasks, dueToday, negativeUnanswered, unansweredReviews, approvals, overdueInvoices, nearLimits, callbacks }),
+     appointments: apptsRes.data || [],
+     tasks: tasksRes.data || [],
+     conversations: convRes.data || [],
+diff --git a/src/lib/voice/service.ts b/src/lib/voice/service.ts
+new file mode 100644
+index 0000000..d4539f1
+--- /dev/null
++++ b/src/lib/voice/service.ts
+@@ -0,0 +1,308 @@
++import "server-only";
++import { randomBytes, timingSafeEqual } from "node:crypto";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { z } from "zod";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { systemAudit } from "@/lib/tenant/system-audit";
++import { hintFor, openJson, sealJson } from "@/lib/crypto/vault";
++import { toE164 } from "@/lib/comms/address";
++import { findContactByPhone, sendMessage } from "@/lib/comms/service";
++import { availability, book, findOrCreateContact, loadCalendar, notifyAppointment } from "@/lib/calendar/service";
++import { formatInZone, localDate } from "@/lib/time/zones";
++import { applyPatch, assistantNumbers, getAssistant, patchAssistant, platformTools, snapshot, TOOL_PREFIX, VapiError, warnings, type Assistant, type Tool } from "./vapi";
++
++// The AI receptionist: connects a Vapi assistant to this business, answers
++// its tool calls (facts, availability, booking, messages) and records calls.
++export const AGENT_COLUMNS = "id, organization_id, provider, name, credential_hint, external_assistant_id, phone_numbers, calendar_id, transfer_number, take_messages, missed_call_text, missed_call_message, status, last_event_at, last_error, created_at";
++export const SECRET_HEADER = "x-sun-agent-secret";
++const e164 = z.string().trim().transform((v, c) => { const n = toE164(v); if (!n) { c.addIssue({ code: "custom", message: "Enter a full phone number, like (856) 555-0100." }); return z.NEVER; } return n; });
++
++export const settingsInput = z.object({
++  name: z.string().trim().min(1).max(80).optional(),
++  calendar_id: z.string().uuid().nullable().optional(),
++  transfer_number: z.union([e164, z.literal("").transform(() => null), z.null()]).optional(),
++  take_messages: z.boolean().optional(),
++  missed_call_text: z.boolean().optional(),
++  missed_call_message: z.string().trim().min(10).max(300).nullable().optional(),
++});
++export const connectInput = settingsInput.extend({
++  api_key: z.string().trim().min(20, "Paste the private API key from Vapi.").max(200),
++  // The assistant's ID, or the whole dashboard link to it.
++  assistant: z.string().trim().max(300).transform((v, c) => {
++    const id = v.match(/assistants\/([A-Za-z0-9_-]{6,80})/)?.[1] ?? (/^[A-Za-z0-9_-]{6,80}$/.test(v) ? v : null);
++    if (!id) { c.addIssue({ code: "custom", message: "Paste the assistant's ID or its link from the Vapi dashboard." }); return z.NEVER; }
++    return id;
++  }),
++});
++
++type Creds = { api_key: string; webhook_secret: string };
++type Agent = { id: string; organization_id: string; external_assistant_id: string; calendar_id: string | null; transfer_number: string | null; take_messages: boolean; missed_call_text: boolean; missed_call_message: string | null; status: string; encrypted_credentials: string; previous_config: { tools: Tool[] | null; server: unknown; serverMessages: string[] | null } | null };
++
++export const webhookUrl = (base: string, agentId: string) => `${base}/api/webhooks/voice/${agentId}`;
++
++async function hasCalendar(system: SupabaseClient, orgId: string, calendarId: string | null) {
++  if (calendarId) return true;
++  const { data } = await system.from("calendars").select("id").eq("organization_id", orgId).eq("status", "active").limit(1).maybeSingle();
++  return !!data;
++}
++
++// Adds our tools and webhook to the assistant (keeping the owner's own tools).
++async function applyTools(system: SupabaseClient, agent: Agent, base: string, assistant?: Assistant) {
++  const creds = openJson(agent.encrypted_credentials) as Creds;
++  const a = assistant ?? (await getAssistant(creds.api_key, agent.external_assistant_id));
++  const server = { url: webhookUrl(base, agent.id), headers: { [SECRET_HEADER]: creds.webhook_secret } };
++  const tools = platformTools(server, { transfer_number: agent.transfer_number, take_messages: agent.take_messages, booking: await hasCalendar(system, agent.organization_id, agent.calendar_id) });
++  const previous = agent.previous_config ?? snapshot(a);
++  await patchAssistant(creds.api_key, agent.external_assistant_id, applyPatch(a, tools, server, previous));
++  const numbers = await assistantNumbers(creds.api_key, agent.external_assistant_id).catch(() => [] as string[]);
++  await system.from("voice_agents").update({ previous_config: previous, phone_numbers: numbers.slice(0, 20), last_error: null }).eq("id", agent.id);
++  return { warnings: warnings(a), numbers };
++}
++
++const vapiFail = (e: unknown): never => {
++  if (e instanceof VapiError) throw new ApiError(e.message, e.status === 401 ? 422 : e.status === 404 ? 404 : 502, "integration_error");
++  throw e;
++};
++
++export async function connectAgent(client: SupabaseClient, system: SupabaseClient, orgId: string, input: z.infer<typeof connectInput>, base: string) {
++  const assistant = await getAssistant(input.api_key, input.assistant).catch(vapiFail);
++  const secret = randomBytes(24).toString("hex");
++  const { api_key: _k, assistant: _a, ...settings } = input;
++  const { data, error } = await client.from("voice_agents").insert({
++    organization_id: orgId, provider: "vapi", name: settings.name || assistant.name?.slice(0, 80) || "AI receptionist",
++    encrypted_credentials: sealJson({ api_key: input.api_key, webhook_secret: secret }), credential_hint: hintFor(input.api_key),
++    external_assistant_id: input.assistant, calendar_id: settings.calendar_id ?? null, transfer_number: settings.transfer_number ?? null,
++    take_messages: settings.take_messages ?? true, missed_call_text: settings.missed_call_text ?? false, missed_call_message: settings.missed_call_message ?? null,
++  }).select("id").single();
++  if (error?.code === "23505") throw new ApiError("That assistant is already connected to an account.", 409, "conflict");
++  fromDb(error);
++  const agent = await loadAgent(system, data!.id);
++  try {
++    const r = await applyTools(system, agent!, base, assistant);
++    await audit(client, orgId, "voice.connected", { type: "voice_agent", id: data!.id }, { assistant: input.assistant });
++    return { id: data!.id, ...r };
++  } catch (e) {
++    await system.from("voice_agents").delete().eq("id", data!.id);
++    return vapiFail(e);
++  }
++}
++
++export async function loadAgent(system: SupabaseClient, id: string) {
++  const { data } = await system.from("voice_agents").select(`${AGENT_COLUMNS}, encrypted_credentials, previous_config`).eq("id", id).maybeSingle();
++  return data as Agent | null;
++}
++
++export async function updateAgent(client: SupabaseClient, system: SupabaseClient, orgId: string, id: string, input: z.infer<typeof settingsInput> & { status?: "active" | "paused" }, base: string) {
++  const { data, error } = await client.from("voice_agents").update(input).eq("organization_id", orgId).eq("id", id).neq("status", "disabled").select("id").maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("Receptionist not found.", 404, "not_found");
++  const agent = await loadAgent(system, id);
++  const r = await applyTools(system, agent!, base).catch(vapiFail);
++  await audit(client, orgId, "voice.updated", { type: "voice_agent", id }, { ...input, missed_call_message: undefined });
++  return r;
++}
++
++export async function disconnectAgent(client: SupabaseClient, system: SupabaseClient, orgId: string, id: string) {
++  const agent = await loadAgent(system, id);
++  if (!agent || agent.organization_id !== orgId) throw new ApiError("Receptionist not found.", 404, "not_found");
++  let restored = true;
++  try {
++    const creds = openJson(agent.encrypted_credentials) as Creds;
++    const a = await getAssistant(creds.api_key, agent.external_assistant_id);
++    const prev = agent.previous_config ?? snapshot(a);
++    await patchAssistant(creds.api_key, agent.external_assistant_id, { model: { ...(a.model ?? {}), tools: prev.tools ?? [] }, server: prev.server ?? null, serverMessages: prev.serverMessages ?? undefined });
++  } catch { restored = false; }
++  const { error } = await client.from("voice_agents").update({ status: "disabled" }).eq("organization_id", orgId).eq("id", id);
++  fromDb(error);
++  await audit(client, orgId, "voice.disconnected", { type: "voice_agent", id }, { restored });
++  return { restored };
++}
++
++export function verifySecret(agent: Pick<Agent, "encrypted_credentials">, header: string | null) {
++  if (!header) return false;
++  let secret: string;
++  try { secret = (openJson(agent.encrypted_credentials) as Creds).webhook_secret; } catch { return false; }
++  const a = Buffer.from(header);
++  const b = Buffer.from(secret);
++  return a.length === b.length && timingSafeEqual(a, b);
++}
++
++// ---------------------------------------------------------------- webhooks
++type VCall = { id?: string; type?: string; customer?: { number?: string }; phoneNumber?: { number?: string }; startedAt?: string };
++type VMessage = {
++  type?: string; call?: VCall; customer?: { number?: string }; phoneNumber?: { number?: string };
++  toolCallList?: { id: string; name?: string; parameters?: Record<string, unknown>; function?: { name?: string; arguments?: string | Record<string, unknown> } }[];
++  endedReason?: string; startedAt?: string; endedAt?: string; durationSeconds?: number; recordingUrl?: string; summary?: string; transcript?: string;
++  artifact?: { transcript?: string; recordingUrl?: string; recording?: { url?: string; mono?: { combinedUrl?: string } }; messages?: { role?: string; message?: string }[] };
++  analysis?: { summary?: string };
++};
++
++const direction = (t?: string) => (t === "outboundPhoneCall" ? "outbound" : t === "webCall" ? "web" : "inbound");
++
++// Pure: what happened on a finished call.
++export function callOutcome(m: VMessage, current: string) {
++  if (current === "booked" || current === "message") return current;
++  const reason = (m.endedReason || "").toLowerCase();
++  if (/forward|transfer/.test(reason)) return "transferred";
++  const spoke = (m.artifact?.messages || []).some((x) => x.role === "user" && (x.message || "").trim().length > 1);
++  if (!spoke) return "missed";
++  return "info";
++}
++
++export function reportFields(m: VMessage) {
++  const rec = m.artifact?.recording?.mono?.combinedUrl || m.artifact?.recording?.url || m.artifact?.recordingUrl || m.recordingUrl || null;
++  const started = m.startedAt || m.call?.startedAt || null;
++  const ended = m.endedAt || null;
++  const duration = typeof m.durationSeconds === "number" ? Math.round(m.durationSeconds)
++    : started && ended ? Math.max(0, Math.round((new Date(ended).getTime() - new Date(started).getTime()) / 1000)) : null;
++  return {
++    started_at: started, ended_at: ended ?? new Date().toISOString(), duration_seconds: duration != null ? Math.min(duration, 86400) : null,
++    ended_reason: (m.endedReason || "").slice(0, 120) || null,
++    summary: (m.analysis?.summary || m.summary || "").slice(0, 4000) || null,
++    transcript: (m.artifact?.transcript || m.transcript || "").slice(0, 100000) || null,
++    recording_url: rec && rec.startsWith("https://") ? rec : null,
++  };
++}
++
++type Ctx = { client: SupabaseClient; orgId: string; userId: null };
++
++async function ensureCall(system: SupabaseClient, agent: Agent, m: VMessage) {
++  const callId = m.call?.id;
++  if (!callId) return null;
++  const { data: existing } = await system.from("calls").select("id, contact_id, outcome, status, from_number").eq("provider", "vapi").eq("provider_call_id", callId).maybeSingle();
++  if (existing) return existing as { id: string; contact_id: string | null; outcome: string; status: string; from_number: string | null };
++  const from = toE164(m.customer?.number || m.call?.customer?.number || "") || null;
++  const contact = from ? await findContactByPhone(system, agent.organization_id, from) : null;
++  const { data, error } = await system.from("calls").insert({
++    organization_id: agent.organization_id, agent_id: agent.id, provider: "vapi", provider_call_id: callId.slice(0, 120), direction: direction(m.call?.type),
++    from_number: from, to_number: (m.phoneNumber?.number || m.call?.phoneNumber?.number || "").slice(0, 40) || null, contact_id: contact?.id ?? null,
++    started_at: m.call?.startedAt ?? new Date().toISOString(), status: "in_progress", outcome: "none",
++  }).select("id, contact_id, outcome, status, from_number").single();
++  if (error?.code === "23505") return ensureCall(system, agent, m);
++  fromDb(error);
++  return data as { id: string; contact_id: string | null; outcome: string; status: string; from_number: string | null };
++}
++
++const args = (t: NonNullable<VMessage["toolCallList"]>[number]) => {
++  if (t.parameters) return t.parameters;
++  const a = t.function?.arguments;
++  if (typeof a === "string") { try { return JSON.parse(a) as Record<string, unknown>; } catch { return {}; } }
++  return a ?? {};
++};
++const str = (v: unknown, max = 200) => (typeof v === "string" ? v.trim().slice(0, max) : "");
++
++async function calendarFor(system: SupabaseClient, agent: Agent) {
++  if (agent.calendar_id) return agent.calendar_id;
++  const { data } = await system.from("calendars").select("id").eq("organization_id", agent.organization_id).eq("status", "active").order("created_at").limit(1).maybeSingle();
++  return (data?.id as string | undefined) ?? null;
++}
++
++export async function runTool(system: SupabaseClient, agent: Agent, call: { id: string; contact_id: string | null; from_number: string | null }, name: string, a: Record<string, unknown>, now = new Date()): Promise<string> {
++  const ctx: Ctx = { client: system, orgId: agent.organization_id, userId: null };
++  switch (name.replace(TOOL_PREFIX, "")) {
++    case "business_info": {
++      const q = str(a.question, 300);
++      const { data } = await system.rpc("search_knowledge", { p_org: agent.organization_id, p_query: q, p_limit: 4 });
++      let items = (data || []) as { title: string; body: string }[];
++      if (!items.length) {
++        const { data: any } = await system.from("knowledge_items").select("title, body").eq("organization_id", agent.organization_id).eq("status", "approved").limit(6);
++        items = (any || []) as { title: string; body: string }[];
++      }
++      if (!items.length) return "There is no approved information about that. Don't guess; offer to take a message so the team can answer.";
++      return items.map((i) => `${i.title}: ${i.body}`).join("\n").slice(0, 2000);
++    }
++    case "check_availability": {
++      const calId = await calendarFor(system, agent);
++      if (!calId) return "Online booking isn't set up. Offer to take a message instead.";
++      const { calendar } = await loadCalendar(system, agent.organization_id, calId);
++      const day = /^\d{4}-\d{2}-\d{2}$/.test(str(a.date)) && str(a.date) >= localDate(now, calendar.timezone) ? str(a.date) : localDate(now, calendar.timezone);
++      const { slots } = await availability(system, agent.organization_id, calId, day, 5, now);
++      if (!slots.length) return "No open times in the next few days. Offer to take a message so the team can call back.";
++      const list = slots.slice(0, 8).map((s) => ({ label: formatInZone(s.start, calendar.timezone, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" }), start: s.start }));
++      return JSON.stringify({ timezone: calendar.timezone, slots: list, note: "Offer two or three labels. When booking, pass the matching start value exactly." });
++    }
++    case "book_appointment": {
++      const calId = await calendarFor(system, agent);
++      if (!calId) return "Online booking isn't set up. Offer to take a message instead.";
++      const first = str(a.first_name, 80) || "Caller";
++      const phone = toE164(str(a.phone, 40)) || call.from_number || undefined;
++      const contactId = call.contact_id ?? await findOrCreateContact(ctx, { first_name: first, last_name: str(a.last_name, 80) || undefined, email: str(a.email, 254), phone }, "Phone call (AI receptionist)");
++      try {
++        const { appointment, calendar } = await book(ctx, { calendar_id: calId, contact_id: contactId, starts_at: str(a.start, 40), notes: str(a.reason, 1000) || undefined, title: undefined }, "ai", now);
++        await system.from("calls").update({ contact_id: contactId, outcome: "booked", appointment_id: appointment.id }).eq("id", call.id);
++        call.contact_id = contactId;
++        await notifyAppointment(ctx, appointment, calendar, "booked", { system: true }).catch(() => null);
++        return `Booked for ${formatInZone(appointment.starts_at, calendar.timezone, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}. A confirmation text is sent when possible.`;
++      } catch (e) {
++        return e instanceof ApiError ? `${e.message} Call check_availability again and offer other times.` : "Booking failed. Offer to take a message instead.";
++      }
++    }
++    case "take_message": {
++      const name = str(a.name, 80) || "Caller";
++      const reason = str(a.reason, 1000) || "Asked for a call back.";
++      const phone = toE164(str(a.callback_number, 40)) || call.from_number || undefined;
++      const contactId = call.contact_id ?? (phone || name !== "Caller" ? await findOrCreateContact(ctx, { first_name: name, email: "", phone }, "Phone call (AI receptionist)") : null);
++      await system.from("tasks").insert({ organization_id: agent.organization_id, title: `Call back ${name}${phone ? ` (${phone})` : ""}`.slice(0, 200), description: reason, priority: "high", due_at: new Date(now.getTime() + 2 * 3600e3).toISOString(), contact_id: contactId });
++      await system.from("calls").update({ contact_id: contactId, outcome: "message" }).eq("id", call.id);
++      call.contact_id = contactId;
++      return "Message taken. Tell the caller the team will call them back as soon as possible.";
++    }
++    default:
++      return "That action isn't available.";
++  }
++}
++
++async function finishCall(system: SupabaseClient, agent: Agent, m: VMessage, now: Date) {
++  const call = await ensureCall(system, agent, m);
++  if (!call) return { stored: false };
++  if (call.status !== "in_progress") return { stored: true, duplicate: true };
++  const outcome = callOutcome(m, call.outcome);
++  let contactId = call.contact_id;
++  if (!contactId && call.from_number) {
++    contactId = (await findContactByPhone(system, agent.organization_id, call.from_number))?.id ?? null;
++    if (!contactId) {
++      const { data } = await system.from("contacts").insert({ organization_id: agent.organization_id, phone: call.from_number, source: "Phone call (AI receptionist)", lifecycle_stage: "lead" }).select("id").single();
++      contactId = data?.id ?? null;
++    }
++  }
++  const { error } = await system.from("calls").update({
++    ...reportFields(m), contact_id: contactId, outcome,
++    status: outcome === "missed" ? "missed" : outcome === "transferred" ? "transferred" : "completed",
++  }).eq("id", call.id).eq("status", "in_progress");
++  fromDb(error);
++  let textBack: string | null = null;
++  if (outcome === "missed" && agent.missed_call_text && contactId && direction(m.call?.type) === "inbound") {
++    const { data: org } = await system.from("organizations").select("name").eq("id", agent.organization_id).maybeSingle();
++    const body = (agent.missed_call_message || `Hi, this is ${org?.name || "our team"}. Sorry we missed your call! How can we help? Reply here and we'll get right back to you.`).slice(0, 300);
++    try {
++      const r = await sendMessage({ client: system, orgId: agent.organization_id, userId: null }, { contact_id: contactId, channel: "sms", purpose: "transactional", body, idempotency_key: `missed-${call.id}` }, { system: true });
++      textBack = r.outcome;
++      if (r.outcome === "sent") await system.from("calls").update({ text_back_sent: true }).eq("id", call.id);
++    } catch (e) { textBack = e instanceof Error ? e.message : "failed"; }
++  }
++  await systemAudit(system, agent.organization_id, "voice.call_recorded", { type: "call", id: call.id }, { outcome, text_back: textBack });
++  return { stored: true, outcome, textBack, at: now.toISOString() };
++}
++
++export async function handleVoiceEvent(system: SupabaseClient, agent: Agent, body: { message?: VMessage }, now = new Date()) {
++  const m = body.message ?? {};
++  await system.from("voice_agents").update({ last_event_at: now.toISOString() }).eq("id", agent.id);
++  if (m.type === "tool-calls") {
++    const list = m.toolCallList || [];
++    if (agent.status !== "active") return { results: list.map((t) => ({ toolCallId: t.id, name: t.name, result: "This service is paused. Offer to take a message." })) };
++    const call = await ensureCall(system, agent, m);
++    const results = [];
++    for (const t of list.slice(0, 5)) {
++      const name = t.name || t.function?.name || "";
++      let result: string;
++      try { result = call ? await runTool(system, agent, call, name, args(t), now) : "Call details are missing."; }
++      catch (e) { console.error("[voice tool]", name, e); result = "Something went wrong. Apologize and offer to take a message."; }
++      results.push({ toolCallId: t.id, name, result });
++    }
++    return { results };
++  }
++  if (m.type === "status-update") { await ensureCall(system, agent, m); return { ok: true }; }
++  if (m.type === "end-of-call-report") return finishCall(system, agent, m, now);
++  return { ok: true };
++}
+diff --git a/src/lib/voice/vapi.ts b/src/lib/voice/vapi.ts
+new file mode 100644
+index 0000000..4134c95
+--- /dev/null
++++ b/src/lib/voice/vapi.ts
+@@ -0,0 +1,102 @@
++import "server-only";
++
++// Vapi adapter: reads the assistant, lists its phone numbers, and adds (or
++// removes) this platform's tools and webhook on the assistant. Everything else
++// about the assistant (voice, prompt, model) stays as the owner set it up.
++type Fetch = typeof fetch;
++const BASE = "https://api.vapi.ai";
++export const SERVER_MESSAGES = ["tool-calls", "end-of-call-report", "status-update"];
++export const TOOL_PREFIX = "sun_";
++
++export class VapiError extends Error {
++  constructor(message: string, public status: number) { super(message); }
++}
++
++async function vapi<T>(key: string, method: string, path: string, body?: unknown, f: Fetch = fetch): Promise<T> {
++  const r = await f(`${BASE}${path}`, {
++    method, headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
++    body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000),
++  }).catch(() => null);
++  if (!r) throw new VapiError("Vapi did not respond. Try again.", 502);
++  const j = (await r.json().catch(() => ({}))) as { message?: string | string[] };
++  if (r.status === 401 || r.status === 403) throw new VapiError("Vapi rejected the API key. Use the private key from Vapi → Organization → API Keys.", 401);
++  if (r.status === 404) throw new VapiError("Vapi has no assistant with that ID in this account.", 404);
++  if (!r.ok) throw new VapiError(`Vapi error: ${Array.isArray(j.message) ? j.message.join("; ") : j.message || r.status}`, r.status);
++  return j as T;
++}
++
++export type Tool = { type: string; function?: { name: string; description?: string; parameters?: unknown }; [k: string]: unknown };
++export type Assistant = {
++  id: string; name?: string; firstMessage?: string;
++  model?: { tools?: Tool[]; [k: string]: unknown };
++  server?: { url?: string; [k: string]: unknown } | null; serverMessages?: string[];
++  artifactPlan?: { recordingEnabled?: boolean };
++};
++
++export const getAssistant = (key: string, id: string, f?: Fetch) => vapi<Assistant>(key, "GET", `/assistant/${encodeURIComponent(id)}`, undefined, f);
++
++export async function assistantNumbers(key: string, id: string, f?: Fetch) {
++  const list = await vapi<{ number?: string; assistantId?: string }[]>(key, "GET", "/phone-number?limit=100", undefined, f);
++  return (Array.isArray(list) ? list : []).filter((n) => n.assistantId === id && n.number).map((n) => n.number as string);
++}
++
++export type ToolSettings = { transfer_number: string | null; take_messages: boolean; booking: boolean };
++
++// Pure: the tools this platform adds to the assistant.
++export function platformTools(server: { url: string; headers: Record<string, string> }, s: ToolSettings): Tool[] {
++  const fn = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []): Tool => ({
++    type: "function", async: false, server,
++    function: { name: `${TOOL_PREFIX}${name}`, description, parameters: { type: "object", properties, required } },
++  });
++  const tools: Tool[] = [
++    fn("business_info", "Look up the business's approved facts (services, prices, hours, service area, policies). Use it before answering any question about the business. Never guess facts that are not returned.",
++      { question: { type: "string", description: "What the caller wants to know" } }, ["question"]),
++  ];
++  if (s.booking) {
++    tools.push(
++      fn("check_availability", "Get open appointment times. Call it before offering times. Offer two or three of the returned times.",
++        { date: { type: "string", description: "Preferred day as YYYY-MM-DD, if the caller named one" } }),
++      fn("book_appointment", "Book an appointment at one of the times returned by check_availability, after confirming the time and the caller's name.",
++        { first_name: { type: "string" }, last_name: { type: "string" }, email: { type: "string" }, phone: { type: "string", description: "Only if different from the number they are calling from" },
++          start: { type: "string", description: "The exact start value returned by check_availability" }, reason: { type: "string", description: "What the appointment is for" } },
++        ["first_name", "start"]),
++    );
++  }
++  if (s.take_messages) {
++    tools.push(fn("take_message", "Take a message for the team when you cannot help or the caller asks for a person who is unavailable.",
++      { name: { type: "string" }, reason: { type: "string", description: "What they need, in one or two sentences" }, callback_number: { type: "string", description: "Only if different from the number they are calling from" } },
++      ["name", "reason"]));
++  }
++  if (s.transfer_number) {
++    tools.push({ type: "transferCall", destinations: [{ type: "number", number: s.transfer_number, message: "One moment, I'll connect you with the team.", description: "A person on the team" }] } as Tool);
++  }
++  return tools;
++}
++
++const isOurs = (t: Tool) => !!t.function?.name?.startsWith(TOOL_PREFIX);
++
++// Pure: the PATCH body that adds our tools and webhook, keeping theirs.
++export function applyPatch(a: Assistant, tools: Tool[], server: { url: string; headers: Record<string, string> }, previous: { tools: Tool[] | null } | null) {
++  const base = previous ? previous.tools ?? [] : (a.model?.tools ?? []).filter((t) => !isOurs(t));
++  return {
++    model: { ...(a.model ?? {}), tools: [...base, ...tools] },
++    server,
++    serverMessages: Array.from(new Set([...(a.serverMessages ?? []), ...SERVER_MESSAGES])),
++  };
++}
++
++export function snapshot(a: Assistant) {
++  return { tools: (a.model?.tools ?? []).filter((t) => !isOurs(t)), server: a.server ?? null, serverMessages: a.serverMessages ?? null };
++}
++
++export const patchAssistant = (key: string, id: string, body: unknown, f?: Fetch) => vapi<Assistant>(key, "PATCH", `/assistant/${encodeURIComponent(id)}`, body, f);
++
++export function warnings(a: Assistant) {
++  const out: string[] = [];
++  const recording = a.artifactPlan?.recordingEnabled !== false;
++  if (recording && !/record/i.test(a.firstMessage || "")) {
++    out.push("Calls are recorded, but the greeting doesn't say so. Many states require telling callers (for example: \"This call may be recorded.\"). Update the first message in Vapi.");
++  }
++  if (!a.firstMessage) out.push("The assistant has no first message, so callers hear silence until they speak.");
++  return out;
++}
+diff --git a/src/lib/workflows/definition.ts b/src/lib/workflows/definition.ts
+index cde8fc6..0c22bba 100644
+--- a/src/lib/workflows/definition.ts
++++ b/src/lib/workflows/definition.ts
+@@ -17,6 +17,7 @@ export const TRIGGERS = {
+   "review.received": { label: "New review received", filters: ["rating_max", "rating_min"] },
+   "review.feedback": { label: "Private feedback received", filters: ["rating_max", "rating_min"] },
+   "form.submitted": { label: "Form submitted", filters: ["form_id"] },
++  "call.completed": { label: "Phone call ended (AI receptionist)", filters: ["call_outcome"] },
+ } as const;
+ export type TriggerType = keyof typeof TRIGGERS;
+ export const TRIGGER_TYPES = Object.keys(TRIGGERS) as TriggerType[];
+@@ -35,6 +36,7 @@ export const triggerSchema = z.object({
+     rating_max: z.number().int().min(1).max(5).optional(),
+     rating_min: z.number().int().min(1).max(5).optional(),
+     form_id: z.string().uuid().optional(),
++    call_outcome: z.enum(["missed", "booked", "message", "transferred", "info"]).optional(),
+   }).strict().default({}),
+ }).strict();
+ 
+@@ -111,6 +113,7 @@ export function matches(trigger: Definition["trigger"], event: EventRow): boolea
+   if (f.stage_name && !eq(p.stage_name, f.stage_name)) return false;
+   if (f.channel && !eq(p.channel, f.channel)) return false;
+   if (f.form_id && p.form_id !== f.form_id) return false;
++  if (f.call_outcome && p.outcome !== f.call_outcome) return false;
+   const rating = Number(p.rating);
+   if (f.rating_max && !(rating <= f.rating_max)) return false;
+   if (f.rating_min && !(rating >= f.rating_min)) return false;
+diff --git a/src/middleware.ts b/src/middleware.ts
+index ad566e8..ed1417e 100644
+--- a/src/middleware.ts
++++ b/src/middleware.ts
+@@ -19,8 +19,8 @@ async function expected(pass: string): Promise<string> {
+ // decided per organization by RLS. Everything else is the legacy single-tenant
+ // console, which reads agency-wide data and is limited to platform staff.
+ const TENANT = [
+-  /^\/(home|command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge|invoices|account|agency)(\/|$)/,
+-  /^\/api\/(crm|command|tenant|inbox|messages|channels|reputation|calendars|appointments|workflows|prospecting|forms|sites|knowledge|invoices|billing|organization|home)(\/|$)/,
++  /^\/(home|command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge|invoices|account|agency|calls)(\/|$)/,
++  /^\/api\/(crm|command|tenant|inbox|messages|channels|reputation|calendars|appointments|workflows|prospecting|forms|sites|knowledge|invoices|billing|organization|home|voice|calls)(\/|$)/,
+ ];
+ 
+ type SessionUser = { id: string };
+diff --git a/supabase/migrations/20261014120000_voice_receptionist.sql b/supabase/migrations/20261014120000_voice_receptionist.sql
+new file mode 100644
+index 0000000..1771ec8
+--- /dev/null
++++ b/supabase/migrations/20261014120000_voice_receptionist.sql
+@@ -0,0 +1,138 @@
++-- AI receptionist: a voice agent (Vapi first, provider-agnostic) answers the
++-- business's phone, uses approved knowledge, books into calendars, takes
++-- messages and transfers. Calls are recorded here from verified webhooks.
++--   * The provider API key and the webhook secret are encrypted by the
++--     application and never readable through the API.
++--   * Calls are written only by the server; people can review and annotate.
++
++create table public.voice_agents (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  provider text not null default 'vapi' check (provider in ('vapi')),
++  name text not null default 'AI receptionist' check (length(btrim(name)) between 1 and 80),
++  encrypted_credentials text not null check (length(encrypted_credentials) between 20 and 8000),
++  credential_hint text check (length(credential_hint) <= 12),
++  external_assistant_id text not null check (external_assistant_id ~ '^[A-Za-z0-9_-]{6,80}$'),
++  phone_numbers text[] not null default '{}',
++  calendar_id uuid,
++  transfer_number text check (transfer_number ~ '^\+[1-9][0-9]{6,14}$'),
++  take_messages boolean not null default true,
++  missed_call_text boolean not null default false,
++  missed_call_message text check (length(missed_call_message) between 10 and 300),
++  -- What the assistant looked like before we added our tools, to restore on disconnect.
++  previous_config jsonb,
++  status text not null default 'active' check (status in ('active', 'paused', 'disabled')),
++  last_event_at timestamptz,
++  last_error text check (length(last_error) <= 500),
++  created_by uuid,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  unique (id, organization_id),
++  foreign key (calendar_id, organization_id) references public.calendars(id, organization_id) on delete set null (calendar_id)
++);
++create unique index voice_agents_assistant on public.voice_agents(provider, external_assistant_id) where status <> 'disabled';
++create trigger voice_agents_updated before update on public.voice_agents for each row execute function public.tg_set_updated_at();
++
++create or replace function public.tg_voice_agents_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if current_user not in ('authenticated', 'anon') then return new; end if;
++  if tg_op = 'INSERT' then
++    new.created_by := auth.uid(); new.last_event_at := null; new.last_error := null;
++    return new;
++  end if;
++  if new.last_event_at is distinct from old.last_event_at or new.last_error is distinct from old.last_error
++     or new.organization_id <> old.organization_id or new.provider <> old.provider or new.external_assistant_id <> old.external_assistant_id
++     or new.previous_config is distinct from old.previous_config then
++    raise exception 'These details are maintained by the server.' using errcode = '42501';
++  end if;
++  return new;
++end $$;
++create trigger voice_agents_guard before insert or update on public.voice_agents
++  for each row execute function public.tg_voice_agents_guard();
++
++create table public.calls (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  agent_id uuid,
++  provider text not null default 'vapi',
++  provider_call_id text not null check (length(provider_call_id) between 4 and 120),
++  direction text not null default 'inbound' check (direction in ('inbound', 'outbound', 'web')),
++  from_number text check (length(from_number) <= 40),
++  to_number text check (length(to_number) <= 40),
++  contact_id uuid,
++  status text not null default 'in_progress' check (status in ('in_progress', 'completed', 'missed', 'transferred', 'failed')),
++  outcome text not null default 'none' check (outcome in ('none', 'booked', 'message', 'transferred', 'info', 'missed')),
++  started_at timestamptz,
++  ended_at timestamptz,
++  duration_seconds integer check (duration_seconds between 0 and 86400),
++  ended_reason text check (length(ended_reason) <= 120),
++  summary text check (length(summary) <= 4000),
++  transcript text check (length(transcript) <= 100000),
++  recording_url text check (recording_url ~ '^https://'),
++  appointment_id uuid,
++  text_back_sent boolean not null default false,
++  reviewed_at timestamptz,
++  reviewed_by uuid,
++  note text check (length(note) <= 2000),
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  unique (provider, provider_call_id),
++  foreign key (agent_id, organization_id) references public.voice_agents(id, organization_id) on delete set null (agent_id),
++  foreign key (contact_id, organization_id) references public.contacts(id, organization_id) on delete set null (contact_id)
++);
++create index calls_org_idx on public.calls(organization_id, created_at desc);
++create index calls_contact_idx on public.calls(organization_id, contact_id, created_at desc);
++create trigger calls_updated before update on public.calls for each row execute function public.tg_set_updated_at();
++
++-- People can mark a call reviewed and add a note; the record itself is the server's.
++create or replace function public.tg_calls_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if current_user not in ('authenticated', 'anon') then return new; end if;
++  if tg_op = 'INSERT' then raise exception 'Calls are recorded by the phone system.' using errcode = '42501'; end if;
++  if (to_jsonb(new) - array['reviewed_at', 'reviewed_by', 'note', 'contact_id', 'updated_at']) is distinct from (to_jsonb(old) - array['reviewed_at', 'reviewed_by', 'note', 'contact_id', 'updated_at']) then
++    raise exception 'Only the review status, note and linked contact of a call can be changed.' using errcode = '42501';
++  end if;
++  if new.reviewed_at is not null and old.reviewed_at is null then new.reviewed_by := auth.uid(); new.reviewed_at := now(); end if;
++  return new;
++end $$;
++create trigger calls_guard before insert or update on public.calls
++  for each row execute function public.tg_calls_guard();
++
++-- Finished calls go on the contact's timeline and start automations.
++create or replace function public.tg_calls_finished() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if new.status = 'in_progress' or (tg_op = 'UPDATE' and old.status <> 'in_progress') then return new; end if;
++  if new.contact_id is not null then
++    insert into public.activities(organization_id, contact_id, kind, direction, subject, body, metadata, actor_type)
++    values (new.organization_id, new.contact_id, 'call', case when new.direction = 'outbound' then 'outbound' else 'inbound' end,
++            left(case new.outcome when 'booked' then 'Call: booked an appointment' when 'message' then 'Call: left a message'
++                 when 'transferred' then 'Call: transferred to the team' when 'missed' then 'Missed call' else 'Call with the AI receptionist' end, 300),
++            left(new.summary, 20000), jsonb_build_object('call_id', new.id, 'duration_seconds', new.duration_seconds), 'system');
++    update public.contacts set last_activity_at = now() where id = new.contact_id;
++  end if;
++  perform public.emit_event(new.organization_id, 'call.completed', new.contact_id, new.id,
++    jsonb_build_object('outcome', new.outcome, 'missed', new.outcome = 'missed', 'duration_seconds', new.duration_seconds));
++  return new;
++end $$;
++create trigger calls_finished after insert or update of status on public.calls
++  for each row execute function public.tg_calls_finished();
++
++alter table public.voice_agents enable row level security;
++alter table public.calls enable row level security;
++create policy voice_agents_read on public.voice_agents for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy voice_agents_write on public.voice_agents for all to authenticated
++  using (public.org_rank(organization_id) >= 4) with check (public.org_rank(organization_id) >= 4);
++create policy calls_read on public.calls for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy calls_review on public.calls for update to authenticated using (public.org_rank(organization_id) >= 2) with check (public.org_rank(organization_id) >= 2);
++create policy calls_delete on public.calls for delete to authenticated using (public.org_rank(organization_id) >= 3);
++
++revoke all on public.voice_agents, public.calls from anon, authenticated;
++grant select (id, organization_id, provider, name, credential_hint, external_assistant_id, phone_numbers, calendar_id, transfer_number, take_messages,
++              missed_call_text, missed_call_message, status, last_event_at, last_error, created_by, created_at, updated_at) on public.voice_agents to authenticated;
++grant insert, update, delete on public.voice_agents to authenticated;
++grant select, update, delete on public.calls to authenticated;
++grant all on public.voice_agents, public.calls to service_role;
++revoke execute on function public.tg_calls_finished() from public, anon, authenticated;
+diff --git a/supabase/tests/voice_receptionist.test.sql b/supabase/tests/voice_receptionist.test.sql
+new file mode 100644
+index 0000000..e5dabe8
+--- /dev/null
++++ b/supabase/tests/voice_receptionist.test.sql
+@@ -0,0 +1,92 @@
++-- AI receptionist security tests: voice agents and calls.
++-- Run with scripts/test-db.sh.
++\set ON_ERROR_STOP 1
++set client_min_messages = notice;
++
++create or replace function pg_temp.as_user(p_uid uuid) returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, false);
++  execute 'set role authenticated';
++end $$;
++create or replace function pg_temp.as_service() returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', '{"role":"service_role"}', false);
++  execute 'set role service_role';
++end $$;
++create or replace function pg_temp.reset_user() returns void language plpgsql as $$
++begin
++  execute 'reset role';
++  perform set_config('request.jwt.claims', '', false);
++end $$;
++create or replace function pg_temp.expect_error(p_sql text, p_label text) returns void language plpgsql as $$
++begin
++  begin execute p_sql; exception when others then raise notice 'ok   (denied) %', p_label; return; end;
++  raise exception 'FAIL expected an error: %', p_label;
++end $$;
++create or replace function pg_temp.expect(p_ok boolean, p_label text) returns void language plpgsql as $$
++begin
++  if not coalesce(p_ok, false) then raise exception 'FAIL %', p_label; end if;
++  raise notice 'ok   %', p_label;
++end $$;
++
++-- 1 = staff owner of agency; 2 = owner of client V; 3 = member of V; 4 = owner of client W
++insert into auth.users values
++  ('63000000-0000-0000-0000-000000000001', 'staff@vr.test'), ('63000000-0000-0000-0000-000000000002', 'owner@vrv.test'),
++  ('63000000-0000-0000-0000-000000000003', 'member@vrv.test'), ('63000000-0000-0000-0000-000000000004', 'owner@vrw.test');
++insert into public.team_members(user_id, email, active) values ('63000000-0000-0000-0000-000000000001', 'staff@vr.test', true);
++create temp table ids (k text primary key, v uuid);
++grant all on ids to authenticated, service_role, anon;
++select pg_temp.as_user('63000000-0000-0000-0000-000000000001');
++insert into ids select 'a', public.create_organization('Agency VR', 'agency');
++insert into ids select 'v', public.create_organization('Client VR V', 'client', (select v from ids where k = 'a'));
++insert into ids select 'w', public.create_organization('Client VR W', 'client', (select v from ids where k = 'a'));
++select public.add_member_by_email((select v from ids where k = 'v'), 'owner@vrv.test', 'owner');
++select public.add_member_by_email((select v from ids where k = 'v'), 'member@vrv.test', 'member');
++select public.add_member_by_email((select v from ids where k = 'w'), 'owner@vrw.test', 'owner');
++select pg_temp.reset_user();
++
++-- 1. Voice agents
++select pg_temp.as_user('63000000-0000-0000-0000-000000000003');
++select pg_temp.expect_error($$insert into public.voice_agents(organization_id, encrypted_credentials, external_assistant_id) values ((select v from ids where k = 'v'), repeat('x', 40), 'asst_123456')$$, 'members cannot connect a voice agent');
++select pg_temp.reset_user();
++select pg_temp.as_user('63000000-0000-0000-0000-000000000002');
++with a as (insert into public.voice_agents(organization_id, encrypted_credentials, external_assistant_id, last_event_at) values ((select v from ids where k = 'v'), repeat('x', 40), 'asst_123456', now()) returning id)
++insert into ids select 'agent', id from a;
++select pg_temp.expect((select last_event_at is null from public.voice_agents where id = (select v from ids where k = 'agent')), 'event state starts empty');
++select pg_temp.expect_error($$select encrypted_credentials from public.voice_agents$$, 'the provider key is not readable');
++select pg_temp.expect_error($$update public.voice_agents set external_assistant_id = 'asst_other1'$$, 'the assistant cannot be swapped silently');
++select pg_temp.expect_error($$update public.voice_agents set transfer_number = '555-1234'$$, 'transfer numbers must be valid');
++update public.voice_agents set transfer_number = '+18565550100', missed_call_text = true, missed_call_message = 'Sorry we missed your call! How can we help?' where id = (select v from ids where k = 'agent');
++select pg_temp.expect((select missed_call_text from public.voice_agents where id = (select v from ids where k = 'agent')), 'owners change settings');
++select pg_temp.reset_user();
++select pg_temp.as_user('63000000-0000-0000-0000-000000000004');
++select pg_temp.expect_error($$insert into public.voice_agents(organization_id, encrypted_credentials, external_assistant_id) values ((select v from ids where k = 'w'), repeat('y', 40), 'asst_123456')$$, 'one assistant cannot serve two businesses');
++select pg_temp.expect((select count(*) = 0 from public.voice_agents), 'other businesses cannot see the agent');
++select pg_temp.reset_user();
++
++-- 2. Calls
++select pg_temp.as_user('63000000-0000-0000-0000-000000000003');
++select pg_temp.expect_error($$insert into public.calls(organization_id, provider_call_id) values ((select v from ids where k = 'v'), 'call-forged')$$, 'people cannot create call records');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++with c as (insert into public.contacts(organization_id, first_name, phone) values ((select v from ids where k = 'v'), 'Caller', '+18565550123') returning id) insert into ids select 'contact', id from c;
++with c as (insert into public.calls(organization_id, agent_id, provider_call_id, from_number, contact_id) values ((select v from ids where k = 'v'), (select v from ids where k = 'agent'), 'call-1', '+18565550123', (select v from ids where k = 'contact')) returning id)
++insert into ids select 'call', id from c;
++select pg_temp.expect((select count(*) = 0 from public.activities where contact_id = (select v from ids where k = 'contact') and kind = 'call'), 'calls in progress are not on the timeline yet');
++update public.calls set status = 'completed', outcome = 'booked', summary = 'Booked a roof inspection for Thursday.', duration_seconds = 140, ended_at = now() where id = (select v from ids where k = 'call');
++select pg_temp.expect((select count(*) = 1 from public.activities where contact_id = (select v from ids where k = 'contact') and kind = 'call' and subject = 'Call: booked an appointment'), 'finished calls go on the timeline');
++select pg_temp.expect((select count(*) = 1 from public.domain_events where subject_id = (select v from ids where k = 'call') and type = 'call.completed' and payload ->> 'outcome' = 'booked'), 'finished calls start automations');
++select pg_temp.expect_error($$insert into public.calls(organization_id, provider_call_id) values ((select v from ids where k = 'v'), 'call-1')$$, 'each provider call is stored once');
++select pg_temp.reset_user();
++select pg_temp.as_user('63000000-0000-0000-0000-000000000003');
++select pg_temp.expect_error($$update public.calls set summary = 'edited' where id = (select v from ids where k = 'call')$$, 'call records cannot be rewritten');
++update public.calls set reviewed_at = now(), note = 'Called back to confirm.' where id = (select v from ids where k = 'call');
++select pg_temp.expect((select reviewed_by = '63000000-0000-0000-0000-000000000003' from public.calls where id = (select v from ids where k = 'call')), 'members mark calls reviewed (and the reviewer is recorded)');
++delete from public.calls where id = (select v from ids where k = 'call');
++select pg_temp.expect((select count(*) = 1 from public.calls where id = (select v from ids where k = 'call')), 'members cannot delete recordings');
++select pg_temp.reset_user();
++select pg_temp.as_user('63000000-0000-0000-0000-000000000004');
++select pg_temp.expect((select count(*) = 0 from public.calls), 'other businesses cannot see calls');
++select pg_temp.reset_user();
++
++\echo 'ALL VOICE RECEPTIONIST TESTS PASSED'
+diff --git a/tests/unit/voice.test.ts b/tests/unit/voice.test.ts
+new file mode 100644
+index 0000000..a59a8ed
+--- /dev/null
++++ b/tests/unit/voice.test.ts
+@@ -0,0 +1,113 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { FakeDb } from "../support/fake-supabase";
++import { sealJson } from "@/lib/crypto/vault";
++
++vi.mock("@/lib/comms/service", () => ({
++  findContactByPhone: vi.fn(async (client: { from: (t: string) => { select: () => { eq: (a: string, b: string) => { eq: (a: string, b: string) => { maybeSingle: () => Promise<{ data: unknown }> } } } } }, org: string, phone: string) =>
++    (await client.from("contacts").select().eq("organization_id", org).eq("phone", phone).maybeSingle()).data),
++  sendMessage: vi.fn(async () => ({ outcome: "sent" })),
++}));
++import { sendMessage } from "@/lib/comms/service";
++import { applyPatch, platformTools, snapshot, warnings } from "@/lib/voice/vapi";
++import { callOutcome, connectInput, handleVoiceEvent, reportFields, verifySecret } from "@/lib/voice/service";
++
++const ORG = "11111111-1111-4111-8111-111111111111";
++const db = (d: FakeDb) => d as unknown as SupabaseClient;
++const server = { url: "https://console.test/api/webhooks/voice/a1", headers: { "x-sun-agent-secret": "s3cret" } };
++
++beforeEach(() => vi.stubEnv("APP_ENCRYPTION_KEY", "v".repeat(40)));
++afterEach(() => { vi.unstubAllEnvs(); vi.mocked(sendMessage).mockClear(); });
++
++describe("Vapi assistant setup", () => {
++  it("adds only the tools that fit the settings", () => {
++    const names = (s: Parameters<typeof platformTools>[1]) => platformTools(server, s).map((t) => t.function?.name ?? t.type);
++    expect(names({ transfer_number: null, take_messages: false, booking: false })).toEqual(["sun_business_info"]);
++    expect(names({ transfer_number: "+18565550100", take_messages: true, booking: true })).toEqual(["sun_business_info", "sun_check_availability", "sun_book_appointment", "sun_take_message", "transferCall"]);
++    expect(platformTools(server, { transfer_number: null, take_messages: false, booking: false })[0].server).toEqual(server);
++  });
++  it("keeps the owner's own tools and settings, and re-applying doesn't duplicate ours", () => {
++    const theirs = { type: "function", function: { name: "check_weather" } };
++    const a = { id: "x", model: { provider: "openai", model: "gpt-4o", messages: [{ role: "system", content: "Be nice" }], tools: [theirs] }, serverMessages: ["hang"] };
++    const tools = platformTools(server, { transfer_number: null, take_messages: true, booking: false });
++    const first = applyPatch(a, tools, server, null);
++    expect(first.model).toMatchObject({ provider: "openai", model: "gpt-4o", messages: [{ role: "system", content: "Be nice" }] });
++    expect(first.model.tools.map((t) => t.function?.name)).toEqual(["check_weather", "sun_business_info", "sun_take_message"]);
++    expect(first.serverMessages).toEqual(["hang", "tool-calls", "end-of-call-report", "status-update"]);
++    const again = applyPatch({ ...a, model: first.model }, tools, server, snapshot({ ...a, model: first.model }));
++    expect(again.model.tools.map((t) => t.function?.name)).toEqual(["check_weather", "sun_business_info", "sun_take_message"]);
++  });
++  it("warns when recording isn't disclosed", () => {
++    expect(warnings({ id: "x", firstMessage: "Thanks for calling Acme!" })[0]).toMatch(/recorded/);
++    expect(warnings({ id: "x", firstMessage: "Thanks for calling Acme! This call may be recorded." })).toEqual([]);
++    expect(warnings({ id: "x", firstMessage: "Hi", artifactPlan: { recordingEnabled: false } })).toEqual([]);
++  });
++  it("accepts the assistant's dashboard link or ID", () => {
++    const base = { api_key: "k".repeat(36) };
++    expect(connectInput.parse({ ...base, assistant: "https://dashboard.vapi.ai/assistants/b3a5b35c-f618-4669-8003-4705da3418b3" }).assistant).toBe("b3a5b35c-f618-4669-8003-4705da3418b3");
++    expect(connectInput.parse({ ...base, assistant: "b3a5b35c-f618-4669-8003-4705da3418b3" }).assistant).toBe("b3a5b35c-f618-4669-8003-4705da3418b3");
++    expect(connectInput.safeParse({ ...base, assistant: "not an id!" }).success).toBe(false);
++    expect(connectInput.parse({ ...base, assistant: "abc123def", transfer_number: "(856) 555-0100" }).transfer_number).toBe("+18565550100");
++    expect(connectInput.safeParse({ ...base, assistant: "abc123def", transfer_number: "555" }).success).toBe(false);
++  });
++});
++
++describe("call reports", () => {
++  it("decides what happened on a call", () => {
++    expect(callOutcome({ artifact: { messages: [{ role: "assistant", message: "Hi" }] } }, "none")).toBe("missed");
++    expect(callOutcome({ artifact: { messages: [{ role: "user", message: "Do you fix gutters?" }] } }, "none")).toBe("info");
++    expect(callOutcome({ endedReason: "assistant-forwarded-call", artifact: { messages: [{ role: "user", message: "A person please" }] } }, "none")).toBe("transferred");
++    expect(callOutcome({ artifact: { messages: [] } }, "booked")).toBe("booked");
++  });
++  it("reads duration, summary, transcript and only https recordings", () => {
++    expect(reportFields({ startedAt: "2026-10-07T14:00:00Z", endedAt: "2026-10-07T14:02:20Z", analysis: { summary: "Booked." }, artifact: { transcript: "AI: Hi", recording: { mono: { combinedUrl: "https://storage.vapi.ai/x.wav" } } } }))
++      .toMatchObject({ duration_seconds: 140, summary: "Booked.", transcript: "AI: Hi", recording_url: "https://storage.vapi.ai/x.wav" });
++    expect(reportFields({ recordingUrl: "http://insecure/x.wav" }).recording_url).toBeNull();
++  });
++  it("checks the per-agent secret in constant time", () => {
++    const agent = { encrypted_credentials: sealJson({ api_key: "k", webhook_secret: "abc123" }) };
++    expect(verifySecret(agent, "abc123")).toBe(true);
++    expect(verifySecret(agent, "abc124")).toBe(false);
++    expect(verifySecret(agent, null)).toBe(false);
++  });
++});
++
++describe("live calls", () => {
++  const agent = (over: Record<string, unknown> = {}) => ({ id: "a1", organization_id: ORG, external_assistant_id: "asst1", calendar_id: null, transfer_number: null, take_messages: true, missed_call_text: true, missed_call_message: null, status: "active", encrypted_credentials: "x", previous_config: null, ...over });
++  const call = { id: "vc1", type: "inboundPhoneCall", customer: { number: "+18565550123" }, phoneNumber: { number: "+18565550199" }, startedAt: "2026-10-07T14:00:00Z" };
++  it("answers business questions only from approved knowledge", async () => {
++    const d = new FakeDb();
++    d.rpcHandlers.search_knowledge = () => [{ title: "Hours", body: "Mon–Fri 8–6" }];
++    const r = await handleVoiceEvent(db(d), agent() as never, { message: { type: "tool-calls", call, toolCallList: [{ id: "t1", name: "sun_business_info", parameters: { question: "When are you open?" } }] } });
++    expect(r).toEqual({ results: [{ toolCallId: "t1", name: "sun_business_info", result: "Hours: Mon–Fri 8–6" }] });
++    expect(d.table("calls")[0]).toMatchObject({ organization_id: ORG, provider_call_id: "vc1", from_number: "+18565550123", direction: "inbound" });
++    d.rpcHandlers.search_knowledge = () => [];
++    const none = await handleVoiceEvent(db(d), agent() as never, { message: { type: "tool-calls", call, toolCallList: [{ id: "t2", function: { name: "sun_business_info", arguments: "{\"question\":\"price?\"}" } }] } }) as { results: { result: string }[] };
++    expect(none.results[0].result).toMatch(/Don't guess/);
++    expect(d.table("calls")).toHaveLength(1);
++  });
++  it("takes a message as a call-back task and records the outcome", async () => {
++    const d = new FakeDb();
++    d.tables.contacts = [{ id: "c1", organization_id: ORG, phone: "+18565550123" }];
++    await handleVoiceEvent(db(d), agent() as never, { message: { type: "tool-calls", call, toolCallList: [{ id: "t1", name: "sun_take_message", parameters: { name: "Dana", reason: "Leak over the kitchen" } }] } });
++    expect(d.table("tasks")[0]).toMatchObject({ title: "Call back Dana (+18565550123)", description: "Leak over the kitchen", priority: "high", contact_id: "c1" });
++    expect(d.table("calls")[0]).toMatchObject({ outcome: "message", contact_id: "c1" });
++  });
++  it("records a missed call, creates the contact and texts them back once", async () => {
++    const d = new FakeDb();
++    const report = { type: "end-of-call-report", call, endedReason: "customer-ended-call", artifact: { messages: [{ role: "assistant", message: "Thanks for calling" }] } };
++    const r = await handleVoiceEvent(db(d), agent() as never, { message: report });
++    expect(r).toMatchObject({ stored: true, outcome: "missed", textBack: "sent" });
++    expect(d.table("contacts")[0]).toMatchObject({ phone: "+18565550123", source: "Phone call (AI receptionist)" });
++    expect(d.table("calls")[0]).toMatchObject({ status: "missed", outcome: "missed", text_back_sent: true });
++    expect(vi.mocked(sendMessage).mock.calls[0][1]).toMatchObject({ channel: "sms", purpose: "transactional", idempotency_key: "missed-" + d.table("calls")[0].id });
++    const again = await handleVoiceEvent(db(d), agent() as never, { message: report });
++    expect(again).toMatchObject({ duplicate: true });
++    expect(vi.mocked(sendMessage)).toHaveBeenCalledTimes(1);
++  });
++  it("tells callers to leave a message while paused", async () => {
++    const d = new FakeDb();
++    const r = await handleVoiceEvent(db(d), agent({ status: "paused" }) as never, { message: { type: "tool-calls", call, toolCallList: [{ id: "t1", name: "sun_check_availability", parameters: {} }] } }) as { results: { result: string }[] };
++    expect(r.results[0].result).toMatch(/paused/);
++  });
++});
+-- 
+2.43.0
+

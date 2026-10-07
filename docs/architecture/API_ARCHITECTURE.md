@@ -135,6 +135,16 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 
 Plan limits surface as HTTP 402 with code `plan_limit`.
 
+### AI receptionist and calls
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET /api/voice` | crm.read | Connected receptionist (never the key), calendars, readiness |
+| `POST /api/voice` | org.manage | Connect a Vapi assistant `{api_key, assistant (ID or dashboard link), calendar_id?, transfer_number?, take_messages, missed_call_text, missed_call_message?}`; adds `sun_*` tools and the webhook to the assistant |
+| `PATCH /api/voice/:id`, `DELETE /api/voice/:id` | org.manage | Change settings (re-applied to the assistant), pause/resume; disconnect restores the assistant's previous tools and webhook |
+| `POST /api/webhooks/voice/:agentId` | per-agent secret header (`x-sun-agent-secret`) | Vapi `tool-calls` (business_info, check_availability, book_appointment, take_message), `status-update`, `end-of-call-report` |
+| `GET /api/calls?filter=review|missed|booked|message`, `PATCH /api/calls/:id {reviewed, note}` | crm.read / crm.write | Call log; mark done, add a note |
+
 ### Reputation: Google and widgets
 
 | Method & path | Permission | Purpose |

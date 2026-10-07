@@ -223,6 +223,17 @@ Verified by `supabase/tests/phase6b_agency.test.sql` (40 assertions; 247 in tota
 
 Verified by `supabase/tests/reputation_google.test.sql` (20 assertions; 267 in total).
 
+### AI receptionist (`20261014120000_voice_receptionist.sql`)
+
+| Table | Purpose and key rules |
+|---|---|
+| `voice_agents` | A provider assistant (Vapi) per business: encrypted API key and webhook secret (not readable through the API), settings (calendar, transfer number, messages, missed-call text), the assistant's previous tools for restoring; one business per assistant |
+| `calls` | Written only by the server from verified webhooks; one row per provider call; people can only mark reviewed, add a note or relink the contact; managers delete. Finished calls go on the contact timeline and emit `call.completed` (automation trigger with an outcome filter) |
+
+Also: an inbound call from a contact now counts like an inbound text for the 24-hour transactional reply rule (missed-call text-back), never for marketing.
+
+Verified by `supabase/tests/voice_receptionist.test.sql` (17 assertions; 284 in total).
+
 ### Phase 7–8 (planned)
 - `price_overrides` (per-client price overrides beyond the current rates)
 - `sender_domains`
