@@ -1,0 +1,2681 @@
+From 4f1c902a9e750cc39334a7d996f5e61504b73148 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 03:55:16 +0000
+Subject: [PATCH] Phase 6 part 2: agency subscriptions, client rebilling,
+ invitations, onboarding, transfers, white-label sign-in
+
+- Agencies subscribe to the platform through Stripe Billing (Checkout and
+  the customer portal); a signed webhook is the only writer of subscription
+  state. Agency plans limit client accounts; a lapsed subscription blocks new
+  clients without disabling existing ones.
+- Client rebilling: a monthly fee plus metered usage at the agency's rates,
+  drafted as one invoice per client and month (on demand or automatically).
+- Email invitations with hashed, expiring, single-use tokens; the accepting
+  account's email must match; new people create their account from the link.
+- Guided client setup: account, time zone, approved facts, plan, draft
+  website and owner invitation in one pass.
+- Account transfer between agencies with the receiving agency's acceptance
+  and the client owner's consent.
+- White-label console domains with branded sign-in and sidebar; verified
+  website and console domains are added to Netlify automatically when
+  NETLIFY_API_TOKEN and NETLIFY_SITE_ID are set.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ docs/architecture/API_ARCHITECTURE.md         |  16 +
+ docs/architecture/DATABASE_SCHEMA.md          |  17 +-
+ docs/architecture/IMPLEMENTATION_PLAN.md      |  12 +
+ docs/architecture/MASTER_ARCHITECTURE.md      |   6 +-
+ docs/architecture/PRODUCT_ROADMAP.md          |  15 +-
+ docs/architecture/SECURITY_PLAN.md            |  10 +
+ src/app/account/page.tsx                      |   3 +
+ src/app/agency/page.tsx                       | 167 +++++++
+ src/app/api/billing/clients/route.ts          |  30 ++
+ src/app/api/billing/platform-plans/route.ts   |  16 +
+ src/app/api/billing/subscription/route.ts     |  25 +
+ src/app/api/jobs/tick/route.ts                |   4 +-
+ .../api/organization/domains/[id]/route.ts    |  17 +
+ src/app/api/organization/domains/route.ts     |  13 +
+ .../api/organization/transfers/[id]/route.ts  |  10 +
+ src/app/api/organization/transfers/route.ts   |  12 +
+ src/app/api/public/brand/route.ts             |  12 +
+ .../api/public/invitation/[token]/route.ts    |  53 +++
+ .../api/tenant/invitations/accept/route.ts    |  23 +
+ src/app/api/tenant/invitations/route.ts       |  16 +
+ src/app/api/webhooks/stripe-platform/route.ts |  28 ++
+ src/app/join/[token]/page.tsx                 |  58 +++
+ src/app/login/page.tsx                        |  21 +-
+ src/app/organization/new-client/page.tsx      |  99 ++++
+ src/app/organization/page.tsx                 |  85 ++--
+ src/components/Shell.tsx                      |  23 +-
+ src/components/tenant/Transfers.tsx           |  59 +++
+ src/lib/billing/platform.ts                   | 109 +++++
+ src/lib/billing/rebilling.ts                  | 130 +++++
+ src/lib/hosting/netlify.ts                    |  37 ++
+ src/lib/platform/email.ts                     |  27 ++
+ src/lib/sites/domains.ts                      |  25 +-
+ src/lib/tenant/agency.ts                      |  72 +++
+ src/lib/tenant/invitations.ts                 |  89 ++++
+ src/middleware.ts                             |   4 +-
+ ...261012120000_phase6b_agency_operations.sql | 446 ++++++++++++++++++
+ supabase/tests/phase6b_agency.test.sql        | 194 ++++++++
+ tests/support/fake-supabase.ts                |  23 +-
+ tests/unit/phase6b-agency.test.ts             | 143 ++++++
+ 39 files changed, 2077 insertions(+), 72 deletions(-)
+ create mode 100644 src/app/agency/page.tsx
+ create mode 100644 src/app/api/billing/clients/route.ts
+ create mode 100644 src/app/api/billing/platform-plans/route.ts
+ create mode 100644 src/app/api/billing/subscription/route.ts
+ create mode 100644 src/app/api/organization/domains/[id]/route.ts
+ create mode 100644 src/app/api/organization/domains/route.ts
+ create mode 100644 src/app/api/organization/transfers/[id]/route.ts
+ create mode 100644 src/app/api/organization/transfers/route.ts
+ create mode 100644 src/app/api/public/brand/route.ts
+ create mode 100644 src/app/api/public/invitation/[token]/route.ts
+ create mode 100644 src/app/api/tenant/invitations/accept/route.ts
+ create mode 100644 src/app/api/tenant/invitations/route.ts
+ create mode 100644 src/app/api/webhooks/stripe-platform/route.ts
+ create mode 100644 src/app/join/[token]/page.tsx
+ create mode 100644 src/app/organization/new-client/page.tsx
+ create mode 100644 src/components/tenant/Transfers.tsx
+ create mode 100644 src/lib/billing/platform.ts
+ create mode 100644 src/lib/billing/rebilling.ts
+ create mode 100644 src/lib/hosting/netlify.ts
+ create mode 100644 src/lib/platform/email.ts
+ create mode 100644 src/lib/tenant/agency.ts
+ create mode 100644 src/lib/tenant/invitations.ts
+ create mode 100644 supabase/migrations/20261012120000_phase6b_agency_operations.sql
+ create mode 100644 supabase/tests/phase6b_agency.test.sql
+ create mode 100644 tests/unit/phase6b-agency.test.ts
+
+diff --git a/docs/architecture/API_ARCHITECTURE.md b/docs/architecture/API_ARCHITECTURE.md
+index 559d02f..a30ae2a 100644
+--- a/docs/architecture/API_ARCHITECTURE.md
++++ b/docs/architecture/API_ARCHITECTURE.md
+@@ -135,6 +135,22 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
+ 
+ Plan limits surface as HTTP 402 with code `plan_limit`.
+ 
++### Phase 6 part 2 endpoints (agency operations)
++
++| Method & path | Permission | Purpose |
++|---|---|---|
++| `GET/POST /api/billing/subscription` | org.read / owner | The agency's platform subscription; `{action: subscribe, plan}` returns Stripe Checkout, `{action: portal}` the Stripe billing portal |
++| `PUT /api/billing/platform-plans` | platform staff | Link a platform plan to its Stripe price |
++| `POST /api/webhooks/stripe-platform` | Stripe signature (`STRIPE_PLATFORM_WEBHOOK_SECRET`) | `customer.subscription.created/updated/deleted` |
++| `GET/PUT/POST /api/billing/clients` | org.manage (agency) | Client billing settings; `POST {period, client_org_id?}` drafts invoices for a finished month |
++| `GET/POST/DELETE /api/tenant/invitations` | org.manage | List, send (email + link), revoke invitations |
++| `POST /api/tenant/invitations/accept` | signed in | Accept with `{token}`; the account email must match |
++| `GET/POST /api/public/invitation/:token` | public, rate-limited | Preview; create the invited person's account and accept |
++| `GET/POST /api/organization/transfers`, `POST /api/organization/transfers/:id {decision}` | org.read (database decides) | Request, approve (client owner), accept (receiving agency), decline, cancel |
++| `GET/POST /api/organization/domains`, `POST/DELETE /api/organization/domains/:id` | org.read / org.manage | An agency's own console domain; verify by TXT record |
++| `GET /api/public/brand` | public | Branding for the visited host (verified agency domains only) |
++| `GET /join/:token`, `/organization/new-client`, `/agency` | pages | Invitation acceptance, guided client setup, agency settings |
++
+ Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>`. They are sent with `publicFetch`, so private and internal addresses are refused, and time out after 10 seconds.
+ 
+ ## 4. Conventions for new endpoints
+diff --git a/docs/architecture/DATABASE_SCHEMA.md b/docs/architecture/DATABASE_SCHEMA.md
+index 1e6818e..bc56efc 100644
+--- a/docs/architecture/DATABASE_SCHEMA.md
++++ b/docs/architecture/DATABASE_SCHEMA.md
+@@ -200,8 +200,21 @@ Verified by `supabase/tests/phase5_sites.test.sql` (22 assertions; 177 in total)
+ 
+ Verified by `supabase/tests/phase6_business.test.sql` (30 assertions; 207 in total).
+ 
+-### Phase 6 (planned remainder) – 8
+-- `subscriptions` (platform SaaS billing of agencies), `price_overrides` (agency markup on usage)
++### Phase 6 (part 2 implemented: `20261012120000_phase6b_agency_operations.sql`)
++
++| Table / function | Purpose and key rules |
++|---|---|
++| `plans.audience`, `plans.stripe_price_id` | Client plans vs agency plans (`agency-solo/growth/scale`, `agency-inactive`); agency plans limit `client_accounts`, enforced on creating or receiving a client. `govern_organization` refuses a plan for the wrong kind of account |
++| `platform_subscriptions` | One per agency; written only by the server from verified Stripe webhooks; readable by the agency's admins |
++| `client_billing`, `client_billing_runs`, `usage_for_period()` | Agency rates per client (plan fee, cents per text/email/AI request/outreach email, tax, automatic monthly); one run per client and month; the bill-to contact must be in the agency's own CRM |
++| `invitations`, `create_invitation()`, `accept_invitation()`, `invitation_preview()` | Only a SHA-256 hash of the token is stored; 7-day expiry; inviter rights and seat limit checked; the accepting account's email must match; previews are server-only |
++| `org_transfers`, `request_transfer()`, `decide_transfer()` | Moving a client between agencies needs the receiving agency's acceptance and, when the client has an owner, the owner's consent; completion moves the account, resets an agency-owned plan to `starter` and removes the old agency's billing settings |
++| `app_domains`, `brand_for_domain()` | An agency's console domain; server-only verification; a host name can be either a website domain or a console domain, never both |
++
++Verified by `supabase/tests/phase6b_agency.test.sql` (40 assertions; 247 in total).
++
++### Phase 7–8 (planned)
++- `price_overrides` (per-client price overrides beyond the current rates)
+ - `sender_domains`
+ - `metrics_daily`, `touchpoints`, `ad_accounts`, `ad_spend_daily`
+ - `affiliates`, `referral_links`, `referrals`, `commission_rules`, `payouts`
+diff --git a/docs/architecture/IMPLEMENTATION_PLAN.md b/docs/architecture/IMPLEMENTATION_PLAN.md
+index 830ea92..e041866 100644
+--- a/docs/architecture/IMPLEMENTATION_PLAN.md
++++ b/docs/architecture/IMPLEMENTATION_PLAN.md
+@@ -130,6 +130,18 @@ Rollback: `drop table public.form_submissions, public.forms, public.site_pages,
+ 
+ Rollback: `drop table public.site_domains, public.payments, public.invoices, public.payment_accounts, public.usage_events cascade;` drop the limit and metering triggers, then `alter table organizations drop constraint organizations_plan_fkey; drop table public.plans;`. Keep the organization guard fix.
+ 
++## 2g. Deploying Phase 6 part 2 (agency operations)
++
++1. Apply `supabase/migrations/20261012120000_phase6b_agency_operations.sql` (additive).
++2. New, optional environment variables:
++   - `PLATFORM_FROM_EMAIL` (with the existing `RESEND_API_KEY`): sender for invitation emails. Without it, invitations still work and the inviter gets a link to share.
++   - `STRIPE_PLATFORM_WEBHOOK_SECRET`: signing secret of a webhook in the **platform's** Stripe account pointing at `/api/webhooks/stripe-platform` with events `customer.subscription.created`, `customer.subscription.updated` and `customer.subscription.deleted`. Subscriptions use the existing `STRIPE_SECRET_KEY` (a restricted key also needs Customers, Checkout Sessions, Subscriptions and Billing Portal access). Turn on the customer portal in Stripe's billing settings.
++   - `NETLIFY_API_TOKEN` and `NETLIFY_SITE_ID`: when set, verifying a website or console domain adds it as a domain alias on the Netlify site (HTTPS is issued automatically) and removing it removes the alias.
++3. Platform staff: create the agency prices in Stripe and paste each `price_…` ID on the **Agency** page. Agencies you created for paying customers can be moved to "No active subscription" (`agency-inactive`) until they subscribe; your own agencies stay on `internal` and are never changed by subscriptions.
++4. Smoke test: invite a new email from **Organization**, open the link in a private window and create the account; run **Guided setup** for a test client; set client billing with your own CRM contact and press **Invoice <last month>**; request a transfer to a second test agency, accept it there, and consent as the client owner.
++
++Rollback: `drop table public.app_domains, public.org_transfers, public.invitations, public.client_billing_runs, public.client_billing, public.platform_subscriptions cascade;` drop the new functions and the `organizations_client_limit` trigger; delete the `agency-*` plans after moving any agencies off them; `alter table plans drop column audience, drop column stripe_price_id;` then re-apply the Phase 6 versions of `check_plan_limit`, `org_usage` and `govern_organization`.
++
+ ## 3. Development workflow
+ 
+ ```bash
+diff --git a/docs/architecture/MASTER_ARCHITECTURE.md b/docs/architecture/MASTER_ARCHITECTURE.md
+index 20068c8..febe097 100644
+--- a/docs/architecture/MASTER_ARCHITECTURE.md
++++ b/docs/architecture/MASTER_ARCHITECTURE.md
+@@ -1,6 +1,6 @@
+ # Sun Marketing Console — Master Architecture
+ 
+-> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) Phase 4 part 1 (Lead Finder) Phase 5 part 1 (sites, forms, knowledge) and Phase 6 part 1 (plans and limits, invoices and payments, custom domains) implemented (October 2026).
++> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) Phase 4 part 1 (Lead Finder) Phase 5 part 1 (sites, forms, knowledge) and Phase 6 (plans and limits, invoices and payments, custom domains, agency subscriptions and rebilling, invitations, onboarding, transfers, white-label sign-in) implemented (October 2026).
+ > **Companion documents:** [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) · [DATABASE_SCHEMA](DATABASE_SCHEMA.md) · [API_ARCHITECTURE](API_ARCHITECTURE.md) · [SECURITY_PLAN](SECURITY_PLAN.md) · [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md)
+ 
+ ## 1. Product thesis
+@@ -96,7 +96,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
+ |---|---|---|---|
+ | 1 | Positioning: AI growth OS | 🟡→🆕 | Navigation now leads with **AI operator**; messaging update pending |
+ | 2 | AI Command Center with permission ladder and audit | 🆕 | Chat operator, 11 tools, observe/recommend/approve/auto per category, DB-enforced, audit trail. Creates/modifies CRM records, deals and tasks today; campaigns, workflows, pages and agents arrive with their modules |
+-| 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. Phase 6 part 1 adds plans with database-enforced limits and metering, agency governance (plan, suspend), branding on customer pages, custom domains and full data export. **Missing:** branded login, SaaS subscription billing, transfer, self-serve onboarding, invitations by email |
++| 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. Phase 6 part 1 adds plans with database-enforced limits and metering, agency governance (plan, suspend), branding on customer pages, custom domains and full data export. Phase 6 part 2 adds platform subscriptions for agencies, client rebilling, email invitations, guided client setup, consent-based account transfer and branded sign-in on an agency's own domain. **Missing:** self-serve onboarding, invitations by email |
+ | 4 | CRM | 🟡→🆕 | Contacts, companies, pipelines, stages, deals, tasks, notes, tags, custom field definitions, activity history, drag-and-drop board, explainable lead scoring. **Missing:** custom objects UI, custom field editor UI, ownership routing, merge/dedupe UI, import/export UI |
+ | 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
+ | 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
+@@ -110,7 +110,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
+ | 14 | Social | ❌ | — |
+ | 15 | Ads and attribution | ❌ | — |
+ | 16 | Affiliates and referrals | ❌ | — |
+-| 17 | Payments and billing | 🆕 (Phase 6 part 1) | Invoices and estimates with deposits and tax, customer pay/accept page, card payments into each business's own Stripe account with verified webhooks and refunds, manual payments. **Missing:** subscriptions, SaaS billing of agencies, rebilling with markup, other processors |
++| 17 | Payments and billing | 🆕 (Phase 6 part 1) | Invoices and estimates with deposits and tax, customer pay/accept page, card payments into each business's own Stripe account with verified webhooks and refunds, manual payments. Part 2: agencies pay the platform through Stripe Billing, and rebill clients a plan fee plus usage at their own rates as reviewable draft invoices. **Missing:** recurring customer subscriptions for businesses, other processors |
+ | 18 | Knowledge base | 🆕 (Phase 5 part 1) | Versioned, approval-gated facts with full-text search, used by the AI operator and AI site copy. **Missing:** vector search, receptionist integration |
+ | 19 | Analytics and revenue intelligence | 🟡 | Dashboard KPIs; the AI can answer pipeline questions via `pipeline_summary`. **Missing:** metrics store, attribution, AI analyst over all data |
+ | 20 | Industry modules | 🟡 | Industry lists in receptionist and radar. **Missing:** installable template bundles |
+diff --git a/docs/architecture/PRODUCT_ROADMAP.md b/docs/architecture/PRODUCT_ROADMAP.md
+index fed3919..1937a39 100644
+--- a/docs/architecture/PRODUCT_ROADMAP.md
++++ b/docs/architecture/PRODUCT_ROADMAP.md
+@@ -157,11 +157,18 @@ Exit criteria (verify after deploy):
+ - **Branding** (name, logo, color, support contacts) on customer pages, and a **full data export** that works even while suspended.
+ - **AI tools:** `invoice_summary`, `usage_summary` (read-only).
+ 
+-**Remaining:**
++**Part 2 implemented (patch 0009):**
++- **Platform subscriptions:** agencies subscribe through Stripe Checkout and manage cards and invoices in Stripe's portal. Agency plans set how many client accounts they can run. A cancelled or unpaid subscription stops new client accounts but never switches existing clients off.
++- **Client rebilling:** per client, a monthly fee plus usage at the agency's rates (texts, emails, AI requests, outreach). Each month becomes a draft invoice to review and send, on demand or automatically in the first days of the month.
++- **Email invitations** with secure, expiring links; new people choose a password, existing users sign in to accept.
++- **Guided client setup:** account, time zone, approved business facts, plan, draft website and owner invitation in one pass.
++- **Account transfer** between agencies with the receiving agency's acceptance and the client owner's consent.
++- **White-label sign-in:** an agency's own console domain shows its name, logo and color on the sign-in page and sidebar.
++- **Automatic HTTPS for custom domains** through the Netlify API when configured.
+ 
+-- Platform subscription billing of agencies (Stripe Billing) and feature packages
+-- Agency rebilling with markup on usage (messages, minutes, AI tokens)
+-- White-label: sender domains, branded login, client onboarding wizard, account transfer, automatic domain certificates through the host's API
++**Remaining:**
++- Sender domains per client, feature packages, voice minutes in rebilling
++- Fully white-label account emails (invitations currently come from the platform sender with the agency's name)
+ 
+ ## Phase 7: Analytics and attribution
+ 
+diff --git a/docs/architecture/SECURITY_PLAN.md b/docs/architecture/SECURITY_PLAN.md
+index 326ba36..9f6a47d 100644
+--- a/docs/architecture/SECURITY_PLAN.md
++++ b/docs/architecture/SECURITY_PLAN.md
+@@ -97,6 +97,16 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
+ | Custom domains | Only the server marks a domain verified, after its own DNS lookup of the TXT token; only verified domains of published sites are routed, and only to that site's pages; unknown hosts fall through to the normal console |
+ | Data portability | Owners and admins (and the managing agency's) can export everything, including while suspended |
+ 
++## 2f. Controls added in Phase 6 part 2 (agency operations)
++
++| Control | Implementation |
++|---|---|
++| Invitations | 192-bit tokens, stored only as SHA-256 hashes, 7-day expiry, single use; the inviter cannot grant above their own role; seat limits apply; the accepting account's email must match the invitation; preview and email-existence checks are server-only; the public join endpoint is rate-limited |
++| Account transfer | Database functions only; the receiving agency's admin must accept and the client's owner must consent; the sending agency loses access the moment it completes and its billing settings are deleted |
++| Subscriptions | State changes only from webhooks signed with the platform's secret; plans are matched by Stripe price; `internal` accounts are never changed; cancellation blocks new clients without disabling existing ones |
++| Rebilling | Rates and runs are visible only to the agency's admins; the bill-to contact must belong to the agency; one invoice per client and month; invoices are drafts until a person sends them |
++| White-label domains | Server-only verification; a host is either a website or a console domain; branding is public only for verified domains of active agencies |
++
+ ## 2. Controls implemented in Phase 1
+ 
+ | Control | Implementation |
+diff --git a/src/app/account/page.tsx b/src/app/account/page.tsx
+index eafe75e..dab9464 100644
+--- a/src/app/account/page.tsx
++++ b/src/app/account/page.tsx
+@@ -3,6 +3,7 @@ import { useState } from "react";
+ import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
+ import { api, atLeast, Org, useResource } from "@/components/tenant/client";
+ import { Copy, useToast } from "@/components/ui";
++import Transfers from "@/components/tenant/Transfers";
+ 
+ type Use = { metric: string; used: number; limit: number | null; label?: string; period?: string };
+ type Plan = { key: string; name: string; description?: string | null; price_cents?: number; limits: Record<string, number>; owner_org_id?: string | null };
+@@ -131,6 +132,8 @@ function Account({ org }: { org: Org }) {
+       {data.agency && <Agency b={data.agency} reload={reload} toast={toast} />}
+       <Payments manage={manage} toast={toast} />
+       <Branding manage={manage} toast={toast} />
++      {org.kind === "client" && atLeast(org.role, "admin") && <Transfers org={org} toast={toast} />}
++      {org.kind === "agency" && manage && <div className="card card-pad small">Your platform subscription, client billing, console domain and transfers are on the <a className="link" href="/agency">Agency</a> page.</div>}
+       <div className="card card-pad row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+         <div><strong>Export all data</strong><div className="small muted">Download every contact, conversation, invoice, page and record as JSON. Owners and admins only.</div></div>
+         <a className="btn btn-sm" href="/api/organization/export">Download export</a>
+diff --git a/src/app/agency/page.tsx b/src/app/agency/page.tsx
+new file mode 100644
+index 0000000..9ada0e7
+--- /dev/null
++++ b/src/app/agency/page.tsx
+@@ -0,0 +1,167 @@
++"use client";
++import { useEffect, useState } from "react";
++import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
++import ContactPicker, { type PickedContact } from "@/components/tenant/ContactPicker";
++import Transfers from "@/components/tenant/Transfers";
++import { api, atLeast, Org, personName, relativeTime, useResource } from "@/components/tenant/client";
++import { Copy, useToast } from "@/components/ui";
++
++type Plan = { key: string; name: string; description: string | null; price_cents: number; limits: Record<string, number>; stripe_price_id: string | null; purchasable: boolean };
++type Sub = { applicable: boolean; configured?: boolean; subscription: { plan_key: string | null; status: string; current_period_end: string | null; cancel_at_period_end: boolean } | null; plans: Plan[] };
++type Client = { id: string; name: string; status: string; plan: string };
++type Billing = { client_org_id: string; contact_id: string; plan_fee_cents: number | null; rates: Record<string, number>; tax_rate_bp: number; auto_invoice: boolean; active: boolean; contacts: { first_name: string | null; last_name: string | null; email: string | null } | null };
++type Runs = { billing: Billing[]; runs: { client_org_id: string; period_start: string; invoice_id: string | null; created_at: string }[]; last_month: string };
++const usd = (c: number) => (c / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
++const RATES: [string, string][] = [["sms", "Per text (¢)"], ["email", "Per email (¢)"], ["ai_request", "Per AI request (¢)"], ["outreach_email", "Per outreach email (¢)"]];
++const month = (p: string) => new Date(`${p.slice(0, 7)}-01T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
++
++function Subscription({ org, staff, toast }: { org: Org; staff: boolean; toast: (m: string) => void }) {
++  const { data, reload } = useResource<Sub>("/api/billing/subscription");
++  const [prices, setPrices] = useState<Record<string, string>>({});
++  const [subscribed, setSubscribed] = useState(false);
++  useEffect(() => setSubscribed(new URLSearchParams(window.location.search).has("subscribed")), []);
++  if (!data?.applicable) return null;
++  const s = data.subscription;
++  const live = s && ["active", "trialing", "past_due"].includes(s.status);
++  const owner = org.role === "owner";
++  const go = async (body: Record<string, string>) => { try { const r = await api<{ url: string }>("/api/billing/subscription", { body }); window.location.href = r.url; } catch (e) { toast(e instanceof Error ? e.message : "That did not work."); } };
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Your subscription</h3><div className="sub">What your agency pays for the platform. Plans set how many client accounts you can run.</div></div></div>
++      <div className="card-pad stack">
++        {!data.configured && <p className="notice notice-warn small"><strong>Integration not configured.</strong> Subscriptions need the platform&apos;s STRIPE_SECRET_KEY and STRIPE_PLATFORM_WEBHOOK_SECRET (see the deploy notes).</p>}
++        {subscribed && !live && <p className="notice small" role="status">Thanks! Your subscription is being confirmed and will show here in a moment.</p>}
++        {s && <div className="small">Status: <span className={`pill ${live ? (s.status === "past_due" ? "pill-warn" : "pill-ok") : "pill-bad"}`}>{s.status.replace("_", " ")}</span>{s.plan_key ? ` · ${data.plans.find((p) => p.key === s.plan_key)?.name ?? s.plan_key}` : ""}{s.current_period_end ? ` · ${s.cancel_at_period_end ? "ends" : "renews"} ${new Date(s.current_period_end).toLocaleDateString()}` : ""}</div>}
++        {s?.status === "past_due" && <p className="notice notice-warn small">Your last payment failed. Update your card to keep your plan.</p>}
++        <div className="grid g3" style={{ gap: 10 }}>
++          {data.plans.map((p) => (
++            <div key={p.key} className="card card-pad stack" style={{ gap: 6 }}>
++              <strong>{p.name}</strong>
++              <div className="small">{usd(p.price_cents)}/month · {p.limits.client_accounts ?? "unlimited"} client accounts</div>
++              {p.description && <div className="tiny muted">{p.description}</div>}
++              {owner && !live && <button className="btn btn-sm btn-primary" disabled={!p.purchasable || !data.configured} onClick={() => go({ action: "subscribe", plan: p.key })}>{p.purchasable ? "Subscribe" : "Not available yet"}</button>}
++              {staff && <div className="row" style={{ gap: 6 }}><label className="sr-only" htmlFor={`pp-${p.key}`}>Stripe price for {p.name}</label><input id={`pp-${p.key}`} className="input" placeholder="price_…" value={prices[p.key] ?? p.stripe_price_id ?? ""} onChange={(e) => setPrices({ ...prices, [p.key]: e.target.value })} />
++                <button className="btn btn-sm" onClick={async () => { try { await api("/api/billing/platform-plans", { method: "PUT", body: { key: p.key, stripe_price_id: (prices[p.key] ?? p.stripe_price_id ?? "").trim() || null } }); toast("Price linked."); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>Save</button></div>}
++            </div>
++          ))}
++        </div>
++        {owner && s && <div><button className="btn btn-sm" onClick={() => go({ action: "portal" })}>Manage billing and invoices</button></div>}
++        {!owner && <p className="small muted">Only owners change the subscription.</p>}
++      </div>
++    </div>
++  );
++}
++
++function ClientBilling({ clients, toast }: { clients: Client[]; toast: (m: string) => void }) {
++  const { data, error, reload } = useResource<Runs>("/api/billing/clients");
++  const [edit, setEdit] = useState<string | null>(null);
++  const [form, setForm] = useState<{ contact: PickedContact | null; fee: string; rates: Record<string, string>; tax: string; auto: boolean }>({ contact: null, fee: "", rates: {}, tax: "0", auto: false });
++  const [busy, setBusy] = useState(false);
++  if (error) return <ErrorState message={error} onRetry={reload} />;
++  if (!data) return <Loading />;
++  const byClient = new Map(data.billing.map((b) => [b.client_org_id, b]));
++  const open = (c: Client) => {
++    const b = byClient.get(c.id);
++    setEdit(c.id);
++    setForm({ contact: b ? { id: b.contact_id, first_name: b.contacts?.first_name ?? null, last_name: b.contacts?.last_name ?? null, email: b.contacts?.email ?? null, phone: null } : null, fee: b?.plan_fee_cents != null ? (b.plan_fee_cents / 100).toFixed(2) : "",
++      rates: Object.fromEntries(Object.entries(b?.rates || {}).map(([k, v]) => [k, String(v)])), tax: String((b?.tax_rate_bp ?? 0) / 100), auto: !!b?.auto_invoice });
++  };
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Bill your clients</h3><div className="sub">A monthly plan fee plus usage at your rates. Each month becomes a draft invoice in <a className="link" href="/invoices">Invoices</a> that you review and send.</div></div>
++        {data.billing.some((b) => b.active) && <button className="btn btn-sm btn-primary" disabled={busy} onClick={async () => {
++          setBusy(true);
++          try { const r = await api<{ results: { status: string }[] }>("/api/billing/clients", { body: { period: data.last_month } }); const n = r.results.filter((x) => x.status === "created").length; toast(n ? `${n} draft invoice${n === 1 ? "" : "s"} created for ${month(data.last_month)}.` : `Nothing new to invoice for ${month(data.last_month)}.`); reload(); }
++          catch (e) { toast(e instanceof Error ? e.message : "Failed."); } finally { setBusy(false); }
++        }}>{busy ? <span className="spin" /> : `Invoice ${month(data.last_month)}`}</button>}
++      </div>
++      {clients.length === 0 ? <div className="empty"><h3>No client accounts yet</h3></div> : <div className="table-wrap"><table><thead><tr><th>Client</th><th>Bill to</th><th>Plan fee</th><th>Usage rates</th><th>Last invoiced</th><th /></tr></thead><tbody>
++        {clients.map((c) => { const b = byClient.get(c.id); const last = data.runs.find((r) => r.client_org_id === c.id); return (
++          <tr key={c.id}>
++            <td className="small"><strong>{c.name}</strong>{b && !b.active ? <div className="tiny muted">paused</div> : null}{b?.auto_invoice ? <div className="tiny muted">automatic monthly</div> : null}</td>
++            <td className="small">{b ? personName(b.contacts) : <span className="muted">Not billed</span>}</td>
++            <td className="small">{b ? (b.plan_fee_cents != null ? usd(b.plan_fee_cents) : "Plan price") : "—"}</td>
++            <td className="tiny">{b ? Object.entries(b.rates).filter(([, v]) => v > 0).map(([k, v]) => `${k.replace("_", " ")} ${v}¢`).join(", ") || "—" : "—"}</td>
++            <td className="tiny muted">{last ? `${month(last.period_start)} · ${relativeTime(last.created_at)}` : "—"}</td>
++            <td><button className="btn btn-sm" onClick={() => open(c)}>{b ? "Edit" : "Set up"}</button></td>
++          </tr>
++        ); })}
++      </tbody></table></div>}
++      {edit && <div className="card-pad stack" style={{ borderTop: "1px solid var(--line)" }}>
++        <strong className="small">Billing for {clients.find((c) => c.id === edit)?.name}</strong>
++        <div className="field"><label htmlFor="cb-contact">Send invoices to (a contact in your agency&apos;s CRM)</label><ContactPicker id="cb-contact" value={form.contact} onChange={(contact) => setForm({ ...form, contact })} /></div>
++        <div className="field-grid">
++          <div className="field"><label htmlFor="cb-fee">Monthly fee ($, blank = plan price)</label><input id="cb-fee" className="input" inputMode="decimal" value={form.fee} onChange={(e) => setForm({ ...form, fee: e.target.value })} /></div>
++          {RATES.map(([k, label]) => <div key={k} className="field"><label htmlFor={`cb-${k}`}>{label}</label><input id={`cb-${k}`} className="input" inputMode="decimal" placeholder="0" value={form.rates[k] ?? ""} onChange={(e) => setForm({ ...form, rates: { ...form.rates, [k]: e.target.value } })} /></div>)}
++          <div className="field"><label htmlFor="cb-tax">Tax rate (%)</label><input id="cb-tax" className="input" inputMode="decimal" value={form.tax} onChange={(e) => setForm({ ...form, tax: e.target.value })} /></div>
++        </div>
++        <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={form.auto} onChange={(e) => setForm({ ...form, auto: e.target.checked })} /> Draft the invoice automatically at the start of each month</label>
++        <div className="row"><button className="btn btn-primary btn-sm" disabled={!form.contact} onClick={async () => {
++          try {
++            const rates = Object.fromEntries(Object.entries(form.rates).filter(([, v]) => v.trim() !== "").map(([k, v]) => [k, Math.max(0, Number(v) || 0)]));
++            await api("/api/billing/clients", { method: "PUT", body: { client_org_id: edit, contact_id: form.contact!.id, plan_fee_cents: form.fee.trim() ? Math.round(Number(form.fee) * 100) : null, rates, tax_rate_bp: Math.round((Number(form.tax) || 0) * 100), auto_invoice: form.auto, active: true } });
++            toast("Billing saved."); setEdit(null); reload();
++          } catch (e) { toast(e instanceof Error ? e.message : "Could not save."); }
++        }}>Save</button><button className="btn btn-sm btn-ghost" onClick={() => setEdit(null)}>Cancel</button></div>
++      </div>}
++    </div>
++  );
++}
++
++type Domain = { id: string; domain: string; verification_token: string; status: string; last_checked_at: string | null };
++function ConsoleDomain({ toast }: { toast: (m: string) => void }) {
++  const { data, reload } = useResource<{ domains: Domain[] }>("/api/organization/domains");
++  const [domain, setDomain] = useState("");
++  const [host, setHost] = useState("");
++  useEffect(() => setHost(window.location.host), []);
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Your own console address</h3><div className="sub">Your team and clients sign in at your domain (like app.youragency.com) and see your name, logo and color from <a className="link" href="/account">Branding</a>.</div></div></div>
++      <div className="card-pad stack">
++        {(data?.domains || []).map((d) => (
++          <div key={d.id} className="stack" style={{ gap: 6 }}>
++            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
++              <span><strong>{d.domain}</strong> <span className={`pill ${d.status === "verified" ? "pill-ok" : "pill-warn"}`}>{d.status === "verified" ? "verified" : "waiting for DNS"}</span></span>
++              <span className="row" style={{ gap: 6 }}>
++                {d.status !== "verified" && <button className="btn btn-sm btn-primary" onClick={async () => { try { const r = await api<{ message: string }>(`/api/organization/domains/${d.id}`, { body: { action: "verify" } }); toast(r.message); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Check failed."); } }}>Verify</button>}
++                <button className="btn btn-sm btn-ghost" onClick={async () => { if (!window.confirm(`Disconnect ${d.domain}?`)) return; try { await api(`/api/organization/domains/${d.id}`, { method: "DELETE" }); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>Remove</button>
++              </span>
++            </div>
++            <ol className="small" style={{ margin: 0, paddingLeft: 18, overflowWrap: "anywhere" }}>
++              <li>Add a <strong>TXT</strong> record <span className="mono">_sun-verify.{d.domain}</span> with value <span className="mono">{d.verification_token}</span> <Copy text={d.verification_token} />, then press Verify.</li>
++              <li>Add a <strong>CNAME</strong> from <span className="mono">{d.domain}</span> to <span className="mono">{host || "the console address"}</span>.</li>
++              <li>HTTPS is set up automatically when hosting automation is configured; otherwise your platform administrator adds the domain alias.</li>
++            </ol>
++          </div>
++        ))}
++        <div className="row"><label className="sr-only" htmlFor="cd">Domain</label><input id="cd" className="input" placeholder="app.youragency.com" value={domain} onChange={(e) => setDomain(e.target.value)} style={{ maxWidth: 260 }} />
++          <button className="btn btn-sm" disabled={!domain.trim()} onClick={async () => { try { await api("/api/organization/domains", { body: { domain } }); setDomain(""); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Could not add."); } }}>Add domain</button></div>
++      </div>
++    </div>
++  );
++}
++
++function Agency({ org, staff }: { org: Org; staff: boolean }) {
++  const { data, error, loading, reload } = useResource<{ agency: { clients: Client[] } | null }>("/api/billing");
++  const { toast, node } = useToast();
++  if (org.kind !== "agency") return <div className="card card-pad small muted">This page is for agencies. Client accounts manage their plan in <a className="link" href="/account">Plan &amp; account</a>.</div>;
++  if (!atLeast(org.role, "admin")) return <div className="card card-pad small muted">Agency billing and settings are for admins.</div>;
++  if (loading && !data) return <Loading />;
++  if (error) return <ErrorState message={error} onRetry={reload} />;
++  const clients = data?.agency?.clients || [];
++  return (
++    <div className="stack">
++      <Subscription org={org} staff={staff} toast={toast} />
++      <ClientBilling clients={clients} toast={toast} />
++      <div className="split">
++        <ConsoleDomain toast={toast} />
++        <Transfers org={org} clients={clients} toast={toast} />
++      </div>
++      {node}
++    </div>
++  );
++}
++
++export default function AgencyPage() {
++  return <TenantGate title="Agency" subtitle="Your subscription, client billing, your own console address and account transfers.">{(info) => <Agency org={info.org} staff={info.isPlatformStaff} />}</TenantGate>;
++}
+diff --git a/src/app/api/billing/clients/route.ts b/src/app/api/billing/clients/route.ts
+new file mode 100644
+index 0000000..04f672c
+--- /dev/null
++++ b/src/app/api/billing/clients/route.ts
+@@ -0,0 +1,30 @@
++import { z } from "zod";
++import { ApiError, readJson, tenantRoute, uuid } from "@/lib/tenant/api";
++import { billingInput, invoiceAllClients, invoiceClientMonth, listClientBilling, periodInput, previousMonth, saveClientBilling } from "@/lib/billing/rebilling";
++
++export const dynamic = "force-dynamic";
++
++function agencyOnly(kind: string) {
++  if (kind !== "agency") throw new ApiError("Client billing is for agencies.", 403, "forbidden");
++}
++
++export const GET = tenantRoute("org.manage", async (ctx) => {
++  agencyOnly(ctx.org.kind);
++  return { ...(await listClientBilling(ctx.client, ctx.org.id)), last_month: previousMonth() };
++});
++
++export const PUT = tenantRoute("org.manage", async (ctx, req) => {
++  agencyOnly(ctx.org.kind);
++  const { client_org_id, ...rest } = await readJson(req, billingInput.extend({ client_org_id: uuid }));
++  await saveClientBilling(ctx.client, ctx.org.id, client_org_id, billingInput.parse(rest));
++  return { ok: true };
++});
++
++// Drafts invoices for a finished month: one client, or every billed client.
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  agencyOnly(ctx.org.kind);
++  const input = await readJson(req, z.object({ period: periodInput, client_org_id: uuid.optional() }));
++  const actor = { client: ctx.client, system: false };
++  if (input.client_org_id) return { results: [{ client_org_id: input.client_org_id, status: (await invoiceClientMonth(actor, ctx.org.id, input.client_org_id, input.period)).status }] };
++  return { results: await invoiceAllClients(actor, ctx.org.id, input.period) };
++});
+diff --git a/src/app/api/billing/platform-plans/route.ts b/src/app/api/billing/platform-plans/route.ts
+new file mode 100644
+index 0000000..36d62b8
+--- /dev/null
++++ b/src/app/api/billing/platform-plans/route.ts
+@@ -0,0 +1,16 @@
++import { z } from "zod";
++import { ApiError, fromDb, readJson, tenantRoute } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++
++export const dynamic = "force-dynamic";
++
++// Platform staff link platform plans to their Stripe prices.
++export const PUT = tenantRoute("org.read", async (ctx, req) => {
++  if (!ctx.isPlatformStaff) throw new ApiError("Only platform staff manage platform plans.", 403, "forbidden");
++  const input = await readJson(req, z.object({ key: z.string().max(41), stripe_price_id: z.string().trim().regex(/^price_[A-Za-z0-9]{3,100}$/, "Paste a Stripe price ID (price_…).").nullable() }));
++  const { data, error } = await ctx.client.from("plans").update({ stripe_price_id: input.stripe_price_id }).eq("key", input.key).is("owner_org_id", null).select("key").maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("Plan not found.", 404, "not_found");
++  await audit(ctx.client, ctx.org.id, "platform_plan.price_linked", { type: "plan", id: input.key }, { stripe_price_id: input.stripe_price_id });
++  return { ok: true };
++});
+diff --git a/src/app/api/billing/subscription/route.ts b/src/app/api/billing/subscription/route.ts
+new file mode 100644
+index 0000000..9250d61
+--- /dev/null
++++ b/src/app/api/billing/subscription/route.ts
+@@ -0,0 +1,25 @@
++import { z } from "zod";
++import { ApiError, readJson, tenantRoute } from "@/lib/tenant/api";
++import { publicBaseUrl, systemClient } from "@/lib/supabase/system";
++import { agencyPlans, platformBillingStatus, portalUrl, startSubscription, subscriptionFor } from "@/lib/billing/platform";
++
++export const dynamic = "force-dynamic";
++
++// The agency's own subscription to the platform.
++export const GET = tenantRoute("org.read", async (ctx) => {
++  if (ctx.org.kind !== "agency") return { applicable: false };
++  const [subscription, plans] = await Promise.all([subscriptionFor(ctx.client, ctx.org.id), agencyPlans(ctx.client)]);
++  return { applicable: true, ...platformBillingStatus(), subscription, plans: plans.map((p) => ({ ...p, purchasable: !!p.stripe_price_id })) };
++});
++
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  const input = await readJson(req, z.discriminatedUnion("action", [
++    z.object({ action: z.literal("subscribe"), plan: z.string().max(41) }),
++    z.object({ action: z.literal("portal") }),
++  ]));
++  const base = publicBaseUrl(req);
++  if (!base) throw new ApiError("Integration not configured: set PUBLIC_APP_URL.", 503, "integration_not_configured");
++  if (ctx.org.role !== "owner") throw new ApiError("Only owners manage the subscription.", 403, "forbidden");
++  if (input.action === "portal") return portalUrl(systemClient(), ctx.org.id, base);
++  return startSubscription(systemClient(), ctx.org, ctx.session.user.email, input.plan, base);
++});
+diff --git a/src/app/api/jobs/tick/route.ts b/src/app/api/jobs/tick/route.ts
+index c39a590..01a4dec 100644
+--- a/src/app/api/jobs/tick/route.ts
++++ b/src/app/api/jobs/tick/route.ts
+@@ -4,13 +4,14 @@ import { sameSecret } from "@/lib/rate-limit";
+ import { enrollFromEvents, advanceRuns } from "@/lib/workflows/engine";
+ import { sendReminders } from "@/lib/calendar/service";
+ import { processAuditQueue } from "@/lib/leads/service";
++import { autoInvoiceTick } from "@/lib/billing/rebilling";
+ 
+ export const dynamic = "force-dynamic";
+ export const maxDuration = 60;
+ 
+ // Background work for Phase 3, called by the scheduler with AUTOMATION_SECRET:
+ // start automations from new events, advance due runs, send appointment reminders,
+-// and audit websites queued in Lead Finder.
++// audit websites queued in Lead Finder, and draft agencies' monthly client invoices.
+ export async function POST(req: Request) {
+   const secret = process.env.AUTOMATION_SECRET;
+   if (!secret || !sameSecret(req.headers.get("authorization") || "", `Bearer ${secret}`)) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+@@ -23,6 +24,7 @@ export async function POST(req: Request) {
+     ["runs", () => advanceRuns(system, now)],
+     ["reminders", () => sendReminders(system, now)],
+     ["lead_audits", () => processAuditQueue(system, null, 3)],
++    ["client_invoices", () => autoInvoiceTick(system, now)],
+   ] as const) {
+     try {
+       result[name] = await job();
+diff --git a/src/app/api/organization/domains/[id]/route.ts b/src/app/api/organization/domains/[id]/route.ts
+new file mode 100644
+index 0000000..8a3eade
+--- /dev/null
++++ b/src/app/api/organization/domains/[id]/route.ts
+@@ -0,0 +1,17 @@
++import { z } from "zod";
++import { readJson, scoped, tenantRoute, uuid } from "@/lib/tenant/api";
++import { systemClient } from "@/lib/supabase/system";
++import { removeDomain, verifyDomain } from "@/lib/sites/domains";
++
++export const dynamic = "force-dynamic";
++type P = { id: string };
++
++export const POST = tenantRoute<P>("org.manage", async (ctx, req, { id }) => {
++  await readJson(req, z.object({ action: z.literal("verify") }));
++  return verifyDomain(scoped(ctx), systemClient(), uuid.parse(id), undefined, "app_domains");
++});
++
++export const DELETE = tenantRoute<P>("org.manage", async (ctx, _req, { id }) => {
++  await removeDomain(scoped(ctx), uuid.parse(id), "app_domains");
++  return { ok: true };
++});
+diff --git a/src/app/api/organization/domains/route.ts b/src/app/api/organization/domains/route.ts
+new file mode 100644
+index 0000000..23036c4
+--- /dev/null
++++ b/src/app/api/organization/domains/route.ts
+@@ -0,0 +1,13 @@
++import { ApiError, readJson, tenantRoute } from "@/lib/tenant/api";
++import { addAppDomain, listAppDomains } from "@/lib/tenant/agency";
++import { domainInput } from "@/lib/sites/domains";
++
++export const dynamic = "force-dynamic";
++
++// An agency's own console address (white-label sign-in).
++export const GET = tenantRoute("org.read", async (ctx) => ({ domains: ctx.org.kind === "agency" ? await listAppDomains(ctx.client, ctx.org.id) : [] }));
++
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  if (ctx.org.kind !== "agency") throw new ApiError("Only agencies can use their own sign-in domain.", 403, "forbidden");
++  return { domain: await addAppDomain(ctx.client, ctx.org.id, await readJson(req, domainInput)) };
++});
+diff --git a/src/app/api/organization/transfers/[id]/route.ts b/src/app/api/organization/transfers/[id]/route.ts
+new file mode 100644
+index 0000000..2b568d3
+--- /dev/null
++++ b/src/app/api/organization/transfers/[id]/route.ts
+@@ -0,0 +1,10 @@
++import { readJson, tenantRoute, uuid } from "@/lib/tenant/api";
++import { decideTransfer, decisionInput } from "@/lib/tenant/agency";
++
++export const dynamic = "force-dynamic";
++
++// The database decides who may approve, accept, decline or cancel.
++export const POST = tenantRoute<{ id: string }>("org.read", async (ctx, req, { id }) => {
++  const { decision } = await readJson(req, decisionInput);
++  return { status: await decideTransfer(ctx.client, uuid.parse(id), decision) };
++});
+diff --git a/src/app/api/organization/transfers/route.ts b/src/app/api/organization/transfers/route.ts
+new file mode 100644
+index 0000000..850d275
+--- /dev/null
++++ b/src/app/api/organization/transfers/route.ts
+@@ -0,0 +1,12 @@
++import { readJson, tenantRoute } from "@/lib/tenant/api";
++import { listTransfers, requestTransfer, transferInput } from "@/lib/tenant/agency";
++
++export const dynamic = "force-dynamic";
++
++// Transfers involving the signed-in person (sending agency, receiving agency or client owner).
++export const GET = tenantRoute("org.read", async (ctx) => {
++  const { data } = await ctx.client.from("organizations").select("slug, kind").eq("id", ctx.org.id).single();
++  return { transfers: await listTransfers(ctx.client), account_id: data?.kind === "agency" ? data.slug : null };
++});
++
++export const POST = tenantRoute("org.read", async (ctx, req) => ({ id: await requestTransfer(ctx.client, await readJson(req, transferInput)) }));
+diff --git a/src/app/api/public/brand/route.ts b/src/app/api/public/brand/route.ts
+new file mode 100644
+index 0000000..8a3feed
+--- /dev/null
++++ b/src/app/api/public/brand/route.ts
+@@ -0,0 +1,12 @@
++import { NextResponse } from "next/server";
++import { systemClient } from "@/lib/supabase/system";
++import { brandForHost } from "@/lib/tenant/agency";
++
++export const dynamic = "force-dynamic";
++
++// Branding for the host being visited: an agency's verified console domain, or none.
++export async function GET(req: Request) {
++  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
++  const brand = await brandForHost(systemClient(), host).catch(() => null);
++  return NextResponse.json({ brand }, { headers: { "Cache-Control": "private, max-age=300" } });
++}
+diff --git a/src/app/api/public/invitation/[token]/route.ts b/src/app/api/public/invitation/[token]/route.ts
+new file mode 100644
+index 0000000..76fb76c
+--- /dev/null
++++ b/src/app/api/public/invitation/[token]/route.ts
+@@ -0,0 +1,53 @@
++import { NextResponse } from "next/server";
++import { ApiError, assertSameOrigin, errorResponse, readJson } from "@/lib/tenant/api";
++import { systemClient } from "@/lib/supabase/system";
++import { clientIp, takeLimit } from "@/lib/rate-limit";
++import { ORG_COOKIE, userClient } from "@/lib/tenant/session";
++import { setSessionCookies } from "@/lib/session-cookies";
++import { joinInput, joinWithNewAccount, previewInvitation } from "@/lib/tenant/invitations";
++
++export const dynamic = "force-dynamic";
++type P = { params: Promise<{ token: string }> };
++
++async function setup(req: Request, bucket: string, max: number) {
++  if (!(await takeLimit(bucket, clientIp(req), max, 600))) throw new ApiError("Too many attempts. Try again in a few minutes.", 429, "rate_limited");
++  const system = systemClient();
++  if (!system) throw new ApiError("Invitations are not available right now.", 503, "integration_not_configured");
++  return system;
++}
++
++export async function GET(req: Request, { params }: P) {
++  try {
++    const system = await setup(req, "invite-view", 60);
++    const p = await previewInvitation(system, (await params).token);
++    if (!p) throw new ApiError("This invitation link is not valid.", 404, "not_found");
++    return NextResponse.json(p, { headers: { "Cache-Control": "no-store" } });
++  } catch (e) {
++    return errorResponse(e);
++  }
++}
++
++// Creates the invited person's account, signs them in and accepts.
++export async function POST(req: Request, { params }: P) {
++  try {
++    assertSameOrigin(req);
++    const system = await setup(req, "invite-join", 10);
++    const input = await readJson(req, joinInput);
++    const url = process.env.SUPABASE_URL!;
++    const key = process.env.SUPABASE_KEY!;
++    const signIn = async (email: string, password: string) => {
++      const r = await fetch(`${url}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: key, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) }).catch(() => null);
++      return r?.ok ? ((await r.json()) as { access_token: string; refresh_token: string; expires_in: number }) : null;
++    };
++    const token = (await params).token;
++    const session = await joinWithNewAccount(system, token, input, signIn, userClient);
++    const { data: p } = await system.rpc("invitation_preview", { p_token: token });
++    const res = NextResponse.json({ ok: true });
++    setSessionCookies(res, session);
++    const orgId = (p as { organization_id: string }[] | null)?.[0]?.organization_id;
++    if (orgId) res.cookies.set(ORG_COOKIE, orgId, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 180 });
++    return res;
++  } catch (e) {
++    return errorResponse(e);
++  }
++}
+diff --git a/src/app/api/tenant/invitations/accept/route.ts b/src/app/api/tenant/invitations/accept/route.ts
+new file mode 100644
+index 0000000..fec6439
+--- /dev/null
++++ b/src/app/api/tenant/invitations/accept/route.ts
+@@ -0,0 +1,23 @@
++import { NextResponse } from "next/server";
++import { z } from "zod";
++import { ApiError, assertSameOrigin, errorResponse, readJson } from "@/lib/tenant/api";
++import { getUserSession, ORG_COOKIE, userClient } from "@/lib/tenant/session";
++import { acceptAs } from "@/lib/tenant/invitations";
++
++export const dynamic = "force-dynamic";
++
++// A signed-in person accepts an invitation sent to their email address.
++export async function POST(req: Request) {
++  try {
++    assertSameOrigin(req);
++    const session = await getUserSession();
++    if (!session) throw new ApiError("Sign in first.", 401, "unauthenticated");
++    const { token } = await readJson(req, z.object({ token: z.string().max(100) }));
++    const orgId = await acceptAs(userClient(session.accessToken), token);
++    const res = NextResponse.json({ ok: true, orgId });
++    res.cookies.set(ORG_COOKIE, orgId, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 180 });
++    return res;
++  } catch (e) {
++    return errorResponse(e);
++  }
++}
+diff --git a/src/app/api/tenant/invitations/route.ts b/src/app/api/tenant/invitations/route.ts
+new file mode 100644
+index 0000000..9d83b5f
+--- /dev/null
++++ b/src/app/api/tenant/invitations/route.ts
+@@ -0,0 +1,16 @@
++import { z } from "zod";
++import { readJson, tenantRoute, uuid } from "@/lib/tenant/api";
++import { invite, inviteInput, listInvitations, revokeInvitation } from "@/lib/tenant/invitations";
++
++export const dynamic = "force-dynamic";
++
++export const GET = tenantRoute("org.manage", async (ctx) => ({ invitations: await listInvitations(ctx.client, ctx.org.id) }));
++
++// Emails an invitation link; returns the link too so it can be shared another way.
++export const POST = tenantRoute("org.manage", async (ctx, req) => invite(ctx.client, ctx.org.id, await readJson(req, inviteInput), req));
++
++export const DELETE = tenantRoute("org.manage", async (ctx, req) => {
++  const { id } = await readJson(req, z.object({ id: uuid }));
++  await revokeInvitation(ctx.client, ctx.org.id, id);
++  return { ok: true };
++});
+diff --git a/src/app/api/webhooks/stripe-platform/route.ts b/src/app/api/webhooks/stripe-platform/route.ts
+new file mode 100644
+index 0000000..4da5296
+--- /dev/null
++++ b/src/app/api/webhooks/stripe-platform/route.ts
+@@ -0,0 +1,28 @@
++import { NextResponse } from "next/server";
++import { systemClient } from "@/lib/supabase/system";
++import { stripeClient } from "@/lib/stripe";
++import { handlePlatformEvent } from "@/lib/billing/platform";
++
++export const dynamic = "force-dynamic";
++
++// Subscription events from the platform's Stripe account, verified with
++// STRIPE_PLATFORM_WEBHOOK_SECRET. Applying the same event twice is harmless.
++export async function POST(req: Request) {
++  const stripe = stripeClient();
++  const secret = process.env.STRIPE_PLATFORM_WEBHOOK_SECRET;
++  const system = systemClient();
++  if (!stripe || !secret || !system) return NextResponse.json({ error: "Not configured." }, { status: 503 });
++  const signature = req.headers.get("stripe-signature");
++  if (!signature) return NextResponse.json({ error: "Missing signature." }, { status: 400 });
++  const raw = await req.text();
++  if (raw.length > 512_000) return NextResponse.json({ error: "Too large." }, { status: 413 });
++  let event;
++  try { event = stripe.webhooks.constructEvent(raw, signature, secret); }
++  catch { return NextResponse.json({ error: "Invalid signature." }, { status: 400 }); }
++  try {
++    return NextResponse.json({ received: true, result: await handlePlatformEvent(system, event) });
++  } catch (e) {
++    console.error("[stripe-platform webhook]", event.id, e);
++    return NextResponse.json({ error: "Processing failed." }, { status: 500 });
++  }
++}
+diff --git a/src/app/join/[token]/page.tsx b/src/app/join/[token]/page.tsx
+new file mode 100644
+index 0000000..0ab2872
+--- /dev/null
++++ b/src/app/join/[token]/page.tsx
+@@ -0,0 +1,58 @@
++"use client";
++import { use, useEffect, useState } from "react";
++import "@/components/public/public.css";
++
++type Preview = { organization: string; email: string; role: string; valid: boolean; account_exists: boolean };
++
++export default function Join({ params }: { params: Promise<{ token: string }> }) {
++  const { token } = use(params);
++  const [p, setP] = useState<Preview | null>(null);
++  const [error, setError] = useState("");
++  const [busy, setBusy] = useState(false);
++  const [msg, setMsg] = useState("");
++  const [name, setName] = useState("");
++  const [password, setPassword] = useState("");
++  useEffect(() => {
++    fetch(`/api/public/invitation/${token}`, { cache: "no-store" }).then(async (r) => { const j = await r.json(); if (!r.ok) throw new Error(j.error || "This invitation link is not valid."); setP(j); })
++      .catch((e) => setError(e.message));
++  }, [token]);
++  const acceptSignedIn = async () => {
++    setBusy(true); setMsg("");
++    const r = await fetch("/api/tenant/invitations/accept", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
++    const j = await r.json().catch(() => ({}));
++    if (r.ok) { window.location.replace("/command-center"); return; }
++    setBusy(false);
++    if (r.status === 401) window.location.href = `/login?next=${encodeURIComponent(`/join/${token}`)}`;
++    else setMsg(j.error || "Could not accept the invitation.");
++  };
++  if (error) return <div className="pub"><div className="pub-card narrow"><h1>Invitation not available</h1><p className="lead">{error}</p></div></div>;
++  if (!p) return <div className="pub"><div className="pub-card narrow"><p className="lead">Loading…</p></div></div>;
++  if (!p.valid) return <div className="pub"><div className="pub-card narrow"><h1>This invitation has expired</h1><p className="lead">Ask {p.organization} to send a new one.</p></div></div>;
++  return (
++    <div className="pub">
++      <div className="pub-card narrow">
++        <h1>Join {p.organization}</h1>
++        <p className="lead">You&apos;ve been invited as a <strong>{p.role}</strong> with <strong>{p.email}</strong>.</p>
++        {p.account_exists ? (
++          <div className="stack">
++            <p className="lead" style={{ fontSize: 14 }}>You already have an account. Sign in with {p.email} to accept.</p>
++            <button className="btn btn-primary" disabled={busy} onClick={acceptSignedIn}>{busy ? "Accepting…" : "Accept invitation"}</button>
++          </div>
++        ) : (
++          <form className="stack" onSubmit={async (e) => {
++            e.preventDefault(); setBusy(true); setMsg("");
++            const r = await fetch(`/api/public/invitation/${token}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password, name: name.trim() || undefined }) });
++            const j = await r.json().catch(() => ({}));
++            if (r.ok) { window.location.replace("/command-center"); return; }
++            setBusy(false); setMsg(j.error || "Could not create your account.");
++          }}>
++            <div className="field" style={{ textAlign: "left" }}><label htmlFor="jn-name">Your name</label><input id="jn-name" className="input" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></div>
++            <div className="field" style={{ textAlign: "left" }}><label htmlFor="jn-pw">Choose a password (10+ characters)</label><input id="jn-pw" className="input" type="password" autoComplete="new-password" minLength={10} required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
++            <button className="btn btn-primary" disabled={busy || password.length < 10}>{busy ? "Creating your account…" : "Create account and join"}</button>
++          </form>
++        )}
++        {msg && <p className="lead" role="alert" style={{ color: "#b91c1c", fontSize: 14 }}>{msg}</p>}
++      </div>
++    </div>
++  );
++}
+diff --git a/src/app/login/page.tsx b/src/app/login/page.tsx
+index 2f8c4db..58af919 100644
+--- a/src/app/login/page.tsx
++++ b/src/app/login/page.tsx
+@@ -1,5 +1,5 @@
+ "use client";
+-import { useState, Suspense } from "react";
++import { useEffect, useState, Suspense } from "react";
+ import { useSearchParams } from "next/navigation";
+ import { SunMark } from "@/components/ui";
+ 
+@@ -10,6 +10,11 @@ function LoginForm() {
+   const [busy, setBusy] = useState(false);
+   const [signedIn, setSignedIn] = useState(false);
+   const sp = useSearchParams();
++  // On an agency's own console domain: their name, logo and color, and team sign-in first.
++  const [brand, setBrand] = useState<{ name: string; logo_url?: string | null; color?: string | null } | null>(null);
++  useEffect(() => {
++    fetch("/api/public/brand").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j?.brand) { setBrand(j.brand); setMode("team"); } }).catch(() => undefined);
++  }, []);
+ 
+   async function submit(e: React.FormEvent<HTMLFormElement>) {
+     e.preventDefault();
+@@ -54,13 +59,15 @@ function LoginForm() {
+     <div className="gate">
+       <form className="gate-card" onSubmit={submit} aria-busy={busy}>
+         <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+-          <div className="brand-mark" style={{ width: 46, height: 46, borderRadius: 14 }}>
+-            <SunMark size={26} />
+-          </div>
++          {brand?.logo_url ? <img src={brand.logo_url} alt={brand.name} style={{ maxWidth: 180, maxHeight: 56 }} /> : (
++            <div className="brand-mark" style={{ width: 46, height: 46, borderRadius: 14, ...(brand?.color ? { background: brand.color } : {}) }}>
++              <SunMark size={26} />
++            </div>
++          )}
+         </div>
+-        <h1 style={{ fontSize: 19 }}>Sun Marketing</h1>
+-        <p className="small muted" style={{ marginTop: 6, marginBottom: 20 }}>Owner access · this device stays trusted for one year</p>
+-        <div className="tabs" style={{ marginBottom: 14 }}><button type="button" disabled={busy || signedIn} className={mode === "team" ? "on" : ""} onClick={() => { setMode("team"); setErr(""); }}>Team account</button><button type="button" disabled={busy || signedIn} className={mode === "passcode" ? "on" : ""} onClick={() => { setMode("passcode"); setErr(""); }}>Owner access</button></div>
++        <h1 style={{ fontSize: 19 }}>{brand?.name || "Sun Marketing"}</h1>
++        <p className="small muted" style={{ marginTop: 6, marginBottom: 20 }}>{brand ? "Sign in with your team account" : "Owner access · this device stays trusted for one year"}</p>
++        {!brand && <div className="tabs" style={{ marginBottom: 14 }}><button type="button" disabled={busy || signedIn} className={mode === "team" ? "on" : ""} onClick={() => { setMode("team"); setErr(""); }}>Team account</button><button type="button" disabled={busy || signedIn} className={mode === "passcode" ? "on" : ""} onClick={() => { setMode("passcode"); setErr(""); }}>Owner access</button></div>}
+         {mode === "team" ? <div className="stack" style={{ gap: 10 }}><label className="sr-only" htmlFor="email">Email</label><input id="email" name="email" className="input" type="email" placeholder="Email" autoComplete="email" required autoFocus /><label className="sr-only" htmlFor="password">Password</label><input id="password" name="password" className="input" type="password" placeholder="Password" autoComplete="current-password" required /></div> : <><label className="sr-only" htmlFor="passcode">Passcode</label><input id="passcode" name="passcode" className="input" type="password" placeholder="Passcode" autoComplete="current-password" required autoFocus style={{ textAlign: "center" }} /></>}
+         {sp.get("unconfigured") === "1" && <p className="tiny" role="alert" style={{ color: "var(--bad)", marginTop: 9 }}>Console access has not been configured by the administrator.</p>}
+         {err && <p role="alert" style={{ color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: 12, marginTop: 12, fontSize: 14, textAlign: "left" }}>{err}</p>}
+diff --git a/src/app/organization/new-client/page.tsx b/src/app/organization/new-client/page.tsx
+new file mode 100644
+index 0000000..857be93
+--- /dev/null
++++ b/src/app/organization/new-client/page.tsx
+@@ -0,0 +1,99 @@
++"use client";
++import { useEffect, useState } from "react";
++import TenantGate, { Loading } from "@/components/tenant/TenantGate";
++import { api, atLeast, Org, useResource } from "@/components/tenant/client";
++
++type Plan = { key: string; name: string; price_cents: number };
++type Step = { label: string; state: "waiting" | "running" | "done" | "skipped" | "failed"; note?: string };
++const ZONES = ["America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu"];
++const usd = (c: number) => (c / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
++const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50);
++
++// Sets up a new client account in one pass: the account, its time zone,
++// approved business facts, plan, a draft website and the owner's invitation.
++function Wizard({ org }: { org: Org }) {
++  const billing = useResource<{ agency: { plans: Plan[] } | null }>("/api/billing");
++  const sites = useResource<{ industries: { key: string; label: string }[] }>("/api/sites");
++  const [f, setF] = useState({ name: "", industry: "general", city: "", phone: "", email: "", timezone: "America/New_York", hours: "", services: "", plan: "", website: true, owner: "" });
++  const [steps, setSteps] = useState<Step[] | null>(null);
++  const [newOrg, setNewOrg] = useState<string | null>(null);
++  const [inviteLink, setInviteLink] = useState<string | null>(null);
++  useEffect(() => { try { setF((x) => ({ ...x, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || x.timezone })); } catch { /* keep default */ } }, []);
++  if (org.kind !== "agency" || !atLeast(org.role, "admin")) return <div className="card card-pad small muted">Switch to your agency (as an admin) to set up client accounts.</div>;
++  if (billing.loading || sites.loading) return <Loading />;
++  const plans = billing.data?.agency?.plans || [];
++  const set = (k: keyof typeof f, v: string | boolean) => setF({ ...f, [k]: v });
++  const run = async () => {
++    const list: Step[] = [
++      { label: "Create the account", state: "waiting" }, { label: "Set the time zone", state: "waiting" }, { label: "Save business facts", state: "waiting" },
++      { label: "Assign the plan", state: "waiting" }, { label: "Draft the website", state: "waiting" }, { label: "Invite the owner", state: "waiting" },
++    ];
++    const upd = (i: number, state: Step["state"], note?: string) => { list[i] = { ...list[i], state, note }; setSteps([...list]); };
++    setSteps([...list]);
++    let id: string;
++    try { upd(0, "running"); id = (await api<{ orgId: string }>("/api/tenant", { body: { action: "create", kind: "client", name: f.name.trim(), parentId: org.id } })).orgId; setNewOrg(id); upd(0, "done"); }
++    catch (e) { upd(0, "failed", e instanceof Error ? e.message : "Failed."); return; }
++    // The new account is now the active one; the remaining steps act inside it.
++    const attempt = async (i: number, skip: boolean, fn: () => Promise<string | void>) => {
++      if (skip) return upd(i, "skipped");
++      upd(i, "running");
++      try { upd(i, "done", (await fn()) || undefined); } catch (e) { upd(i, "failed", e instanceof Error ? e.message : "Failed."); }
++    };
++    await attempt(1, false, async () => { await api("/api/channels/settings", { method: "PUT", body: { timezone: f.timezone, quiet_start: 8, quiet_end: 21 } }); });
++    await attempt(2, !f.hours.trim() && !f.services.trim(), async () => {
++      if (f.hours.trim()) await api("/api/knowledge", { body: { kind: "hours", title: "Business hours", body: f.hours.trim(), status: "approved" } });
++      for (const s of f.services.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 12)) await api("/api/knowledge", { body: { kind: "service", title: s.slice(0, 200), body: s, status: "approved" } });
++    });
++    await attempt(3, !f.plan, async () => { await api("/api/billing/govern", { body: { org_id: id, plan: f.plan } }); });
++    await attempt(4, !f.website, async () => {
++      const slug = `${slugify(f.name) || "site"}-${Math.random().toString(36).slice(2, 6)}`;
++      await api("/api/sites", { body: { name: f.name.trim(), slug, industry: f.industry, business_name: f.name.trim(), phone: f.phone.trim() || undefined, email: f.email.trim() || undefined, location: f.city.trim() || undefined, hours: f.hours.trim().slice(0, 300) || undefined } });
++      return "Draft only; publish it when the client approves.";
++    });
++    await attempt(5, !f.owner.trim(), async () => {
++      const r = await api<{ link: string; delivery: { sent: boolean; reason: string | null } }>("/api/tenant/invitations", { body: { email: f.owner.trim(), role: "owner" } });
++      if (!r.delivery.sent) { setInviteLink(r.link); return `Email not sent (${r.delivery.reason}). Copy the link below.`; }
++      return `Emailed to ${f.owner.trim()}.`;
++    });
++  };
++  if (steps) return (
++    <div className="card card-pad stack" style={{ maxWidth: 640 }}>
++      <h3>Setting up {f.name}</h3>
++      {steps.map((s, i) => <div key={i} className="row small" style={{ gap: 8, alignItems: "flex-start" }}>
++        <span className={`pill ${s.state === "done" ? "pill-ok" : s.state === "failed" ? "pill-bad" : "pill-neutral"}`} style={{ minWidth: 70, textAlign: "center" }}>{s.state === "running" ? "working…" : s.state}</span>
++        <span>{s.label}{s.note ? <div className="tiny muted">{s.note}</div> : null}</span>
++      </div>)}
++      {inviteLink && <div className="notice small" style={{ overflowWrap: "anywhere" }}>Owner invitation link (share only with them): <span className="mono">{inviteLink}</span></div>}
++      {newOrg && steps.every((s) => s.state !== "running" && s.state !== "waiting") && <div className="row" style={{ flexWrap: "wrap" }}>
++        <a className="btn btn-primary" href="/command-center">Open {f.name}</a><a className="btn" href="/sites">Review the website</a><a className="btn btn-ghost" href="/organization">Back to agency</a>
++      </div>}
++      {steps.some((s) => s.state === "failed") && newOrg && <p className="small muted">Anything that failed can be finished from the account&apos;s own pages.</p>}
++    </div>
++  );
++  return (
++    <form className="card card-pad stack" style={{ maxWidth: 720 }} onSubmit={(e) => { e.preventDefault(); run(); }}>
++      <h3>New client account</h3>
++      <div className="field-grid">
++        <div className="field"><label htmlFor="nc-name">Business name</label><input id="nc-name" className="input" required minLength={2} maxLength={120} value={f.name} onChange={(e) => set("name", e.target.value)} /></div>
++        <div className="field"><label htmlFor="nc-ind">Industry</label><select id="nc-ind" className="select" value={f.industry} onChange={(e) => set("industry", e.target.value)}>{(sites.data?.industries || [{ key: "general", label: "Other local business" }]).map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}</select></div>
++        <div className="field"><label htmlFor="nc-city">City / service area</label><input id="nc-city" className="input" maxLength={120} value={f.city} onChange={(e) => set("city", e.target.value)} /></div>
++        <div className="field"><label htmlFor="nc-tz">Time zone</label><select id="nc-tz" className="select" value={f.timezone} onChange={(e) => set("timezone", e.target.value)}>{Array.from(new Set([f.timezone, ...ZONES])).map((z) => <option key={z} value={z}>{z.replace("_", " ")}</option>)}</select></div>
++        <div className="field"><label htmlFor="nc-phone">Business phone</label><input id="nc-phone" className="input" maxLength={40} value={f.phone} onChange={(e) => set("phone", e.target.value)} /></div>
++        <div className="field"><label htmlFor="nc-email">Business email</label><input id="nc-email" className="input" type="email" maxLength={254} value={f.email} onChange={(e) => set("email", e.target.value)} /></div>
++      </div>
++      <div className="field"><label htmlFor="nc-hours">Hours</label><input id="nc-hours" className="input" maxLength={300} placeholder="Mon–Fri 8am–6pm, Sat 9am–1pm" value={f.hours} onChange={(e) => set("hours", e.target.value)} /></div>
++      <div className="field"><label htmlFor="nc-svc">Services (one per line)</label><textarea id="nc-svc" className="textarea" rows={4} value={f.services} onChange={(e) => set("services", e.target.value)} placeholder={"Roof repairs\nFull replacements\nGutter installation"} /></div>
++      <p className="hint">Hours and services are saved as approved facts the AI and website copy can use. Only enter what the client confirmed.</p>
++      <div className="field-grid">
++        <div className="field"><label htmlFor="nc-plan">Plan</label><select id="nc-plan" className="select" value={f.plan} onChange={(e) => set("plan", e.target.value)}><option value="">Decide later (no limits)</option>{plans.map((p) => <option key={p.key} value={p.key}>{p.name} · {usd(p.price_cents)}/mo</option>)}</select></div>
++        <div className="field"><label htmlFor="nc-owner">Client owner&apos;s email (invite)</label><input id="nc-owner" className="input" type="email" maxLength={254} placeholder="optional" value={f.owner} onChange={(e) => set("owner", e.target.value)} /></div>
++      </div>
++      <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={f.website} onChange={(e) => set("website", e.target.checked)} /> Draft a website from the industry template (not published)</label>
++      <div><button className="btn btn-primary" disabled={f.name.trim().length < 2}>Set up account</button></div>
++    </form>
++  );
++}
++
++export default function NewClientPage() {
++  return <TenantGate title="New client" subtitle="Guided setup for a client account.">{(info) => <Wizard org={info.org} />}</TenantGate>;
++}
+diff --git a/src/app/organization/page.tsx b/src/app/organization/page.tsx
+index 23502a2..0a59331 100644
+--- a/src/app/organization/page.tsx
++++ b/src/app/organization/page.tsx
+@@ -1,8 +1,8 @@
+ "use client";
+ import { useState } from "react";
+ import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
+-import { api, atLeast, Org, Role, TenantInfo, useResource } from "@/components/tenant/client";
+-import { useToast } from "@/components/ui";
++import { api, atLeast, Org, relativeTime, Role, TenantInfo, useResource } from "@/components/tenant/client";
++import { Copy, useToast } from "@/components/ui";
+ 
+ type Member = { user_id: string; role: Role; status: "active" | "disabled"; email: string | null; display_name: string | null; created_at: string };
+ type Ready = Extract<TenantInfo, { signedIn: true }> & { org: Org };
+@@ -17,9 +17,6 @@ const ROLE_HELP: Record<Role, string> = {
+ 
+ function Members({ org, selfId }: { org: Org; selfId: string }) {
+   const { data, error, loading, reload } = useResource<{ members: Member[] }>("/api/tenant/members");
+-  const [email, setEmail] = useState("");
+-  const [role, setRole] = useState<Role>("member");
+-  const [busy, setBusy] = useState(false);
+   const { toast, node } = useToast();
+   const isAdmin = atLeast(org.role, "admin");
+   const grantable = ROLES.filter((r) => atLeast(org.role, r) || (r === "owner" && isAdmin && org.kind === "client"));
+@@ -64,43 +61,55 @@ function Members({ org, selfId }: { org: Org; selfId: string }) {
+           </table>
+         </div>
+       )}
+-      {isAdmin && (
+-        <form
+-          className="card-pad stack"
+-          style={{ borderTop: "1px solid var(--line)", gap: 8 }}
+-          onSubmit={async (e) => {
+-            e.preventDefault();
+-            setBusy(true);
+-            try {
+-              await api("/api/tenant/members", { body: { email, role } });
+-              setEmail("");
+-              toast("Member added.");
+-              reload();
+-            } catch (err) {
+-              toast(err instanceof Error ? err.message : "Could not add member.");
+-            } finally {
+-              setBusy(false);
+-            }
+-          }}
+-        >
+-          <strong className="small">Add a person</strong>
+-          <div className="row row-wrap">
+-            <label className="sr-only" htmlFor="mem-email">Email</label>
+-            <input id="mem-email" className="input" type="email" required placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} style={{ maxWidth: 280 }} />
+-            <label className="sr-only" htmlFor="mem-role">Role</label>
+-            <select id="mem-role" className="select" style={{ maxWidth: 150 }} value={role} onChange={(e) => setRole(e.target.value as Role)}>
+-              {grantable.map((r) => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}
+-            </select>
+-            <button className="btn btn-primary" disabled={busy || !email}>{busy ? <span className="spin" /> : "Add"}</button>
+-          </div>
+-          <p className="hint">{ROLE_HELP[role]} The person needs an account first; email invitations arrive with the communications phase.</p>
+-        </form>
+-      )}
++      {isAdmin && <Invitations grantable={grantable} toast={toast} />}
+       {node}
+     </div>
+   );
+ }
+ 
++type Invite = { id: string; email: string; role: Role; status: string; expires_at: string; created_at: string };
++function Invitations({ grantable, toast }: { grantable: Role[]; toast: (m: string) => void }) {
++  const { data, reload } = useResource<{ invitations: Invite[] }>("/api/tenant/invitations");
++  const [email, setEmail] = useState("");
++  const [role, setRole] = useState<Role>("member");
++  const [busy, setBusy] = useState(false);
++  const [link, setLink] = useState<string | null>(null);
++  const pending = (data?.invitations || []).filter((i) => i.status === "pending" && new Date(i.expires_at) > new Date());
++  return (
++    <div className="card-pad stack" style={{ borderTop: "1px solid var(--line)", gap: 8 }}>
++      <form className="stack" style={{ gap: 8 }} onSubmit={async (e) => {
++        e.preventDefault(); setBusy(true); setLink(null);
++        try {
++          const r = await api<{ link: string; delivery: { sent: boolean; reason: string | null } }>("/api/tenant/invitations", { body: { email, role } });
++          setEmail("");
++          if (r.delivery.sent) toast(`Invitation emailed to ${email}.`);
++          else { setLink(r.link); toast(`Invitation created. Email not sent: ${r.delivery.reason}`); }
++          reload();
++        } catch (err) { toast(err instanceof Error ? err.message : "Could not invite."); }
++        finally { setBusy(false); }
++      }}>
++        <strong className="small">Invite a person</strong>
++        <div className="row row-wrap">
++          <label className="sr-only" htmlFor="mem-email">Email</label>
++          <input id="mem-email" className="input" type="email" required placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} style={{ maxWidth: 280 }} />
++          <label className="sr-only" htmlFor="mem-role">Role</label>
++          <select id="mem-role" className="select" style={{ maxWidth: 150 }} value={role} onChange={(e) => setRole(e.target.value as Role)}>
++            {grantable.map((r) => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}
++          </select>
++          <button className="btn btn-primary" disabled={busy || !email}>{busy ? <span className="spin" /> : "Send invitation"}</button>
++        </div>
++        <p className="hint">{ROLE_HELP[role]} They get an email with a link that works for 7 days; new people choose a password, existing users sign in to accept.</p>
++      </form>
++      {link && <div className="notice small" style={{ overflowWrap: "anywhere" }}>Share this link only with that person: <span className="mono">{link}</span> <Copy text={link} /></div>}
++      {pending.length > 0 && <div className="stack" style={{ gap: 4 }}>
++        <strong className="small">Waiting to accept</strong>
++        {pending.map((i) => <div key={i.id} className="spread small"><span>{i.email} · {i.role} · sent {relativeTime(i.created_at)}</span>
++          <button className="btn btn-sm btn-ghost" onClick={async () => { try { await api("/api/tenant/invitations", { method: "DELETE", body: { id: i.id } }); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>Revoke</button></div>)}
++      </div>}
++    </div>
++  );
++}
++
+ function ClientAccounts({ info }: { info: Ready }) {
+   const [name, setName] = useState("");
+   const [busy, setBusy] = useState(false);
+@@ -108,7 +117,7 @@ function ClientAccounts({ info }: { info: Ready }) {
+   const clients = info.orgs.filter((o) => o.parent_id === info.org.id);
+   return (
+     <div className="card">
+-      <div className="card-head"><div><h3>Client accounts</h3><div className="sub">Each client gets an isolated workspace. Your team keeps admin access.</div></div></div>
++      <div className="card-head"><div><h3>Client accounts</h3><div className="sub">Each client gets an isolated workspace. Your team keeps admin access.</div></div><a className="btn btn-sm btn-primary" href="/organization/new-client">Guided setup</a></div>
+       <div className="card-pad stack" style={{ gap: 8 }}>
+         {clients.length === 0 ? <p className="small muted">No client accounts yet.</p> : clients.map((c) => (
+           <div key={c.id} className="spread small">
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index 6a6e87e..9c2b4ed 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -1,6 +1,7 @@
+ "use client";
+ import Link from "next/link";
+ import { usePathname } from "next/navigation";
++import { useEffect, useState } from "react";
+ import { SunMark } from "./ui";
+ 
+ const I = {
+@@ -37,25 +38,37 @@ const NAV = [
+   { g: "Find work", items: [{ href: "/lead-finder", label: "Lead Finder", i: I.radar }, { href: "/", label: "Dashboard", i: I.home }, { href: "/discover", label: "Opportunity Radar", i: I.radar }, { href: "/scan", label: "Site Scanner", i: I.radar }, { href: "/prospects", label: "Pipeline", i: I.users }] },
+   { g: "Generate revenue", items: [{ href: "/campaign-studio", label: "Campaign Studio", i: I.engine }, { href: "/growth-engine", label: "Growth Engine", i: I.engine }, { href: "/agents", label: "Agent Center", i: I.bot }, { href: "/email-marketing", label: "Email Marketing", i: I.mail }, { href: "/video-prompts", label: "Video Prompt Studio", i: I.star }, { href: "/receptionists", label: "AI Receptionist", i: I.phone }, { href: "/leads", label: "Lead Marketplace", i: I.phone }] },
+   { g: "Websites", items: [{ href: "/sites", label: "Sites", i: I.org }, { href: "/forms", label: "Forms", i: I.report }, { href: "/knowledge", label: "Knowledge base", i: I.crm }] },
+-  { g: "Money", items: [{ href: "/invoices", label: "Invoices", i: I.report }, { href: "/account", label: "Plan & account", i: I.gear }] },
++  { g: "Money", items: [{ href: "/invoices", label: "Invoices", i: I.report }, { href: "/account", label: "Plan & account", i: I.gear }, { href: "/agency", label: "Agency", i: I.org }] },
+   { g: "Deliver", items: [{ href: "/website-builder", label: "Website Builder", i: I.star }, { href: "/audits", label: "Report Cards", i: I.report }, { href: "/seo", label: "SEO Toolkit", i: I.seo }, { href: "/reputation", label: "Review Engine", i: I.star }] },
+   { g: "", items: [{ href: "/organization", label: "Organization", i: I.org }, { href: "/channels", label: "Channels", i: I.plug }, { href: "/settings", label: "Settings", i: I.gear }] },
+ ];
+ 
+-const BARE = [/^\/login/, /^\/report\//, /^\/proposal\//, /^\/r\//, /^\/bridge\//, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//];
++const BARE = [/^\/login/, /^\/report\//, /^\/proposal\//, /^\/r\//, /^\/bridge\//, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/join\//];
++
++type Brand = { name: string; logo_url?: string | null; color?: string | null };
++
++// On an agency's own console domain, show that agency's name and logo.
++function useHostBrand() {
++  const [brand, setBrand] = useState<Brand | null>(null);
++  useEffect(() => {
++    fetch("/api/public/brand").then((r) => (r.ok ? r.json() : null)).then((j) => setBrand(j?.brand ?? null)).catch(() => undefined);
++  }, []);
++  return brand;
++}
+ 
+ export default function Shell({ children, agency }: { children: React.ReactNode; agency: string }) {
+   const path = usePathname() || "/";
++  const brand = useHostBrand();
+   if (BARE.some((r) => r.test(path))) return <>{children}</>;
+   return (
+     <div className="shell">
+       <aside className="sidebar">
+         <div className="brand">
+-          <div className="brand-mark">
+-            <SunMark />
++          <div className="brand-mark" style={brand?.color ? { background: brand.color } : undefined}>
++            {brand?.logo_url ? <img src={brand.logo_url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: "inherit" }} /> : <SunMark />}
+           </div>
+           <div>
+-            <div className="brand-name">{agency}</div>
++            <div className="brand-name">{brand?.name || agency}</div>
+             <div className="brand-sub">Growth Console</div>
+           </div>
+         </div>
+diff --git a/src/components/tenant/Transfers.tsx b/src/components/tenant/Transfers.tsx
+new file mode 100644
+index 0000000..6799363
+--- /dev/null
++++ b/src/components/tenant/Transfers.tsx
+@@ -0,0 +1,59 @@
++"use client";
++import { useState } from "react";
++import { api, atLeast, Org, relativeTime, useResource } from "./client";
++
++type Transfer = { id: string; organization_id: string; organization_name: string; from_name: string; to_name: string; from_agency_id: string; to_agency_id: string; status: string; client_approved_at: string | null; agency_accepted_at: string | null; note: string | null; created_at: string };
++
++// Moving a client account to another agency. Needs the receiving agency's
++// acceptance and the client owner's consent; the database checks every step.
++export default function Transfers({ org, clients, toast }: { org: Org; clients?: { id: string; name: string }[]; toast: (m: string) => void }) {
++  const { data, reload } = useResource<{ transfers: Transfer[]; account_id: string | null }>("/api/organization/transfers");
++  const [target, setTarget] = useState("");
++  const [orgId, setOrgId] = useState(org.kind === "client" ? org.id : "");
++  const [note, setNote] = useState("");
++  const decide = async (id: string, decision: string, done: string) => { try { const r = await api<{ status: string }>(`/api/organization/transfers/${id}`, { body: { decision } }); toast(r.status === "completed" ? "Transfer completed." : done); reload(); } catch (e) { toast(e instanceof Error ? e.message : "That did not work."); } };
++  const canStart = org.kind === "client" ? org.role === "owner" : atLeast(org.role, "admin");
++  const pending = (data?.transfers || []).filter((t) => t.status === "pending");
++  const past = (data?.transfers || []).filter((t) => t.status !== "pending").slice(0, 5);
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Account transfers</h3><div className="sub">Move a client account to another agency. The receiving agency accepts, and the client&apos;s owner consents.</div></div></div>
++      <div className="card-pad stack">
++        {data?.account_id && <div className="small">Your agency account ID (give it to an agency transferring a client to you): <span className="mono">{data.account_id}</span></div>}
++        {pending.map((t) => {
++          const incoming = t.to_agency_id === org.id;
++          return (
++            <div key={t.id} className="stack" style={{ gap: 6, border: "1px solid var(--line)", borderRadius: 8, padding: 10 }}>
++              <div className="small"><strong>{t.organization_name}</strong>: {t.from_name} → {t.to_name} · {relativeTime(t.created_at)}{t.note ? ` · “${t.note}”` : ""}</div>
++              <div className="tiny muted">Client consent: {t.client_approved_at ? "given" : "waiting"} · Receiving agency: {t.agency_accepted_at ? "accepted" : "waiting"}</div>
++              <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
++                {incoming && !t.agency_accepted_at && <button className="btn btn-sm btn-primary" onClick={() => decide(t.id, "accept", "Accepted. Waiting for the client's consent.")}>Accept client</button>}
++                {org.kind === "client" && org.role === "owner" && !t.client_approved_at && <button className="btn btn-sm btn-primary" onClick={() => { if (window.confirm(`Move ${t.organization_name} to ${t.to_name}? They will manage your account and see its data.`)) decide(t.id, "approve", "Consent given."); }}>Consent to move</button>}
++                {(incoming || org.kind === "client") && <button className="btn btn-sm" onClick={() => decide(t.id, "decline", "Declined.")}>Decline</button>}
++                {!incoming && <button className="btn btn-sm btn-ghost" onClick={() => decide(t.id, "cancel", "Cancelled.")}>Cancel request</button>}
++              </div>
++            </div>
++          );
++        })}
++        {canStart && (org.kind === "client" || (clients && clients.length > 0)) && (
++          <div className="stack" style={{ gap: 6 }}>
++            <strong className="small">Start a transfer</strong>
++            <div className="row" style={{ flexWrap: "wrap" }}>
++              {org.kind === "agency" && <><label className="sr-only" htmlFor="tr-org">Client account</label><select id="tr-org" className="select" style={{ maxWidth: 220 }} value={orgId} onChange={(e) => setOrgId(e.target.value)}><option value="">Choose a client…</option>{clients!.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></>}
++              <label className="sr-only" htmlFor="tr-to">Receiving agency account ID</label>
++              <input id="tr-to" className="input" style={{ maxWidth: 240 }} placeholder="Receiving agency's account ID" value={target} onChange={(e) => setTarget(e.target.value)} />
++              <label className="sr-only" htmlFor="tr-note">Note</label>
++              <input id="tr-note" className="input" style={{ maxWidth: 220 }} placeholder="Note (optional)" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
++              <button className="btn btn-sm" disabled={!orgId || target.trim().length < 3} onClick={async () => {
++                try { await api("/api/organization/transfers", { body: { organization_id: orgId, to_agency: target.trim(), note: note.trim() || undefined } }); setTarget(""); setNote(""); toast("Transfer requested."); reload(); }
++                catch (e) { toast(e instanceof Error ? e.message : "Could not start the transfer."); }
++              }}>Request transfer</button>
++            </div>
++          </div>
++        )}
++        {!pending.length && !canStart && <p className="small muted">No pending transfers.</p>}
++        {past.length > 0 && <div className="tiny muted">{past.map((t) => `${t.organization_name} → ${t.to_name}: ${t.status}`).join(" · ")}</div>}
++      </div>
++    </div>
++  );
++}
+diff --git a/src/lib/billing/platform.ts b/src/lib/billing/platform.ts
+new file mode 100644
+index 0000000..44c3442
+--- /dev/null
++++ b/src/lib/billing/platform.ts
+@@ -0,0 +1,109 @@
++import "server-only";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import type Stripe from "stripe";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { systemAudit } from "@/lib/tenant/system-audit";
++import { stripeClient } from "@/lib/stripe";
++
++// Agencies subscribe to the platform through the platform's own Stripe
++// account (Stripe Billing). The verified webhook is the only writer of
++// subscription state and of the agency's plan.
++export const ACTIVE = ["trialing", "active", "past_due"] as const;
++export const INACTIVE_PLAN = "agency-inactive";
++
++export function platformBillingStatus() {
++  return { configured: !!stripeClient() && !!process.env.STRIPE_PLATFORM_WEBHOOK_SECRET };
++}
++
++export async function subscriptionFor(client: SupabaseClient, orgId: string) {
++  const { data, error } = await client.from("platform_subscriptions").select("plan_key, status, current_period_end, cancel_at_period_end, updated_at").eq("organization_id", orgId).maybeSingle();
++  fromDb(error);
++  return data;
++}
++
++export async function agencyPlans(client: SupabaseClient) {
++  const { data, error } = await client.from("plans").select("key, name, description, price_cents, limits, stripe_price_id")
++    .is("owner_org_id", null).eq("audience", "agency").eq("active", true).order("price_cents");
++  fromDb(error);
++  return data || [];
++}
++
++async function customerFor(stripe: Stripe, system: SupabaseClient, org: { id: string; name: string }, email: string | null) {
++  const { data } = await system.from("platform_subscriptions").select("stripe_customer_id").eq("organization_id", org.id).maybeSingle();
++  if (data?.stripe_customer_id) return data.stripe_customer_id as string;
++  const c = await stripe.customers.create({ name: org.name, email: email || undefined, metadata: { organization_id: org.id } }, { idempotencyKey: `platform-customer-${org.id}` });
++  const { error } = await system.from("platform_subscriptions").insert({ organization_id: org.id, stripe_customer_id: c.id, status: "incomplete" });
++  if (error && error.code !== "23505") fromDb(error);
++  return c.id;
++}
++
++// Checkout for a new subscription, or the billing portal to change or cancel one.
++export async function startSubscription(system: SupabaseClient | null, org: { id: string; name: string; kind: string }, email: string | null, planKey: string, base: string) {
++  const stripe = stripeClient();
++  if (!stripe || !system) throw new ApiError("Integration not configured: the platform's STRIPE_SECRET_KEY and SUPABASE_SERVICE_ROLE_KEY are needed for subscriptions.", 503, "integration_not_configured");
++  if (org.kind !== "agency") throw new ApiError("Only agencies subscribe to the platform.", 403, "forbidden");
++  const { data: plan } = await system.from("plans").select("key, stripe_price_id, audience, owner_org_id, active").eq("key", planKey).maybeSingle();
++  if (!plan || plan.audience !== "agency" || plan.owner_org_id || !plan.active) throw new ApiError("That plan is not available.", 422, "invalid");
++  if (!plan.stripe_price_id) throw new ApiError("Integration not configured: this plan has no Stripe price yet. Platform staff set it in Plan & account.", 503, "integration_not_configured");
++  const existing = await subscriptionFor(system, org.id);
++  const customer = await customerFor(stripe, system, org, email);
++  if (existing && (ACTIVE as readonly string[]).includes(existing.status)) {
++    const portal = await stripe.billingPortal.sessions.create({ customer, return_url: `${base}/account` });
++    return { url: portal.url };
++  }
++  const session = await stripe.checkout.sessions.create({
++    mode: "subscription", customer, line_items: [{ price: plan.stripe_price_id, quantity: 1 }],
++    success_url: `${base}/account?subscribed=1`, cancel_url: `${base}/account`,
++    client_reference_id: org.id, subscription_data: { metadata: { organization_id: org.id } }, metadata: { organization_id: org.id },
++  });
++  if (!session.url) throw new ApiError("Stripe did not return a checkout link.", 502, "server_error");
++  return { url: session.url };
++}
++
++export async function portalUrl(system: SupabaseClient | null, orgId: string, base: string) {
++  const stripe = stripeClient();
++  if (!stripe || !system) throw new ApiError("Integration not configured: platform Stripe keys are missing.", 503, "integration_not_configured");
++  const { data } = await system.from("platform_subscriptions").select("stripe_customer_id").eq("organization_id", orgId).maybeSingle();
++  if (!data) throw new ApiError("No subscription yet.", 404, "not_found");
++  return { url: (await stripe.billingPortal.sessions.create({ customer: data.stripe_customer_id, return_url: `${base}/account` })).url };
++}
++
++// Applies a subscription's state: active/trialing/past_due keep the paid plan,
++// anything else moves the agency to the inactive plan (existing clients keep
++// working; no new client accounts).
++export async function applySubscription(system: SupabaseClient, sub: Pick<Stripe.Subscription, "id" | "status" | "customer" | "cancel_at_period_end" | "metadata"> & { items: { data: { price: { id: string }; current_period_end?: number }[] } }) {
++  const customer = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
++  const { data: row } = await system.from("platform_subscriptions").select("organization_id").eq("stripe_customer_id", customer).maybeSingle();
++  const orgId = row?.organization_id ?? sub.metadata?.organization_id;
++  if (!orgId) return "unknown_customer";
++  const item = sub.items.data[0];
++  const { data: plan } = item ? await system.from("plans").select("key").eq("stripe_price_id", item.price.id).is("owner_org_id", null).eq("audience", "agency").maybeSingle() : { data: null };
++  const periodEnd = item?.current_period_end ? new Date(item.current_period_end * 1000).toISOString() : null;
++  const { error } = await system.from("platform_subscriptions").upsert({
++    organization_id: orgId, stripe_customer_id: customer, stripe_subscription_id: sub.id, plan_key: plan?.key ?? null, status: sub.status,
++    current_period_end: periodEnd, cancel_at_period_end: !!sub.cancel_at_period_end, updated_at: new Date().toISOString(),
++  });
++  fromDb(error);
++  const live = (ACTIVE as readonly string[]).includes(sub.status);
++  const nextPlan = live && plan ? plan.key : live ? null : INACTIVE_PLAN;
++  if (nextPlan) {
++    const { data: org } = await system.from("organizations").select("plan, kind").eq("id", orgId).maybeSingle();
++    if (org?.kind === "agency" && org.plan !== nextPlan && org.plan !== "internal") {
++      const { error: e2 } = await system.from("organizations").update({ plan: nextPlan }).eq("id", orgId);
++      fromDb(e2);
++      await systemAudit(system, orgId, "subscription.plan_changed", null, { from: org.plan, to: nextPlan, status: sub.status });
++    }
++  }
++  return "applied";
++}
++
++export async function handlePlatformEvent(system: SupabaseClient, event: Stripe.Event) {
++  switch (event.type) {
++    case "customer.subscription.created":
++    case "customer.subscription.updated":
++    case "customer.subscription.deleted":
++      return applySubscription(system, event.data.object as Stripe.Subscription);
++    default:
++      return "ignored";
++  }
++}
+diff --git a/src/lib/billing/rebilling.ts b/src/lib/billing/rebilling.ts
+new file mode 100644
+index 0000000..8713b4d
+--- /dev/null
++++ b/src/lib/billing/rebilling.ts
+@@ -0,0 +1,130 @@
++import "server-only";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { z } from "zod";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { systemAudit } from "@/lib/tenant/system-audit";
++import { INVOICE_COLUMNS, type Invoice } from "@/lib/billing/invoices";
++
++// Agencies bill their client accounts: a monthly plan fee plus metered usage
++// at the agency's own per-unit rates. Each month becomes a draft invoice in
++// the agency's account, which the agency reviews and sends.
++export const RATED = { sms: "Text messages", email: "Emails", ai_request: "AI requests", outreach_email: "Outreach emails" } as const;
++export type Rated = keyof typeof RATED;
++
++export const billingInput = z.object({
++  contact_id: z.string().uuid("Choose who receives the invoice."),
++  plan_fee_cents: z.number().int().min(0).max(10_000_000).nullable().default(null),
++  rates: z.partialRecord(z.enum(Object.keys(RATED) as [Rated, ...Rated[]]), z.number().min(0).max(1000)).default({}),
++  tax_rate_bp: z.number().int().min(0).max(5000).default(0),
++  auto_invoice: z.boolean().default(false),
++  active: z.boolean().default(true),
++});
++
++export const periodInput = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Use a month like 2026-09.");
++
++export function previousMonth(now = new Date()) {
++  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
++  return d.toISOString().slice(0, 7);
++}
++export const monthLabel = (period: string) => new Date(`${period}-01T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
++
++// 3 → "$0.03", 0.5 → "$0.005", 125 → "$1.25"
++export function fmtRate(cents: number) {
++  const [whole, frac = ""] = (cents / 100).toFixed(5).split(".");
++  const trimmed = frac.replace(/0+$/, "").padEnd(2, "0");
++  return `$${whole}.${trimmed}`;
++}
++
++// Pure: the invoice lines for one client and month.
++export function rebillLines(input: { planName: string; feeCents: number; rates: Partial<Record<Rated, number>>; usage: Partial<Record<Rated, number>>; period: string }) {
++  const lines: { description: string; quantity: number; unit_cents: number }[] = [];
++  if (input.feeCents > 0) lines.push({ description: `${input.planName} plan, ${monthLabel(input.period)}`, quantity: 1, unit_cents: input.feeCents });
++  for (const k of Object.keys(RATED) as Rated[]) {
++    const rate = input.rates[k] ?? 0;
++    const used = input.usage[k] ?? 0;
++    if (rate <= 0 || used <= 0) continue;
++    const amount = Math.round(used * rate);
++    if (amount <= 0) continue;
++    lines.push({ description: `${RATED[k]}: ${used.toLocaleString("en-US")} × ${fmtRate(rate)}`, quantity: 1, unit_cents: amount });
++  }
++  return lines;
++}
++
++export async function listClientBilling(client: SupabaseClient, agencyId: string) {
++  const [{ data: rows, error }, { data: runs }] = await Promise.all([
++    client.from("client_billing").select("client_org_id, contact_id, plan_fee_cents, rates, tax_rate_bp, auto_invoice, active, contacts(first_name, last_name, email)").eq("agency_org_id", agencyId),
++    client.from("client_billing_runs").select("client_org_id, period_start, invoice_id, created_at").eq("agency_org_id", agencyId).order("period_start", { ascending: false }).limit(200),
++  ]);
++  fromDb(error);
++  return { billing: rows || [], runs: runs || [] };
++}
++
++export async function saveClientBilling(client: SupabaseClient, agencyId: string, clientOrgId: string, input: z.infer<typeof billingInput>) {
++  const { error } = await client.from("client_billing").upsert({ client_org_id: clientOrgId, agency_org_id: agencyId, ...input });
++  if (error?.code === "42501") throw new ApiError("Billing can be set only for your own client accounts.", 403, "forbidden");
++  fromDb(error);
++  await audit(client, agencyId, "client_billing.saved", { type: "organization", id: clientOrgId }, { fee: input.plan_fee_cents, rates: input.rates });
++}
++
++type Actor = { client: SupabaseClient; system: boolean };
++
++// Creates the month's draft invoice for one client (idempotent per month).
++export async function invoiceClientMonth(actor: Actor, agencyId: string, clientOrgId: string, period: string) {
++  const c = actor.client;
++  const periodStart = `${periodInput.parse(period)}-01`;
++  if (periodStart >= new Date().toISOString().slice(0, 7) + "-01") throw new ApiError("Only finished months can be invoiced.", 422, "invalid");
++  const { data: b, error } = await c.from("client_billing").select("client_org_id, contact_id, plan_fee_cents, rates, tax_rate_bp, active").eq("agency_org_id", agencyId).eq("client_org_id", clientOrgId).maybeSingle();
++  fromDb(error);
++  if (!b || !b.active) return { status: "not_billed" as const };
++  const { data: existing } = await c.from("client_billing_runs").select("invoice_id").eq("client_org_id", clientOrgId).eq("period_start", periodStart).maybeSingle();
++  if (existing) return { status: "already_invoiced" as const, invoice_id: existing.invoice_id as string | null };
++  const [{ data: org }, { data: used, error: uErr }] = await Promise.all([
++    c.from("organizations").select("name, plan, parent_id").eq("id", clientOrgId).maybeSingle(),
++    c.rpc("usage_for_period", { p_org: clientOrgId, p_period: periodStart }),
++  ]);
++  fromDb(uErr);
++  if (!org || org.parent_id !== agencyId) return { status: "not_billed" as const };
++  const { data: plan } = await c.from("plans").select("name, price_cents").eq("key", org.plan).maybeSingle();
++  const usage = Object.fromEntries(((used || []) as { metric: string; quantity: number }[]).map((u) => [u.metric, Number(u.quantity)]));
++  const lines = rebillLines({ planName: plan?.name ?? org.plan, feeCents: b.plan_fee_cents ?? (org.plan === "internal" ? 0 : plan?.price_cents ?? 0), rates: b.rates, usage, period: periodStart.slice(0, 7) });
++  if (!lines.length) return { status: "nothing_to_bill" as const };
++  const { data: inv, error: iErr } = await c.from("invoices").insert({
++    organization_id: agencyId, kind: "invoice", contact_id: b.contact_id, line_items: lines, tax_rate_bp: b.tax_rate_bp,
++    notes: `${org.name}: services for ${monthLabel(periodStart.slice(0, 7))}.`,
++  }).select(INVOICE_COLUMNS).single();
++  fromDb(iErr);
++  const { error: rErr } = await c.from("client_billing_runs").insert({ agency_org_id: agencyId, client_org_id: clientOrgId, period_start: periodStart, invoice_id: inv!.id });
++  if (rErr?.code === "23505") {
++    await c.from("invoices").delete().eq("organization_id", agencyId).eq("id", inv!.id).eq("status", "draft");
++    return { status: "already_invoiced" as const };
++  }
++  fromDb(rErr);
++  const target = { type: "invoice", id: inv!.id };
++  if (actor.system) await systemAudit(c, agencyId, "client_billing.invoiced", target, { client: clientOrgId, period: periodStart });
++  else await audit(c, agencyId, "client_billing.invoiced", target, { client: clientOrgId, period: periodStart });
++  return { status: "created" as const, invoice: inv as Invoice };
++}
++
++export async function invoiceAllClients(actor: Actor, agencyId: string, period: string, onlyAuto = false) {
++  let q = actor.client.from("client_billing").select("client_org_id").eq("agency_org_id", agencyId).eq("active", true);
++  if (onlyAuto) q = q.eq("auto_invoice", true);
++  const { data, error } = await q;
++  fromDb(error);
++  const results: { client_org_id: string; status: string }[] = [];
++  for (const r of data || []) {
++    try { results.push({ client_org_id: r.client_org_id, status: (await invoiceClientMonth(actor, agencyId, r.client_org_id, period)).status }); }
++    catch (e) { results.push({ client_org_id: r.client_org_id, status: e instanceof ApiError ? e.message : "failed" }); }
++  }
++  return results;
++}
++
++// Scheduler: in the first days of a month, draft last month's invoices for
++// clients whose agency turned on automatic invoicing.
++export async function autoInvoiceTick(system: SupabaseClient, now = new Date()) {
++  if (now.getUTCDate() > 5) return { agencies: 0 };
++  const { data } = await system.from("client_billing").select("agency_org_id").eq("active", true).eq("auto_invoice", true).limit(1000);
++  const agencies = Array.from(new Set((data || []).map((r) => r.agency_org_id as string)));
++  for (const a of agencies) await invoiceAllClients({ client: system, system: true }, a, previousMonth(now), true);
++  return { agencies: agencies.length };
++}
+diff --git a/src/lib/hosting/netlify.ts b/src/lib/hosting/netlify.ts
+new file mode 100644
+index 0000000..e8cc227
+--- /dev/null
++++ b/src/lib/hosting/netlify.ts
+@@ -0,0 +1,37 @@
++import "server-only";
++
++// Adds or removes a domain alias on the Netlify site that serves the console,
++// so a verified custom domain gets an HTTPS certificate without manual steps.
++// Optional: without NETLIFY_API_TOKEN and NETLIFY_SITE_ID the UI shows the manual step.
++type Result = { configured: boolean; ok: boolean; message: string };
++type Fetch = typeof fetch;
++
++export function netlifyConfigured() {
++  return !!(process.env.NETLIFY_API_TOKEN?.trim() && process.env.NETLIFY_SITE_ID?.trim());
++}
++
++async function aliases(op: "add" | "remove", domain: string, f: Fetch = fetch): Promise<Result> {
++  const token = process.env.NETLIFY_API_TOKEN?.trim();
++  const site = process.env.NETLIFY_SITE_ID?.trim();
++  if (!token || !site) return { configured: false, ok: false, message: "Add the domain as a domain alias in Netlify (automatic setup not configured: NETLIFY_API_TOKEN, NETLIFY_SITE_ID)." };
++  if (!/^[A-Za-z0-9-]{3,64}$/.test(site)) return { configured: true, ok: false, message: "NETLIFY_SITE_ID looks wrong." };
++  const url = `https://api.netlify.com/api/v1/sites/${site}`;
++  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
++  try {
++    const r = await f(url, { headers, signal: AbortSignal.timeout(15000) });
++    if (!r.ok) return { configured: true, ok: false, message: `Netlify refused the request (${r.status}). Check the token's access.` };
++    const s = (await r.json()) as { custom_domain?: string | null; domain_aliases?: string[] };
++    const current = (s.domain_aliases || []).map((d) => d.toLowerCase());
++    if (s.custom_domain?.toLowerCase() === domain) return { configured: true, ok: true, message: "Already the site's main domain." };
++    const next = op === "add" ? Array.from(new Set([...current, domain])) : current.filter((d) => d !== domain);
++    if (next.length === current.length && next.every((d, i) => d === current[i])) return { configured: true, ok: true, message: op === "add" ? "Already set up on Netlify." : "Not on Netlify." };
++    const u = await f(url, { method: "PATCH", headers, body: JSON.stringify({ domain_aliases: next }), signal: AbortSignal.timeout(15000) });
++    if (!u.ok) return { configured: true, ok: false, message: `Netlify could not ${op} the domain (${u.status}).` };
++    return { configured: true, ok: true, message: op === "add" ? "Added on Netlify; the HTTPS certificate is issued automatically within minutes." : "Removed from Netlify." };
++  } catch {
++    return { configured: true, ok: false, message: "Netlify did not respond. Try again." };
++  }
++}
++
++export const addDomainAlias = (domain: string, f?: Fetch) => aliases("add", domain, f);
++export const removeDomainAlias = (domain: string, f?: Fetch) => aliases("remove", domain, f);
+diff --git a/src/lib/platform/email.ts b/src/lib/platform/email.ts
+new file mode 100644
+index 0000000..4bafb50
+--- /dev/null
++++ b/src/lib/platform/email.ts
+@@ -0,0 +1,27 @@
++import "server-only";
++
++// Platform email for account messages (invitations). Uses the platform's own
++// Resend key and sender, not a client's channels.
++export function platformEmailConfigured() {
++  return !!(process.env.RESEND_API_KEY?.trim() && (process.env.PLATFORM_FROM_EMAIL || process.env.OUTREACH_FROM_EMAIL));
++}
++
++export async function sendPlatformEmail(to: string, subject: string, text: string, fromName?: string): Promise<{ sent: boolean; reason: string | null }> {
++  const key = process.env.RESEND_API_KEY?.trim();
++  const address = process.env.PLATFORM_FROM_EMAIL || process.env.OUTREACH_FROM_EMAIL;
++  if (!key || !address) return { sent: false, reason: "Integration not configured: set RESEND_API_KEY and PLATFORM_FROM_EMAIL." };
++  const name = (fromName || "").replace(/[<>"\r\n]/g, "").slice(0, 60).trim();
++  const bare = address.replace(/^.*<([^>]+)>.*$/, "$1");
++  const r = await fetch("https://api.resend.com/emails", {
++    method: "POST",
++    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
++    body: JSON.stringify({ from: name ? `${name} <${bare}>` : address, to: [to], subject, text }),
++    signal: AbortSignal.timeout(15000),
++  }).catch(() => null);
++  if (!r) return { sent: false, reason: "The email service did not respond." };
++  if (!r.ok) {
++    const j = await r.json().catch(() => ({}));
++    return { sent: false, reason: (j as { message?: string }).message || `Email service error ${r.status}.` };
++  }
++  return { sent: true, reason: null };
++}
+diff --git a/src/lib/sites/domains.ts b/src/lib/sites/domains.ts
+index 67f3e6e..9b4e6d5 100644
+--- a/src/lib/sites/domains.ts
++++ b/src/lib/sites/domains.ts
+@@ -5,6 +5,7 @@ import { z } from "zod";
+ import { ApiError, fromDb } from "@/lib/tenant/api";
+ import { audit } from "@/lib/tenant/audit";
+ import type { CrmContext } from "@/lib/crm/service";
++import { addDomainAlias, removeDomainAlias } from "@/lib/hosting/netlify";
+ 
+ // Custom domains for hosted sites. Ownership is proven with a DNS TXT record
+ // at _sun-verify.<domain>; only the server (service role) marks a domain
+@@ -33,16 +34,21 @@ export async function addDomain(ctx: CrmContext, siteId: string, input: z.infer<
+   return data!;
+ }
+ 
+-export async function removeDomain(ctx: CrmContext, id: string) {
+-  const { error } = await ctx.client.from("site_domains").delete().eq("organization_id", ctx.orgId).eq("id", id);
++export async function removeDomain(ctx: CrmContext, id: string, table: DomainTable = "site_domains") {
++  const { data, error } = await ctx.client.from(table).delete().eq("organization_id", ctx.orgId).eq("id", id).select("domain, status").maybeSingle();
+   fromDb(error);
++  if (data?.status === "verified") await removeDomainAlias(data.domain);
+ }
+ 
+ export type TxtLookup = (name: string) => Promise<string[][]>;
++export type DomainTable = "site_domains" | "app_domains";
+ 
+-export async function verifyDomain(ctx: CrmContext, system: SupabaseClient | null, id: string, lookup: TxtLookup = resolveTxt) {
+-  const { data: d, error } = await ctx.client.from("site_domains").select("id, site_id, domain, verification_token, status").eq("organization_id", ctx.orgId).eq("id", id).maybeSingle();
++// Shared by website domains and agency console domains.
++export async function verifyDomain(ctx: CrmContext, system: SupabaseClient | null, id: string, lookup: TxtLookup = resolveTxt, table: DomainTable = "site_domains") {
++  const cols = table === "site_domains" ? "id, site_id, domain, verification_token, status" : "id, domain, verification_token, status";
++  const { data, error } = await ctx.client.from(table).select(cols).eq("organization_id", ctx.orgId).eq("id", id).maybeSingle();
+   fromDb(error);
++  const d = data as unknown as { id: string; site_id?: string; domain: string; verification_token: string; status: string } | null;
+   if (!d) throw new ApiError("Domain not found.", 404, "not_found");
+   if (d.status === "verified") return { verified: true, message: "Already verified." };
+   if (!system) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY is needed to verify domains.", 503, "integration_not_configured");
+@@ -53,10 +59,11 @@ export async function verifyDomain(ctx: CrmContext, system: SupabaseClient | nul
+     records = [];
+   }
+   const ok = records.includes(d.verification_token);
+-  await system.from("site_domains").update({ last_checked_at: new Date().toISOString(), ...(ok ? { status: "verified", verified_at: new Date().toISOString() } : {}) })
++  await system.from(table).update({ last_checked_at: new Date().toISOString(), ...(ok ? { status: "verified", verified_at: new Date().toISOString() } : {}) })
+     .eq("organization_id", ctx.orgId).eq("id", id);
+-  if (ok) await audit(ctx.client, ctx.orgId, "site.domain_verified", { type: "site", id: d.site_id }, { domain: d.domain });
+-  return ok
+-    ? { verified: true, message: "Verified. Point the domain at the console (see the DNS steps) and it will serve your published site." }
+-    : { verified: false, message: records.length ? "A TXT record was found but it doesn't match. Check the value and try again." : "No TXT record found yet. DNS changes can take up to an hour." };
++  if (!ok) return { verified: false, message: records.length ? "A TXT record was found but it doesn't match. Check the value and try again." : "No TXT record found yet. DNS changes can take up to an hour." };
++  await audit(ctx.client, ctx.orgId, table === "site_domains" ? "site.domain_verified" : "organization.domain_verified", d.site_id ? { type: "site", id: d.site_id } : null, { domain: d.domain });
++  const host = await addDomainAlias(d.domain);
++  const what = table === "site_domains" ? "it will serve your published site" : "your team can sign in there";
++  return { verified: true, hosting: host, message: `Verified. Point the domain at the console (see the DNS steps) and ${what}. ${host.message}` };
+ }
+diff --git a/src/lib/tenant/agency.ts b/src/lib/tenant/agency.ts
+new file mode 100644
+index 0000000..dfdb639
+--- /dev/null
++++ b/src/lib/tenant/agency.ts
+@@ -0,0 +1,72 @@
++import "server-only";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { z } from "zod";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { domainInput } from "@/lib/sites/domains";
++
++// Account transfers between agencies and white-label console domains.
++export const transferInput = z.object({
++  organization_id: z.string().uuid(),
++  to_agency: z.string().trim().toLowerCase().regex(/^[a-z0-9-]{3,60}$/, "Enter the receiving agency's account ID."),
++  note: z.string().trim().max(500).optional(),
++});
++export const decisionInput = z.object({ decision: z.enum(["approve", "accept", "decline", "cancel"]) });
++
++export async function listTransfers(client: SupabaseClient) {
++  const { data, error } = await client.from("org_transfers")
++    .select("id, organization_id, from_agency_id, to_agency_id, status, client_approved_at, agency_accepted_at, note, created_at, decided_at")
++    .order("created_at", { ascending: false }).limit(50);
++  fromDb(error);
++  const ids = Array.from(new Set((data || []).flatMap((t) => [t.organization_id, t.from_agency_id, t.to_agency_id])));
++  const { data: orgs } = ids.length ? await client.from("organizations").select("id, name").in("id", ids) : { data: [] };
++  const name = new Map((orgs || []).map((o) => [o.id, o.name as string]));
++  return (data || []).map((t) => ({ ...t, organization_name: name.get(t.organization_id) ?? "Client account", from_name: name.get(t.from_agency_id) ?? "Current agency", to_name: name.get(t.to_agency_id) ?? "Receiving agency" }));
++}
++
++export async function requestTransfer(client: SupabaseClient, input: z.infer<typeof transferInput>) {
++  const { data, error } = await client.rpc("request_transfer", { p_org: input.organization_id, p_to_agency_slug: input.to_agency, p_note: input.note ?? null });
++  if (error?.code === "P0002") throw new ApiError(error.message, 404, "not_found");
++  if (error?.code === "23505") throw new ApiError("A transfer is already pending for this account.", 409, "conflict");
++  fromDb(error);
++  return String(data);
++}
++
++export async function decideTransfer(client: SupabaseClient, id: string, decision: z.infer<typeof decisionInput>["decision"]) {
++  const { data, error } = await client.rpc("decide_transfer", { p_id: id, p_decision: decision });
++  if (error?.code === "P0002") throw new ApiError("This transfer is no longer pending.", 409, "conflict");
++  if (error?.code === "53400") throw new ApiError("The receiving agency has reached its client-account limit.", 402, "plan_limit");
++  fromDb(error);
++  return String(data);
++}
++
++export async function listAppDomains(client: SupabaseClient, orgId: string) {
++  const { data, error } = await client.from("app_domains").select("id, domain, verification_token, status, verified_at, last_checked_at, created_at").eq("organization_id", orgId).order("created_at");
++  fromDb(error);
++  return data || [];
++}
++
++export async function addAppDomain(client: SupabaseClient, orgId: string, input: z.infer<typeof domainInput>) {
++  const { data, error } = await client.from("app_domains").insert({ organization_id: orgId, domain: input.domain }).select("id, domain, verification_token, status").single();
++  if (error?.code === "23505") throw new ApiError("That domain is already connected.", 409, "conflict");
++  if (error?.code === "42501") throw new ApiError("Only agencies can use their own sign-in domain.", 403, "forbidden");
++  fromDb(error);
++  await audit(client, orgId, "organization.domain_added", null, { domain: input.domain });
++  return data!;
++}
++
++export type Brand = { name: string; logo_url?: string | null; color?: string | null; support_email?: string | null };
++
++// Branding for a host name (an agency's verified console domain), cached briefly.
++const cache = new Map<string, { brand: Brand | null; until: number }>();
++export async function brandForHost(system: SupabaseClient | null, host: string): Promise<Brand | null> {
++  const h = host.toLowerCase().split(":")[0];
++  if (!system || !/^[a-z0-9.-]{3,253}$/.test(h)) return null;
++  const hit = cache.get(h);
++  if (hit && hit.until > Date.now()) return hit.brand;
++  const { data } = await system.rpc("brand_for_domain", { p_domain: h });
++  const brand = (data as Brand | null) ?? null;
++  if (cache.size > 1000) cache.clear();
++  cache.set(h, { brand, until: Date.now() + 60_000 });
++  return brand;
++}
+diff --git a/src/lib/tenant/invitations.ts b/src/lib/tenant/invitations.ts
+new file mode 100644
+index 0000000..b2adf73
+--- /dev/null
++++ b/src/lib/tenant/invitations.ts
+@@ -0,0 +1,89 @@
++import "server-only";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { z } from "zod";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { publicBaseUrl } from "@/lib/supabase/system";
++import { sendPlatformEmail } from "@/lib/platform/email";
++
++// Email invitations. The database creates the token, stores only its hash,
++// checks the inviter's rights and the plan's seat limit, and requires the
++// accepting account's email to match.
++export const inviteInput = z.object({
++  email: z.string().trim().toLowerCase().email("Enter a valid email address.").max(254),
++  role: z.enum(["owner", "admin", "manager", "member", "viewer"]),
++});
++export const TOKEN = /^[0-9a-f]{48}$/;
++
++export async function listInvitations(client: SupabaseClient, orgId: string) {
++  const { data, error } = await client.from("invitations").select("id, email, role, status, expires_at, created_at, accepted_at")
++    .eq("organization_id", orgId).order("created_at", { ascending: false }).limit(50);
++  fromDb(error);
++  return data || [];
++}
++
++export async function invite(client: SupabaseClient, orgId: string, input: z.infer<typeof inviteInput>, req?: Request) {
++  const base = publicBaseUrl(req);
++  if (!base) throw new ApiError("Integration not configured: set PUBLIC_APP_URL so invitation links work.", 503, "integration_not_configured");
++  const { data: token, error } = await client.rpc("create_invitation", { p_org: orgId, p_email: input.email, p_role: input.role });
++  fromDb(error);
++  const { data: org } = await client.from("organizations").select("name, branding, parent_id").eq("id", orgId).single();
++  const brand = await senderBrand(client, org);
++  const link = `${base}/join/${token}`;
++  const text = `Hello,\n\nYou've been invited to join ${org!.name} on ${brand} as ${input.role === "admin" || input.role === "owner" ? "an" : "a"} ${input.role}.\n\nAccept the invitation here (the link works for 7 days):\n${link}\n\nIf you weren't expecting this, you can ignore this email.`;
++  const delivery = await sendPlatformEmail(input.email, `You're invited to ${org!.name}`, text, brand);
++  return { link, delivery };
++}
++
++// The name invitations come from: the managing agency's brand, else the platform's.
++async function senderBrand(client: SupabaseClient, org: { name: string; branding: Record<string, string> | null; parent_id: string | null } | null) {
++  if (org?.parent_id) {
++    const { data: parent } = await client.from("organizations").select("name, branding").eq("id", org.parent_id).maybeSingle();
++    if (parent) return (parent.branding as Record<string, string> | null)?.display_name || parent.name;
++  }
++  return org?.branding?.display_name || process.env.PLATFORM_NAME || "Sun Marketing";
++}
++
++export async function revokeInvitation(client: SupabaseClient, orgId: string, id: string) {
++  const { data, error } = await client.from("invitations").update({ status: "revoked" }).eq("organization_id", orgId).eq("id", id).eq("status", "pending").select("id").maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("That invitation is no longer pending.", 409, "conflict");
++}
++
++export async function previewInvitation(system: SupabaseClient, token: string) {
++  if (!TOKEN.test(token)) return null;
++  const { data, error } = await system.rpc("invitation_preview", { p_token: token });
++  fromDb(error);
++  const row = (data as { organization_id: string; organization_name: string; email: string; role: string; valid: boolean }[] | null)?.[0];
++  if (!row) return null;
++  const { data: exists } = await system.rpc("auth_email_exists", { p_email: row.email });
++  return { organization: row.organization_name, email: row.email, role: row.role, valid: row.valid, account_exists: exists === true };
++}
++
++export const joinInput = z.object({
++  password: z.string().min(10, "Use at least 10 characters.").max(200),
++  name: z.string().trim().max(120).optional(),
++});
++
++type Session = { access_token: string; refresh_token: string; expires_in: number };
++
++// New person: creates their account (the invitation link proves the email,
++// since it was sent there), signs them in and accepts as them.
++export async function joinWithNewAccount(system: SupabaseClient, token: string, input: z.infer<typeof joinInput>, signIn: (email: string, password: string) => Promise<Session | null>, asUser: (accessToken: string) => SupabaseClient) {
++  const p = await previewInvitation(system, token);
++  if (!p || !p.valid) throw new ApiError("This invitation is no longer valid. Ask for a new one.", 410, "not_found");
++  if (p.account_exists) throw new ApiError("You already have an account. Sign in to accept.", 409, "conflict");
++  const { error } = await system.auth.admin.createUser({ email: p.email, password: input.password, email_confirm: true, user_metadata: input.name ? { full_name: input.name } : undefined });
++  if (error) throw new ApiError(/already/i.test(error.message) ? "You already have an account. Sign in to accept." : "Your account could not be created.", 409, "conflict");
++  const session = await signIn(p.email, input.password);
++  if (!session) throw new ApiError("Your account was created, but signing in failed. Sign in to accept.", 502, "server_error");
++  await acceptAs(asUser(session.access_token), token);
++  return session;
++}
++
++export async function acceptAs(client: SupabaseClient, token: string) {
++  if (!TOKEN.test(token)) throw new ApiError("This invitation is no longer valid.", 410, "not_found");
++  const { data, error } = await client.rpc("accept_invitation", { p_token: token });
++  if (error?.code === "P0002") throw new ApiError("This invitation is no longer valid. Ask for a new one.", 410, "not_found");
++  fromDb(error);
++  return String(data);
++}
+diff --git a/src/middleware.ts b/src/middleware.ts
+index 30c9443..2f406af 100644
+--- a/src/middleware.ts
++++ b/src/middleware.ts
+@@ -4,7 +4,7 @@ import { AUTH_COOKIE, REFRESH_COOKIE, refreshSession, setSessionCookies } from "
+ // Public pages /book, /appointment and /review are customer-facing (token or slug).
+ // /api/automation/run, /api/comms/dispatch and /api/jobs/tick authenticate with AUTOMATION_SECRET (scheduler);
+ // /api/webhooks/* verify each provider's signature.
+-const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/automation\/run$/, /^\/api\/webhooks\//, /^\/api\/comms\/dispatch$/, /^\/api\/jobs\/tick$/, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
++const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/automation\/run$/, /^\/api\/webhooks\//, /^\/api\/comms\/dispatch$/, /^\/api\/jobs\/tick$/, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/join\//, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
+ 
+ async function expected(pass: string): Promise<string> {
+   const buf = new TextEncoder().encode("sunmarketing::" + pass);
+@@ -19,7 +19,7 @@ async function expected(pass: string): Promise<string> {
+ // decided per organization by RLS. Everything else is the legacy single-tenant
+ // console, which reads agency-wide data and is limited to platform staff.
+ const TENANT = [
+-  /^\/(command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge|invoices|account)(\/|$)/,
++  /^\/(command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge|invoices|account|agency)(\/|$)/,
+   /^\/api\/(crm|command|tenant|inbox|messages|channels|reputation|calendars|appointments|workflows|prospecting|forms|sites|knowledge|invoices|billing|organization)(\/|$)/,
+ ];
+ 
+diff --git a/supabase/migrations/20261012120000_phase6b_agency_operations.sql b/supabase/migrations/20261012120000_phase6b_agency_operations.sql
+new file mode 100644
+index 0000000..55a6133
+--- /dev/null
++++ b/supabase/migrations/20261012120000_phase6b_agency_operations.sql
+@@ -0,0 +1,446 @@
++-- Phase 6 part 2: agency operations.
++--   * Platform subscriptions: agencies pay the platform (Stripe Billing);
++--     agency plans limit the number of client accounts.
++--   * Client rebilling: agencies bill clients a plan fee plus metered usage
++--     at their own rates, as draft invoices they review.
++--   * Invitations by email with hashed, expiring tokens.
++--   * Account transfer between agencies, with the client's consent.
++--   * White-label app domains for agencies (branded sign-in).
++
++-- ------------------------------------------------------------------ plans
++alter table public.plans add column audience text not null default 'client' check (audience in ('client', 'agency'));
++alter table public.plans add column stripe_price_id text check (stripe_price_id ~ '^price_[A-Za-z0-9]{3,100}$');
++alter table public.plans add constraint plans_agency_owned_client check (owner_org_id is null or (audience = 'client' and stripe_price_id is null));
++
++insert into public.plans(key, name, description, price_cents, limits, audience, active) values
++  ('agency-solo', 'Agency Solo', 'Up to 5 client accounts.', 9700, '{"client_accounts": 5}', 'agency', true),
++  ('agency-growth', 'Agency Growth', 'Up to 25 client accounts.', 29700, '{"client_accounts": 25}', 'agency', true),
++  ('agency-scale', 'Agency Scale', 'Up to 100 client accounts.', 59700, '{"client_accounts": 100}', 'agency', true),
++  ('agency-inactive', 'No active subscription', 'Existing client accounts keep working; new ones need a subscription.', 0, '{"client_accounts": 0}', 'agency', false)
++on conflict (key) do nothing;
++
++create or replace function public.check_plan_limit(p_org uuid, p_metric text, p_add integer default 1) returns void
++language plpgsql security definer set search_path = '' as $$
++declare v_limit bigint; v_used bigint; v_label text;
++begin
++  select (p.limits ->> p_metric)::bigint into v_limit
++    from public.organizations o join public.plans p on p.key = o.plan where o.id = p_org;
++  if v_limit is null then return; end if;
++  v_used := case p_metric
++    when 'contacts' then (select count(*) from public.contacts where organization_id = p_org and erased_at is null)
++    when 'users' then (select count(*) from public.memberships where organization_id = p_org and status = 'active')
++    when 'sites' then (select count(*) from public.sites where organization_id = p_org and status <> 'archived')
++    when 'client_accounts' then (select count(*) from public.organizations where parent_id = p_org and status <> 'closed')
++    else (select coalesce(sum(quantity), 0) from public.usage_events where organization_id = p_org and metric = p_metric and occurred_at >= public.month_start())
++  end;
++  if v_used + p_add > v_limit then
++    v_label := case p_metric when 'sms' then 'text messages this month' when 'email' then 'emails this month' when 'ai_request' then 'AI requests this month'
++      when 'outreach_email' then 'outreach emails this month' when 'contacts' then 'contacts' when 'users' then 'team members' when 'sites' then 'websites'
++      when 'client_accounts' then 'client accounts' else p_metric end;
++    raise exception 'Plan limit reached: % of % %. Upgrade the plan to add more.', v_used, v_limit, v_label using errcode = '53400';
++  end if;
++end $$;
++
++create or replace function public.org_usage(p_org uuid)
++returns table (metric text, used bigint, "limit" bigint)
++language plpgsql stable security definer set search_path = '' as $$
++declare v_limits jsonb; v_kind text;
++begin
++  if public.org_rank(p_org) < 1 then raise exception 'Not allowed.' using errcode = '42501'; end if;
++  select p.limits, o.kind into v_limits, v_kind from public.organizations o join public.plans p on p.key = o.plan where o.id = p_org;
++  return query
++  select m.metric,
++    case m.metric
++      when 'contacts' then (select count(*) from public.contacts c where c.organization_id = p_org and c.erased_at is null)
++      when 'users' then (select count(*) from public.memberships x where x.organization_id = p_org and x.status = 'active')
++      when 'sites' then (select count(*) from public.sites s where s.organization_id = p_org and s.status <> 'archived')
++      when 'client_accounts' then (select count(*) from public.organizations o where o.parent_id = p_org and o.status <> 'closed')
++      else (select coalesce(sum(u.quantity), 0)::bigint from public.usage_events u where u.organization_id = p_org and u.metric = m.metric and u.occurred_at >= public.month_start())
++    end,
++    (v_limits ->> m.metric)::bigint
++  from unnest(array['sms', 'email', 'ai_request', 'outreach_email', 'contacts', 'users', 'sites'] || case when v_kind = 'agency' then array['client_accounts'] else array[]::text[] end) as m(metric);
++end $$;
++
++-- New client accounts count against the agency's plan.
++create or replace function public.tg_limit_client_accounts() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if new.kind = 'client' and new.parent_id is not null and (tg_op = 'INSERT' or new.parent_id is distinct from old.parent_id) then
++    perform public.check_plan_limit(new.parent_id, 'client_accounts');
++  end if;
++  return new;
++end $$;
++create trigger organizations_client_limit before insert or update of parent_id on public.organizations
++  for each row execute function public.tg_limit_client_accounts();
++
++-- Plans must match the kind of account they are assigned to.
++create or replace function public.govern_organization(p_org uuid, p_status text default null, p_plan text default null) returns void
++language plpgsql security definer set search_path = '' as $$
++declare v_org public.organizations; v_plan public.plans; v_allowed boolean;
++begin
++  select * into v_org from public.organizations where id = p_org;
++  if not found then raise exception 'Organization not found.' using errcode = 'P0002'; end if;
++  v_allowed := public.is_platform_staff() or (v_org.kind = 'client' and exists (
++    select 1 from public.memberships m where m.organization_id = v_org.parent_id and m.user_id = auth.uid() and m.status = 'active' and public.role_rank(m.role) >= 4));
++  if not v_allowed then raise exception 'Only the managing agency''s admins can change this.' using errcode = '42501'; end if;
++  if p_status is not null and p_status not in ('active', 'suspended', 'closed') then raise exception 'Unknown status.' using errcode = '22023'; end if;
++  if p_plan is not null then
++    -- Staff may also assign inactive plans (e.g. "No active subscription").
++    select * into v_plan from public.plans where key = p_plan and (active or public.is_platform_staff());
++    if not found or (v_plan.owner_org_id is not null and v_plan.owner_org_id is distinct from v_org.parent_id) then
++      raise exception 'That plan is not available for this account.' using errcode = '22023';
++    end if;
++    if v_plan.key = 'internal' and not public.is_platform_staff() then
++      raise exception 'Only platform staff assign the internal plan.' using errcode = '42501';
++    end if;
++    if v_plan.key <> 'internal' and v_plan.audience <> (case v_org.kind when 'agency' then 'agency' else 'client' end) then
++      raise exception 'That plan is for a different kind of account.' using errcode = '22023';
++    end if;
++  end if;
++  update public.organizations set status = coalesce(p_status, status), plan = coalesce(p_plan, plan) where id = p_org;
++  insert into public.audit_log(organization_id, actor_type, actor_id, action, metadata)
++  values (p_org, 'user', auth.uid(), 'organization.governed', jsonb_build_object('status', p_status, 'plan', p_plan, 'previous_status', v_org.status, 'previous_plan', v_org.plan));
++end $$;
++
++-- ------------------------------------------------- platform subscriptions
++-- Written only by the server from verified Stripe webhooks.
++create table public.platform_subscriptions (
++  organization_id uuid primary key references public.organizations(id) on delete cascade,
++  stripe_customer_id text not null unique check (stripe_customer_id ~ '^cus_[A-Za-z0-9]+$'),
++  stripe_subscription_id text unique,
++  plan_key text references public.plans(key),
++  status text not null default 'incomplete' check (status in ('incomplete', 'incomplete_expired', 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'paused')),
++  current_period_end timestamptz,
++  cancel_at_period_end boolean not null default false,
++  updated_at timestamptz not null default now()
++);
++
++-- --------------------------------------------------------- client billing
++create table public.client_billing (
++  client_org_id uuid primary key references public.organizations(id) on delete cascade,
++  agency_org_id uuid not null references public.organizations(id) on delete cascade,
++  contact_id uuid not null,
++  plan_fee_cents integer check (plan_fee_cents between 0 and 10000000),
++  rates jsonb not null default '{}' check (jsonb_typeof(rates) = 'object'),
++  tax_rate_bp integer not null default 0 check (tax_rate_bp between 0 and 5000),
++  auto_invoice boolean not null default false,
++  active boolean not null default true,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  foreign key (contact_id, agency_org_id) references public.contacts(id, organization_id) on delete restrict
++);
++create index client_billing_agency_idx on public.client_billing(agency_org_id);
++create trigger client_billing_updated before update on public.client_billing for each row execute function public.tg_set_updated_at();
++
++create or replace function public.tg_client_billing_guard() returns trigger
++language plpgsql set search_path = '' as $$
++declare v_key text; v_val jsonb;
++begin
++  if not exists (select 1 from public.organizations o where o.id = new.client_org_id and o.kind = 'client' and o.parent_id = new.agency_org_id) then
++    raise exception 'Billing can be set only for your own client accounts.' using errcode = '42501';
++  end if;
++  for v_key, v_val in select * from jsonb_each(new.rates) loop
++    if v_key not in ('sms', 'email', 'ai_request', 'outreach_email') then raise exception 'Unknown usage type %.', v_key using errcode = '22023'; end if;
++    if jsonb_typeof(v_val) <> 'number' or v_val::numeric < 0 or v_val::numeric > 1000 then
++      raise exception 'Rates are cents per unit between 0 and 1000.' using errcode = '22023';
++    end if;
++  end loop;
++  return new;
++end $$;
++create trigger client_billing_guard before insert or update on public.client_billing
++  for each row execute function public.tg_client_billing_guard();
++
++create table public.client_billing_runs (
++  id uuid primary key default gen_random_uuid(),
++  agency_org_id uuid not null references public.organizations(id) on delete cascade,
++  client_org_id uuid not null references public.organizations(id) on delete cascade,
++  period_start date not null check (extract(day from period_start) = 1),
++  invoice_id uuid,
++  created_at timestamptz not null default now(),
++  unique (client_org_id, period_start),
++  foreign key (invoice_id, agency_org_id) references public.invoices(id, organization_id) on delete set null (invoice_id)
++);
++
++-- Metered usage of a client for one calendar month (UTC).
++create or replace function public.usage_for_period(p_org uuid, p_period date)
++returns table (metric text, quantity bigint)
++language plpgsql stable security definer set search_path = '' as $$
++begin
++  if coalesce(current_setting('role', true), '') <> 'service_role' and public.org_rank(p_org) < 1 then
++    raise exception 'Not allowed.' using errcode = '42501';
++  end if;
++  return query
++  select u.metric, sum(u.quantity)::bigint from public.usage_events u
++   where u.organization_id = p_org
++     and u.occurred_at >= (date_trunc('month', p_period::timestamp) at time zone 'UTC')
++     and u.occurred_at < ((date_trunc('month', p_period::timestamp) + interval '1 month') at time zone 'UTC')
++   group by u.metric;
++end $$;
++
++-- ------------------------------------------------------------ invitations
++create table public.invitations (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  email text not null check (email = lower(btrim(email)) and email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' and length(email) <= 254),
++  role text not null check (role in ('owner', 'admin', 'manager', 'member', 'viewer')),
++  token_hash text not null unique,
++  status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked')),
++  expires_at timestamptz not null default now() + interval '7 days',
++  invited_by uuid,
++  accepted_by uuid,
++  accepted_at timestamptz,
++  created_at timestamptz not null default now()
++);
++create unique index invitations_pending on public.invitations(organization_id, email) where status = 'pending';
++
++-- Returns the raw token once; only its hash is stored.
++create or replace function public.create_invitation(p_org uuid, p_email text, p_role text) returns text
++language plpgsql security definer set search_path = '' as $$
++declare v_rank integer := public.org_rank(p_org); v_token text := encode(extensions.gen_random_bytes(24), 'hex'); v_email text := lower(btrim(p_email));
++begin
++  if v_rank < 4 then raise exception 'Only admins can invite people.' using errcode = '42501'; end if;
++  if public.role_rank(p_role) = 0 then raise exception 'Unknown role.' using errcode = '22023'; end if;
++  if public.role_rank(p_role) > v_rank and not (p_role = 'owner' and public.can_manage_owners(p_org)) then
++    raise exception 'You cannot grant a role above your own.' using errcode = '42501';
++  end if;
++  if exists (select 1 from public.organizations where id = p_org and status <> 'active') then
++    raise exception 'This account is not active.' using errcode = '42501';
++  end if;
++  perform public.check_plan_limit(p_org, 'users');
++  update public.invitations set status = 'revoked' where organization_id = p_org and email = v_email and status = 'pending';
++  insert into public.invitations(organization_id, email, role, token_hash, invited_by)
++  values (p_org, v_email, p_role, encode(extensions.digest(v_token, 'sha256'), 'hex'), auth.uid());
++  insert into public.audit_log(organization_id, actor_type, actor_id, action, metadata)
++  values (p_org, 'user', auth.uid(), 'invitation.created', jsonb_build_object('email', v_email, 'role', p_role));
++  return v_token;
++end $$;
++
++-- What a token holder may see before accepting (server use only).
++create or replace function public.invitation_preview(p_token text)
++returns table (id uuid, organization_id uuid, organization_name text, email text, role text, valid boolean)
++language sql stable security definer set search_path = '' as $$
++  select i.id, i.organization_id, o.name, i.email, i.role, (i.status = 'pending' and i.expires_at > now() and o.status = 'active')
++    from public.invitations i join public.organizations o on o.id = i.organization_id
++   where i.token_hash = encode(extensions.digest(coalesce(p_token, ''), 'sha256'), 'hex')
++$$;
++
++-- Whether an account already exists for an invited address (server use only).
++create or replace function public.auth_email_exists(p_email text) returns boolean
++language sql stable security definer set search_path = '' as $$
++  select exists (select 1 from auth.users u where lower(u.email) = lower(btrim(p_email)))
++$$;
++
++-- The signed-in person accepts; their account email must match the invitation.
++create or replace function public.accept_invitation(p_token text) returns uuid
++language plpgsql security definer set search_path = '' as $$
++declare v_inv public.invitations; v_email text;
++begin
++  if auth.uid() is null then raise exception 'Sign in first.' using errcode = '42501'; end if;
++  select * into v_inv from public.invitations where token_hash = encode(extensions.digest(coalesce(p_token, ''), 'sha256'), 'hex') for update;
++  if not found or v_inv.status <> 'pending' or v_inv.expires_at <= now() then
++    raise exception 'This invitation is no longer valid. Ask for a new one.' using errcode = 'P0002';
++  end if;
++  select lower(u.email) into v_email from auth.users u where u.id = auth.uid();
++  if v_email is distinct from v_inv.email then
++    raise exception 'This invitation was sent to a different email address.' using errcode = '42501';
++  end if;
++  insert into public.memberships(organization_id, user_id, role, email) values (v_inv.organization_id, auth.uid(), v_inv.role, v_inv.email)
++  on conflict (organization_id, user_id) do update set role = excluded.role, status = 'active', email = excluded.email
++  where public.memberships.role <> 'owner';
++  update public.invitations set status = 'accepted', accepted_by = auth.uid(), accepted_at = now() where id = v_inv.id;
++  insert into public.audit_log(organization_id, actor_type, actor_id, action, target_type, target_id, metadata)
++  values (v_inv.organization_id, 'user', auth.uid(), 'invitation.accepted', 'user', auth.uid()::text, jsonb_build_object('role', v_inv.role));
++  return v_inv.organization_id;
++end $$;
++
++-- ------------------------------------------------------- account transfer
++create table public.org_transfers (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  from_agency_id uuid not null references public.organizations(id) on delete cascade,
++  to_agency_id uuid not null references public.organizations(id) on delete cascade,
++  status text not null default 'pending' check (status in ('pending', 'completed', 'declined', 'cancelled')),
++  client_approved_at timestamptz,
++  client_approved_by uuid,
++  agency_accepted_at timestamptz,
++  agency_accepted_by uuid,
++  requested_by uuid not null,
++  note text check (length(note) <= 500),
++  created_at timestamptz not null default now(),
++  decided_at timestamptz,
++  check (from_agency_id <> to_agency_id)
++);
++create unique index org_transfers_pending on public.org_transfers(organization_id) where status = 'pending';
++
++create or replace function public.is_direct_admin(p_org uuid, p_min integer default 4) returns boolean
++language sql stable security definer set search_path = '' as $$
++  select exists (select 1 from public.memberships m where m.organization_id = p_org and m.user_id = auth.uid() and m.status = 'active' and public.role_rank(m.role) >= p_min)
++$$;
++
++create or replace function public.tg_finish_transfer() returns trigger
++language plpgsql security definer set search_path = '' as $$
++declare v_plan public.plans;
++begin
++  if new.status = 'pending' and new.client_approved_at is not null and new.agency_accepted_at is not null then
++    perform public.check_plan_limit(new.to_agency_id, 'client_accounts');
++    select p.* into v_plan from public.organizations o join public.plans p on p.key = o.plan where o.id = new.organization_id;
++    update public.organizations set parent_id = new.to_agency_id,
++      plan = case when v_plan.owner_org_id is not null then 'starter' else plan end
++     where id = new.organization_id;
++    delete from public.client_billing where client_org_id = new.organization_id;
++    new.status := 'completed'; new.decided_at := now();
++    insert into public.audit_log(organization_id, actor_type, actor_id, action, metadata)
++    values (new.organization_id, 'user', auth.uid(), 'organization.transferred', jsonb_build_object('from', new.from_agency_id, 'to', new.to_agency_id));
++  end if;
++  return new;
++end $$;
++create trigger org_transfers_finish before insert or update on public.org_transfers
++  for each row execute function public.tg_finish_transfer();
++
++-- Started by the current agency's admins or the client's owner. Needs the
++-- receiving agency's acceptance and, if the client has an owner, their consent.
++create or replace function public.request_transfer(p_org uuid, p_to_agency_slug text, p_note text default null) returns uuid
++language plpgsql security definer set search_path = '' as $$
++declare v_org public.organizations; v_to uuid; v_id uuid; v_client_owner boolean; v_has_owner boolean;
++begin
++  select * into v_org from public.organizations where id = p_org and kind = 'client';
++  if not found then raise exception 'Client account not found.' using errcode = 'P0002'; end if;
++  v_client_owner := public.is_direct_admin(p_org, 5);
++  if not (v_client_owner or public.is_direct_admin(v_org.parent_id, 4) or public.is_platform_staff()) then
++    raise exception 'Only the managing agency''s admins or the account owner can start a transfer.' using errcode = '42501';
++  end if;
++  select id into v_to from public.organizations where slug = lower(btrim(p_to_agency_slug)) and kind = 'agency' and status = 'active';
++  if v_to is null then raise exception 'No active agency has that account ID.' using errcode = 'P0002'; end if;
++  if v_to = v_org.parent_id then raise exception 'The account already belongs to that agency.' using errcode = '22023'; end if;
++  v_has_owner := exists (select 1 from public.memberships m where m.organization_id = p_org and m.role = 'owner' and m.status = 'active');
++  insert into public.org_transfers(organization_id, from_agency_id, to_agency_id, requested_by, note, client_approved_at, client_approved_by)
++  values (p_org, v_org.parent_id, v_to, auth.uid(), nullif(btrim(p_note), ''),
++          case when v_client_owner or not v_has_owner then now() end, case when v_client_owner then auth.uid() end)
++  returning id into v_id;
++  insert into public.audit_log(organization_id, actor_type, actor_id, action, metadata)
++  values (p_org, 'user', auth.uid(), 'organization.transfer_requested', jsonb_build_object('to', v_to));
++  return v_id;
++exception when unique_violation then
++  raise exception 'A transfer is already pending for this account.' using errcode = '23505';
++end $$;
++
++-- p_decision: 'approve' (client owner), 'accept' (receiving agency admin),
++-- 'decline' (either), 'cancel' (the requesting side).
++create or replace function public.decide_transfer(p_id uuid, p_decision text) returns text
++language plpgsql security definer set search_path = '' as $$
++declare v_t public.org_transfers; v_client boolean; v_receiver boolean; v_sender boolean;
++begin
++  select * into v_t from public.org_transfers where id = p_id for update;
++  if not found or v_t.status <> 'pending' then raise exception 'This transfer is no longer pending.' using errcode = 'P0002'; end if;
++  v_client := public.is_direct_admin(v_t.organization_id, 5);
++  v_receiver := public.is_direct_admin(v_t.to_agency_id, 4);
++  v_sender := public.is_direct_admin(v_t.from_agency_id, 4) or v_t.requested_by = auth.uid();
++  if p_decision = 'approve' and v_client then
++    update public.org_transfers set client_approved_at = now(), client_approved_by = auth.uid() where id = p_id;
++  elsif p_decision = 'accept' and v_receiver then
++    update public.org_transfers set agency_accepted_at = now(), agency_accepted_by = auth.uid() where id = p_id;
++  elsif p_decision = 'decline' and (v_client or v_receiver) then
++    update public.org_transfers set status = 'declined', decided_at = now() where id = p_id;
++  elsif p_decision = 'cancel' and (v_sender or v_client) then
++    update public.org_transfers set status = 'cancelled', decided_at = now() where id = p_id;
++  else
++    raise exception 'You cannot do that for this transfer.' using errcode = '42501';
++  end if;
++  return (select status from public.org_transfers where id = p_id);
++end $$;
++
++-- ------------------------------------------------- white-label app domains
++create table public.app_domains (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  domain text not null check (domain ~ '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$' and length(domain) <= 253),
++  verification_token text not null default encode(extensions.gen_random_bytes(16), 'hex'),
++  status text not null default 'pending' check (status in ('pending', 'verified')),
++  verified_at timestamptz,
++  last_checked_at timestamptz,
++  created_by uuid,
++  created_at timestamptz not null default now()
++);
++create unique index app_domains_domain on public.app_domains(domain);
++
++create or replace function public.tg_app_domains_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if current_user not in ('authenticated', 'anon') then return new; end if;
++  if tg_op = 'INSERT' then
++    if not exists (select 1 from public.organizations o where o.id = new.organization_id and o.kind = 'agency') then
++      raise exception 'Only agencies use their own sign-in domain.' using errcode = '42501';
++    end if;
++    new.status := 'pending'; new.verified_at := null; new.created_by := auth.uid();
++    new.verification_token := encode(extensions.gen_random_bytes(16), 'hex');
++    return new;
++  end if;
++  raise exception 'Domains are verified by the server.' using errcode = '42501';
++end $$;
++create trigger app_domains_guard before insert or update on public.app_domains
++  for each row execute function public.tg_app_domains_guard();
++
++-- A host name serves either a client website or an agency's console, never both.
++create or replace function public.tg_domain_unique_across() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if (tg_table_name = 'app_domains' and exists (select 1 from public.site_domains where domain = new.domain))
++     or (tg_table_name = 'site_domains' and exists (select 1 from public.app_domains where domain = new.domain)) then
++    raise exception 'That domain is already connected.' using errcode = '23505';
++  end if;
++  return new;
++end $$;
++create trigger app_domains_unique before insert on public.app_domains for each row execute function public.tg_domain_unique_across();
++create trigger site_domains_unique before insert on public.site_domains for each row execute function public.tg_domain_unique_across();
++
++-- Public branding for the sign-in page on an agency's verified domain.
++create or replace function public.brand_for_domain(p_domain text) returns jsonb
++language sql stable security definer set search_path = '' as $$
++  select jsonb_build_object('name', coalesce(nullif(o.branding ->> 'display_name', ''), o.name), 'logo_url', o.branding ->> 'logo_url',
++                            'color', o.branding ->> 'color', 'support_email', o.branding ->> 'support_email')
++    from public.app_domains d join public.organizations o on o.id = d.organization_id and o.status = 'active' and o.kind = 'agency'
++   where d.domain = lower(btrim(p_domain)) and d.status = 'verified'
++   limit 1
++$$;
++
++-- ---------------------------------------------------------------------- RLS
++alter table public.platform_subscriptions enable row level security;
++alter table public.client_billing enable row level security;
++alter table public.client_billing_runs enable row level security;
++alter table public.invitations enable row level security;
++alter table public.org_transfers enable row level security;
++alter table public.app_domains enable row level security;
++
++create policy platform_subscriptions_read on public.platform_subscriptions for select to authenticated
++  using (public.org_rank(organization_id) >= 4 or public.is_platform_staff());
++create policy client_billing_agency on public.client_billing for all to authenticated
++  using (public.org_rank(agency_org_id) >= 4) with check (public.org_rank(agency_org_id) >= 4);
++create policy client_billing_runs_agency on public.client_billing_runs for all to authenticated
++  using (public.org_rank(agency_org_id) >= 4)
++  with check (public.org_rank(agency_org_id) >= 4 and exists (select 1 from public.organizations o where o.id = client_org_id and o.parent_id = agency_org_id));
++create policy invitations_admin_read on public.invitations for select to authenticated using (public.org_rank(organization_id) >= 4);
++create policy invitations_admin_revoke on public.invitations for update to authenticated
++  using (public.org_rank(organization_id) >= 4 and status = 'pending') with check (status = 'revoked');
++create policy org_transfers_read on public.org_transfers for select to authenticated using (
++  public.org_rank(organization_id) >= 4 or public.is_direct_admin(to_agency_id, 4) or public.is_direct_admin(from_agency_id, 4));
++create policy app_domains_read on public.app_domains for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy app_domains_write on public.app_domains for insert to authenticated with check (public.org_rank(organization_id) >= 4);
++create policy app_domains_delete on public.app_domains for delete to authenticated using (public.org_rank(organization_id) >= 4);
++
++revoke all on public.platform_subscriptions, public.client_billing, public.client_billing_runs, public.invitations, public.org_transfers, public.app_domains from anon, authenticated;
++grant select on public.platform_subscriptions, public.org_transfers to authenticated;
++grant select, insert, update, delete on public.client_billing to authenticated;
++grant select, insert, delete on public.client_billing_runs to authenticated;
++grant select (id, organization_id, email, role, status, expires_at, invited_by, accepted_by, accepted_at, created_at) on public.invitations to authenticated;
++grant update (status) on public.invitations to authenticated;
++grant select, insert, delete on public.app_domains to authenticated;
++grant all on public.platform_subscriptions, public.client_billing, public.client_billing_runs, public.invitations, public.org_transfers, public.app_domains to service_role;
++
++revoke execute on function public.usage_for_period(uuid, date), public.create_invitation(uuid, text, text), public.invitation_preview(text),
++  public.accept_invitation(text), public.is_direct_admin(uuid, integer), public.request_transfer(uuid, text, text), public.decide_transfer(uuid, text),
++  public.brand_for_domain(text), public.auth_email_exists(text), public.tg_limit_client_accounts(), public.tg_finish_transfer(), public.tg_domain_unique_across() from public, anon;
++revoke execute on function public.auth_email_exists(text) from authenticated;
++grant execute on function public.usage_for_period(uuid, date), public.create_invitation(uuid, text, text), public.accept_invitation(text),
++  public.is_direct_admin(uuid, integer), public.request_transfer(uuid, text, text), public.decide_transfer(uuid, text) to authenticated;
++grant execute on function public.usage_for_period(uuid, date), public.invitation_preview(text), public.auth_email_exists(text), public.brand_for_domain(text) to service_role;
++grant execute on function public.brand_for_domain(text) to anon, authenticated;
+diff --git a/supabase/tests/phase6b_agency.test.sql b/supabase/tests/phase6b_agency.test.sql
+new file mode 100644
+index 0000000..c7c4eb4
+--- /dev/null
++++ b/supabase/tests/phase6b_agency.test.sql
+@@ -0,0 +1,194 @@
++-- Phase 6 part 2 security tests: agency plans, rebilling, invitations, transfers, app domains.
++-- Run with scripts/test-db.sh.
++\set ON_ERROR_STOP 1
++set client_min_messages = notice;
++
++create or replace function pg_temp.as_user(p_uid uuid) returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, false);
++  execute 'set role authenticated';
++end $$;
++create or replace function pg_temp.as_service() returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', '{"role":"service_role"}', false);
++  execute 'set role service_role';
++end $$;
++create or replace function pg_temp.reset_user() returns void language plpgsql as $$
++begin
++  execute 'reset role';
++  perform set_config('request.jwt.claims', '', false);
++end $$;
++create or replace function pg_temp.expect_error(p_sql text, p_label text) returns void language plpgsql as $$
++begin
++  begin execute p_sql; exception when others then raise notice 'ok   (denied) %', p_label; return; end;
++  raise exception 'FAIL expected an error: %', p_label;
++end $$;
++create or replace function pg_temp.expect(p_ok boolean, p_label text) returns void language plpgsql as $$
++begin
++  if not coalesce(p_ok, false) then raise exception 'FAIL %', p_label; end if;
++  raise notice 'ok   %', p_label;
++end $$;
++
++-- 1 = staff, owner of agencies X and Y; 2 = owner of client C; 3 = admin of Y; 4 = admin of X; 5 = member of C; 6 = invitee
++insert into auth.users values
++  ('61000000-0000-0000-0000-000000000001', 'staff@p6b.test'), ('61000000-0000-0000-0000-000000000002', 'owner@p6bc.test'),
++  ('61000000-0000-0000-0000-000000000003', 'admin@p6by.test'), ('61000000-0000-0000-0000-000000000004', 'admin@p6bx.test'),
++  ('61000000-0000-0000-0000-000000000005', 'member@p6bc.test'), ('61000000-0000-0000-0000-000000000006', 'new@p6b.test');
++insert into public.team_members(user_id, email, active) values ('61000000-0000-0000-0000-000000000001', 'staff@p6b.test', true);
++create temp table ids (k text primary key, v uuid);
++grant all on ids to authenticated, service_role, anon;
++create temp table toks (k text primary key, v text);
++grant all on toks to authenticated, service_role, anon;
++select pg_temp.as_user('61000000-0000-0000-0000-000000000001');
++insert into ids select 'x', public.create_organization('Agency B X', 'agency');
++insert into ids select 'y', public.create_organization('Agency B Y', 'agency');
++select public.add_member_by_email((select v from ids where k = 'x'), 'admin@p6bx.test', 'admin');
++select public.add_member_by_email((select v from ids where k = 'y'), 'admin@p6by.test', 'admin');
++insert into toks select 'yslug', slug from public.organizations where id = (select v from ids where k = 'y');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++insert into ids select 'c', public.create_organization('Client B C', 'client', (select v from ids where k = 'x'));
++select public.add_member_by_email((select v from ids where k = 'c'), 'owner@p6bc.test', 'admin');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000001');
++select public.add_member_by_email((select v from ids where k = 'c'), 'owner@p6bc.test', 'owner');
++select public.add_member_by_email((select v from ids where k = 'c'), 'member@p6bc.test', 'member');
++select pg_temp.reset_user();
++
++-- 1. Agency plans and the client-account limit
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++select pg_temp.expect_error($$select public.govern_organization((select v from ids where k = 'c'), null, 'agency-solo')$$, 'agency plans cannot be assigned to clients');
++select pg_temp.expect((select count(*) = 8 from public.org_usage((select v from ids where k = 'x'))), 'agencies see their client-account usage');
++select pg_temp.expect((select count(*) = 7 from public.org_usage((select v from ids where k = 'c'))), 'clients do not get the client-account metric');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000001');
++select public.govern_organization((select v from ids where k = 'x'), null, 'agency-solo');
++select pg_temp.expect_error($$select public.govern_organization((select v from ids where k = 'x'), null, 'starter')$$, 'client plans cannot be assigned to agencies');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++update public.organizations set plan = 'agency-inactive' where id = (select v from ids where k = 'x');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++select pg_temp.expect_error($$select public.create_organization('Client B Over', 'client', (select v from ids where k = 'x'))$$, 'the client-account limit is enforced');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++update public.organizations set plan = 'internal' where id = (select v from ids where k = 'x');
++select pg_temp.reset_user();
++
++select pg_temp.as_user('61000000-0000-0000-0000-000000000001');
++select public.govern_organization((select v from ids where k = 'y'), null, 'agency-inactive');
++select pg_temp.expect((select plan = 'agency-inactive' from public.organizations where id = (select v from ids where k = 'y')), 'staff can mark an agency as needing a subscription');
++select public.govern_organization((select v from ids where k = 'y'), null, 'agency-scale');
++select pg_temp.reset_user();
++
++-- 2. Platform subscriptions are written by the server only
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++select pg_temp.expect_error($$insert into public.platform_subscriptions(organization_id, stripe_customer_id, status) values ((select v from ids where k = 'x'), 'cus_fake', 'active')$$,
++  'agencies cannot write their own subscription');
++select pg_temp.reset_user();
++
++-- 3. Client rebilling
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++with c as (insert into public.contacts(organization_id, first_name, email) values ((select v from ids where k = 'x'), 'Client C billing', 'billing@p6bc.test') returning id)
++insert into ids select 'xc', id from c;
++insert into public.client_billing(client_org_id, agency_org_id, contact_id, plan_fee_cents, rates)
++values ((select v from ids where k = 'c'), (select v from ids where k = 'x'), (select v from ids where k = 'xc'), 19700, '{"sms": 3, "ai_request": 0.5}');
++select pg_temp.expect((select count(*) = 1 from public.client_billing), 'agency admins set billing for their client');
++select pg_temp.expect_error($$update public.client_billing set rates = '{"sms": -1}'$$, 'negative rates are rejected');
++select pg_temp.expect_error($$update public.client_billing set rates = '{"minutes": 1}'$$, 'unknown usage types are rejected');
++insert into public.client_billing_runs(agency_org_id, client_org_id, period_start) values ((select v from ids where k = 'x'), (select v from ids where k = 'c'), '2026-09-01');
++select pg_temp.expect_error($$insert into public.client_billing_runs(agency_org_id, client_org_id, period_start) values ((select v from ids where k = 'x'), (select v from ids where k = 'c'), '2026-09-01')$$,
++  'a client is billed once per month');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000003');
++select pg_temp.expect_error($$insert into public.client_billing(client_org_id, agency_org_id, contact_id) values ((select v from ids where k = 'c'), (select v from ids where k = 'y'), (select v from ids where k = 'xc'))$$,
++  'another agency cannot bill the client');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000002');
++select pg_temp.expect((select count(*) = 0 from public.client_billing), 'clients do not see the agency''s rates');
++select pg_temp.expect((select count(*) >= 0 from public.usage_for_period((select v from ids where k = 'c'), '2026-10-01')), 'clients can see their own monthly usage');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000003');
++select pg_temp.expect_error($$select * from public.usage_for_period((select v from ids where k = 'c'), '2026-10-01')$$, 'outsiders cannot read a client''s usage');
++select pg_temp.reset_user();
++
++select pg_temp.as_service();
++select pg_temp.expect((select count(*) >= 0 from public.usage_for_period((select v from ids where k = 'c'), '2026-10-01')), 'the scheduler can read monthly usage');
++select pg_temp.reset_user();
++
++-- 4. Invitations
++select pg_temp.as_user('61000000-0000-0000-0000-000000000005');
++select pg_temp.expect_error($$select public.create_invitation((select v from ids where k = 'c'), 'new@p6b.test', 'member')$$, 'members cannot invite');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000002');
++insert into toks select 'inv', public.create_invitation((select v from ids where k = 'c'), 'New@P6B.test ', 'manager');
++select pg_temp.expect_error($$select token_hash from public.invitations$$, 'token hashes are not readable');
++select pg_temp.expect((select email = 'new@p6b.test' and status = 'pending' from public.invitations where organization_id = (select v from ids where k = 'c')), 'invitations are stored with a normalized email');
++select pg_temp.expect_error($$select * from public.invitation_preview((select v from toks where k = 'inv'))$$, 'invitation previews are server-only');
++select pg_temp.expect_error($$select public.auth_email_exists('new@p6b.test')$$, 'people cannot probe which emails have accounts');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000005');
++select pg_temp.expect_error($$select public.accept_invitation((select v from toks where k = 'inv'))$$, 'a different account cannot accept the invitation');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000006');
++select pg_temp.expect_error($$select public.accept_invitation('not-the-token')$$, 'a wrong token is refused');
++select public.accept_invitation((select v from toks where k = 'inv'));
++select pg_temp.expect((select role = 'manager' from public.memberships where user_id = '61000000-0000-0000-0000-000000000006' and organization_id = (select v from ids where k = 'c')),
++  'the invitee joins with the invited role');
++select pg_temp.expect_error($$select public.accept_invitation((select v from toks where k = 'inv'))$$, 'an invitation works once');
++select pg_temp.reset_user();
++
++select pg_temp.as_service();
++select pg_temp.expect((select valid from public.invitation_preview((select v from toks where k = 'inv'))) = false, 'accepted invitations preview as invalid');
++select pg_temp.reset_user();
++
++-- 5. Account transfer
++select pg_temp.as_user('61000000-0000-0000-0000-000000000005');
++select pg_temp.expect_error($$select public.request_transfer((select v from ids where k = 'c'), (select v from toks where k = 'yslug'))$$,
++  'members cannot start a transfer');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++insert into ids select 't', public.request_transfer((select v from ids where k = 'c'), (select v from toks where k = 'yslug'), 'Client is moving');
++select pg_temp.expect_error($$select public.decide_transfer((select v from ids where k = 't'), 'accept')$$, 'the sending agency cannot accept for the receiver');
++select pg_temp.expect_error($$select public.decide_transfer((select v from ids where k = 't'), 'approve')$$, 'the sending agency cannot consent for the client');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000003');
++select pg_temp.expect((select public.decide_transfer((select v from ids where k = 't'), 'accept') = 'pending'), 'the receiver''s acceptance alone does not move the account');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000002');
++select pg_temp.expect((select public.decide_transfer((select v from ids where k = 't'), 'approve') = 'completed'), 'with the client''s consent the transfer completes');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++select pg_temp.expect((select parent_id = (select v from ids where k = 'y') from public.organizations where id = (select v from ids where k = 'c')), 'the account now belongs to the new agency');
++select pg_temp.expect((select count(*) = 0 from public.client_billing where client_org_id = (select v from ids where k = 'c')), 'the old agency''s billing settings are removed');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++select pg_temp.expect((select count(*) = 0 from public.contacts where organization_id = (select v from ids where k = 'c')), 'the old agency loses access');
++select pg_temp.reset_user();
++
++-- 6. White-label app domains
++select pg_temp.as_user('61000000-0000-0000-0000-000000000002');
++select pg_temp.expect_error($$insert into public.app_domains(organization_id, domain) values ((select v from ids where k = 'c'), 'app.p6bc.test')$$, 'client accounts cannot add a console domain');
++select pg_temp.reset_user();
++select pg_temp.as_user('61000000-0000-0000-0000-000000000004');
++with d as (insert into public.app_domains(organization_id, domain, status) values ((select v from ids where k = 'x'), 'app.p6bx.test', 'verified') returning id) insert into ids select 'ad', id from d;
++select pg_temp.expect((select status = 'pending' from public.app_domains where id = (select v from ids where k = 'ad')), 'console domains start unverified');
++select pg_temp.expect_error($$update public.app_domains set status = 'verified'$$, 'people cannot verify console domains');
++select pg_temp.reset_user();
++set role anon;
++select pg_temp.expect(public.brand_for_domain('app.p6bx.test') is null, 'unverified domains show no branding');
++reset role;
++select pg_temp.as_service();
++update public.app_domains set status = 'verified', verified_at = now() where id = (select v from ids where k = 'ad');
++update public.organizations set branding = '{"display_name": "Bright Agency", "color": "#123456"}' where id = (select v from ids where k = 'x');
++select pg_temp.reset_user();
++set role anon;
++select pg_temp.expect(public.brand_for_domain('APP.p6bx.test') ->> 'name' = 'Bright Agency', 'verified agency domains show the agency''s branding');
++reset role;
++select pg_temp.as_user('61000000-0000-0000-0000-000000000003');
++with s as (insert into public.sites(organization_id, name, slug) values ((select v from ids where k = 'y'), 'Y site', 'p6b-y-site') returning id) insert into ids select 'ys', id from s;
++select pg_temp.expect_error($$insert into public.site_domains(organization_id, site_id, domain) values ((select v from ids where k = 'y'), (select v from ids where k = 'ys'), 'app.p6bx.test')$$,
++  'a console domain cannot also serve a website');
++select pg_temp.reset_user();
++
++\echo 'ALL PHASE 6 PART 2 TESTS PASSED'
+diff --git a/tests/support/fake-supabase.ts b/tests/support/fake-supabase.ts
+index 28d13dd..1cf00cb 100644
+--- a/tests/support/fake-supabase.ts
++++ b/tests/support/fake-supabase.ts
+@@ -33,7 +33,8 @@ export class FakeDb {
+ 
+ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: number }> {
+   private filters: Filter[] = [];
+-  private op: "select" | "insert" | "update" = "select";
++  private op: "select" | "insert" | "update" | "upsert" | "delete" = "select";
++  private conflictKey: string | null = null;
+   private payload: Row | Row[] | null = null;
+   private limitN: number | null = null;
+   private mode: "many" | "single" | "maybe" = "many";
+@@ -50,6 +51,17 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
+     this.payload = rows;
+     return this;
+   }
++  // Insert, or update the row with the same key (default: the first column given).
++  upsert(row: Row, opts?: { onConflict?: string }) {
++    this.op = "upsert";
++    this.payload = row;
++    this.conflictKey = opts?.onConflict ?? Object.keys(row)[0];
++    return this;
++  }
++  delete() {
++    this.op = "delete";
++    return this;
++  }
+   update(patch: Row) {
+     this.op = "update";
+     this.payload = patch;
+@@ -132,6 +144,15 @@ class Query implements PromiseLike<{ data: unknown; error: unknown; count?: numb
+         table.push(hooked);
+         rows.push(hooked);
+       }
++    } else if (this.op === "upsert") {
++      const input = this.payload as Row;
++      const existing = table.find((r) => r[this.conflictKey!] === input[this.conflictKey!]);
++      if (existing) Object.assign(existing, input);
++      else table.push({ created_at: new Date().toISOString(), ...input });
++      rows = [existing ?? table[table.length - 1]];
++    } else if (this.op === "delete") {
++      rows = table.filter((r) => this.filters.every((f) => f(r)));
++      this.db.tables[this.name] = table.filter((r) => !rows.includes(r));
+     } else {
+       rows = table.filter((r) => this.filters.every((f) => f(r)));
+       if (this.op === "update") for (const r of rows) Object.assign(r, this.payload);
+diff --git a/tests/unit/phase6b-agency.test.ts b/tests/unit/phase6b-agency.test.ts
+new file mode 100644
+index 0000000..e1c0d5c
+--- /dev/null
++++ b/tests/unit/phase6b-agency.test.ts
+@@ -0,0 +1,143 @@
++import { afterEach, describe, expect, it, vi } from "vitest";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { FakeDb } from "../support/fake-supabase";
++import { fmtRate, invoiceClientMonth, previousMonth, rebillLines } from "@/lib/billing/rebilling";
++import { applySubscription, INACTIVE_PLAN } from "@/lib/billing/platform";
++import { addDomainAlias, removeDomainAlias } from "@/lib/hosting/netlify";
++import { acceptAs, inviteInput, joinWithNewAccount, previewInvitation } from "@/lib/tenant/invitations";
++import { transferInput } from "@/lib/tenant/agency";
++
++const AGENCY = "11111111-1111-4111-8111-111111111111";
++const CLIENT = "22222222-2222-4222-8222-222222222222";
++const CONTACT = "33333333-3333-4333-8333-333333333333";
++const TOKEN = "a".repeat(48);
++const db = (d: FakeDb) => d as unknown as SupabaseClient;
++
++describe("client rebilling", () => {
++  it("bills the plan fee plus usage at the agency's rates", () => {
++    const lines = rebillLines({ planName: "Roofer Pro", feeCents: 39700, rates: { sms: 3, ai_request: 0.5, email: 0 }, usage: { sms: 812, ai_request: 233, email: 1430 }, period: "2026-09" });
++    expect(lines).toEqual([
++      { description: "Roofer Pro plan, September 2026", quantity: 1, unit_cents: 39700 },
++      { description: "Text messages: 812 × $0.03", quantity: 1, unit_cents: 2436 },
++      { description: "AI requests: 233 × $0.005", quantity: 1, unit_cents: 117 },
++    ]);
++    expect(rebillLines({ planName: "X", feeCents: 0, rates: {}, usage: { sms: 5 }, period: "2026-09" })).toEqual([]);
++  });
++  it("formats rates and months", () => {
++    expect(fmtRate(3)).toBe("$0.03");
++    expect(fmtRate(0.5)).toBe("$0.005");
++    expect(fmtRate(125)).toBe("$1.25");
++    expect(previousMonth(new Date("2026-01-03T00:00:00Z"))).toBe("2025-12");
++  });
++  it("drafts one invoice per client and month, only for finished months", async () => {
++    const d = new FakeDb();
++    d.tables.client_billing = [{ client_org_id: CLIENT, agency_org_id: AGENCY, contact_id: CONTACT, plan_fee_cents: null, rates: { sms: 3 }, tax_rate_bp: 0, active: true }];
++    d.tables.organizations = [{ id: CLIENT, name: "Acme Roofing", plan: "starter", parent_id: AGENCY }];
++    d.tables.plans = [{ key: "starter", name: "Starter", price_cents: 9700 }];
++    d.rpcHandlers.usage_for_period = () => [{ metric: "sms", quantity: 100 }];
++    const actor = { client: db(d), system: false };
++    const first = await invoiceClientMonth(actor, AGENCY, CLIENT, "2026-09");
++    expect(first.status).toBe("created");
++    const inv = d.table("invoices")[0];
++    expect(inv).toMatchObject({ organization_id: AGENCY, contact_id: CONTACT, kind: "invoice" });
++    expect(inv.line_items).toEqual([{ description: "Starter plan, September 2026", quantity: 1, unit_cents: 9700 }, { description: "Text messages: 100 × $0.03", quantity: 1, unit_cents: 300 }]);
++    expect((await invoiceClientMonth(actor, AGENCY, CLIENT, "2026-09")).status).toBe("already_invoiced");
++    expect(d.table("invoices")).toHaveLength(1);
++    const thisMonth = new Date().toISOString().slice(0, 7);
++    await expect(invoiceClientMonth(actor, AGENCY, CLIENT, thisMonth)).rejects.toMatchObject({ status: 422 });
++  });
++  it("skips accounts that moved to another agency", async () => {
++    const d = new FakeDb();
++    d.tables.client_billing = [{ client_org_id: CLIENT, agency_org_id: AGENCY, contact_id: CONTACT, plan_fee_cents: 5000, rates: {}, tax_rate_bp: 0, active: true }];
++    d.tables.organizations = [{ id: CLIENT, name: "Acme", plan: "starter", parent_id: "someone-else" }];
++    expect((await invoiceClientMonth({ client: db(d), system: false }, AGENCY, CLIENT, "2026-09")).status).toBe("not_billed");
++  });
++});
++
++describe("platform subscriptions", () => {
++  const sub = (status: string, price = "price_growth") => ({ id: "sub_1", status, customer: "cus_1", cancel_at_period_end: false, metadata: {}, items: { data: [{ price: { id: price }, current_period_end: 1790000000 }] } }) as never;
++  const setup = (plan = "agency-inactive") => {
++    const d = new FakeDb();
++    d.tables.platform_subscriptions = [{ organization_id: AGENCY, stripe_customer_id: "cus_1", status: "incomplete" }];
++    d.tables.plans = [{ key: "agency-growth", stripe_price_id: "price_growth", owner_org_id: null, audience: "agency" }];
++    d.tables.organizations = [{ id: AGENCY, plan, kind: "agency" }];
++    return d;
++  };
++  it("moves the agency to the paid plan while active, and off it when cancelled", async () => {
++    const d = setup();
++    expect(await applySubscription(db(d), sub("active"))).toBe("applied");
++    expect(d.table("organizations")[0].plan).toBe("agency-growth");
++    expect(d.table("platform_subscriptions")[0]).toMatchObject({ status: "active", plan_key: "agency-growth", stripe_subscription_id: "sub_1" });
++    await applySubscription(db(d), sub("past_due"));
++    expect(d.table("organizations")[0].plan).toBe("agency-growth");
++    await applySubscription(db(d), sub("canceled"));
++    expect(d.table("organizations")[0].plan).toBe(INACTIVE_PLAN);
++  });
++  it("never changes internal accounts and ignores unknown customers", async () => {
++    const d = setup("internal");
++    await applySubscription(db(d), sub("canceled"));
++    expect(d.table("organizations")[0].plan).toBe("internal");
++    const e = new FakeDb();
++    expect(await applySubscription(db(e), sub("active"))).toBe("unknown_customer");
++  });
++});
++
++describe("Netlify domain aliases", () => {
++  afterEach(() => { vi.unstubAllEnvs(); });
++  it("explains the manual step when not configured", async () => {
++    vi.stubEnv("NETLIFY_API_TOKEN", "");
++    const r = await addDomainAlias("www.acme.test");
++    expect(r).toMatchObject({ configured: false, ok: false });
++  });
++  it("adds and removes aliases without touching others", async () => {
++    vi.stubEnv("NETLIFY_API_TOKEN", "tok");
++    vi.stubEnv("NETLIFY_SITE_ID", "site-123");
++    let aliases = ["other.test"];
++    const sent: unknown[] = [];
++    const f = (async (_url: string, init?: RequestInit) => {
++      if (init?.method === "PATCH") { const body = JSON.parse(String(init.body)); sent.push(body); aliases = body.domain_aliases; return new Response("{}"); }
++      return new Response(JSON.stringify({ custom_domain: "console.test", domain_aliases: aliases }));
++    }) as typeof fetch;
++    expect((await addDomainAlias("www.acme.test", f)).ok).toBe(true);
++    expect(aliases).toEqual(["other.test", "www.acme.test"]);
++    expect((await addDomainAlias("www.acme.test", f)).message).toMatch(/Already/);
++    expect(sent).toHaveLength(1);
++    await removeDomainAlias("www.acme.test", f);
++    expect(aliases).toEqual(["other.test"]);
++  });
++});
++
++describe("invitations", () => {
++  it("validates input", () => {
++    expect(inviteInput.parse({ email: " Pat@Example.COM ", role: "member" }).email).toBe("pat@example.com");
++    expect(inviteInput.safeParse({ email: "pat@example.com", role: "superuser" }).success).toBe(false);
++    expect(transferInput.safeParse({ organization_id: CLIENT, to_agency: "Bright Agency!" }).success).toBe(false);
++  });
++  it("ignores malformed tokens without asking the database", async () => {
++    const d = new FakeDb();
++    expect(await previewInvitation(db(d), "nope")).toBeNull();
++    await expect(acceptAs(db(d), "nope")).rejects.toMatchObject({ status: 410 });
++    expect(d.rpcCalls).toHaveLength(0);
++  });
++  it("creates the account, signs in and accepts as the new person", async () => {
++    const d = new FakeDb();
++    d.rpcHandlers.invitation_preview = () => [{ organization_id: CLIENT, organization_name: "Acme", email: "pat@example.com", role: "member", valid: true }];
++    d.rpcHandlers.auth_email_exists = () => false;
++    const created: unknown[] = [];
++    (d as unknown as { auth: unknown }).auth = { admin: { createUser: async (u: unknown) => { created.push(u); return { error: null }; } } };
++    const user = new FakeDb();
++    user.rpcHandlers.accept_invitation = () => CLIENT;
++    const session = await joinWithNewAccount(db(d), TOKEN, { password: "correct horse battery" }, async (email) => (email === "pat@example.com" ? { access_token: "at", refresh_token: "rt", expires_in: 3600 } : null), () => db(user));
++    expect(session.access_token).toBe("at");
++    expect(created).toEqual([{ email: "pat@example.com", password: "correct horse battery", email_confirm: true, user_metadata: undefined }]);
++    expect(user.rpcCalls).toEqual([{ name: "accept_invitation", args: { p_token: TOKEN } }]);
++  });
++  it("sends existing account holders to sign in, and refuses used invitations", async () => {
++    const d = new FakeDb();
++    d.rpcHandlers.invitation_preview = () => [{ organization_id: CLIENT, organization_name: "Acme", email: "pat@example.com", role: "member", valid: true }];
++    d.rpcHandlers.auth_email_exists = () => true;
++    await expect(joinWithNewAccount(db(d), TOKEN, { password: "correct horse battery" }, async () => null, () => db(d))).rejects.toMatchObject({ status: 409 });
++    d.rpcHandlers.invitation_preview = () => [{ organization_id: CLIENT, organization_name: "Acme", email: "pat@example.com", role: "member", valid: false }];
++    await expect(joinWithNewAccount(db(d), TOKEN, { password: "correct horse battery" }, async () => null, () => db(d))).rejects.toMatchObject({ status: 410 });
++  });
++});
+-- 
+2.43.0
+

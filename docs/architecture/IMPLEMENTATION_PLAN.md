@@ -130,6 +130,18 @@ Rollback: `drop table public.form_submissions, public.forms, public.site_pages, 
 
 Rollback: `drop table public.site_domains, public.payments, public.invoices, public.payment_accounts, public.usage_events cascade;` drop the limit and metering triggers, then `alter table organizations drop constraint organizations_plan_fkey; drop table public.plans;`. Keep the organization guard fix.
 
+## 2g. Deploying Phase 6 part 2 (agency operations)
+
+1. Apply `supabase/migrations/20261012120000_phase6b_agency_operations.sql` (additive).
+2. New, optional environment variables:
+   - `PLATFORM_FROM_EMAIL` (with the existing `RESEND_API_KEY`): sender for invitation emails. Without it, invitations still work and the inviter gets a link to share.
+   - `STRIPE_PLATFORM_WEBHOOK_SECRET`: signing secret of a webhook in the **platform's** Stripe account pointing at `/api/webhooks/stripe-platform` with events `customer.subscription.created`, `customer.subscription.updated` and `customer.subscription.deleted`. Subscriptions use the existing `STRIPE_SECRET_KEY` (a restricted key also needs Customers, Checkout Sessions, Subscriptions and Billing Portal access). Turn on the customer portal in Stripe's billing settings.
+   - `NETLIFY_API_TOKEN` and `NETLIFY_SITE_ID`: when set, verifying a website or console domain adds it as a domain alias on the Netlify site (HTTPS is issued automatically) and removing it removes the alias.
+3. Platform staff: create the agency prices in Stripe and paste each `price_…` ID on the **Agency** page. Agencies you created for paying customers can be moved to "No active subscription" (`agency-inactive`) until they subscribe; your own agencies stay on `internal` and are never changed by subscriptions.
+4. Smoke test: invite a new email from **Organization**, open the link in a private window and create the account; run **Guided setup** for a test client; set client billing with your own CRM contact and press **Invoice <last month>**; request a transfer to a second test agency, accept it there, and consent as the client owner.
+
+Rollback: `drop table public.app_domains, public.org_transfers, public.invitations, public.client_billing_runs, public.client_billing, public.platform_subscriptions cascade;` drop the new functions and the `organizations_client_limit` trigger; delete the `agency-*` plans after moving any agencies off them; `alter table plans drop column audience, drop column stripe_price_id;` then re-apply the Phase 6 versions of `check_plan_limit`, `org_usage` and `govern_organization`.
+
 ## 3. Development workflow
 
 ```bash

@@ -1,6 +1,6 @@
 # Sun Marketing Console — Master Architecture
 
-> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) Phase 4 part 1 (Lead Finder) Phase 5 part 1 (sites, forms, knowledge) and Phase 6 part 1 (plans and limits, invoices and payments, custom domains) implemented (October 2026).
+> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) Phase 4 part 1 (Lead Finder) Phase 5 part 1 (sites, forms, knowledge) and Phase 6 (plans and limits, invoices and payments, custom domains, agency subscriptions and rebilling, invitations, onboarding, transfers, white-label sign-in) implemented (October 2026).
 > **Companion documents:** [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) · [DATABASE_SCHEMA](DATABASE_SCHEMA.md) · [API_ARCHITECTURE](API_ARCHITECTURE.md) · [SECURITY_PLAN](SECURITY_PLAN.md) · [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md)
 
 ## 1. Product thesis
@@ -96,7 +96,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 |---|---|---|---|
 | 1 | Positioning: AI growth OS | 🟡→🆕 | Navigation now leads with **AI operator**; messaging update pending |
 | 2 | AI Command Center with permission ladder and audit | 🆕 | Chat operator, 11 tools, observe/recommend/approve/auto per category, DB-enforced, audit trail. Creates/modifies CRM records, deals and tasks today; campaigns, workflows, pages and agents arrive with their modules |
-| 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. Phase 6 part 1 adds plans with database-enforced limits and metering, agency governance (plan, suspend), branding on customer pages, custom domains and full data export. **Missing:** branded login, SaaS subscription billing, transfer, self-serve onboarding, invitations by email |
+| 3 | Multi-tenant SaaS | 🆕 (foundation) | Agencies → client sub-accounts, locations, memberships, RBAC, suspension. Phase 6 part 1 adds plans with database-enforced limits and metering, agency governance (plan, suspend), branding on customer pages, custom domains and full data export. Phase 6 part 2 adds platform subscriptions for agencies, client rebilling, email invitations, guided client setup, consent-based account transfer and branded sign-in on an agency's own domain. **Missing:** self-serve onboarding, invitations by email |
 | 4 | CRM | 🟡→🆕 | Contacts, companies, pipelines, stages, deals, tasks, notes, tags, custom field definitions, activity history, drag-and-drop board, explainable lead scoring. **Missing:** custom objects UI, custom field editor UI, ownership routing, merge/dedupe UI, import/export UI |
 | 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
 | 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
@@ -110,7 +110,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 | 14 | Social | ❌ | — |
 | 15 | Ads and attribution | ❌ | — |
 | 16 | Affiliates and referrals | ❌ | — |
-| 17 | Payments and billing | 🆕 (Phase 6 part 1) | Invoices and estimates with deposits and tax, customer pay/accept page, card payments into each business's own Stripe account with verified webhooks and refunds, manual payments. **Missing:** subscriptions, SaaS billing of agencies, rebilling with markup, other processors |
+| 17 | Payments and billing | 🆕 (Phase 6 part 1) | Invoices and estimates with deposits and tax, customer pay/accept page, card payments into each business's own Stripe account with verified webhooks and refunds, manual payments. Part 2: agencies pay the platform through Stripe Billing, and rebill clients a plan fee plus usage at their own rates as reviewable draft invoices. **Missing:** recurring customer subscriptions for businesses, other processors |
 | 18 | Knowledge base | 🆕 (Phase 5 part 1) | Versioned, approval-gated facts with full-text search, used by the AI operator and AI site copy. **Missing:** vector search, receptionist integration |
 | 19 | Analytics and revenue intelligence | 🟡 | Dashboard KPIs; the AI can answer pipeline questions via `pipeline_summary`. **Missing:** metrics store, attribution, AI analyst over all data |
 | 20 | Industry modules | 🟡 | Industry lists in receptionist and radar. **Missing:** installable template bundles |

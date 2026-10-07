@@ -200,8 +200,21 @@ Verified by `supabase/tests/phase5_sites.test.sql` (22 assertions; 177 in total)
 
 Verified by `supabase/tests/phase6_business.test.sql` (30 assertions; 207 in total).
 
-### Phase 6 (planned remainder) – 8
-- `subscriptions` (platform SaaS billing of agencies), `price_overrides` (agency markup on usage)
+### Phase 6 (part 2 implemented: `20261012120000_phase6b_agency_operations.sql`)
+
+| Table / function | Purpose and key rules |
+|---|---|
+| `plans.audience`, `plans.stripe_price_id` | Client plans vs agency plans (`agency-solo/growth/scale`, `agency-inactive`); agency plans limit `client_accounts`, enforced on creating or receiving a client. `govern_organization` refuses a plan for the wrong kind of account |
+| `platform_subscriptions` | One per agency; written only by the server from verified Stripe webhooks; readable by the agency's admins |
+| `client_billing`, `client_billing_runs`, `usage_for_period()` | Agency rates per client (plan fee, cents per text/email/AI request/outreach email, tax, automatic monthly); one run per client and month; the bill-to contact must be in the agency's own CRM |
+| `invitations`, `create_invitation()`, `accept_invitation()`, `invitation_preview()` | Only a SHA-256 hash of the token is stored; 7-day expiry; inviter rights and seat limit checked; the accepting account's email must match; previews are server-only |
+| `org_transfers`, `request_transfer()`, `decide_transfer()` | Moving a client between agencies needs the receiving agency's acceptance and, when the client has an owner, the owner's consent; completion moves the account, resets an agency-owned plan to `starter` and removes the old agency's billing settings |
+| `app_domains`, `brand_for_domain()` | An agency's console domain; server-only verification; a host name can be either a website domain or a console domain, never both |
+
+Verified by `supabase/tests/phase6b_agency.test.sql` (40 assertions; 247 in total).
+
+### Phase 7–8 (planned)
+- `price_overrides` (per-client price overrides beyond the current rates)
 - `sender_domains`
 - `metrics_daily`, `touchpoints`, `ad_accounts`, `ad_spend_daily`
 - `affiliates`, `referral_links`, `referrals`, `commission_rules`, `payouts`

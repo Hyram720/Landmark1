@@ -97,6 +97,16 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Custom domains | Only the server marks a domain verified, after its own DNS lookup of the TXT token; only verified domains of published sites are routed, and only to that site's pages; unknown hosts fall through to the normal console |
 | Data portability | Owners and admins (and the managing agency's) can export everything, including while suspended |
 
+## 2f. Controls added in Phase 6 part 2 (agency operations)
+
+| Control | Implementation |
+|---|---|
+| Invitations | 192-bit tokens, stored only as SHA-256 hashes, 7-day expiry, single use; the inviter cannot grant above their own role; seat limits apply; the accepting account's email must match the invitation; preview and email-existence checks are server-only; the public join endpoint is rate-limited |
+| Account transfer | Database functions only; the receiving agency's admin must accept and the client's owner must consent; the sending agency loses access the moment it completes and its billing settings are deleted |
+| Subscriptions | State changes only from webhooks signed with the platform's secret; plans are matched by Stripe price; `internal` accounts are never changed; cancellation blocks new clients without disabling existing ones |
+| Rebilling | Rates and runs are visible only to the agency's admins; the bill-to contact must belong to the agency; one invoice per client and month; invoices are drafts until a person sends them |
+| White-label domains | Server-only verification; a host is either a website or a console domain; branding is public only for verified domains of active agencies |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

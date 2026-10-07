@@ -157,11 +157,18 @@ Exit criteria (verify after deploy):
 - **Branding** (name, logo, color, support contacts) on customer pages, and a **full data export** that works even while suspended.
 - **AI tools:** `invoice_summary`, `usage_summary` (read-only).
 
-**Remaining:**
+**Part 2 implemented (patch 0009):**
+- **Platform subscriptions:** agencies subscribe through Stripe Checkout and manage cards and invoices in Stripe's portal. Agency plans set how many client accounts they can run. A cancelled or unpaid subscription stops new client accounts but never switches existing clients off.
+- **Client rebilling:** per client, a monthly fee plus usage at the agency's rates (texts, emails, AI requests, outreach). Each month becomes a draft invoice to review and send, on demand or automatically in the first days of the month.
+- **Email invitations** with secure, expiring links; new people choose a password, existing users sign in to accept.
+- **Guided client setup:** account, time zone, approved business facts, plan, draft website and owner invitation in one pass.
+- **Account transfer** between agencies with the receiving agency's acceptance and the client owner's consent.
+- **White-label sign-in:** an agency's own console domain shows its name, logo and color on the sign-in page and sidebar.
+- **Automatic HTTPS for custom domains** through the Netlify API when configured.
 
-- Platform subscription billing of agencies (Stripe Billing) and feature packages
-- Agency rebilling with markup on usage (messages, minutes, AI tokens)
-- White-label: sender domains, branded login, client onboarding wizard, account transfer, automatic domain certificates through the host's API
+**Remaining:**
+- Sender domains per client, feature packages, voice minutes in rebilling
+- Fully white-label account emails (invitations currently come from the platform sender with the agency's name)
 
 ## Phase 7: Analytics and attribution
 

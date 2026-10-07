@@ -135,6 +135,22 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 
 Plan limits surface as HTTP 402 with code `plan_limit`.
 
+### Phase 6 part 2 endpoints (agency operations)
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET/POST /api/billing/subscription` | org.read / owner | The agency's platform subscription; `{action: subscribe, plan}` returns Stripe Checkout, `{action: portal}` the Stripe billing portal |
+| `PUT /api/billing/platform-plans` | platform staff | Link a platform plan to its Stripe price |
+| `POST /api/webhooks/stripe-platform` | Stripe signature (`STRIPE_PLATFORM_WEBHOOK_SECRET`) | `customer.subscription.created/updated/deleted` |
+| `GET/PUT/POST /api/billing/clients` | org.manage (agency) | Client billing settings; `POST {period, client_org_id?}` drafts invoices for a finished month |
+| `GET/POST/DELETE /api/tenant/invitations` | org.manage | List, send (email + link), revoke invitations |
+| `POST /api/tenant/invitations/accept` | signed in | Accept with `{token}`; the account email must match |
+| `GET/POST /api/public/invitation/:token` | public, rate-limited | Preview; create the invited person's account and accept |
+| `GET/POST /api/organization/transfers`, `POST /api/organization/transfers/:id {decision}` | org.read (database decides) | Request, approve (client owner), accept (receiving agency), decline, cancel |
+| `GET/POST /api/organization/domains`, `POST/DELETE /api/organization/domains/:id` | org.read / org.manage | An agency's own console domain; verify by TXT record |
+| `GET /api/public/brand` | public | Branding for the visited host (verified agency domains only) |
+| `GET /join/:token`, `/organization/new-client`, `/agency` | pages | Invitation acceptance, guided client setup, agency settings |
+
 Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>`. They are sent with `publicFetch`, so private and internal addresses are refused, and time out after 10 seconds.
 
 ## 4. Conventions for new endpoints
