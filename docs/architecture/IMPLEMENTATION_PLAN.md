@@ -81,6 +81,20 @@ commit;
 
 Rollback: `drop table public.messages, public.conversations, public.suppressions, public.webhook_events, public.provider_accounts cascade;` then drop `provider_secret`, `apply_opt_out`, `clear_opt_out`, `tg_messages_guard`, `tg_messages_timeline`.
 
+## 2c. Deploying Phase 3 (reputation, calendars, automations)
+
+1. Apply `supabase/migrations/20261008120000_phase3_reputation_calendars_workflows.sql`. It enables `btree_gist` in the `extensions` schema, is additive, and runs in one transaction.
+2. No new environment variables. Phase 2's `SUPABASE_SERVICE_ROLE_KEY`, `PUBLIC_APP_URL` and `APP_ENCRYPTION_KEY` are required for public booking, review links, reminders, automations and signed webhooks. Each feature shows "Integration not configured" when one is missing.
+3. Redeploy. The 15-minute scheduler now also calls `/api/jobs/tick`. Automation waits and reminders therefore resolve to within 15 minutes; call `/api/jobs/tick` more often from an external cron if you need tighter timing.
+4. In **Reputation → Review sites**, add your Google review link. In **Calendars**, create a calendar with members and switch on online booking. In **Automations**, start from a template, save it, then switch it on as a manager.
+5. Smoke test:
+   - Book yourself through `/book/<slug>` with the SMS box ticked.
+   - Confirm the agenda shows the booking, a confirmation arrives, and the manage link can reschedule it.
+   - Mark a past appointment *No-show* with the No-show recovery template switched on. Within 15 minutes the run appears under the automation, with its text and task.
+   - Send yourself a review request, rate 2 stars, and confirm a follow-up task appears and the Google button still works.
+
+Rollback: `drop table public.workflow_run_logs, public.workflow_runs, public.workflows, public.workflow_versions, public.appointments, public.calendar_members, public.calendars, public.review_requests, public.reviews, public.review_sources, public.domain_events cascade;` Then drop the functions `emit_event` and `review_request_respond`, the triggers `contacts_created_events`, `contacts_changed_events`, `opportunities_stage_event` and `messages_received_event`, and the `calendar` value from the `ai_policies` check (delete those rows first).
+
 ## 3. Development workflow
 
 ```bash

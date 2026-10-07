@@ -1,6 +1,6 @@
 # Sun Marketing Console — Master Architecture
 
-> **Status:** Phase 1 foundation implemented (October 2026).
+> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) implemented (October 2026).
 > **Companion documents:** [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) · [DATABASE_SCHEMA](DATABASE_SCHEMA.md) · [API_ARCHITECTURE](API_ARCHITECTURE.md) · [SECURITY_PLAN](SECURITY_PLAN.md) · [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md)
 
 ## 1. Product thesis
@@ -101,11 +101,11 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 | 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
 | 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
 | 7 | SMS and messaging | 🆕 (Phase 2 part 1) | Provider layer (Telnyx, Twilio, Resend) with failover, unified inbox, scheduling, consent/opt-out/quiet-hours gate, verified webhooks, STOP/START. **Missing:** web chat, WhatsApp, 10DLC registry UI, bulk sends (Phase 3 campaigns) |
-| 8 | Reputation and Trust Center | 🟡 | Review pages, QR, private feedback. **Missing:** review monitoring/ingestion, AI responses, Reputation Health Score, competitor comparison, alerts |
+| 8 | Reputation and Trust Center | 🆕 (Phase 3 part 1) | Reviews (manual/CSV), reply drafts incl. AI, explained Reputation Health Score, non-gated review requests, complaint tasks. **Missing:** Google/Facebook sync, widgets, competitor comparison |
 | 9 | Lead generation engine | 🟡 | Opportunity Radar + Site Scanner are strong. **Missing:** tenant scoping, Opportunity Score v2, audit-driven outreach campaigns |
 | 10 | Websites, funnels, forms | 🟡 | Website rebuild concepts, Puck builder, Campaign Studio funnels. **Missing:** hosted multi-tenant sites, forms/surveys builder, templates library |
-| 11 | Workflow automation | ❌ | Only a fixed 15-minute follow-up sender |
-| 12 | Calendars | ❌ | Only external calendar URLs |
+| 11 | Workflow automation | 🆕 (Phase 3 part 1) | Event-triggered, versioned automations with templates, AI drafting, compliance-gated messaging, signed webhooks, per-step run logs. **Missing:** branching graphs, queue faster than the 15-minute scheduler |
+| 12 | Calendars | 🆕 (Phase 3 part 1) | Personal/round-robin/resource calendars, public booking, reminders, reschedule/cancel, no double booking, AI booking tools. **Missing:** Google/Microsoft sync, waitlists |
 | 13 | Email marketing | 🟡 | Resend broadcasts with approval. **Missing:** sequences, A/B, tracking, segmentation, provider abstraction |
 | 14 | Social | ❌ | — |
 | 15 | Ads and attribution | ❌ | — |
@@ -224,7 +224,7 @@ interface SmsProvider {
 
 Credentials live in a per-organization `provider_accounts` table, encrypted, with agency-level defaults (Phase 2). The AI layer already follows this pattern: `ai/types.ts`, `ai/openai.ts`, `ai/provider.ts`.
 
-### 4.5 Event-driven backbone (Phase 2)
+### 4.5 Event-driven backbone (outbox implemented in Phase 3; queue pending)
 
 - **Transactional outbox:** domain writes insert `domain_events (organization_id, type, payload, created_at)` in the same transaction.
 - **Queue:** Supabase Queues (pgmq) or an external queue such as Inngest; workers run with the service role, scoped per organization, idempotent by event ID.

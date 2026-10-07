@@ -37,6 +37,7 @@
 | `GET /api/crm/contacts/:id` | crm.read | Contact + timeline + tasks + deals + current consent |
 | `PATCH /api/crm/contacts/:id` | crm.write | Update fields, stage, tags, do-not-contact |
 | `POST /api/crm/contacts/:id` | crm.write / crm.erase | `{action:"rescore"}` or `{action:"erase"}` (admin) |
+| `DELETE /api/crm/contacts/:id`, `DELETE /api/crm/contacts {ids}` | crm.delete (manager) | Permanently delete one or up to 100 contacts with their timeline, tasks, messages and appointments; deals and reviews are kept, unlinked; opt-outs survive |
 | `POST /api/crm/contacts/:id/notes` | crm.write | Add note to timeline |
 | `POST /api/crm/contacts/:id/consent` | crm.write | Append consent change (channel, status, source, evidence) |
 | `GET /api/crm/pipeline?pipeline` | crm.read | Board: pipeline, stages, deals |
@@ -65,6 +66,29 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 | `GET/POST /api/channels`, `PATCH/DELETE/POST(test) /api/channels/:id`, `PUT /api/channels/settings` | org.read / org.manage | Provider accounts, credential test, time zone and texting hours |
 | `POST /api/webhooks/telnyx/sms`, `POST /api/webhooks/twilio/sms` | provider signature | Inbound texts, delivery receipts, STOP/START (service role) |
 | `POST /api/comms/dispatch` | `AUTOMATION_SECRET` | Sends due scheduled messages (called by the scheduler) |
+
+### Phase 3 endpoints (reputation, calendars, automations)
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET /api/reputation?needs_reply=1&rating_max=&status=` | crm.read | Health score with factors, request stats, review sites, reviews, recent requests |
+| `POST /api/reputation/reviews`, `PATCH /api/reputation/reviews/:id` | crm.write | Record a review; change status, save a draft reply or mark it posted |
+| `POST /api/reputation/import` | reputation.manage | CSV import (`{csv, platform}`); duplicate review ids are skipped |
+| `POST /api/reputation/sources`, `PATCH/DELETE /api/reputation/sources/:id` | reputation.manage | Review sites |
+| `POST /api/reputation/requests` | crm.write | `{contact_id, channel, force?}` → `{outcome: sent/blocked/failed/skipped}` |
+| `GET/POST /api/calendars`, `PATCH /api/calendars/:id` | crm.read / calendar.manage | Calendars with members; create and edit |
+| `GET /api/calendars/:id/slots?from&days&exclude` | crm.read | Open times |
+| `GET/POST /api/appointments`, `PATCH /api/appointments/:id` | crm.read / crm.write | Agenda, book (`outside_hours` for staff), status changes and reschedule, optional customer notice |
+| `GET/POST /api/workflows`, `GET/POST /api/workflows/:id` | crm.read / automation.manage | List and templates; detail with versions, runs and `?run=` step log; actions `save`, `activate`, `pause`, `archive` |
+| `POST /api/workflows/draft` | automation.manage | "Describe it in English" → proposal (not saved); 10 per hour per user |
+| `POST /api/workflows/runs/:id` | automation.manage | Stop a run |
+| `GET /api/workflows/webhook-secret` | org.manage | Signing secret for webhook steps |
+| `GET/POST /api/public/booking/:slug` | public, rate-limited | Open times (no team identities); book with optional SMS consent captured as evidence |
+| `GET/POST /api/public/appointment/:token` | public, rate-limited | Customer views, reschedules or cancels |
+| `GET/POST /api/public/review-request/:token` | public, rate-limited | Records open, rating and site click; always returns every active review site |
+| `POST /api/jobs/tick` | `AUTOMATION_SECRET` | Enroll runs from events, advance due runs, send reminders |
+
+Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>`. They are sent with `publicFetch`, so private and internal addresses are refused, and time out after 10 seconds.
 
 ## 4. Conventions for new endpoints
 
@@ -130,7 +154,7 @@ type WriteTool = {
 };
 ```
 
-Phase 1 tools: `search_contacts`, `get_contact`, `pipeline_summary`, `list_deals`, `list_open_tasks` (read); `create_contact`, `update_contact`, `add_note`, `create_task`, `create_deal`, `move_deal` (write).
+Phase 1 tools: `search_contacts`, `get_contact`, `pipeline_summary`, `list_deals`, `list_open_tasks` (read); `create_contact`, `update_contact`, `add_note`, `create_task`, `create_deal`, `move_deal` (write). Phase 2: `list_conversations`, `get_conversation`, `send_message`. Phase 3: `reputation_summary`, `list_reviews`, `list_calendars`, `check_availability`, `list_appointments`, `list_automations` (read); `draft_review_reply`, `request_review` (reputation), `book_appointment`, `cancel_appointment` (calendar), `draft_automation` (workflows; creates drafts only).
 
 ## 8. Rate limiting
 

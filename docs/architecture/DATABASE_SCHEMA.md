@@ -138,7 +138,22 @@ Planned for the rest of Phase 2:
 - `suppression_list (organization_id, channel, address, reason)`, `quiet_hours` in `organizations.settings`
 - `domain_events` (outbox) and `webhook_events (provider, provider_event_id unique, payload, processed_at)`
 
-### Phase 3
+### Phase 3 (part 1 implemented: `20261008120000_phase3_reputation_calendars_workflows.sql`)
+
+| Table | Purpose and key rules |
+|---|---|
+| `domain_events` | Outbox written only by triggers (contact created, tag added, lifecycle and deal stage, inbound message, appointment states, review, private feedback). Managers can read it; the workflow engine claims rows with the service role. A statement that inserts more than 25 contacts emits no `contact.created` events, so imports never start automations |
+| `review_sources` | Public review links (https only), managed by managers |
+| `reviews` | Rating, text and author are immutable through the API; `sentiment` is generated from the rating; reply `draft` → `posted` records who replied and when. A review of 1–2 stars creates a high-priority task |
+| `review_requests` | Random 36-hex token, 60-day expiry. Staff cannot write a customer's response; `review_request_respond()` (service role only) records open, rating once, and site clicks, and creates a task for ratings of 3 or lower |
+| `calendars`, `calendar_members` | Rules (hours, buffers, notice, horizon, daily limit), unique public slug; members must belong to the organization or its agency |
+| `appointments` | `exclude using gist (resource_key, tstzrange)` for booked and confirmed appointments. `resource_key` is the assignee, or the calendar when unassigned. Status machine: booked → confirmed / cancelled / completed / no_show. Only upcoming appointments move; reminders and public/workflow sources are system-only. Timeline entries and events come from a trigger |
+| `workflows`, `workflow_versions` | Versions are insert-only and numbered by the database; activating needs a manager and pins `active_version_id` (a composite foreign key keeps it within the same workflow); `trigger_type` is derived from the active version |
+| `workflow_runs`, `workflow_run_logs` | At most one active run per (workflow, contact) through a partial unique index. People can only stop runs; the engine writes everything else |
+
+`ai_policies.category` gains `calendar` (seeded as `approve` for new and existing organizations). Verified by `supabase/tests/phase3_growth.test.sql` (49 assertions, including contact deletion; 134 in total).
+
+Original plan, for reference:
 - Reputation: `review_sources`, `reviews (source, external_id unique, rating, body, author, published_at, sentiment, response, responded_at, response_by)`, `review_requests`, `reputation_snapshots (date, score, factors)`
 - Calendars: `calendars (type individual/round_robin/team/service/location)`, `calendar_members`, `availability_rules`, `appointments (status, contact_id, starts_at, ends_at, location_id, source)`, `waitlist_entries`, `external_calendar_links`
 - Workflows: `workflows`, `workflow_versions (graph jsonb, published)`, `workflow_runs`, `workflow_run_steps` (idempotency key per step)

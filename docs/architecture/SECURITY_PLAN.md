@@ -52,6 +52,18 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Opt-out integrity | Suppressions written only by `apply_opt_out`/`clear_opt_out`; lifting one requires the person's START or an admin; all changes audited |
 | Multi-tenant routing | A number belongs to one organization (unique index); inbound is routed by the receiving number, then verified with that organization's credentials |
 
+## 2b. Controls added in Phase 3 (reputation, calendars, automations)
+
+| Control | Implementation |
+|---|---|
+| No review gating | The public review page and API return every active review site whatever the rating; private feedback is optional and offered alongside. A DB function, callable only by the service role, records responses, and staff cannot write or alter a customer's rating |
+| Public pages | Booking, appointment and review links use unguessable 144-bit tokens or public slugs. Every route is rate-limited per IP, exposes no team identities, and uses the service role scoped to the token's organization. Online booking stores SMS consent with its exact wording, IP, user agent and time |
+| Double booking | Enforced by a Postgres exclusion constraint, not only by the UI |
+| Human-approved automation | Versions are immutable; activation requires a manager, records who did it, and pins the exact version. The AI can only create drafts. Every automated message passes the compliance gate; blocked sends are logged and never retried around the gate |
+| Runaway prevention | One active run per contact per automation, at most 3 enrollments per contact per automation per day, bulk inserts emit no events, and paused or archived automations hold or cancel their runs |
+| Outgoing webhooks | https only, SSRF-guarded `publicFetch`, 10-second timeout, signed with a per-organization secret derived from `APP_ENCRYPTION_KEY` |
+| Audit | Calendar, appointment, review, request and workflow changes are audited; system actions (online bookings, automations) are recorded as actor `system` |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

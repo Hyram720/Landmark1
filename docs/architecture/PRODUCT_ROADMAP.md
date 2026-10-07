@@ -9,7 +9,7 @@ Principle: **stable foundations before breadth.** Each phase ships behind the sa
 | 1 | Core architecture, multi-tenancy, CRM, auth, AI Command Center foundation | Convert | **Implemented** (pending deploy) |
 | 1b | Hardening: baseline schema, secret rotation, MFA, CI, JWKS | — | **In progress** (part 1 implemented) |
 | 2 | Communications: unified inbox, SMS/email/voice provider layer, AI voice agents | Convert | **In progress** (messaging foundation implemented; voice next) |
-| 3 | Reputation & Trust Center, calendars, workflow automation | Protect · Convert | Planned |
+| 3 | Reputation & Trust Center, calendars, workflow automation | Protect · Convert | **Part 1 implemented** (reviews, booking, automations; platform sync next) |
 | 4 | Lead generation engine, audits at scale, AI prospecting | Acquire | Planned |
 | 5 | Websites, funnels, forms, landing pages, knowledge base | Acquire | Planned |
 | 6 | Billing, white-label SaaS, agency rebilling, plans and limits | — | Planned |
@@ -65,6 +65,20 @@ Exit criteria (verify after deploy):
 - Navigation restructure to the target IA (Dashboard, AI Command Center, CRM, Conversations, Calls, Calendar, Campaigns, Automations, Reputation, Websites, Lead Finder, Analytics, Payments, AI Agents, Settings), with legacy tools grouped under "Agency tools"
 
 ## Phase 3: Reputation, calendars, workflows
+
+**Part 1 implemented (patch 0005):**
+- **Reputation:** review sites, reviews recorded by hand or imported from CSV, reply drafts (people or the AI) that a person posts and marks as posted, status (new / acknowledged / resolved), negative reviews open a high-priority task automatically, and an explained 0–100 Reputation Health Score.
+- **Review requests:** sent by text or email through the compliance gate, at most once per customer every 30 days. The public request page always shows every review site; private feedback is offered alongside them, never instead of them (no gating). Ratings of 3 or lower create a follow-up task.
+- **Calendars:** personal, round-robin and resource calendars with working hours, buffers, minimum notice, horizon and daily limits. The database blocks double booking. Includes public booking pages with recorded SMS consent, a manage link for the customer to reschedule or cancel, confirmations and reminders 1–24 hours ahead, and an agenda with confirm, complete, no-show, reschedule and cancel.
+- **Automations:** versioned, immutable workflow definitions triggered by domain events (new contact, tag, lifecycle stage, deal stage, inbound message, appointment booked, cancelled, completed or no-show, review, private feedback). Steps: wait, text, email, task, tags, stage, note, review request, stop-if (replied, booked, tag, stage) and signed webhook. Four templates. "Describe it in English" proposes a draft that a person reviews and saves; only managers switch versions on. Runs are leased (safe with two schedulers) and logged per step.
+- **AI tools:** `reputation_summary`, `list_reviews`, `draft_review_reply`, `request_review`, `list_calendars`, `check_availability`, `list_appointments`, `book_appointment`, `cancel_appointment`, `list_automations` and `draft_automation`, plus a new **Appointments** AI permission (default: approve).
+
+**Remaining:**
+- Google Business Profile and Facebook review sync, with posting replies through the API.
+- Google and Microsoft calendar sync, waitlists and territories.
+- QR review cards, review widgets and testimonials, competitor comparison, and reputation trend snapshots.
+- Branching (if/else) workflow graphs; AI-call, payment, form and missed-call triggers, which arrive with their modules.
+- A queue faster than the 15-minute scheduler.
 
 - **Reputation & Trust Center:** Google Business Profile review ingestion (and Facebook where permitted), review requests by SMS, email and QR, AI responses with approval or auto policy, negative-review alerts, complaint escalation into tasks, recovery workflows, widgets and testimonials, competitor comparison, trend charts
 - **Reputation Health Score** (0–100): weighted average rating, volume, 90-day velocity, negative frequency, response rate and speed, sentiment, unresolved complaints, trend. Factors are stored and explained like lead scores
