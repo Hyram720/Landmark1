@@ -88,6 +88,20 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 | `GET/POST /api/public/review-request/:token` | public, rate-limited | Records open, rating and site click; always returns every active review site |
 | `POST /api/jobs/tick` | `AUTOMATION_SECRET` | Enroll runs from events, advance due runs, send reminders |
 
+### Phase 4 endpoints (Lead Finder)
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET /api/prospecting?q&status&min_score&no_website&ssl_issue&no_booking&has_email&not_audited` | crm.read | Prospects (score order), recent searches, directory categories |
+| `POST /api/prospecting` / `DELETE /api/prospecting {ids}` | crm.write / crm.delete | Add a business by hand; delete prospects |
+| `POST /api/prospecting/search` | crm.write | Directory search; saves new businesses (10 per 10 minutes per organization) |
+| `POST /api/prospecting/audit {ids?}` | crm.write | Queue audits and run the next two; returns `remaining` |
+| `GET/PATCH /api/prospecting/:id`, `POST {action:"convert"}` | crm.read / crm.write | Detail with audits and outreach; status, notes, email, do-not-contact; add to CRM |
+| `GET/PUT /api/prospecting/settings` | crm.read / org.manage | Sender name, postal address, signature, daily limit |
+| `POST /api/prospecting/outreach` | crm.write | Draft the next email (template from the audit, or given text) |
+| `PATCH /api/prospecting/outreach/:id`, `POST {action: send/discard}` | crm.write | Edit a draft; send (as the signed-in person) or discard |
+| `POST /api/public/outreach-unsubscribe/:token` | public, rate-limited | One-click unsubscribe (RFC 8058) and the `/optout/:token` button |
+
 Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>`. They are sent with `publicFetch`, so private and internal addresses are refused, and time out after 10 seconds.
 
 ## 4. Conventions for new endpoints

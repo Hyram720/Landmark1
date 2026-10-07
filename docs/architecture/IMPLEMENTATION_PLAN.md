@@ -95,6 +95,19 @@ Rollback: `drop table public.messages, public.conversations, public.suppressions
 
 Rollback: `drop table public.workflow_run_logs, public.workflow_runs, public.workflows, public.workflow_versions, public.appointments, public.calendar_members, public.calendars, public.review_requests, public.reviews, public.review_sources, public.domain_events cascade;` Then drop the functions `emit_event` and `review_request_respond`, the triggers `contacts_created_events`, `contacts_changed_events`, `opportunities_stage_event` and `messages_received_event`, and the `calendar` value from the `ai_policies` check (delete those rows first).
 
+## 2d. Deploying Phase 4 (Lead Finder)
+
+1. Apply `supabase/migrations/20261009120000_phase4_lead_engine.sql` (additive, one transaction).
+2. No new environment variables. Sending needs an email sender in **Channels** (Resend with a verified domain), `APP_ENCRYPTION_KEY` and `PUBLIC_APP_URL`. Background audits need `SUPABASE_SERVICE_ROLE_KEY`.
+3. In **Lead Finder → Outreach settings**, an admin enters the sender name and a real postal address (street or registered PO box). Sending is refused until this is set.
+4. Use a separate sending subdomain for outreach (for example `hello.youragency.com`) with SPF, DKIM and DMARC, and keep the default daily limit until the domain has a sending history.
+5. Smoke test:
+   - Search a business type in your city and audit a few websites.
+   - Add yourself as a business with your work email, draft an email and send it.
+   - Click the unsubscribe link, and confirm the prospect shows *Do not contact* and that a second send is refused.
+
+Rollback: `drop table public.outreach_messages, public.prospect_audits, public.prospects, public.prospect_searches cascade;` then drop the functions `outreach_unsubscribe` and `outreach_unsubscribe_token`.
+
 ## 3. Development workflow
 
 ```bash

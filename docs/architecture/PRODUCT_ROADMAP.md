@@ -10,7 +10,7 @@ Principle: **stable foundations before breadth.** Each phase ships behind the sa
 | 1b | Hardening: baseline schema, secret rotation, MFA, CI, JWKS | — | **In progress** (part 1 implemented) |
 | 2 | Communications: unified inbox, SMS/email/voice provider layer, AI voice agents | Convert | **In progress** (messaging foundation implemented; voice next) |
 | 3 | Reputation & Trust Center, calendars, workflow automation | Protect · Convert | **Part 1 implemented** (reviews, booking, automations; platform sync next) |
-| 4 | Lead generation engine, audits at scale, AI prospecting | Acquire | Planned |
+| 4 | Lead generation engine, audits at scale, AI prospecting | Acquire | **Part 1 implemented** (Lead Finder, Opportunity Score, compliant email outreach) |
 | 5 | Websites, funnels, forms, landing pages, knowledge base | Acquire | Planned |
 | 6 | Billing, white-label SaaS, agency rebilling, plans and limits | — | Planned |
 | 7 | Analytics, attribution, AI revenue intelligence, ads | Retain · Acquire | Planned |
@@ -87,6 +87,30 @@ Exit criteria (verify after deploy):
 - **Workflow automation:** versioned workflow graphs; triggers on domain events (new lead, form, call, missed call, message, appointment states, stage change, payment, review, inactivity, tag, webhook, schedule); actions (send SMS/email, AI call, assign, move stage, create task, request review, book, update CRM, generate document, webhook, notify, start/stop agent or campaign). "Describe it in English" builds a draft workflow that runs only after approval
 
 ## Phase 4: Lead generation engine
+
+**Part 1 implemented (patch 0006):**
+- **Lead Finder:** each organization keeps its own prospect list. Search the free OpenStreetMap directory (shared with the legacy Opportunity Radar), add businesses by hand, filter, and delete.
+- **Audits at scale:** queued audits run two at a time while the page is open and three per scheduler tick in the background.
+- **Each audit** uses the existing website audit, now with online-booking detection, plus email discovery on the business's own site (business addresses only, never freemail).
+- **Opportunity Score** (0–100), explained factor by factor: no website, website, mobile, speed and search scores, SSL warning, online booking, chat, reputation (when known) and independence. Signals that have not been checked earn nothing rather than being guessed.
+- **Email outreach:**
+  - One-to-one business email drafted from the audit's strongest verifiable finding, edited and sent by a person.
+  - Every send adds a CAN-SPAM footer: sender, postal address, "marketing message" line and an unsubscribe link, plus RFC 8058 one-click unsubscribe headers.
+  - Limits: 3 emails per business, 3 days apart, and a daily organization limit (default 40).
+  - Unsubscribing suppresses the address organization-wide and flags the business do-not-contact.
+  - There is no texting or calling of prospects.
+- **Convert to CRM** creates a company and contact (lifecycle: prospect) with the score reasons as a note.
+- **AI tools:**
+  - `find_businesses`, `audit_prospects` and `convert_prospect`, under the CRM permission.
+  - `list_prospects` and `get_prospect` (read-only).
+  - `draft_outreach`, under the Outreach permission (formerly Campaigns, default: recommend). It only ever creates drafts.
+
+**Remaining:**
+- Paid data providers (Google Places ratings and reviews, Yelp) behind an adapter.
+- Social-activity and AI-receptionist signals, and broken-link checks.
+- Reply detection through inbound email.
+- Multi-step outreach sequences with automatic stop on reply.
+- Shareable report cards per prospect, reusing the legacy report pages.
 
 - Tenant-scoped Lead Finder built on Opportunity Radar + `lib/audit.ts`
 - Filters: industry, geography, website quality, review score and count, missing site, speed, SEO, broken links, SSL, mobile, booking, chat, AI receptionist, reputation, social activity

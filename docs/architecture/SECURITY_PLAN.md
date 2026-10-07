@@ -64,6 +64,17 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Outgoing webhooks | https only, SSRF-guarded `publicFetch`, 10-second timeout, signed with a per-organization secret derived from `APP_ENCRYPTION_KEY` |
 | Audit | Calendar, appointment, review, request and workflow changes are audited; system actions (online bookings, automations) are recorded as actor `system` |
 
+## 2c. Controls added in Phase 4 (Lead Finder)
+
+| Control | Implementation |
+|---|---|
+| CAN-SPAM | Every outreach email adds the sender, a postal address (required before any send), a "marketing message" line and an unsubscribe link, plus `List-Unsubscribe` and `List-Unsubscribe-Post` headers. Subjects and bodies are visible to and edited by the sender; nothing is sent automatically |
+| No cold texts or calls | Prospects are not contacts. The only outreach path is email; converted contacts carry no consent, so the Phase 2 gate blocks marketing texts to them |
+| Recipient selection | Only business addresses: freemail is refused, and discovered addresses must come from the business's own website (the source page is stored) |
+| Volume limits | 3 emails per business, 3 days apart, and a per-organization daily limit (default 40); the directory search is rate-limited |
+| Unsubscribe integrity | Tokens are random (144 bits), unreadable to staff, and released only to the sender during their own send. Unsubscribing is idempotent, needs no login, suppresses the address organization-wide (shared with the CRM), and cannot be undone by members. The unsubscribe page uses a button, so mail-scanner GETs never unsubscribe anyone |
+| SSRF | Audits and email discovery use the existing pinned `publicFetch`; directory search contacts only fixed public hosts |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

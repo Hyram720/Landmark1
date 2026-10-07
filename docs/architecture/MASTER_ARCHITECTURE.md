@@ -1,6 +1,6 @@
 # Sun Marketing Console — Master Architecture
 
-> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) implemented (October 2026).
+> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) and Phase 4 part 1 (Lead Finder) implemented (October 2026).
 > **Companion documents:** [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) · [DATABASE_SCHEMA](DATABASE_SCHEMA.md) · [API_ARCHITECTURE](API_ARCHITECTURE.md) · [SECURITY_PLAN](SECURITY_PLAN.md) · [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md)
 
 ## 1. Product thesis
@@ -102,7 +102,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 | 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
 | 7 | SMS and messaging | 🆕 (Phase 2 part 1) | Provider layer (Telnyx, Twilio, Resend) with failover, unified inbox, scheduling, consent/opt-out/quiet-hours gate, verified webhooks, STOP/START. **Missing:** web chat, WhatsApp, 10DLC registry UI, bulk sends (Phase 3 campaigns) |
 | 8 | Reputation and Trust Center | 🆕 (Phase 3 part 1) | Reviews (manual/CSV), reply drafts incl. AI, explained Reputation Health Score, non-gated review requests, complaint tasks. **Missing:** Google/Facebook sync, widgets, competitor comparison |
-| 9 | Lead generation engine | 🟡 | Opportunity Radar + Site Scanner are strong. **Missing:** tenant scoping, Opportunity Score v2, audit-driven outreach campaigns |
+| 9 | Lead generation engine | 🆕 (Phase 4 part 1) | Tenant-scoped Lead Finder, audits at scale with business-email discovery, explained Opportunity Score, CAN-SPAM email outreach with one-click unsubscribe and volume limits, convert to CRM, AI tools. **Missing:** paid data providers (ratings), reply detection, sequences |
 | 10 | Websites, funnels, forms | 🟡 | Website rebuild concepts, Puck builder, Campaign Studio funnels. **Missing:** hosted multi-tenant sites, forms/surveys builder, templates library |
 | 11 | Workflow automation | 🆕 (Phase 3 part 1) | Event-triggered, versioned automations with templates, AI drafting, compliance-gated messaging, signed webhooks, per-step run logs. **Missing:** branching graphs, queue faster than the 15-minute scheduler |
 | 12 | Calendars | 🆕 (Phase 3 part 1) | Personal/round-robin/resource calendars, public booking, reminders, reschedule/cancel, no double booking, AI booking tools. **Missing:** Google/Microsoft sync, waitlists |

@@ -158,8 +158,19 @@ Original plan, for reference:
 - Calendars: `calendars (type individual/round_robin/team/service/location)`, `calendar_members`, `availability_rules`, `appointments (status, contact_id, starts_at, ends_at, location_id, source)`, `waitlist_entries`, `external_calendar_links`
 - Workflows: `workflows`, `workflow_versions (graph jsonb, published)`, `workflow_runs`, `workflow_run_steps` (idempotency key per step)
 
-### Phase 4–5
-- `prospect_searches`, `prospects (org-scoped)`, `prospect_audits` (link to `audits`)
+### Phase 4 (part 1 implemented: `20261009120000_phase4_lead_engine.sql`)
+
+| Table | Purpose and key rules |
+|---|---|
+| `prospect_searches` | Log of directory searches per organization |
+| `prospects` | Businesses (not CRM contacts) with directory data, audit-derived signals, `opportunity_score` and `score_factors`, found `emails` with their source page, `business_email`, `do_not_contact` (only admins can clear it) and links to the CRM company and contact after conversion. A directory listing is unique per organization |
+| `prospect_audits` | Audit history: grade, category scores and top findings |
+| `outreach_messages` | Drafts are editable. `draft → sending` is claimed by the sender, and the database re-checks do-not-contact and the suppression list. Only the sender records `sent`/`failed`, and sent mail is frozen. The `unsubscribe_token` column is not readable through the API: `outreach_unsubscribe_token()` gives it only to the sender while their own send is in flight. `outreach_unsubscribe()` (service role) suppresses the address, flags the prospect, cancels pending drafts and, for converted prospects, revokes email consent through `apply_opt_out` |
+
+Verified by `supabase/tests/phase4_leads.test.sql` (21 assertions; 155 in total).
+
+### Phase 5
+- (planned) Original Phase 4 note: `prospect_searches`, `prospects (org-scoped)`, `prospect_audits` (link to `audits`)
 - `sites`, `pages`, `forms`, `form_submissions`, `templates`
 - `knowledge_items (type, content, version, status draft/approved, approved_by)` with `pgvector` embeddings
 
