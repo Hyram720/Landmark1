@@ -1,0 +1,743 @@
+From 060079dd6e44cbd22180cf60e5c3a36314456f19 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 04:42:34 +0000
+Subject: [PATCH] Home dashboard and simpler navigation
+
+- Home: today's numbers (new leads vs the week before, appointments,
+  conversations waiting, 90-day rating, money owed), a prioritized
+  "needs your attention" list, upcoming appointments, due tasks, unanswered
+  conversations, newest leads and a setup checklist. "Today" follows the
+  business's time zone.
+- Menu grouped by Customers, Marketing, AI, Money and Settings and filtered
+  by account type and role; the classic console tools are one collapsible
+  group shown only to platform staff.
+- Phone: a five-item bottom bar with a "More" sheet instead of every page.
+- Signed-in team users land on Home; deep links open the right inbox
+  thread, CRM tab and new-contact form.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ docs/architecture/API_ARCHITECTURE.md    |   6 +
+ docs/architecture/MASTER_ARCHITECTURE.md |   2 +-
+ src/app/api/home/route.ts                |   6 +
+ src/app/api/login/route.ts               |   2 +-
+ src/app/crm/page.tsx                     |   6 +
+ src/app/globals.css                      |  20 +++-
+ src/app/home/page.tsx                    | 144 +++++++++++++++++++++++
+ src/app/join/[token]/page.tsx            |   4 +-
+ src/app/organization/new-client/page.tsx |   2 +-
+ src/components/Shell.tsx                 | 124 +++++++++++++++----
+ src/components/tenant/tenant.css         |  21 ++++
+ src/lib/home/service.ts                  | 132 +++++++++++++++++++++
+ src/middleware.ts                        |   6 +-
+ tests/unit/home.test.ts                  |  28 +++++
+ 14 files changed, 466 insertions(+), 37 deletions(-)
+ create mode 100644 src/app/api/home/route.ts
+ create mode 100644 src/app/home/page.tsx
+ create mode 100644 src/lib/home/service.ts
+ create mode 100644 tests/unit/home.test.ts
+
+diff --git a/docs/architecture/API_ARCHITECTURE.md b/docs/architecture/API_ARCHITECTURE.md
+index a30ae2a..57eec00 100644
+--- a/docs/architecture/API_ARCHITECTURE.md
++++ b/docs/architecture/API_ARCHITECTURE.md
+@@ -135,6 +135,12 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
+ 
+ Plan limits surface as HTTP 402 with code `plan_limit`.
+ 
++### Home
++
++| Method & path | Permission | Purpose |
++|---|---|---|
++| `GET /api/home` | crm.read | Today's numbers (new leads vs prior week, appointments, unanswered conversations, 90-day rating, money owed), a prioritized needs-attention list, upcoming appointments, due tasks, unanswered conversations, newest leads and the setup checklist. "Today" uses the organization's time zone |
++
+ ### Phase 6 part 2 endpoints (agency operations)
+ 
+ | Method & path | Permission | Purpose |
+diff --git a/docs/architecture/MASTER_ARCHITECTURE.md b/docs/architecture/MASTER_ARCHITECTURE.md
+index febe097..a6e082a 100644
+--- a/docs/architecture/MASTER_ARCHITECTURE.md
++++ b/docs/architecture/MASTER_ARCHITECTURE.md
+@@ -119,7 +119,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
+ | 23 | Security | 🟡→🆕 | See [SECURITY_PLAN](SECURITY_PLAN.md) |
+ | 24 | Compliance | 🟡→🆕 | Consent ledger, erasure, append-only audit; messaging compliance in Phase 2 |
+ | 25 | Technical architecture | 🟡 | Supabase, Next, TS in place; Tailwind not adopted (deliberate, see ADR-6); provider abstractions started with AI |
+-| 26 | UX / navigation | 🟡 | New "AI operator" group; full IA restructure in Phase 2 |
++| 26 | UX / navigation | 🆕 | Home dashboard (today's numbers, needs-attention list, schedule, tasks, unanswered conversations, newest leads, setup checklist); menu grouped by Customers, Marketing, AI, Money and Settings, filtered by account type and role; the classic console is one collapsible group for platform staff; phone bottom bar with a "More" sheet |
+ | 27 | Development documentation | 🆕 | This document set |
+ | 28 | Quality requirements | 🆕 for new modules | Loading, empty and error states, validation, tests, "integration not configured" |
+ 
+diff --git a/src/app/api/home/route.ts b/src/app/api/home/route.ts
+new file mode 100644
+index 0000000..7adb9aa
+--- /dev/null
++++ b/src/app/api/home/route.ts
+@@ -0,0 +1,6 @@
++import { tenantRoute } from "@/lib/tenant/api";
++import { homeSummary } from "@/lib/home/service";
++
++export const dynamic = "force-dynamic";
++
++export const GET = tenantRoute("crm.read", async (ctx) => homeSummary(ctx.client, ctx.org, ctx.session.user.id));
+diff --git a/src/app/api/login/route.ts b/src/app/api/login/route.ts
+index 0049b3f..3011304 100644
+--- a/src/app/api/login/route.ts
++++ b/src/app/api/login/route.ts
+@@ -42,7 +42,7 @@ export async function POST(req: Request) {
+       return NextResponse.json({ ok: false, error: "Invalid login or no active account access." }, { status: 401 });
+     }
+     attempts.delete(ip);
+-    const response = NextResponse.json({ ok: true, role: member?.active ? member.role : "organization", home: member?.active ? "/" : "/command-center" });
++    const response = NextResponse.json({ ok: true, role: member?.active ? member.role : "organization", home: member?.active ? "/" : "/home" });
+     setSessionCookies(response, session);
+     return response;
+   }
+diff --git a/src/app/crm/page.tsx b/src/app/crm/page.tsx
+index 0573164..60e687c 100644
+--- a/src/app/crm/page.tsx
++++ b/src/app/crm/page.tsx
+@@ -63,6 +63,7 @@ function Contacts({ org }: { org: Org }) {
+   const [q, setQ] = useState("");
+   const [debounced, setDebounced] = useState("");
+   const [creating, setCreating] = useState(false);
++  useEffect(() => { if (new URLSearchParams(window.location.search).get("new") === "1") setCreating(true); }, []);
+   const { toast, node } = useToast();
+   useEffect(() => {
+     const t = setTimeout(() => setDebounced(q), 250);
+@@ -324,6 +325,11 @@ function Tasks({ org }: { org: Org }) {
+ 
+ export default function CrmPage() {
+   const [tab, setTab] = useState<"contacts" | "pipeline" | "tasks">("contacts");
++  // Deep links from the home screen, e.g. /crm?view=tasks.
++  useEffect(() => {
++    const v = new URLSearchParams(window.location.search).get("view");
++    if (v === "pipeline" || v === "tasks") setTab(v);
++  }, []);
+   return (
+     <TenantGate title="CRM" subtitle="Contacts, deals and follow-ups in one place.">
+       {(info) => (
+diff --git a/src/app/globals.css b/src/app/globals.css
+index 6228667..79b3d0a 100644
+--- a/src/app/globals.css
++++ b/src/app/globals.css
+@@ -74,9 +74,10 @@ button,input,select,textarea{font:inherit;color:inherit}
+ @media(max-width:720px){
+   .g2,.g3,.g4{grid-template-columns:1fr}.sidebar{display:none}
+   .shell{padding-bottom:68px}.page{padding:18px 14px}.topbar{padding:10px 14px;position:static;flex-wrap:wrap}
+-  .mobile-nav{display:grid;grid-template-columns:repeat(7,1fr);position:fixed;left:0;right:0;bottom:0;z-index:80;background:var(--ink-950);border-top:1px solid rgba(255,255,255,.12);padding:6px max(4px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left));box-shadow:0 -8px 24px rgba(11,18,32,.2)}
+-  .mobile-nav a{min-width:0;color:#91a0b9;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:9px;padding:4px 1px;border-radius:7px;white-space:nowrap}
+-  .mobile-nav a.active{color:var(--sun-300);background:rgba(255,129,18,.12)}
++  .mobile-nav{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:80;background:var(--ink-950);border-top:1px solid rgba(255,255,255,.12);padding:6px max(4px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left));box-shadow:0 -8px 24px rgba(11,18,32,.2)}
++  .mobile-nav button{background:none;border:0;font:inherit;cursor:pointer}
++  .mobile-nav a,.mobile-nav button{min-width:0;color:#91a0b9;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:9px;padding:4px 1px;border-radius:7px;white-space:nowrap}
++  .mobile-nav a.active,.mobile-nav button.active{color:var(--sun-300);background:rgba(255,129,18,.12)}
+   .mobile-nav svg{width:18px;height:18px}.mobile-nav span{overflow:hidden;text-overflow:ellipsis;max-width:100%}
+   .card-head{align-items:flex-start}.row>.input{min-width:0!important}
+   .finder-result{flex-wrap:wrap}.finder-actions{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+@@ -396,3 +397,16 @@ tbody tr:hover{background:var(--ink-50)}
+ .agent-center th{color:#b8c5d8}.agent-center td{color:#f4f7fb}
+ .agent-center .notice{background:#14233a;color:#d8e8ff;border:1px solid #35527a;border-radius:10px;padding:12px 14px;margin-bottom:16px}
+ @media(max-width:800px){.agent-grid{grid-template-columns:1fr}.agent-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
++
++/* Navigation: collapsible classic group and the phone "More" sheet */
++.nav-toggle{display:block;width:100%;text-align:left;background:none;border:0;cursor:pointer;font:inherit}
++.mobile-more{display:none}
++@media(max-width:900px){
++  .mobile-more{display:block;position:fixed;inset:0;z-index:79;background:rgba(8,14,25,.55)}
++  .mobile-more-sheet{position:absolute;left:0;right:0;bottom:calc(58px + env(safe-area-inset-bottom));max-height:72vh;overflow:auto;background:var(--ink-950,#0b1220);border-top:1px solid rgba(255,255,255,.12);border-radius:16px 16px 0 0;padding:12px 14px 16px}
++  .mobile-more-sheet .nav-label{color:#91a0b9}
++  .mobile-more-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:6px}
++  .mobile-more-grid a{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px;border-radius:10px;color:#c9d3e3;font-size:11.5px;text-align:center;text-decoration:none;background:rgba(255,255,255,.04)}
++  .mobile-more-grid a.active{color:var(--sun-300);background:rgba(255,129,18,.12)}
++  .mobile-more-grid svg{width:20px;height:20px}
++}
+diff --git a/src/app/home/page.tsx b/src/app/home/page.tsx
+new file mode 100644
+index 0000000..a8e6982
+--- /dev/null
++++ b/src/app/home/page.tsx
+@@ -0,0 +1,144 @@
++"use client";
++import Link from "next/link";
++import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
++import { Org, personName, relativeTime, useResource } from "@/components/tenant/client";
++
++type Person = { first_name: string | null; last_name: string | null; email?: string | null; phone?: string | null };
++type Home = {
++  greeting: string; organization: string; timezone: string;
++  numbers: { new_leads: number; previous_leads: number; appointments_today: number; unread: number; rating: number | null; reviews_90d: number; outstanding_cents: number };
++  attention: { key: string; tone: "bad" | "warn" | "info"; text: string; href: string }[];
++  appointments: { id: string; starts_at: string; status: string; title: string | null; contacts: Person | null }[];
++  tasks: { id: string; title: string; due_at: string | null; priority: string }[];
++  conversations: { id: string; contact_id: string; channel: string; last_message_at: string | null; last_message_preview: string | null; unread_count: number; contacts: Person | null }[];
++  leads: (Person & { id: string; source: string | null; created_at: string })[];
++  setup: { key: string; label: string; done: boolean; href: string; why: string }[];
++  is_agency: boolean;
++};
++const usd = (c: number) => (c / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
++const TONE = { bad: "pill-bad", warn: "pill-warn", info: "pill-info" } as const;
++const TONE_LABEL = { bad: "Urgent", warn: "Soon", info: "FYI" } as const;
++
++function Tile({ label, value, detail, href }: { label: string; value: string; detail: string; href: string }) {
++  return (
++    <Link href={href} className="card stat home-tile">
++      <div className="k">{label}</div>
++      <div className="v">{value}</div>
++      <div className="d">{detail}</div>
++    </Link>
++  );
++}
++
++function trend(now: number, before: number) {
++  if (!before && !now) return "None in the last 2 weeks";
++  if (!before) return "Up from none the week before";
++  const pct = Math.round(((now - before) / before) * 100);
++  return pct === 0 ? "Same as the week before" : `${pct > 0 ? "▲ Up" : "▼ Down"} ${Math.abs(pct)}% from the week before`;
++}
++
++function Dashboard({ org }: { org: Org }) {
++  const { data, error, loading, reload } = useResource<Home>("/api/home");
++  if (loading && !data) return <Loading />;
++  if (error) return <ErrorState message={error} onRetry={reload} />;
++  if (!data) return null;
++  const n = data.numbers;
++  const left = data.setup.filter((s) => !s.done);
++  const time = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: data.timezone, weekday: "short", hour: "numeric", minute: "2-digit" });
++  return (
++    <div className="stack home">
++      <div className="spread" style={{ flexWrap: "wrap" }}>
++        <div><h2 style={{ fontSize: 22 }}>{data.greeting}</h2><div className="small muted">Here&apos;s what&apos;s happening at {data.organization} today.</div></div>
++        <div className="row home-actions">
++          <Link className="btn btn-sm btn-primary" href="/command-center">Ask the AI</Link>
++          <Link className="btn btn-sm" href="/crm?new=1">Add contact</Link>
++          <Link className="btn btn-sm" href="/inbox">Send a message</Link>
++          <Link className="btn btn-sm" href="/calendars">Book appointment</Link>
++          <Link className="btn btn-sm" href="/invoices">New invoice</Link>
++        </div>
++      </div>
++
++      <div className="home-tiles">
++        <Tile label="New leads (7 days)" value={String(n.new_leads)} detail={trend(n.new_leads, n.previous_leads)} href="/crm" />
++        <Tile label="Appointments today" value={String(n.appointments_today)} detail={data.appointments.length ? `Next: ${time(data.appointments[0].starts_at)}` : "Nothing booked yet"} href="/calendars" />
++        <Tile label="Waiting for a reply" value={String(n.unread)} detail={n.unread ? "Reply fast to win the job" : "Inbox is clear"} href="/inbox" />
++        <Tile label="Star rating (90 days)" value={n.rating != null ? `${n.rating.toFixed(1)} ★` : "—"} detail={`${n.reviews_90d} ${n.reviews_90d === 1 ? "review" : "reviews"}`} href="/trust" />
++        <Tile label="Owed to you" value={usd(n.outstanding_cents)} detail="Open invoices" href="/invoices" />
++      </div>
++
++      <div className="card">
++        <div className="card-head"><div><h3>Needs your attention</h3><div className="sub">Most urgent first.</div></div></div>
++        {data.attention.length === 0 ? <div className="card-pad small">You&apos;re all caught up. Nice work.</div> : (
++          <div className="home-list">
++            {data.attention.map((a) => (
++              <Link key={a.key} href={a.href} className="home-item">
++                <span className={`pill ${TONE[a.tone]}`}>{TONE_LABEL[a.tone]}</span>
++                <span className="small">{a.text}</span>
++                <span className="small muted" aria-hidden>›</span>
++              </Link>
++            ))}
++          </div>
++        )}
++      </div>
++
++      <div className="grid g2 home-grid">
++        <div className="card">
++          <div className="card-head"><div><h3>Coming up</h3><div className="sub">Next appointments</div></div><Link className="link small" href="/calendars">Calendar</Link></div>
++          {data.appointments.length === 0 ? <div className="card-pad small muted">No upcoming appointments. Share your booking link to fill the calendar.</div> : (
++            <div className="home-list">{data.appointments.map((a) => (
++              <div key={a.id} className="home-item static"><strong className="small" style={{ minWidth: 92 }}>{time(a.starts_at)}</strong><span className="small">{a.title || "Appointment"} · {personName(a.contacts)}</span>{a.status === "confirmed" ? <span className="pill pill-ok">confirmed</span> : <span />}</div>
++            ))}</div>
++          )}
++        </div>
++        <div className="card">
++          <div className="card-head"><div><h3>Tasks due</h3><div className="sub">Today and overdue</div></div><Link className="link small" href="/crm?view=tasks">All tasks</Link></div>
++          {data.tasks.length === 0 ? <div className="card-pad small muted">Nothing due. Follow-ups you or the AI create show up here.</div> : (
++            <div className="home-list">{data.tasks.map((t) => {
++              const overdue = t.due_at && new Date(t.due_at) < new Date(new Date().setHours(0, 0, 0, 0));
++              return <Link key={t.id} href="/crm?view=tasks" className="home-item"><span className={`pill ${overdue ? "pill-bad" : "pill-neutral"}`}>{overdue ? "overdue" : "today"}</span><span className="small">{t.title}</span><span className="tiny muted">{t.priority === "high" ? "high priority" : ""}</span></Link>;
++            })}</div>
++          )}
++        </div>
++        <div className="card">
++          <div className="card-head"><div><h3>Waiting for a reply</h3><div className="sub">Newest first</div></div><Link className="link small" href="/inbox">Inbox</Link></div>
++          {data.conversations.length === 0 ? <div className="card-pad small muted">No unanswered messages.</div> : (
++            <div className="home-list">{data.conversations.map((c) => (
++              <Link key={c.id} href={`/inbox?contact=${c.contact_id}&channel=${c.channel}`} className="home-item"><span className="pill pill-neutral">{c.channel === "sms" ? "text" : "email"}</span><span className="small" style={{ minWidth: 0 }}><strong>{personName(c.contacts)}</strong> <span className="muted home-preview">{c.last_message_preview}</span></span><span className="tiny muted">{relativeTime(c.last_message_at)}</span></Link>
++            ))}</div>
++          )}
++        </div>
++        <div className="card">
++          <div className="card-head"><div><h3>Newest leads</h3><div className="sub">Latest contacts</div></div><Link className="link small" href="/crm">CRM</Link></div>
++          {data.leads.length === 0 ? <div className="card-pad small muted">No contacts yet. Add a lead form to your website to start collecting them.</div> : (
++            <div className="home-list">{data.leads.map((l) => (
++              <Link key={l.id} href={`/crm/contacts/${l.id}`} className="home-item"><span className="small"><strong>{personName(l)}</strong></span><span className="tiny muted">{l.source || ""}</span><span className="tiny muted">{relativeTime(l.created_at)}</span></Link>
++            ))}</div>
++          )}
++        </div>
++      </div>
++
++      {left.length > 0 && (
++        <div className="card">
++          <div className="card-head"><div><h3>Finish setting up</h3><div className="sub">{data.setup.length - left.length} of {data.setup.length} done</div></div></div>
++          <div className="card-pad stack" style={{ gap: 10 }}>
++            <div className="home-progress" role="progressbar" aria-valuemin={0} aria-valuemax={data.setup.length} aria-valuenow={data.setup.length - left.length} aria-label="Setup progress">
++              <div style={{ width: `${Math.round(((data.setup.length - left.length) / data.setup.length) * 100)}%` }} />
++            </div>
++            <div className="home-setup">
++              {data.setup.map((s) => (
++                <Link key={s.key} href={s.href} className={`home-step ${s.done ? "done" : ""}`}>
++                  <span aria-hidden className="home-check">{s.done ? "✓" : ""}</span>
++                  <span><span className="small"><strong>{s.label}</strong>{s.done ? <span className="sr-only"> (done)</span> : null}</span><span className="tiny muted" style={{ display: "block" }}>{s.why}</span></span>
++                </Link>
++              ))}
++            </div>
++          </div>
++        </div>
++      )}
++      {data.is_agency && org.kind === "agency" && <div className="card card-pad small">Managing clients? Switch accounts from the menu at the top, or set up a new one with <Link className="link" href="/organization/new-client">Guided setup</Link>.</div>}
++    </div>
++  );
++}
++
++export default function HomePage() {
++  return <TenantGate title="Home" subtitle="Your day at a glance.">{(info) => <Dashboard org={info.org} />}</TenantGate>;
++}
+diff --git a/src/app/join/[token]/page.tsx b/src/app/join/[token]/page.tsx
+index 0ab2872..178661e 100644
+--- a/src/app/join/[token]/page.tsx
++++ b/src/app/join/[token]/page.tsx
+@@ -20,7 +20,7 @@ export default function Join({ params }: { params: Promise<{ token: string }> })
+     setBusy(true); setMsg("");
+     const r = await fetch("/api/tenant/invitations/accept", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+     const j = await r.json().catch(() => ({}));
+-    if (r.ok) { window.location.replace("/command-center"); return; }
++    if (r.ok) { window.location.replace("/home"); return; }
+     setBusy(false);
+     if (r.status === 401) window.location.href = `/login?next=${encodeURIComponent(`/join/${token}`)}`;
+     else setMsg(j.error || "Could not accept the invitation.");
+@@ -43,7 +43,7 @@ export default function Join({ params }: { params: Promise<{ token: string }> })
+             e.preventDefault(); setBusy(true); setMsg("");
+             const r = await fetch(`/api/public/invitation/${token}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password, name: name.trim() || undefined }) });
+             const j = await r.json().catch(() => ({}));
+-            if (r.ok) { window.location.replace("/command-center"); return; }
++            if (r.ok) { window.location.replace("/home"); return; }
+             setBusy(false); setMsg(j.error || "Could not create your account.");
+           }}>
+             <div className="field" style={{ textAlign: "left" }}><label htmlFor="jn-name">Your name</label><input id="jn-name" className="input" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></div>
+diff --git a/src/app/organization/new-client/page.tsx b/src/app/organization/new-client/page.tsx
+index 857be93..ebf25e3 100644
+--- a/src/app/organization/new-client/page.tsx
++++ b/src/app/organization/new-client/page.tsx
+@@ -65,7 +65,7 @@ function Wizard({ org }: { org: Org }) {
+       </div>)}
+       {inviteLink && <div className="notice small" style={{ overflowWrap: "anywhere" }}>Owner invitation link (share only with them): <span className="mono">{inviteLink}</span></div>}
+       {newOrg && steps.every((s) => s.state !== "running" && s.state !== "waiting") && <div className="row" style={{ flexWrap: "wrap" }}>
+-        <a className="btn btn-primary" href="/command-center">Open {f.name}</a><a className="btn" href="/sites">Review the website</a><a className="btn btn-ghost" href="/organization">Back to agency</a>
++        <a className="btn btn-primary" href="/home">Open {f.name}</a><a className="btn" href="/sites">Review the website</a><a className="btn btn-ghost" href="/organization">Back to agency</a>
+       </div>}
+       {steps.some((s) => s.state === "failed") && newOrg && <p className="small muted">Anything that failed can be finished from the account&apos;s own pages.</p>}
+     </div>
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index 9c2b4ed..24a9ff9 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -3,6 +3,7 @@ import Link from "next/link";
+ import { usePathname } from "next/navigation";
+ import { useEffect, useState } from "react";
+ import { SunMark } from "./ui";
++import { atLeast, type Role } from "./tenant/client";
+ 
+ const I = {
+   home: "M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5",
+@@ -22,6 +23,7 @@ const I = {
+   chat: "M4 5h16v11H8l-4 4zM8 9h8M8 12h5",
+   plug: "M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4",
+   calendar: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5",
++  more: "M5 12h.01M12 12h.01M19 12h.01",
+   flow: "M6 3v6M6 15v6M6 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 6a3 3 0 1 0 0 .01M9 12h3a3 3 0 0 0 3-3V6",
+ };
+ 
+@@ -33,16 +35,50 @@ function Icon({ d }: { d: string }) {
+   );
+ }
+ 
+-const NAV = [
+-  { g: "AI operator", items: [{ href: "/command-center", label: "AI Command Center", i: I.spark }, { href: "/crm", label: "CRM", i: I.crm }, { href: "/inbox", label: "Conversations", i: I.chat }, { href: "/calendars", label: "Calendars", i: I.calendar }, { href: "/workflows", label: "Automations", i: I.flow }, { href: "/trust", label: "Reputation", i: I.star }] },
+-  { g: "Find work", items: [{ href: "/lead-finder", label: "Lead Finder", i: I.radar }, { href: "/", label: "Dashboard", i: I.home }, { href: "/discover", label: "Opportunity Radar", i: I.radar }, { href: "/scan", label: "Site Scanner", i: I.radar }, { href: "/prospects", label: "Pipeline", i: I.users }] },
+-  { g: "Generate revenue", items: [{ href: "/campaign-studio", label: "Campaign Studio", i: I.engine }, { href: "/growth-engine", label: "Growth Engine", i: I.engine }, { href: "/agents", label: "Agent Center", i: I.bot }, { href: "/email-marketing", label: "Email Marketing", i: I.mail }, { href: "/video-prompts", label: "Video Prompt Studio", i: I.star }, { href: "/receptionists", label: "AI Receptionist", i: I.phone }, { href: "/leads", label: "Lead Marketplace", i: I.phone }] },
+-  { g: "Websites", items: [{ href: "/sites", label: "Sites", i: I.org }, { href: "/forms", label: "Forms", i: I.report }, { href: "/knowledge", label: "Knowledge base", i: I.crm }] },
+-  { g: "Money", items: [{ href: "/invoices", label: "Invoices", i: I.report }, { href: "/account", label: "Plan & account", i: I.gear }, { href: "/agency", label: "Agency", i: I.org }] },
+-  { g: "Deliver", items: [{ href: "/website-builder", label: "Website Builder", i: I.star }, { href: "/audits", label: "Report Cards", i: I.report }, { href: "/seo", label: "SEO Toolkit", i: I.seo }, { href: "/reputation", label: "Review Engine", i: I.star }] },
+-  { g: "", items: [{ href: "/organization", label: "Organization", i: I.org }, { href: "/channels", label: "Channels", i: I.plug }, { href: "/settings", label: "Settings", i: I.gear }] },
++type Item = { href: string; label: string; i: string; show?: (c: NavContext) => boolean };
++type Group = { g: string; items: Item[]; classic?: boolean };
++type NavContext = { staff: boolean; signedIn: boolean; kind: "agency" | "client" | null; role: Role | null };
++
++const admin = (c: NavContext) => atLeast(c.role ?? undefined, "admin");
++
++// Everyday work first; the classic agency console is one collapsible group
++// that only platform staff (or the owner passcode) see.
++const NAV: Group[] = [
++  { g: "", items: [{ href: "/home", label: "Home", i: I.home }] },
++  { g: "Customers", items: [{ href: "/inbox", label: "Conversations", i: I.chat }, { href: "/crm", label: "Contacts & deals", i: I.crm }, { href: "/calendars", label: "Calendars", i: I.calendar }, { href: "/trust", label: "Reputation", i: I.star }] },
++  { g: "Marketing", items: [{ href: "/workflows", label: "Automations", i: I.flow }, { href: "/sites", label: "Websites", i: I.org }, { href: "/forms", label: "Forms", i: I.report }, { href: "/lead-finder", label: "Lead Finder", i: I.radar, show: (c) => c.kind !== "client" }] },
++  { g: "AI", items: [{ href: "/command-center", label: "AI assistant", i: I.spark }, { href: "/knowledge", label: "Knowledge base", i: I.crm }] },
++  { g: "Money", items: [{ href: "/invoices", label: "Invoices", i: I.report }, { href: "/account", label: "Plan & account", i: I.gear, show: admin }, { href: "/agency", label: "Agency", i: I.org, show: (c) => c.kind === "agency" && admin(c) }] },
++  { g: "Settings", items: [{ href: "/organization", label: "Team & accounts", i: I.users }, { href: "/channels", label: "Phone & email", i: I.plug, show: admin }] },
++  { g: "Classic console", classic: true, items: [
++    { href: "/", label: "Dashboard", i: I.home }, { href: "/discover", label: "Opportunity Radar", i: I.radar }, { href: "/scan", label: "Site Scanner", i: I.radar }, { href: "/prospects", label: "Pipeline", i: I.users },
++    { href: "/campaign-studio", label: "Campaign Studio", i: I.engine }, { href: "/growth-engine", label: "Growth Engine", i: I.engine }, { href: "/agents", label: "Agent Center", i: I.bot }, { href: "/email-marketing", label: "Email Marketing", i: I.mail },
++    { href: "/video-prompts", label: "Video Prompt Studio", i: I.star }, { href: "/receptionists", label: "AI Receptionist", i: I.phone }, { href: "/leads", label: "Lead Marketplace", i: I.phone },
++    { href: "/website-builder", label: "Website Builder", i: I.star }, { href: "/audits", label: "Report Cards", i: I.report }, { href: "/seo", label: "SEO Toolkit", i: I.seo }, { href: "/reputation", label: "Review Engine", i: I.star }, { href: "/settings", label: "Console settings", i: I.gear },
++  ] },
+ ];
+ 
++// The most used screens, for the phone's bottom bar.
++const MOBILE_PRIMARY = ["/home", "/inbox", "/crm", "/calendars"];
++
++function useNavContext(): NavContext | null {
++  const [ctx, setCtx] = useState<NavContext | null>(null);
++  useEffect(() => {
++    fetch("/api/tenant", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((t) => {
++      if (!t?.signedIn) return setCtx({ staff: true, signedIn: false, kind: null, role: null }); // owner passcode session
++      setCtx({ staff: !!t.isPlatformStaff, signedIn: true, kind: t.org?.kind ?? null, role: t.org?.role ?? null });
++    }).catch(() => setCtx({ staff: true, signedIn: false, kind: null, role: null }));
++  }, []);
++  return ctx;
++}
++
++function visibleNav(ctx: NavContext | null): Group[] {
++  const c = ctx ?? { staff: false, signedIn: true, kind: null, role: null };
++  return NAV.filter((g) => !g.classic || c.staff).map((g) => ({ ...g, items: g.items.filter((it) => !it.show || it.show(c)) })).filter((g) => g.items.length);
++}
++
++const isOn = (href: string, path: string) => (href === "/" ? path === "/" : path === href || path.startsWith(href + "/"));
++
+ const BARE = [/^\/login/, /^\/report\//, /^\/proposal\//, /^\/r\//, /^\/bridge\//, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/join\//];
+ 
+ type Brand = { name: string; logo_url?: string | null; color?: string | null };
+@@ -59,6 +95,12 @@ function useHostBrand() {
+ export default function Shell({ children, agency }: { children: React.ReactNode; agency: string }) {
+   const path = usePathname() || "/";
+   const brand = useHostBrand();
++  const navCtx = useNavContext();
++  const [classicOpen, setClassicOpen] = useState(false);
++  const [moreOpen, setMoreOpen] = useState(false);
++  useEffect(() => setMoreOpen(false), [path]);
++  const groups = visibleNav(navCtx);
++  const all = groups.flatMap((g) => g.items);
+   if (BARE.some((r) => r.test(path))) return <>{children}</>;
+   return (
+     <div className="shell">
+@@ -73,35 +115,65 @@ export default function Shell({ children, agency }: { children: React.ReactNode;
+           </div>
+         </div>
+         <nav className="nav">
+-          {NAV.map((grp, gi) => (
+-            <div key={gi}>
+-              {grp.g && <div className="nav-label">{grp.g}</div>}
+-              {grp.items.map((it) => {
+-                const on = it.href === "/" ? path === "/" : path.startsWith(it.href);
+-                return (
+-                  <Link key={it.href} href={it.href} className={on ? "active" : ""}>
+-                    <Icon d={it.i} />
+-                    {it.label}
+-                  </Link>
+-                );
+-              })}
+-            </div>
+-          ))}
++          {groups.map((grp) => {
++            const open = !grp.classic || classicOpen || grp.items.some((it) => isOn(it.href, path));
++            return (
++              <div key={grp.g || "top"}>
++                {grp.classic ? (
++                  <button type="button" className="nav-label nav-toggle" aria-expanded={open} onClick={() => setClassicOpen(!classicOpen)}>{grp.g} {open ? "▾" : "▸"}</button>
++                ) : grp.g && <div className="nav-label">{grp.g}</div>}
++                {open && grp.items.map((it) => {
++                  const on = isOn(it.href, path);
++                  return (
++                    <Link key={it.href} href={it.href} className={on ? "active" : ""} aria-current={on ? "page" : undefined}>
++                      <Icon d={it.i} />
++                      {it.label}
++                    </Link>
++                  );
++                })}
++              </div>
++            );
++          })}
+         </nav>
+         <div className="side-foot">Built for local business growth</div>
+       </aside>
+       <main className="main" id="main-content">{children}</main>
+       <nav className="mobile-nav" aria-label="Primary navigation">
+-        {NAV.flatMap((group) => group.items).map((it) => {
+-          const on = it.href === "/" ? path === "/" : path.startsWith(it.href);
++        {MOBILE_PRIMARY.map((href) => {
++          const it = all.find((x) => x.href === href);
++          if (!it) return null;
++          const on = isOn(href, path);
+           return (
+-            <Link key={it.href} href={it.href} className={on ? "active" : ""} aria-current={on ? "page" : undefined}>
++            <Link key={href} href={href} className={on ? "active" : ""} aria-current={on ? "page" : undefined}>
+               <Icon d={it.i} />
+-              <span>{it.label.replace("Site ", "")}</span>
++              <span>{it.label.split(" ")[0]}</span>
+             </Link>
+           );
+         })}
++        <button type="button" className={moreOpen ? "active" : ""} aria-expanded={moreOpen} aria-controls="mobile-more" onClick={() => setMoreOpen(!moreOpen)}>
++          <Icon d={I.more} />
++          <span>More</span>
++        </button>
+       </nav>
++      {moreOpen && (
++        <div className="mobile-more" id="mobile-more" role="dialog" aria-label="All pages" onClick={() => setMoreOpen(false)}>
++          <div className="mobile-more-sheet" onClick={(e) => e.stopPropagation()}>
++            {groups.map((grp) => (
++              <div key={grp.g || "top"}>
++                {grp.g && <div className="nav-label">{grp.g}</div>}
++                <div className="mobile-more-grid">
++                  {grp.items.map((it) => (
++                    <Link key={it.href} href={it.href} className={isOn(it.href, path) ? "active" : ""} onClick={() => setMoreOpen(false)}>
++                      <Icon d={it.i} />
++                      <span>{it.label}</span>
++                    </Link>
++                  ))}
++                </div>
++              </div>
++            ))}
++          </div>
++        </div>
++      )}
+     </div>
+   );
+ }
+diff --git a/src/components/tenant/tenant.css b/src/components/tenant/tenant.css
+index a2f0517..e103579 100644
+--- a/src/components/tenant/tenant.css
++++ b/src/components/tenant/tenant.css
+@@ -123,3 +123,24 @@
+ .sig{display:inline-flex;gap:4px;flex-wrap:wrap}
+ .lf-sticky{position:sticky;top:12px}
+ @media(max-width:1000px){.lf-grid{grid-template-columns:minmax(0,1fr)}.lf-sticky{position:static}}
++/* Home dashboard */
++.home-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
++.home-tile{display:block;color:inherit;text-decoration:none;transition:border-color .15s}
++.home-tile:hover{border-color:var(--sun-300,#fdba74)}
++.home-tile .v{font-size:26px}
++.home-list{display:flex;flex-direction:column}
++.home-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 18px;border-top:1px solid var(--line);color:inherit;text-decoration:none}
++.home-item:first-child{border-top:0}
++a.home-item:hover{background:var(--panel-2)}
++.home-preview{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
++.home-progress{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
++.home-progress>div{height:100%;background:var(--sun-500,#f97316);border-radius:3px}
++.home-setup{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
++.home-step{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:inherit;text-decoration:none}
++.home-step:hover{border-color:var(--sun-300,#fdba74)}
++.home-step.done{opacity:.6}
++.home-check{flex:none;width:20px;height:20px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-size:12px;font-weight:800}
++.home-step.done .home-check{background:var(--ok-bg,#dcfce7);border-color:transparent}
++.home-actions{flex-wrap:wrap;gap:6px}
++@media(max-width:1100px){.home-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}.home-setup{grid-template-columns:repeat(2,minmax(0,1fr))}}
++@media(max-width:700px){.home-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.home-setup{grid-template-columns:1fr}.home-grid{grid-template-columns:minmax(0,1fr)}.home-item{padding:10px 14px}}
+diff --git a/src/lib/home/service.ts b/src/lib/home/service.ts
+new file mode 100644
+index 0000000..19bb6e9
+--- /dev/null
++++ b/src/lib/home/service.ts
+@@ -0,0 +1,132 @@
++import "server-only";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { isValidTimeZone, zonedParts, zonedToUtc } from "@/lib/time/zones";
++
++// The home screen: what needs attention today, a few numbers, and what is
++// left to set up. Every query runs as the signed-in person (RLS applies).
++export type Attention = { key: string; tone: "bad" | "warn" | "info"; text: string; href: string; count: number };
++export type SetupStep = { key: string; label: string; done: boolean; href: string; why: string };
++
++export function dayBounds(now: Date, tz: string) {
++  const zone = isValidTimeZone(tz) ? tz : "America/New_York";
++  const p = zonedParts(now, zone);
++  const start = zonedToUtc(p.year, p.month, p.day, 0, 0, zone);
++  const tomorrow = new Date(Date.UTC(p.year, p.month - 1, p.day + 1));
++  const end = zonedToUtc(tomorrow.getUTCFullYear(), tomorrow.getUTCMonth() + 1, tomorrow.getUTCDate(), 0, 0, zone);
++  return { start, end, hour: p.hour, zone };
++}
++
++export function greeting(hour: number) {
++  return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
++}
++
++// Pure: turns counts into an ordered "needs attention" list (most urgent first).
++export function attentionList(c: { unread: number; overdueTasks: number; dueToday: number; negativeUnanswered: number; unansweredReviews: number; approvals: number; overdueInvoices: number; nearLimits: string[] }): Attention[] {
++  const out: Attention[] = [];
++  const s = (n: number, one: string, many: string) => (n === 1 ? one : many);
++  if (c.negativeUnanswered) out.push({ key: "negative", tone: "bad", count: c.negativeUnanswered, href: "/trust", text: `${c.negativeUnanswered} unhappy ${s(c.negativeUnanswered, "review needs", "reviews need")} a reply` });
++  if (c.unread) out.push({ key: "unread", tone: "bad", count: c.unread, href: "/inbox", text: `${c.unread} ${s(c.unread, "conversation is", "conversations are")} waiting for a reply` });
++  if (c.overdueTasks) out.push({ key: "overdue", tone: "warn", count: c.overdueTasks, href: "/crm?view=tasks", text: `${c.overdueTasks} overdue ${s(c.overdueTasks, "task", "tasks")}` });
++  if (c.approvals) out.push({ key: "approvals", tone: "warn", count: c.approvals, href: "/command-center", text: `${c.approvals} AI ${s(c.approvals, "action waits", "actions wait")} for approval` });
++  if (c.overdueInvoices) out.push({ key: "invoices", tone: "warn", count: c.overdueInvoices, href: "/invoices", text: `${c.overdueInvoices} ${s(c.overdueInvoices, "invoice is", "invoices are")} past due` });
++  if (c.nearLimits.length) out.push({ key: "limits", tone: "warn", count: c.nearLimits.length, href: "/account", text: `Close to your plan limit: ${c.nearLimits.join(", ")}` });
++  const otherReviews = c.unansweredReviews - c.negativeUnanswered;
++  if (otherReviews > 0) out.push({ key: "reviews", tone: "info", count: otherReviews, href: "/trust", text: `${otherReviews} ${s(otherReviews, "review", "reviews")} without a reply` });
++  if (c.dueToday) out.push({ key: "today", tone: "info", count: c.dueToday, href: "/crm?view=tasks", text: `${c.dueToday} ${s(c.dueToday, "task", "tasks")} due today` });
++  return out;
++}
++
++const count = async (q: PromiseLike<{ count: number | null; error: unknown }>) => {
++  const r = await q;
++  return r.error ? 0 : r.count ?? 0;
++};
++
++export async function homeSummary(client: SupabaseClient, org: { id: string; kind: string }, userId: string, now = new Date()) {
++  const o = org.id;
++  const { data: orgRow } = await client.from("organizations").select("name, timezone").eq("id", o).maybeSingle();
++  const { start, end, hour, zone } = dayBounds(now, orgRow?.timezone || "America/New_York");
++  const iso = (d: Date) => d.toISOString();
++  const week = new Date(now.getTime() - 7 * 86400000).toISOString();
++  const prevWeek = new Date(now.getTime() - 14 * 86400000).toISOString();
++  const month = new Date(now.getTime() - 30 * 86400000).toISOString();
++  const head = { count: "exact" as const, head: true };
++
++  const [
++    newLeads, prevLeads, unread, overdueTasks, dueToday, approvals, negativeUnanswered, unansweredReviews,
++    apptsRes, tasksRes, convRes, reviewsRes, invoicesRes, usageRes, leadsRes,
++    smsAcct, emailAcct, calendars, forms, liveSites, knowledge, payAcct, workflows, members,
++  ] = await Promise.all([
++    count(client.from("contacts").select("id", head).eq("organization_id", o).is("erased_at", null).gte("created_at", week)),
++    count(client.from("contacts").select("id", head).eq("organization_id", o).is("erased_at", null).gte("created_at", prevWeek).lt("created_at", week)),
++    count(client.from("conversations").select("id", head).eq("organization_id", o).eq("status", "open").gt("unread_count", 0)),
++    count(client.from("tasks").select("id", head).eq("organization_id", o).eq("status", "open").lt("due_at", iso(start))),
++    count(client.from("tasks").select("id", head).eq("organization_id", o).eq("status", "open").gte("due_at", iso(start)).lt("due_at", iso(end))),
++    count(client.from("ai_actions").select("id", head).eq("organization_id", o).eq("status", "pending_approval")),
++    count(client.from("reviews").select("id", head).eq("organization_id", o).eq("response_status", "none").lte("rating", 2)),
++    count(client.from("reviews").select("id", head).eq("organization_id", o).eq("response_status", "none").gte("published_at", month)),
++    client.from("appointments").select("id, starts_at, ends_at, status, title, contacts(first_name, last_name)").eq("organization_id", o)
++      .in("status", ["booked", "confirmed"]).gte("starts_at", iso(now)).order("starts_at").limit(6),
++    client.from("tasks").select("id, title, due_at, priority, contact_id").eq("organization_id", o).eq("status", "open").lt("due_at", iso(end))
++      .order("due_at").limit(6),
++    client.from("conversations").select("id, contact_id, channel, last_message_at, last_message_preview, unread_count, contacts(first_name, last_name, email, phone)")
++      .eq("organization_id", o).eq("status", "open").gt("unread_count", 0).order("last_message_at", { ascending: false }).limit(5),
++    client.from("reviews").select("rating, published_at").eq("organization_id", o).gte("published_at", new Date(now.getTime() - 90 * 86400000).toISOString()).limit(2000),
++    client.from("invoices").select("total_cents, amount_paid_cents, due_date, status").eq("organization_id", o).eq("kind", "invoice").in("status", ["sent", "partially_paid"]).limit(1000),
++    client.rpc("org_usage", { p_org: o }),
++    client.from("contacts").select("id, first_name, last_name, email, phone, source, created_at").eq("organization_id", o).is("erased_at", null)
++      .order("created_at", { ascending: false }).limit(5),
++    count(client.from("provider_accounts").select("id", head).eq("organization_id", o).eq("status", "active").eq("channel", "sms")),
++    count(client.from("provider_accounts").select("id", head).eq("organization_id", o).eq("status", "active").eq("channel", "email")),
++    count(client.from("calendars").select("id", head).eq("organization_id", o)),
++    count(client.from("forms").select("id", head).eq("organization_id", o).eq("status", "active")),
++    count(client.from("sites").select("id", head).eq("organization_id", o).eq("status", "published")),
++    count(client.from("knowledge_items").select("id", head).eq("organization_id", o).eq("status", "approved")),
++    count(client.from("payment_accounts").select("id", head).eq("organization_id", o).eq("status", "active")),
++    count(client.from("workflows").select("id", head).eq("organization_id", o).eq("status", "active")),
++    count(client.from("memberships").select("user_id", head).eq("organization_id", o).eq("status", "active")),
++  ]);
++
++  const ratings = ((reviewsRes.data || []) as { rating: number }[]).map((r) => r.rating);
++  const today = now.toISOString().slice(0, 10);
++  const open = (invoicesRes.data || []) as { total_cents: number; amount_paid_cents: number; due_date: string | null }[];
++  const outstanding = open.reduce((s, i) => s + i.total_cents - i.amount_paid_cents, 0);
++  const overdueInvoices = open.filter((i) => i.due_date && i.due_date < today).length;
++  const nearLimits = ((usageRes.data || []) as { metric: string; used: number; limit: number | null }[])
++    .filter((u) => u.limit != null && u.limit > 0 && u.used / u.limit >= 0.8)
++    .map((u) => u.metric.replace("_", " "));
++  const todayAppts = ((apptsRes.data || []) as { starts_at: string }[]).filter((a) => a.starts_at < iso(end)).length;
++
++  const setup: SetupStep[] = [
++    { key: "sms", label: "Connect a texting number", done: smsAcct > 0, href: "/channels", why: "Text leads, send reminders and review requests." },
++    { key: "email", label: "Connect an email sender", done: emailAcct > 0, href: "/channels", why: "Send invoices, confirmations and follow-ups." },
++    { key: "knowledge", label: "Add your business facts", done: knowledge > 0, href: "/knowledge", why: "Services, hours and prices the AI may use." },
++    { key: "calendar", label: "Create a booking calendar", done: calendars > 0, href: "/calendars", why: "Let customers book online." },
++    { key: "form", label: "Create a lead form", done: forms > 0, href: "/forms", why: "Capture leads from your website and ads." },
++    { key: "site", label: "Publish your website", done: liveSites > 0, href: "/sites", why: "A fast site with your form and booking built in." },
++    { key: "workflow", label: "Turn on an automation", done: workflows > 0, href: "/workflows", why: "Instant replies, reminders and review requests." },
++    { key: "payments", label: "Connect card payments", done: payAcct > 0, href: "/account", why: "Get paid online from invoices." },
++    { key: "team", label: "Invite your team", done: members > 1, href: "/organization", why: "Share the inbox and calendar." },
++  ];
++
++  return {
++    greeting: greeting(hour),
++    organization: orgRow?.name ?? "",
++    timezone: zone,
++    numbers: {
++      new_leads: newLeads, previous_leads: prevLeads,
++      appointments_today: todayAppts,
++      unread,
++      rating: ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null,
++      reviews_90d: ratings.length,
++      outstanding_cents: outstanding,
++    },
++    attention: attentionList({ unread, overdueTasks, dueToday, negativeUnanswered, unansweredReviews, approvals, overdueInvoices, nearLimits }),
++    appointments: apptsRes.data || [],
++    tasks: tasksRes.data || [],
++    conversations: convRes.data || [],
++    leads: leadsRes.data || [],
++    setup,
++    is_agency: org.kind === "agency",
++    user_id: userId,
++  };
++}
+diff --git a/src/middleware.ts b/src/middleware.ts
+index 2f406af..427f15b 100644
+--- a/src/middleware.ts
++++ b/src/middleware.ts
+@@ -19,8 +19,8 @@ async function expected(pass: string): Promise<string> {
+ // decided per organization by RLS. Everything else is the legacy single-tenant
+ // console, which reads agency-wide data and is limited to platform staff.
+ const TENANT = [
+-  /^\/(command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge|invoices|account|agency)(\/|$)/,
+-  /^\/api\/(crm|command|tenant|inbox|messages|channels|reputation|calendars|appointments|workflows|prospecting|forms|sites|knowledge|invoices|billing|organization)(\/|$)/,
++  /^\/(home|command-center|crm|organization|inbox|channels|trust|calendars|workflows|lead-finder|forms|sites|knowledge|invoices|account|agency)(\/|$)/,
++  /^\/api\/(crm|command|tenant|inbox|messages|channels|reputation|calendars|appointments|workflows|prospecting|forms|sites|knowledge|invoices|billing|organization|home)(\/|$)/,
+ ];
+ 
+ type SessionUser = { id: string };
+@@ -142,7 +142,7 @@ export async function middleware(req: NextRequest) {
+         } else response = NextResponse.next();
+       } else {
+         const url = req.nextUrl.clone();
+-        url.pathname = "/command-center";
++        url.pathname = "/home";
+         url.search = "";
+         response = NextResponse.redirect(url);
+       }
+diff --git a/tests/unit/home.test.ts b/tests/unit/home.test.ts
+new file mode 100644
+index 0000000..bf97228
+--- /dev/null
++++ b/tests/unit/home.test.ts
+@@ -0,0 +1,28 @@
++import { describe, expect, it } from "vitest";
++import { attentionList, dayBounds, greeting } from "@/lib/home/service";
++
++const none = { unread: 0, overdueTasks: 0, dueToday: 0, negativeUnanswered: 0, unansweredReviews: 0, approvals: 0, overdueInvoices: 0, nearLimits: [] as string[] };
++
++describe("home dashboard", () => {
++  it("lists what needs attention, most urgent first", () => {
++    const list = attentionList({ ...none, unread: 3, overdueTasks: 1, dueToday: 2, negativeUnanswered: 1, unansweredReviews: 4, approvals: 2, overdueInvoices: 1, nearLimits: ["sms"] });
++    expect(list.map((a) => a.key)).toEqual(["negative", "unread", "overdue", "approvals", "invoices", "limits", "reviews", "today"]);
++    expect(list[0]).toMatchObject({ tone: "bad", href: "/trust", text: "1 unhappy review needs a reply" });
++    expect(list.find((a) => a.key === "reviews")?.text).toBe("3 reviews without a reply");
++    expect(list.find((a) => a.key === "unread")?.text).toBe("3 conversations are waiting for a reply");
++    expect(attentionList(none)).toEqual([]);
++  });
++  it("uses the business's time zone for 'today'", () => {
++    // 03:30 UTC on Oct 8 is still Oct 7 in New York.
++    const { start, end, hour } = dayBounds(new Date("2026-10-08T03:30:00Z"), "America/New_York");
++    expect(start.toISOString()).toBe("2026-10-07T04:00:00.000Z");
++    expect(end.toISOString()).toBe("2026-10-08T04:00:00.000Z");
++    expect(hour).toBe(23);
++    expect(dayBounds(new Date("2026-10-08T03:30:00Z"), "Not/AZone").zone).toBe("America/New_York");
++  });
++  it("greets by time of day", () => {
++    expect(greeting(8)).toBe("Good morning");
++    expect(greeting(13)).toBe("Good afternoon");
++    expect(greeting(20)).toBe("Good evening");
++  });
++});
+-- 
+2.43.0
+

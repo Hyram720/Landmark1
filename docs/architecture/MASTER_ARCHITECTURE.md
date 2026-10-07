@@ -119,7 +119,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 | 23 | Security | 🟡→🆕 | See [SECURITY_PLAN](SECURITY_PLAN.md) |
 | 24 | Compliance | 🟡→🆕 | Consent ledger, erasure, append-only audit; messaging compliance in Phase 2 |
 | 25 | Technical architecture | 🟡 | Supabase, Next, TS in place; Tailwind not adopted (deliberate, see ADR-6); provider abstractions started with AI |
-| 26 | UX / navigation | 🟡 | New "AI operator" group; full IA restructure in Phase 2 |
+| 26 | UX / navigation | 🆕 | Home dashboard (today's numbers, needs-attention list, schedule, tasks, unanswered conversations, newest leads, setup checklist); menu grouped by Customers, Marketing, AI, Money and Settings, filtered by account type and role; the classic console is one collapsible group for platform staff; phone bottom bar with a "More" sheet |
 | 27 | Development documentation | 🆕 | This document set |
 | 28 | Quality requirements | 🆕 for new modules | Loading, empty and error states, validation, tests, "integration not configured" |
 

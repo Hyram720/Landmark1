@@ -135,6 +135,12 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 
 Plan limits surface as HTTP 402 with code `plan_limit`.
 
+### Home
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET /api/home` | crm.read | Today's numbers (new leads vs prior week, appointments, unanswered conversations, 90-day rating, money owed), a prioritized needs-attention list, upcoming appointments, due tasks, unanswered conversations, newest leads and the setup checklist. "Today" uses the organization's time zone |
+
 ### Phase 6 part 2 endpoints (agency operations)
 
 | Method & path | Permission | Purpose |
