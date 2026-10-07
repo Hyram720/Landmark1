@@ -213,6 +213,16 @@ Verified by `supabase/tests/phase6_business.test.sql` (30 assertions; 207 in tot
 
 Verified by `supabase/tests/phase6b_agency.test.sql` (40 assertions; 247 in total).
 
+### Reputation: Google (`20261013120000_reputation_google.sql`)
+
+| Table / function | Purpose and key rules |
+|---|---|
+| `review_connections` | One Google connection per organization; refresh token encrypted and not readable through the API; admins choose the location; sync state is written only by the server |
+| `review_widgets`, `review_widget_data()` | Embeddable widgets with random addresses; the public data always includes the true average and count of all reviews, shows first names only, and disabled widgets show nothing |
+| `tg_reviews_created` (changed) | Reviews older than 14 days (imported history) go on the timeline but no longer open tasks or start automations |
+
+Verified by `supabase/tests/reputation_google.test.sql` (20 assertions; 267 in total).
+
 ### Phase 7–8 (planned)
 - `price_overrides` (per-client price overrides beyond the current rates)
 - `sender_domains`

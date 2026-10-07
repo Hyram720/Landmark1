@@ -135,6 +135,18 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 
 Plan limits surface as HTTP 402 with code `plan_limit`.
 
+### Reputation: Google and widgets
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET /api/reputation/google` | crm.read | Connection status (never the token) and whether Google is configured |
+| `GET /api/reputation/google/start`, `GET /api/reputation/google/callback` | org.manage | OAuth sign-in with a state cookie tied to the browser and organization |
+| `GET /api/reputation/google/locations` | org.manage | Business locations the connected account manages |
+| `POST /api/reputation/google {action: select, location}` / `{action: sync}`, `DELETE` | org.manage | Choose the location (also creates the Google review link), sync now, disconnect (token revoked) |
+| `POST /api/reputation/reviews/:id/reply {text}` | crm.write | Post the reply publicly on Google, then record it |
+| `GET/POST /api/reputation/widgets`, `PATCH/DELETE /api/reputation/widgets/:id` | crm.read / sites.manage | Review widgets |
+| `GET /api/public/reviews/:token`, `GET /w/reviews/:token` | public | Widget data and the embeddable page (the only pages that may be framed) |
+
 ### Home
 
 | Method & path | Permission | Purpose |

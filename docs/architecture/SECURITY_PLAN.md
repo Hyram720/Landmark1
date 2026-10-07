@@ -107,6 +107,15 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Rebilling | Rates and runs are visible only to the agency's admins; the bill-to contact must belong to the agency; one invoice per client and month; invoices are drafts until a person sends them |
 | White-label domains | Server-only verification; a host is either a website or a console domain; branding is public only for verified domains of active agencies |
 
+## 2g. Controls added for Google reviews and widgets
+
+| Control | Implementation |
+|---|---|
+| Google access | OAuth with offline access limited to `business.manage`; state bound to an httpOnly cookie and the organization; refresh token sealed with `APP_ENCRYPTION_KEY`, unreadable through the API, revoked on disconnect |
+| Locations | A location can be chosen only if the connected Google account manages it (checked server-side against Google) |
+| Replies | Posting publicly needs a confirmation in the UI, is audited, and only works for Google reviews with an active connection |
+| Widgets | Only `/w/*` may be framed (`frame-ancestors *`); every other page keeps `X-Frame-Options: DENY`. Widgets show first names only and always the true overall rating, with a note and a link to all reviews when filtered by rating |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

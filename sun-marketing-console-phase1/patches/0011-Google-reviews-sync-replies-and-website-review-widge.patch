@@ -1,0 +1,1331 @@
+From e0a6fafc969589ef6fd03911ac1e5a5083e97c89 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 12:57:53 +0000
+Subject: [PATCH] Google reviews: sync, replies and website review widgets
+
+- Connect Google Business Profile with OAuth (business.manage, offline);
+  the refresh token is encrypted and never readable through the API.
+- Choose the business location (only ones the Google account manages);
+  its review link becomes the Google review site automatically.
+- Reviews sync every hour (new, edited, and owner replies), plus "Sync now".
+  Imported history no longer floods tasks or automations.
+- Post replies publicly on Google from the Reputation page.
+- Embeddable review widgets (cards, list or badge; light or dark) that
+  always show the true overall rating and say when they are filtered.
+  Only /w/* pages may be framed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RPZCHpFd1FKcchaeMbmcMV
+---
+ docs/architecture/API_ARCHITECTURE.md         |  12 +
+ docs/architecture/DATABASE_SCHEMA.md          |  10 +
+ docs/architecture/MASTER_ARCHITECTURE.md      |   2 +-
+ docs/architecture/SECURITY_PLAN.md            |   9 +
+ next.config.mjs                               |  21 +-
+ src/app/api/jobs/tick/route.ts                |   2 +
+ src/app/api/public/reviews/[token]/route.ts   |  15 ++
+ .../api/reputation/google/callback/route.ts   |  39 ++++
+ .../api/reputation/google/locations/route.ts  |  12 +
+ src/app/api/reputation/google/route.ts        |  63 ++++++
+ src/app/api/reputation/google/start/route.ts  |  19 ++
+ .../reputation/reviews/[id]/reply/route.ts    |  23 ++
+ src/app/api/reputation/widgets/[id]/route.ts  |  19 ++
+ src/app/api/reputation/widgets/route.ts       |  17 ++
+ src/app/trust/page.tsx                        | 119 +++++++++-
+ src/app/w/reviews/[token]/page.tsx            |  65 ++++++
+ src/components/Shell.tsx                      |   2 +-
+ src/lib/reputation/google.ts                  | 211 ++++++++++++++++++
+ src/lib/reputation/widgets.ts                 |  11 +
+ src/middleware.ts                             |   4 +-
+ .../20261013120000_reputation_google.sql      | 141 ++++++++++++
+ supabase/tests/reputation_google.test.sql     | 111 +++++++++
+ tests/unit/reputation-google.test.ts          |  90 ++++++++
+ 23 files changed, 997 insertions(+), 20 deletions(-)
+ create mode 100644 src/app/api/public/reviews/[token]/route.ts
+ create mode 100644 src/app/api/reputation/google/callback/route.ts
+ create mode 100644 src/app/api/reputation/google/locations/route.ts
+ create mode 100644 src/app/api/reputation/google/route.ts
+ create mode 100644 src/app/api/reputation/google/start/route.ts
+ create mode 100644 src/app/api/reputation/reviews/[id]/reply/route.ts
+ create mode 100644 src/app/api/reputation/widgets/[id]/route.ts
+ create mode 100644 src/app/api/reputation/widgets/route.ts
+ create mode 100644 src/app/w/reviews/[token]/page.tsx
+ create mode 100644 src/lib/reputation/google.ts
+ create mode 100644 src/lib/reputation/widgets.ts
+ create mode 100644 supabase/migrations/20261013120000_reputation_google.sql
+ create mode 100644 supabase/tests/reputation_google.test.sql
+ create mode 100644 tests/unit/reputation-google.test.ts
+
+diff --git a/docs/architecture/API_ARCHITECTURE.md b/docs/architecture/API_ARCHITECTURE.md
+index 57eec00..cc78fb7 100644
+--- a/docs/architecture/API_ARCHITECTURE.md
++++ b/docs/architecture/API_ARCHITECTURE.md
+@@ -135,6 +135,18 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
+ 
+ Plan limits surface as HTTP 402 with code `plan_limit`.
+ 
++### Reputation: Google and widgets
++
++| Method & path | Permission | Purpose |
++|---|---|---|
++| `GET /api/reputation/google` | crm.read | Connection status (never the token) and whether Google is configured |
++| `GET /api/reputation/google/start`, `GET /api/reputation/google/callback` | org.manage | OAuth sign-in with a state cookie tied to the browser and organization |
++| `GET /api/reputation/google/locations` | org.manage | Business locations the connected account manages |
++| `POST /api/reputation/google {action: select, location}` / `{action: sync}`, `DELETE` | org.manage | Choose the location (also creates the Google review link), sync now, disconnect (token revoked) |
++| `POST /api/reputation/reviews/:id/reply {text}` | crm.write | Post the reply publicly on Google, then record it |
++| `GET/POST /api/reputation/widgets`, `PATCH/DELETE /api/reputation/widgets/:id` | crm.read / sites.manage | Review widgets |
++| `GET /api/public/reviews/:token`, `GET /w/reviews/:token` | public | Widget data and the embeddable page (the only pages that may be framed) |
++
+ ### Home
+ 
+ | Method & path | Permission | Purpose |
+diff --git a/docs/architecture/DATABASE_SCHEMA.md b/docs/architecture/DATABASE_SCHEMA.md
+index bc56efc..0a13415 100644
+--- a/docs/architecture/DATABASE_SCHEMA.md
++++ b/docs/architecture/DATABASE_SCHEMA.md
+@@ -213,6 +213,16 @@ Verified by `supabase/tests/phase6_business.test.sql` (30 assertions; 207 in tot
+ 
+ Verified by `supabase/tests/phase6b_agency.test.sql` (40 assertions; 247 in total).
+ 
++### Reputation: Google (`20261013120000_reputation_google.sql`)
++
++| Table / function | Purpose and key rules |
++|---|---|
++| `review_connections` | One Google connection per organization; refresh token encrypted and not readable through the API; admins choose the location; sync state is written only by the server |
++| `review_widgets`, `review_widget_data()` | Embeddable widgets with random addresses; the public data always includes the true average and count of all reviews, shows first names only, and disabled widgets show nothing |
++| `tg_reviews_created` (changed) | Reviews older than 14 days (imported history) go on the timeline but no longer open tasks or start automations |
++
++Verified by `supabase/tests/reputation_google.test.sql` (20 assertions; 267 in total).
++
+ ### Phase 7–8 (planned)
+ - `price_overrides` (per-client price overrides beyond the current rates)
+ - `sender_domains`
+diff --git a/docs/architecture/MASTER_ARCHITECTURE.md b/docs/architecture/MASTER_ARCHITECTURE.md
+index a6e082a..103a56c 100644
+--- a/docs/architecture/MASTER_ARCHITECTURE.md
++++ b/docs/architecture/MASTER_ARCHITECTURE.md
+@@ -101,7 +101,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
+ | 5 | Customer memory | 🆕 (foundation) | Unified `activities` timeline, `sensitive` flag hidden from AI, erasure, consent. Cross-channel ingestion arrives with Phase 2 |
+ | 6 | AI voice platform | 🟡 | Vapi-specific receptionist config and Campaign Studio calls exist. **Missing:** provider-agnostic voice layer, call records per tenant, transfers, call-time booking |
+ | 7 | SMS and messaging | 🆕 (Phase 2 part 1) | Provider layer (Telnyx, Twilio, Resend) with failover, unified inbox, scheduling, consent/opt-out/quiet-hours gate, verified webhooks, STOP/START. **Missing:** web chat, WhatsApp, 10DLC registry UI, bulk sends (Phase 3 campaigns) |
+-| 8 | Reputation and Trust Center | 🆕 (Phase 3 part 1) | Reviews (manual/CSV), reply drafts incl. AI, explained Reputation Health Score, non-gated review requests, complaint tasks. **Missing:** Google/Facebook sync, widgets, competitor comparison |
++| 8 | Reputation and Trust Center | 🆕 | Reviews (Google sync every hour, manual/CSV), replies drafted by AI and posted to Google from the app, explained Reputation Health Score, non-gated review requests, complaint tasks, embeddable review widgets. **Missing:** Facebook/Yelp sync, competitor comparison |
+ | 9 | Lead generation engine | 🆕 (Phase 4 part 1) | Tenant-scoped Lead Finder, audits at scale with business-email discovery, explained Opportunity Score, CAN-SPAM email outreach with one-click unsubscribe and volume limits, convert to CRM, AI tools. **Missing:** paid data providers (ratings), reply detection, sequences |
+ | 10 | Websites, funnels, forms | 🆕 (Phase 5 part 1) | Hosted multi-tenant sites on the Puck editor with industry templates, draft/publish by managers, forms builder with consent capture and automation trigger. Custom domains (Phase 6). **Missing:** surveys/quizzes, A/B tests |
+ | 11 | Workflow automation | 🆕 (Phase 3 part 1) | Event-triggered, versioned automations with templates, AI drafting, compliance-gated messaging, signed webhooks, per-step run logs. **Missing:** branching graphs, queue faster than the 15-minute scheduler |
+diff --git a/docs/architecture/SECURITY_PLAN.md b/docs/architecture/SECURITY_PLAN.md
+index 9f6a47d..d78cbf6 100644
+--- a/docs/architecture/SECURITY_PLAN.md
++++ b/docs/architecture/SECURITY_PLAN.md
+@@ -107,6 +107,15 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
+ | Rebilling | Rates and runs are visible only to the agency's admins; the bill-to contact must belong to the agency; one invoice per client and month; invoices are drafts until a person sends them |
+ | White-label domains | Server-only verification; a host is either a website or a console domain; branding is public only for verified domains of active agencies |
+ 
++## 2g. Controls added for Google reviews and widgets
++
++| Control | Implementation |
++|---|---|
++| Google access | OAuth with offline access limited to `business.manage`; state bound to an httpOnly cookie and the organization; refresh token sealed with `APP_ENCRYPTION_KEY`, unreadable through the API, revoked on disconnect |
++| Locations | A location can be chosen only if the connected Google account manages it (checked server-side against Google) |
++| Replies | Posting publicly needs a confirmation in the UI, is audited, and only works for Google reviews with an active connection |
++| Widgets | Only `/w/*` may be framed (`frame-ancestors *`); every other page keeps `X-Frame-Options: DENY`. Widgets show first names only and always the true overall rating, with a note and a link to all reviews when filtered by rating |
++
+ ## 2. Controls implemented in Phase 1
+ 
+ | Control | Implementation |
+diff --git a/next.config.mjs b/next.config.mjs
+index 2d04f0e..c3cd952 100644
+--- a/next.config.mjs
++++ b/next.config.mjs
+@@ -4,15 +4,20 @@ const nextConfig = {
+   // into browser bundles. Server modules read process.env directly instead.
+   poweredByHeader: false,
+   async headers() {
++    const base = [
++      { key: "X-Content-Type-Options", value: "nosniff" },
++      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
++      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
++      { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
++    ];
+     return [{
+-      source: "/(.*)",
+-      headers: [
+-        { key: "X-Content-Type-Options", value: "nosniff" },
+-        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+-        { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+-        { key: "X-Frame-Options", value: "DENY" },
+-        { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+-      ],
++      // Everything except embeddable widgets refuses to be framed.
++      source: "/((?!w/).*)",
++      headers: [...base, { key: "X-Frame-Options", value: "DENY" }],
++    }, {
++      // Review widgets are meant to be embedded on customers' own websites.
++      source: "/w/:path*",
++      headers: [...base, { key: "Content-Security-Policy", value: "frame-ancestors *" }],
+     }, {
+       source: "/bridge/:path*",
+       headers: [{ key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" }],
+diff --git a/src/app/api/jobs/tick/route.ts b/src/app/api/jobs/tick/route.ts
+index 01a4dec..54bcfdf 100644
+--- a/src/app/api/jobs/tick/route.ts
++++ b/src/app/api/jobs/tick/route.ts
+@@ -5,6 +5,7 @@ import { enrollFromEvents, advanceRuns } from "@/lib/workflows/engine";
+ import { sendReminders } from "@/lib/calendar/service";
+ import { processAuditQueue } from "@/lib/leads/service";
+ import { autoInvoiceTick } from "@/lib/billing/rebilling";
++import { syncDue } from "@/lib/reputation/google";
+ 
+ export const dynamic = "force-dynamic";
+ export const maxDuration = 60;
+@@ -25,6 +26,7 @@ export async function POST(req: Request) {
+     ["reminders", () => sendReminders(system, now)],
+     ["lead_audits", () => processAuditQueue(system, null, 3)],
+     ["client_invoices", () => autoInvoiceTick(system, now)],
++    ["google_reviews", () => syncDue(system, now)],
+   ] as const) {
+     try {
+       result[name] = await job();
+diff --git a/src/app/api/public/reviews/[token]/route.ts b/src/app/api/public/reviews/[token]/route.ts
+new file mode 100644
+index 0000000..377e6f7
+--- /dev/null
++++ b/src/app/api/public/reviews/[token]/route.ts
+@@ -0,0 +1,15 @@
++import { NextResponse } from "next/server";
++import { systemClient } from "@/lib/supabase/system";
++
++export const dynamic = "force-dynamic";
++
++// Data for an embedded review widget. Cached briefly at the edge.
++export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
++  const token = (await params).token;
++  if (!/^[0-9a-f]{24}$/.test(token)) return NextResponse.json({ error: "Not found." }, { status: 404 });
++  const system = systemClient();
++  if (!system) return NextResponse.json({ error: "Not available." }, { status: 503 });
++  const { data } = await system.rpc("review_widget_data", { p_token: token });
++  if (!data) return NextResponse.json({ error: "Not found." }, { status: 404 });
++  return NextResponse.json(data, { headers: { "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" } });
++}
+diff --git a/src/app/api/reputation/google/callback/route.ts b/src/app/api/reputation/google/callback/route.ts
+new file mode 100644
+index 0000000..c70b04f
+--- /dev/null
++++ b/src/app/api/reputation/google/callback/route.ts
+@@ -0,0 +1,39 @@
++import { NextResponse } from "next/server";
++import { cookies } from "next/headers";
++import { timingSafeEqual } from "node:crypto";
++import { fromDb, tenantRoute } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { publicBaseUrl } from "@/lib/supabase/system";
++import { exchangeCode, sealToken, STATE_COOKIE } from "@/lib/reputation/google";
++
++export const dynamic = "force-dynamic";
++
++const back = (base: string, q: string) => {
++  const res = NextResponse.redirect(`${base}/trust?${q}`);
++  res.cookies.set(STATE_COOKIE, "", { path: "/api/reputation/google", maxAge: 0 });
++  return res;
++};
++
++// Google sends the admin back here with a one-time code.
++export const GET = tenantRoute("org.manage", async (ctx, req) => {
++  const base = publicBaseUrl(req) || new URL(req.url).origin;
++  const url = new URL(req.url);
++  if (url.searchParams.get("error")) return back(base, "google=cancelled");
++  const [state, orgId] = ((await cookies()).get(STATE_COOKIE)?.value || "").split(".");
++  const given = url.searchParams.get("state") || "";
++  const same = state && given.length === state.length && timingSafeEqual(Buffer.from(state), Buffer.from(given));
++  if (!same || orgId !== ctx.org.id) return back(base, "google=expired");
++  const code = url.searchParams.get("code");
++  if (!code) return back(base, "google=cancelled");
++  try {
++    const t = await exchangeCode(code, base);
++    await ctx.client.from("review_connections").update({ status: "disabled" }).eq("organization_id", ctx.org.id).eq("provider", "google").neq("status", "disabled");
++    const { error } = await ctx.client.from("review_connections").insert({ organization_id: ctx.org.id, provider: "google", encrypted_credentials: sealToken(t.refresh_token), account_email: t.email?.slice(0, 254) ?? null });
++    fromDb(error);
++    await audit(ctx.client, ctx.org.id, "reputation.google_connected", null, { account: t.email });
++    return back(base, "google=connected");
++  } catch (e) {
++    console.error("[google oauth]", e);
++    return back(base, "google=failed");
++  }
++});
+diff --git a/src/app/api/reputation/google/locations/route.ts b/src/app/api/reputation/google/locations/route.ts
+new file mode 100644
+index 0000000..15c6ac0
+--- /dev/null
++++ b/src/app/api/reputation/google/locations/route.ts
+@@ -0,0 +1,12 @@
++import { ApiError, tenantRoute } from "@/lib/tenant/api";
++import { systemClient } from "@/lib/supabase/system";
++import { locationsFor } from "@/lib/reputation/google";
++
++export const dynamic = "force-dynamic";
++
++// Business locations the connected Google account manages.
++export const GET = tenantRoute("org.manage", async (ctx) => {
++  const system = systemClient();
++  if (!system) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY is needed for Google.", 503, "integration_not_configured");
++  return { locations: await locationsFor(system, ctx.org.id) };
++});
+diff --git a/src/app/api/reputation/google/route.ts b/src/app/api/reputation/google/route.ts
+new file mode 100644
+index 0000000..55cc9de
+--- /dev/null
++++ b/src/app/api/reputation/google/route.ts
+@@ -0,0 +1,63 @@
++import { z } from "zod";
++import { ApiError, fromDb, readJson, tenantRoute } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { takeLimit } from "@/lib/rate-limit";
++import { publicBaseUrl, systemClient } from "@/lib/supabase/system";
++import { activeConnection, googleConfigured, locationsFor, redirectUri, revokeToken, syncConnection } from "@/lib/reputation/google";
++
++export const dynamic = "force-dynamic";
++export const maxDuration = 60;
++const COLUMNS = "id, account_email, account_name, location_name, location_title, source_id, status, last_synced_at, last_error, created_at";
++
++export const GET = tenantRoute("crm.read", async (ctx, req) => {
++  const { data, error } = await ctx.client.from("review_connections").select(COLUMNS).eq("organization_id", ctx.org.id).eq("provider", "google").neq("status", "disabled").maybeSingle();
++  fromDb(error);
++  const base = publicBaseUrl(req);
++  return { configured: googleConfigured(), connection: data, redirect_uri: base ? redirectUri(base) : null };
++});
++
++const action = z.discriminatedUnion("action", [
++  z.object({ action: z.literal("select"), location: z.string().regex(/^locations\/[0-9]{1,40}$/) }),
++  z.object({ action: z.literal("sync") }),
++]);
++
++export const POST = tenantRoute("org.manage", async (ctx, req) => {
++  const input = await readJson(req, action);
++  const system = systemClient();
++  if (!system) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY is needed for Google.", 503, "integration_not_configured");
++  if (input.action === "select") {
++    // Only a location the connected Google account actually manages.
++    const loc = (await locationsFor(system, ctx.org.id)).find((l) => l.location === input.location);
++    if (!loc) throw new ApiError("That location isn't managed by the connected Google account.", 404, "not_found");
++    let sourceId: string | null = null;
++    if (loc.review_url) {
++      const { data: existing } = await ctx.client.from("review_sources").select("id").eq("organization_id", ctx.org.id).eq("platform", "google").limit(1).maybeSingle();
++      if (existing) {
++        sourceId = existing.id;
++        await ctx.client.from("review_sources").update({ review_url: loc.review_url, status: "active" }).eq("organization_id", ctx.org.id).eq("id", existing.id);
++      } else {
++        const { data: s } = await ctx.client.from("review_sources").insert({ organization_id: ctx.org.id, platform: "google", name: "Google", review_url: loc.review_url, position: 0 }).select("id").single();
++        sourceId = s?.id ?? null;
++      }
++    }
++    const { error } = await ctx.client.from("review_connections").update({ account_name: loc.account, location_name: loc.location, location_title: loc.title.slice(0, 200), source_id: sourceId, status: "active" })
++      .eq("organization_id", ctx.org.id).eq("provider", "google").neq("status", "disabled");
++    fromDb(error);
++    await audit(ctx.client, ctx.org.id, "reputation.google_location", null, { location: loc.title });
++  } else if (!(await takeLimit("google-sync", ctx.org.id, 6, 3600))) {
++    throw new ApiError("You can sync a few times an hour; reviews also sync automatically every hour.", 429, "rate_limited");
++  }
++  const conn = await activeConnection(system, ctx.org.id);
++  if (!conn) throw new ApiError("Choose a location first.", 409, "conflict");
++  return { sync: await syncConnection(system, conn) };
++});
++
++export const DELETE = tenantRoute("org.manage", async (ctx) => {
++  const system = systemClient();
++  const { data } = system ? await system.from("review_connections").select("id, encrypted_credentials").eq("organization_id", ctx.org.id).eq("provider", "google").neq("status", "disabled").maybeSingle() : { data: null };
++  if (data) await revokeToken(data.encrypted_credentials);
++  const { error } = await ctx.client.from("review_connections").update({ status: "disabled" }).eq("organization_id", ctx.org.id).eq("provider", "google").neq("status", "disabled");
++  fromDb(error);
++  await audit(ctx.client, ctx.org.id, "reputation.google_disconnected", null);
++  return { ok: true };
++});
+diff --git a/src/app/api/reputation/google/start/route.ts b/src/app/api/reputation/google/start/route.ts
+new file mode 100644
+index 0000000..c20a4f9
+--- /dev/null
++++ b/src/app/api/reputation/google/start/route.ts
+@@ -0,0 +1,19 @@
++import { randomBytes } from "node:crypto";
++import { NextResponse } from "next/server";
++import { ApiError, tenantRoute } from "@/lib/tenant/api";
++import { publicBaseUrl } from "@/lib/supabase/system";
++import { authUrl, googleConfigured, STATE_COOKIE } from "@/lib/reputation/google";
++
++export const dynamic = "force-dynamic";
++
++// Sends an admin to Google's consent screen; the state ties the answer to
++// this browser and organization.
++export const GET = tenantRoute("org.manage", async (ctx, req) => {
++  if (!googleConfigured()) throw new ApiError("Integration not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.", 503, "integration_not_configured");
++  const base = publicBaseUrl(req);
++  if (!base) throw new ApiError("Integration not configured: set PUBLIC_APP_URL.", 503, "integration_not_configured");
++  const state = randomBytes(24).toString("hex");
++  const res = NextResponse.redirect(authUrl(state, base));
++  res.cookies.set(STATE_COOKIE, `${state}.${ctx.org.id}`, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/reputation/google", maxAge: 600 });
++  return res;
++});
+diff --git a/src/app/api/reputation/reviews/[id]/reply/route.ts b/src/app/api/reputation/reviews/[id]/reply/route.ts
+new file mode 100644
+index 0000000..0cc93e7
+--- /dev/null
++++ b/src/app/api/reputation/reviews/[id]/reply/route.ts
+@@ -0,0 +1,23 @@
++import { z } from "zod";
++import { ApiError, fromDb, readJson, scoped, tenantRoute, uuid } from "@/lib/tenant/api";
++import { audit } from "@/lib/tenant/audit";
++import { systemClient } from "@/lib/supabase/system";
++import { postGoogleReply } from "@/lib/reputation/google";
++import { updateReview } from "@/lib/reputation/service";
++
++export const dynamic = "force-dynamic";
++
++// Posts the reply publicly on Google, then records it as posted.
++export const POST = tenantRoute<{ id: string }>("crm.write", async (ctx, req, { id }) => {
++  const { text } = await readJson(req, z.object({ text: z.string().trim().min(2, "Write a reply.").max(4000) }));
++  const rid = uuid.parse(id);
++  const { data: review, error } = await ctx.client.from("reviews").select("id, platform, external_id, response_ai_drafted, response_body").eq("organization_id", ctx.org.id).eq("id", rid).maybeSingle();
++  fromDb(error);
++  if (!review) throw new ApiError("Review not found.", 404, "not_found");
++  const system = systemClient();
++  if (!system) throw new ApiError("Integration not configured: SUPABASE_SERVICE_ROLE_KEY is needed for Google.", 503, "integration_not_configured");
++  await postGoogleReply(system, ctx.org.id, review, text);
++  const updated = await updateReview(scoped(ctx), rid, { response_body: text, response_status: "posted" }, { aiDrafted: review.response_ai_drafted && review.response_body === text });
++  await audit(ctx.client, ctx.org.id, "reputation.reply_posted", { type: "review", id: rid }, { platform: "google" });
++  return { review: updated };
++});
+diff --git a/src/app/api/reputation/widgets/[id]/route.ts b/src/app/api/reputation/widgets/[id]/route.ts
+new file mode 100644
+index 0000000..407cd80
+--- /dev/null
++++ b/src/app/api/reputation/widgets/[id]/route.ts
+@@ -0,0 +1,19 @@
++import { ApiError, fromDb, readJson, tenantRoute, uuid } from "@/lib/tenant/api";
++import { WIDGET_COLUMNS, widgetInput } from "@/lib/reputation/widgets";
++
++export const dynamic = "force-dynamic";
++type P = { id: string };
++
++export const PATCH = tenantRoute<P>("sites.manage", async (ctx, req, { id }) => {
++  const input = await readJson(req, widgetInput.partial());
++  const { data, error } = await ctx.client.from("review_widgets").update(input).eq("organization_id", ctx.org.id).eq("id", uuid.parse(id)).select(WIDGET_COLUMNS).maybeSingle();
++  fromDb(error);
++  if (!data) throw new ApiError("Widget not found.", 404, "not_found");
++  return { widget: data };
++});
++
++export const DELETE = tenantRoute<P>("sites.manage", async (ctx, _req, { id }) => {
++  const { error } = await ctx.client.from("review_widgets").delete().eq("organization_id", ctx.org.id).eq("id", uuid.parse(id));
++  fromDb(error);
++  return { ok: true };
++});
+diff --git a/src/app/api/reputation/widgets/route.ts b/src/app/api/reputation/widgets/route.ts
+new file mode 100644
+index 0000000..4a3c606
+--- /dev/null
++++ b/src/app/api/reputation/widgets/route.ts
+@@ -0,0 +1,17 @@
++import { fromDb, readJson, tenantRoute } from "@/lib/tenant/api";
++import { WIDGET_COLUMNS, widgetInput } from "@/lib/reputation/widgets";
++
++export const dynamic = "force-dynamic";
++
++export const GET = tenantRoute("crm.read", async (ctx) => {
++  const { data, error } = await ctx.client.from("review_widgets").select(WIDGET_COLUMNS).eq("organization_id", ctx.org.id).order("created_at");
++  fromDb(error);
++  return { widgets: data || [] };
++});
++
++export const POST = tenantRoute("sites.manage", async (ctx, req) => {
++  const input = await readJson(req, widgetInput);
++  const { data, error } = await ctx.client.from("review_widgets").insert({ organization_id: ctx.org.id, ...input }).select(WIDGET_COLUMNS).single();
++  fromDb(error);
++  return { widget: data };
++});
+diff --git a/src/app/trust/page.tsx b/src/app/trust/page.tsx
+index 3972d82..1a27097 100644
+--- a/src/app/trust/page.tsx
++++ b/src/app/trust/page.tsx
+@@ -1,5 +1,5 @@
+ "use client";
+-import { useState } from "react";
++import { useEffect, useState } from "react";
+ import TenantGate, { ErrorState, Loading } from "@/components/tenant/TenantGate";
+ import ContactPicker, { type PickedContact } from "@/components/tenant/ContactPicker";
+ import { api, atLeast, Org, personName, relativeTime, useResource } from "@/components/tenant/client";
+@@ -7,7 +7,7 @@ import { Copy, useToast } from "@/components/ui";
+ 
+ type Factor = { key: string; label: string; weight: number; points: number; detail: string };
+ type Review = {
+-  id: string; platform: string; rating: number; author_name: string | null; body: string | null; published_at: string; status: "new" | "acknowledged" | "resolved";
++  id: string; platform: string; external_id: string | null; rating: number; author_name: string | null; body: string | null; published_at: string; status: "new" | "acknowledged" | "resolved";
+   response_body: string | null; response_status: "none" | "draft" | "posted"; response_ai_drafted: boolean; contacts: { first_name: string | null; last_name: string | null } | null;
+ };
+ type Source = { id: string; platform: string; name: string; review_url: string; status: string };
+@@ -53,9 +53,10 @@ function Health({ data }: { data: Data }) {
+   );
+ }
+ 
+-function ReviewItem({ r, canWrite, onChanged, toast }: { r: Review; canWrite: boolean; onChanged: () => void; toast: (m: string) => void }) {
++function ReviewItem({ r, canWrite, googleLive, onChanged, toast }: { r: Review; canWrite: boolean; googleLive: boolean; onChanged: () => void; toast: (m: string) => void }) {
+   const [reply, setReply] = useState(r.response_body || "");
+   const [busy, setBusy] = useState(false);
++  const direct = googleLive && r.platform === "google" && !!r.external_id;
+   const save = async (body: Record<string, unknown>, done: string) => {
+     setBusy(true);
+     try { await api(`/api/reputation/reviews/${r.id}`, { method: "PATCH", body }); toast(done); onChanged(); }
+@@ -83,11 +84,19 @@ function ReviewItem({ r, canWrite, onChanged, toast }: { r: Review; canWrite: bo
+           <div className="inline-actions">
+             <button className="btn btn-sm" disabled={busy || !reply.trim()} onClick={() => save({ response_body: reply.trim(), response_status: "draft" }, "Draft saved.")}>Save draft</button>
+             {reply.trim() && <Copy text={reply.trim()} label="Copy reply" />}
+-            <button className="btn btn-sm btn-primary" disabled={busy || !reply.trim()} onClick={() => save({ response_body: reply.trim(), response_status: "posted" }, "Marked as replied.")}>I posted it</button>
++            {direct ? (
++              <button className="btn btn-sm btn-primary" disabled={busy || reply.trim().length < 2} onClick={async () => {
++                if (!window.confirm("Post this reply publicly on Google? Everyone who sees the review will see it.")) return;
++                setBusy(true);
++                try { await api(`/api/reputation/reviews/${r.id}/reply`, { body: { text: reply.trim() } }); toast("Reply posted on Google."); onChanged(); }
++                catch (e) { toast(e instanceof Error ? e.message : "Could not post the reply."); }
++                finally { setBusy(false); }
++              }}>Post reply on Google</button>
++            ) : <button className="btn btn-sm btn-primary" disabled={busy || !reply.trim()} onClick={() => save({ response_body: reply.trim(), response_status: "posted" }, "Marked as replied.")}>I posted it</button>}
+             {r.status !== "acknowledged" && r.status !== "resolved" && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => save({ status: "acknowledged" }, "Acknowledged.")}>Acknowledge</button>}
+             {r.status !== "resolved" && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => save({ status: "resolved" }, "Marked resolved.")}>Resolve</button>}
+           </div>
+-          <span className="hint">Post the reply on {label(r.platform)} yourself, then press &ldquo;I posted it&rdquo;. Posting directly from here arrives with the {label(r.platform)} connection in a later update. The AI operator can draft replies for you in the Command Center.</span>
++          <span className="hint">{direct ? "Your reply is posted publicly on Google under the business name." : <>Post the reply on {label(r.platform)} yourself, then press &ldquo;I posted it&rdquo;.{r.platform === "google" ? " Connect Google (right) to post replies directly from here." : ""}</>} The AI assistant can draft replies for you.</span>
+         </div>
+       )}
+       {r.response_status === "posted" && r.response_body && <div className="small" style={{ borderLeft: "3px solid var(--line)", paddingLeft: 10 }}><span className="tiny muted">Your reply</span><div className="text">{r.response_body}</div>
+@@ -218,8 +227,100 @@ function Sites({ sources, canManage, onChanged, toast }: { sources: Source[]; ca
+   );
+ }
+ 
++type GoogleState = { configured: boolean; redirect_uri: string | null; connection: { account_email: string | null; location_title: string | null; status: "choose_location" | "active" | "error"; last_synced_at: string | null; last_error: string | null } | null };
++type GLocation = { account: string; location: string; title: string; address: string; review_url: string | null };
++
++function GoogleCard({ state, admin, reload, toast }: { state: GoogleState | null; admin: boolean; reload: () => void; toast: (m: string) => void }) {
++  const [locations, setLocations] = useState<GLocation[] | null>(null);
++  const [busy, setBusy] = useState(false);
++  const [locError, setLocError] = useState("");
++  const conn = state?.connection;
++  useEffect(() => {
++    const q = new URLSearchParams(window.location.search).get("google");
++    const msg: Record<string, string> = { connected: "Google connected. Now choose your business location.", cancelled: "Google connection cancelled.", expired: "That Google sign-in expired. Try again.", failed: "Google connection failed. Try again." };
++    if (q && msg[q]) { toast(msg[q]); window.history.replaceState(null, "", "/trust"); }
++  }, []); // eslint-disable-line react-hooks/exhaustive-deps
++  useEffect(() => {
++    if (conn?.status !== "choose_location" || !admin || locations) return;
++    api<{ locations: GLocation[] }>("/api/reputation/google/locations").then((r) => setLocations(r.locations)).catch((e) => setLocError(e instanceof Error ? e.message : "Could not load locations."));
++  }, [conn?.status, admin, locations]);
++  if (!state) return null;
++  const act = async (body: Record<string, unknown>, done: string) => {
++    setBusy(true);
++    try { const r = await api<{ sync?: { ok: boolean; added: number; updated: number; error?: string } }>("/api/reputation/google", { body }); toast(r.sync && !r.sync.ok ? `Sync problem: ${r.sync.error}` : `${done}${r.sync ? ` ${r.sync.added} new, ${r.sync.updated} updated.` : ""}`); reload(); }
++    catch (e) { toast(e instanceof Error ? e.message : "That did not work."); }
++    finally { setBusy(false); }
++  };
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Google Business Profile</h3><div className="sub">Reviews arrive automatically every hour, and you reply from here.</div></div>
++        {conn?.status === "active" && <span className="pill pill-ok">Connected</span>}{conn?.status === "error" && <span className="pill pill-bad">Needs attention</span>}</div>
++      <div className="card-pad stack" style={{ gap: 10 }}>
++        {!state.configured ? (
++          <p className="notice notice-warn small"><strong>Integration not configured.</strong> The platform needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from a Google Cloud project approved for the Business Profile APIs{state.redirect_uri ? <>, with the redirect address <span className="mono" style={{ overflowWrap: "anywhere" }}>{state.redirect_uri}</span></> : null}.</p>
++        ) : !conn ? (
++          admin ? <><p className="small">Sign in with the Google account that manages your business on Google Maps.</p><div><a className="btn btn-primary btn-sm" href="/api/reputation/google/start">Connect Google</a></div></> : <p className="small muted">An admin can connect Google.</p>
++        ) : conn.status === "choose_location" ? (
++          admin ? <div className="stack" style={{ gap: 6 }}>
++            <span className="small">Signed in as {conn.account_email || "your Google account"}. Which business is this?</span>
++            {locError ? <p className="small" role="alert" style={{ color: "var(--bad)" }}>{locError}</p> : !locations ? <Loading /> : locations.length === 0 ? <p className="small muted">This Google account doesn&apos;t manage any business profiles. Connect with the account that does.</p>
++              : locations.map((l) => <button key={l.location} className="btn btn-sm" style={{ justifyContent: "space-between", textAlign: "left" }} disabled={busy} onClick={() => act({ action: "select", location: l.location }, `Connected ${l.title}.`)}><span><strong>{l.title}</strong><span className="tiny muted" style={{ display: "block" }}>{l.address}</span></span><span>Choose</span></button>)}
++          </div> : <p className="small muted">An admin needs to choose the business location.</p>
++        ) : (
++          <>
++            <div className="small"><strong>{conn.location_title}</strong>{conn.account_email ? <span className="muted"> · {conn.account_email}</span> : null}</div>
++            <div className="tiny muted">{conn.last_synced_at ? `Last checked ${relativeTime(conn.last_synced_at)}` : "Not synced yet"}</div>
++            {conn.last_error && <p className="notice notice-warn small">{conn.last_error}</p>}
++            {admin && <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
++              {conn.status === "error" ? <a className="btn btn-sm btn-primary" href="/api/reputation/google/start">Reconnect Google</a> : <button className="btn btn-sm" disabled={busy} onClick={() => act({ action: "sync" }, "Synced.")}>{busy ? <span className="spin spin-dark" /> : "Sync now"}</button>}
++              <button className="btn btn-sm btn-ghost" disabled={busy} onClick={async () => { if (!window.confirm("Disconnect Google? Reviews already here stay.")) return; try { await api("/api/reputation/google", { method: "DELETE" }); toast("Google disconnected."); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>Disconnect</button>
++            </div>}
++          </>
++        )}
++      </div>
++    </div>
++  );
++}
++
++type Widget = { id: string; name: string; public_token: string; min_rating: number; max_items: number; layout: "grid" | "list" | "badge"; theme: "light" | "dark"; status: string };
++function Widgets({ canManage, toast }: { canManage: boolean; toast: (m: string) => void }) {
++  const { data, reload } = useResource<{ widgets: Widget[] }>("/api/reputation/widgets");
++  const [origin, setOrigin] = useState("");
++  const [open, setOpen] = useState<string | null>(null);
++  useEffect(() => setOrigin(window.location.origin), []);
++  const widgets = data?.widgets || [];
++  const current = widgets.find((w) => w.id === open) || widgets[0];
++  const change = async (w: Widget, patch: Partial<Widget>) => { try { await api(`/api/reputation/widgets/${w.id}`, { method: "PATCH", body: patch }); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Could not save."); } };
++  const code = current ? `<iframe src="${origin}/w/reviews/${current.public_token}" title="Customer reviews" style="width:100%;border:0;min-height:${current.layout === "badge" ? 90 : 420}px" loading="lazy"></iframe>` : "";
++  return (
++    <div className="card">
++      <div className="card-head"><div><h3>Reviews on your website</h3><div className="sub">Paste one line into any website. It always shows your true star average across all reviews.</div></div>
++        {canManage && <button className="btn btn-sm btn-primary" onClick={async () => { try { const r = await api<{ widget: Widget }>("/api/reputation/widgets", { body: { name: `Widget ${widgets.length + 1}` } }); setOpen(r.widget.id); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>New widget</button>}</div>
++      {!current ? <div className="empty"><h3>No widget yet</h3><p className="small">Create one to show recent reviews on your site.</p></div> : (
++        <div className="card-pad stack">
++          {widgets.length > 1 && <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>{widgets.map((w) => <button key={w.id} className={`chip ${w.id === current.id ? "on" : ""}`} onClick={() => setOpen(w.id)}>{w.name}</button>)}</div>}
++          {canManage && <div className="field-grid">
++            <div className="field"><label htmlFor="wg-layout">Layout</label><select id="wg-layout" className="select" value={current.layout} onChange={(e) => change(current, { layout: e.target.value as Widget["layout"] })}><option value="grid">Cards</option><option value="list">List</option><option value="badge">Rating badge only</option></select></div>
++            <div className="field"><label htmlFor="wg-min">Show reviews rated</label><select id="wg-min" className="select" value={current.min_rating} onChange={(e) => change(current, { min_rating: Number(e.target.value) })}><option value={1}>All ratings</option><option value={3}>3★ and up</option><option value={4}>4★ and up</option><option value={5}>5★ only</option></select></div>
++            <div className="field"><label htmlFor="wg-max">How many</label><select id="wg-max" className="select" value={current.max_items} onChange={(e) => change(current, { max_items: Number(e.target.value) })}>{[3, 4, 6, 8, 10, 12].map((n) => <option key={n} value={n}>{n}</option>)}</select></div>
++            <div className="field"><label htmlFor="wg-theme">Colors</label><select id="wg-theme" className="select" value={current.theme} onChange={(e) => change(current, { theme: e.target.value as Widget["theme"] })}><option value="light">Light</option><option value="dark">Dark</option></select></div>
++          </div>}
++          {current.min_rating > 1 && <p className="hint">When you show only higher ratings, the widget says so and links to all your reviews; the average always includes every review.</p>}
++          <div className="field"><label htmlFor="wg-code">Embed code</label><textarea id="wg-code" className="textarea mono" rows={3} readOnly value={code} /></div>
++          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}><Copy text={code} label="Copy embed code" /><a className="btn btn-sm" href={`/w/reviews/${current.public_token}`} target="_blank" rel="noreferrer">Open preview</a>
++            {canManage && <button className="btn btn-sm btn-ghost" onClick={() => change(current, { status: current.status === "active" ? "disabled" : "active" })}>{current.status === "active" ? "Turn off" : "Turn on"}</button>}
++            {canManage && <button className="btn btn-sm btn-ghost" onClick={async () => { if (!window.confirm("Delete this widget? Websites using it will show nothing.")) return; try { await api(`/api/reputation/widgets/${current.id}`, { method: "DELETE" }); setOpen(null); reload(); } catch (e) { toast(e instanceof Error ? e.message : "Failed."); } }}>Delete</button>}</div>
++          {current.status === "active" ? <iframe key={`${current.id}-${current.layout}-${current.min_rating}-${current.max_items}-${current.theme}`} src={`/w/reviews/${current.public_token}`} title="Widget preview" style={{ width: "100%", border: "1px solid var(--line)", borderRadius: 12, minHeight: current.layout === "badge" ? 110 : 420, background: "#fff" }} />
++            : <p className="small muted">This widget is turned off; websites using it show nothing.</p>}
++        </div>
++      )}
++    </div>
++  );
++}
++
+ function Trust({ org }: { org: Org }) {
+-  const [tab, setTab] = useState<"reviews" | "requests" | "sites">("reviews");
++  const [tab, setTab] = useState<"reviews" | "requests" | "sites" | "widget">("reviews");
++  const google = useResource<GoogleState>("/api/reputation/google");
+   const [filter, setFilter] = useState<"all" | "reply" | "low">("all");
+   const query = filter === "reply" ? "?needs_reply=1" : filter === "low" ? "?rating_max=2" : "";
+   const { data, error, loading, reload } = useResource<Data>(`/api/reputation${query}`);
+@@ -233,7 +334,7 @@ function Trust({ org }: { org: Org }) {
+     <div className="split">
+       <div className="stack">
+         <div className="tabs" role="tablist">
+-          {(["reviews", "requests", "sites"] as const).map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "reviews" ? `Reviews (${data.totalReviews})` : t === "requests" ? "Review requests" : "Review sites"}</button>)}
++          {(["reviews", "requests", "sites", "widget"] as const).map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "reviews" ? `Reviews (${data.totalReviews})` : t === "requests" ? "Review requests" : t === "sites" ? "Review sites" : "Website widget"}</button>)}
+         </div>
+         {tab === "reviews" && (
+           <div className="card">
+@@ -241,7 +342,7 @@ function Trust({ org }: { org: Org }) {
+               {([["all", "All"], ["reply", "Needs a reply"], ["low", "1-2 stars"]] as const).map(([k, l]) => <button key={k} className={`btn btn-sm ${filter === k ? "btn-dark" : ""}`} onClick={() => setFilter(k)}>{l}</button>)}
+             </div></div>
+             {data.reviews.length === 0 ? <div className="empty"><h3>No reviews here</h3><p className="small">Record reviews by hand or import a CSV export from your review site.</p></div>
+-              : data.reviews.map((r) => <ReviewItem key={r.id} r={r} canWrite={canWrite} onChanged={reload} toast={toast} />)}
++              : data.reviews.map((r) => <ReviewItem key={r.id} r={r} canWrite={canWrite} googleLive={google.data?.connection?.status === "active"} onChanged={reload} toast={toast} />)}
+             {canWrite && <AddReview onDone={reload} toast={toast} canImport={canManage} />}
+           </div>
+         )}
+@@ -261,8 +362,10 @@ function Trust({ org }: { org: Org }) {
+           </div>
+         )}
+         {tab === "sites" && <Sites sources={data.sources} canManage={canManage} onChanged={reload} toast={toast} />}
++        {tab === "widget" && <Widgets canManage={canManage} toast={toast} />}
+       </div>
+       <div className="stack">
++        <GoogleCard state={google.data} admin={atLeast(org.role, "admin")} reload={() => { google.reload(); reload(); }} toast={toast} />
+         <Health data={data} />
+         {canWrite && <RequestReview hasSources={data.sources.some((s) => s.status === "active")} onSent={reload} toast={toast} />}
+       </div>
+diff --git a/src/app/w/reviews/[token]/page.tsx b/src/app/w/reviews/[token]/page.tsx
+new file mode 100644
+index 0000000..e518170
+--- /dev/null
++++ b/src/app/w/reviews/[token]/page.tsx
+@@ -0,0 +1,65 @@
++"use client";
++import { use, useEffect, useState } from "react";
++
++type Data = { business: string; layout: "grid" | "list" | "badge"; theme: "light" | "dark"; min_rating: number; average: number | null; count: number; review_url: string | null;
++  reviews: { rating: number; author: string; body: string; platform: string; published_at: string; reply: string | null }[] };
++
++// Embeddable review widget: <iframe src="https://<console>/w/reviews/<token>">.
++// Always shows the true average and count of all reviews.
++function Stars({ n, size = 15 }: { n: number; size?: number }) {
++  return <span aria-label={`${n} out of 5 stars`} style={{ color: "#f5a623", fontSize: size, letterSpacing: 1 }}>{"★★★★★".slice(0, Math.round(n))}<span style={{ color: "#d6d3cc" }}>{"★★★★★".slice(Math.round(n))}</span></span>;
++}
++
++export default function ReviewWidget({ params }: { params: Promise<{ token: string }> }) {
++  const { token } = use(params);
++  const [d, setD] = useState<Data | null>(null);
++  const [missing, setMissing] = useState(false);
++  useEffect(() => {
++    // Blend into the host page instead of the console's background.
++    document.documentElement.style.background = "transparent";
++    document.body.style.background = "transparent";
++    document.body.style.margin = "0";
++    fetch(`/api/public/reviews/${token}`).then((r) => (r.ok ? r.json() : Promise.reject())).then(setD).catch(() => setMissing(true));
++  }, [token]);
++  // Tell a parent page our height so the iframe can fit its content.
++  useEffect(() => {
++    if (!d) return;
++    const post = () => window.parent?.postMessage({ type: "sun-review-widget", token, height: document.documentElement.scrollHeight }, "*");
++    post();
++    const ro = new ResizeObserver(post);
++    ro.observe(document.body);
++    return () => ro.disconnect();
++  }, [d, token]);
++  if (missing) return null;
++  if (!d) return <div style={{ minHeight: 80 }} />;
++  const dark = d.theme === "dark";
++  const c = { bg: dark ? "#111827" : "#ffffff", card: dark ? "#1f2937" : "#faf9f6", text: dark ? "#f3f4f6" : "#1f2328", muted: dark ? "#9ca3af" : "#6b6459", line: dark ? "#374151" : "#ebe7df" };
++  const header = (
++    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: d.layout === "badge" ? 0 : 14 }}>
++      <div>
++        <div style={{ fontWeight: 700, fontSize: 15 }}>{d.business}</div>
++        {d.average != null ? <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}><strong style={{ fontSize: 20 }}>{Number(d.average).toFixed(1)}</strong><Stars n={Number(d.average)} size={17} /><span style={{ color: c.muted }}>{d.count} {d.count === 1 ? "review" : "reviews"}</span></div>
++          : <div style={{ color: c.muted, fontSize: 13 }}>No reviews yet</div>}
++      </div>
++      {d.review_url && <a href={d.review_url} target="_blank" rel="noopener noreferrer" style={{ background: "#1a73e8", color: "#fff", borderRadius: 999, padding: "8px 14px", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>Write a review</a>}
++    </div>
++  );
++  return (
++    <div style={{ fontFamily: "Inter, system-ui, -apple-system, Segoe UI, sans-serif", background: c.bg, color: c.text, padding: 14, borderRadius: 14 }}>
++      {header}
++      {d.layout !== "badge" && (
++        <div style={{ display: "grid", gap: 10, gridTemplateColumns: d.layout === "grid" ? "repeat(auto-fill, minmax(230px, 1fr))" : "1fr" }}>
++          {d.reviews.map((r, i) => (
++            <figure key={i} style={{ margin: 0, background: c.card, border: `1px solid ${c.line}`, borderRadius: 12, padding: 12 }}>
++              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><Stars n={r.rating} /><span style={{ color: c.muted, fontSize: 12 }}>{new Date(r.published_at).toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span></div>
++              <blockquote style={{ margin: "8px 0", fontSize: 14, lineHeight: 1.5 }}>{r.body}</blockquote>
++              <figcaption style={{ fontSize: 13, color: c.muted }}>{r.author} · {r.platform === "google" ? "Google" : r.platform[0].toUpperCase() + r.platform.slice(1)}</figcaption>
++              {r.reply && <div style={{ marginTop: 8, borderLeft: `3px solid ${c.line}`, paddingLeft: 8, fontSize: 13, color: c.muted }}><strong>Reply from the owner:</strong> {r.reply}</div>}
++            </figure>
++          ))}
++        </div>
++      )}
++      {d.min_rating > 1 && d.layout !== "badge" && <div style={{ marginTop: 10, fontSize: 11.5, color: c.muted }}>Showing recent {d.min_rating}★ and higher reviews. The rating above includes all {d.count} reviews.{d.review_url ? " " : ""}{d.review_url && <a href={d.review_url.replace("/writereview", "/reviews")} target="_blank" rel="noopener noreferrer" style={{ color: c.muted }}>See all reviews</a>}</div>}
++    </div>
++  );
++}
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index 24a9ff9..01c01fd 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -79,7 +79,7 @@ function visibleNav(ctx: NavContext | null): Group[] {
+ 
+ const isOn = (href: string, path: string) => (href === "/" ? path === "/" : path === href || path.startsWith(href + "/"));
+ 
+-const BARE = [/^\/login/, /^\/report\//, /^\/proposal\//, /^\/r\//, /^\/bridge\//, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/join\//];
++const BARE = [/^\/login/, /^\/report\//, /^\/proposal\//, /^\/r\//, /^\/bridge\//, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/join\//, /^\/w\//];
+ 
+ type Brand = { name: string; logo_url?: string | null; color?: string | null };
+ 
+diff --git a/src/lib/reputation/google.ts b/src/lib/reputation/google.ts
+new file mode 100644
+index 0000000..2c35a03
+--- /dev/null
++++ b/src/lib/reputation/google.ts
+@@ -0,0 +1,211 @@
++import "server-only";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { ApiError, fromDb } from "@/lib/tenant/api";
++import { openJson, sealJson } from "@/lib/crypto/vault";
++import { systemAudit } from "@/lib/tenant/system-audit";
++
++// Google Business Profile: connect with OAuth, pick a location, sync reviews
++// and post replies. Needs GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET and Google's
++// approval for the Business Profile APIs on that Cloud project.
++type Fetch = typeof fetch;
++export const STATE_COOKIE = "sm_goauth";
++export const SCOPE = "https://www.googleapis.com/auth/business.manage openid email";
++const TOKEN_URL = "https://oauth2.googleapis.com/token";
++const ACCOUNTS = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts";
++const INFO = "https://mybusinessbusinessinformation.googleapis.com/v1";
++const V4 = "https://mybusiness.googleapis.com/v4";
++const STARS = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 } as const;
++
++export function googleConfigured() {
++  return !!(process.env.GOOGLE_CLIENT_ID?.trim() && process.env.GOOGLE_CLIENT_SECRET?.trim());
++}
++export const redirectUri = (base: string) => `${base}/api/reputation/google/callback`;
++
++export function authUrl(state: string, base: string) {
++  const p = new URLSearchParams({
++    client_id: process.env.GOOGLE_CLIENT_ID!.trim(), redirect_uri: redirectUri(base), response_type: "code", scope: SCOPE,
++    access_type: "offline", prompt: "consent", include_granted_scopes: "true", state,
++  });
++  return `https://accounts.google.com/o/oauth2/v2/auth?${p}`;
++}
++
++class GoogleError extends Error {
++  constructor(message: string, public status: number, public reauth = false) { super(message); }
++}
++
++async function call<T>(f: Fetch, url: string, init: RequestInit = {}): Promise<T> {
++  const r = await f(url, { ...init, signal: AbortSignal.timeout(20000) }).catch(() => null);
++  if (!r) throw new GoogleError("Google did not respond.", 502);
++  const j = (await r.json().catch(() => ({}))) as { error?: string | { message?: string; status?: string }; error_description?: string };
++  if (!r.ok) {
++    const msg = typeof j.error === "object" ? j.error?.message : j.error_description || j.error;
++    if (r.status === 400 && j.error === "invalid_grant") throw new GoogleError("Google access was revoked or expired. Reconnect Google.", 401, true);
++    if (r.status === 401) throw new GoogleError("Google access was revoked or expired. Reconnect Google.", 401, true);
++    if (r.status === 403) throw new GoogleError(`Google refused access${msg ? `: ${msg}` : ""}. The Business Profile API must be enabled and approved for this app, and the connected Google account must manage the profile.`, 403);
++    throw new GoogleError(msg ? `Google error: ${msg}` : `Google error ${r.status}.`, r.status);
++  }
++  return j as T;
++}
++
++export async function exchangeCode(code: string, base: string, f: Fetch = fetch) {
++  const body = new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID!.trim(), client_secret: process.env.GOOGLE_CLIENT_SECRET!.trim(), redirect_uri: redirectUri(base), grant_type: "authorization_code" });
++  const t = await call<{ access_token: string; refresh_token?: string; id_token?: string }>(f, TOKEN_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
++  if (!t.refresh_token) throw new ApiError("Google did not grant offline access. Remove this app's access in your Google account settings and connect again.", 400, "invalid");
++  let email: string | null = null;
++  try { email = JSON.parse(Buffer.from((t.id_token || "").split(".")[1] || "", "base64url").toString()).email ?? null; } catch { email = null; }
++  return { refresh_token: t.refresh_token, access_token: t.access_token, email };
++}
++
++export async function accessToken(refresh: string, f: Fetch = fetch) {
++  const body = new URLSearchParams({ refresh_token: refresh, client_id: process.env.GOOGLE_CLIENT_ID!.trim(), client_secret: process.env.GOOGLE_CLIENT_SECRET!.trim(), grant_type: "refresh_token" });
++  return (await call<{ access_token: string }>(f, TOKEN_URL, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body })).access_token;
++}
++
++export type GLocation = { account: string; location: string; title: string; address: string; review_url: string | null };
++
++export async function listLocations(token: string, f: Fetch = fetch): Promise<GLocation[]> {
++  const auth = { Authorization: `Bearer ${token}` };
++  const { accounts = [] } = await call<{ accounts?: { name: string }[] }>(f, ACCOUNTS, { headers: auth });
++  const out: GLocation[] = [];
++  for (const a of accounts.slice(0, 20)) {
++    let pageToken = "";
++    for (let page = 0; page < 5; page++) {
++      const q = new URLSearchParams({ readMask: "name,title,storefrontAddress,metadata", pageSize: "100", ...(pageToken ? { pageToken } : {}) });
++      const r = await call<{ locations?: { name: string; title?: string; storefrontAddress?: { addressLines?: string[]; locality?: string; administrativeArea?: string }; metadata?: { newReviewUri?: string } }[]; nextPageToken?: string }>(f, `${INFO}/${a.name}/locations?${q}`, { headers: auth });
++      for (const l of r.locations || []) {
++        const ad = l.storefrontAddress;
++        out.push({ account: a.name, location: l.name, title: l.title || "Unnamed location", address: [ad?.addressLines?.join(" "), ad?.locality, ad?.administrativeArea].filter(Boolean).join(", "),
++          review_url: l.metadata?.newReviewUri?.startsWith("https://") ? l.metadata.newReviewUri : null });
++      }
++      if (!r.nextPageToken) break;
++      pageToken = r.nextPageToken;
++    }
++  }
++  return out;
++}
++
++export type GReview = { reviewId: string; reviewer?: { displayName?: string; isAnonymous?: boolean }; starRating?: keyof typeof STARS | string; comment?: string; createTime: string; updateTime?: string; reviewReply?: { comment?: string; updateTime?: string } };
++
++// Pure: a Google review as a row for our reviews table.
++export function mapReview(r: GReview) {
++  const rating = STARS[r.starRating as keyof typeof STARS];
++  if (!rating || !r.reviewId) return null;
++  const body = (r.comment || "").trim();
++  return {
++    external_id: r.reviewId.slice(0, 200), rating,
++    author_name: r.reviewer?.isAnonymous ? null : (r.reviewer?.displayName || "").slice(0, 120) || null,
++    body: body ? body.slice(0, 10000) : null, published_at: r.createTime,
++    reply: r.reviewReply?.comment?.trim() ? r.reviewReply.comment.trim().slice(0, 4000) : null,
++    updated_at: r.updateTime || r.createTime,
++  };
++}
++
++type Conn = { id: string; organization_id: string; account_name: string; location_name: string; source_id: string | null; last_synced_at: string | null; encrypted_credentials: string };
++
++async function connectionToken(conn: Conn, f: Fetch) {
++  let refresh: string;
++  try { refresh = openJson(conn.encrypted_credentials).refresh_token; } catch { throw new GoogleError("The saved Google connection cannot be read (APP_ENCRYPTION_KEY changed?). Reconnect Google.", 401, true); }
++  return accessToken(refresh, f);
++}
++
++// Pulls new and changed reviews. Stops once it reaches reviews older than the
++// last sync (with a day of overlap), at most 10 pages per run.
++export async function syncConnection(system: SupabaseClient, conn: Conn, f: Fetch = fetch, now = new Date()) {
++  const stats = { added: 0, updated: 0, pages: 0 };
++  try {
++    const token = await connectionToken(conn, f);
++    const since = conn.last_synced_at ? new Date(new Date(conn.last_synced_at).getTime() - 86400000).toISOString() : null;
++    let pageToken = "";
++    for (let page = 0; page < 10; page++) {
++      stats.pages++;
++      const q = new URLSearchParams({ pageSize: "50", orderBy: "updateTime desc", ...(pageToken ? { pageToken } : {}) });
++      const r = await call<{ reviews?: GReview[]; nextPageToken?: string }>(f, `${V4}/${conn.account_name}/${conn.location_name}/reviews?${q}`, { headers: { Authorization: `Bearer ${token}` } });
++      const mapped = (r.reviews || []).map(mapReview).filter((x): x is NonNullable<ReturnType<typeof mapReview>> => !!x);
++      if (mapped.length) {
++        const { data: existing } = await system.from("reviews").select("id, external_id, rating, body, response_body, response_status")
++          .eq("organization_id", conn.organization_id).eq("platform", "google").in("external_id", mapped.map((m) => m.external_id));
++        const byId = new Map((existing || []).map((e) => [e.external_id as string, e]));
++        for (const m of mapped) {
++          const e = byId.get(m.external_id);
++          if (!e) {
++            const { error } = await system.from("reviews").insert({
++              organization_id: conn.organization_id, platform: "google", external_id: m.external_id, source_id: conn.source_id, rating: m.rating,
++              author_name: m.author_name, body: m.body, published_at: m.published_at,
++              ...(m.reply ? { response_body: m.reply, response_status: "posted" } : {}),
++            });
++            if (error && error.code !== "23505") fromDb(error);
++            if (!error) stats.added++;
++            continue;
++          }
++          const patch: Record<string, unknown> = {};
++          if (e.rating !== m.rating) patch.rating = m.rating;
++          if ((e.body ?? null) !== m.body) patch.body = m.body;
++          if (m.reply && (e.response_status !== "posted" || e.response_body !== m.reply)) { patch.response_body = m.reply; patch.response_status = "posted"; }
++          if (Object.keys(patch).length) {
++            const { error } = await system.from("reviews").update(patch).eq("organization_id", conn.organization_id).eq("id", e.id);
++            fromDb(error);
++            stats.updated++;
++          }
++        }
++      }
++      const oldest = mapped[mapped.length - 1]?.updated_at;
++      if (!r.nextPageToken || (since && oldest && oldest < since)) break;
++      pageToken = r.nextPageToken;
++    }
++    await system.from("review_connections").update({ last_synced_at: now.toISOString(), last_error: null, status: "active" }).eq("id", conn.id);
++    if (stats.added) await systemAudit(system, conn.organization_id, "reputation.google_synced", null, stats);
++    return { ok: true as const, ...stats };
++  } catch (e) {
++    const message = e instanceof Error ? e.message.slice(0, 480) : "Sync failed.";
++    const reauth = e instanceof GoogleError && e.reauth;
++    await system.from("review_connections").update({ last_error: message, ...(reauth ? { status: "error" } : {}), last_synced_at: now.toISOString() }).eq("id", conn.id);
++    return { ok: false as const, error: message, ...stats };
++  }
++}
++
++const CONN_COLUMNS = "id, organization_id, account_name, location_name, source_id, last_synced_at, encrypted_credentials";
++
++export async function activeConnection(system: SupabaseClient, orgId: string) {
++  const { data } = await system.from("review_connections").select(CONN_COLUMNS).eq("organization_id", orgId).eq("provider", "google").eq("status", "active").maybeSingle();
++  return data as Conn | null;
++}
++
++// Scheduler: sync each active connection about once an hour.
++export async function syncDue(system: SupabaseClient, now = new Date(), f: Fetch = fetch, limit = 20) {
++  if (!googleConfigured()) return { synced: 0 };
++  const before = new Date(now.getTime() - 55 * 60000).toISOString();
++  const { data } = await system.from("review_connections").select(CONN_COLUMNS).eq("provider", "google").eq("status", "active")
++    .or(`last_synced_at.is.null,last_synced_at.lt.${before}`).limit(limit);
++  let synced = 0;
++  for (const c of (data || []) as Conn[]) { await syncConnection(system, c, f, now); synced++; }
++  return { synced };
++}
++
++export const sealToken = (refresh: string) => sealJson({ refresh_token: refresh });
++
++export async function locationsFor(system: SupabaseClient, orgId: string, f: Fetch = fetch) {
++  const { data } = await system.from("review_connections").select(CONN_COLUMNS).eq("organization_id", orgId).eq("provider", "google").neq("status", "disabled").maybeSingle();
++  if (!data) throw new ApiError("Connect Google first.", 404, "not_found");
++  try { return await listLocations(await connectionToken(data as Conn, f), f); }
++  catch (e) { if (e instanceof GoogleError) throw new ApiError(e.message, e.status === 401 ? 409 : 502, "integration_error"); throw e; }
++}
++
++// Posts (or replaces) the public reply on Google, then records it.
++export async function postGoogleReply(system: SupabaseClient, orgId: string, review: { external_id: string | null; platform: string }, text: string, f: Fetch = fetch) {
++  if (review.platform !== "google" || !review.external_id) throw new ApiError("Only Google reviews can be answered from here.", 422, "invalid");
++  const conn = await activeConnection(system, orgId);
++  if (!conn) throw new ApiError("Integration not configured: connect Google in Reputation → Review sites.", 409, "integration_not_configured");
++  try {
++    const token = await connectionToken(conn, f);
++    await call(f, `${V4}/${conn.account_name}/${conn.location_name}/reviews/${encodeURIComponent(review.external_id)}/reply`, {
++      method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ comment: text }),
++    });
++  } catch (e) {
++    if (e instanceof GoogleError) throw new ApiError(e.message, e.status === 401 ? 409 : 502, "integration_error");
++    throw e;
++  }
++}
++
++export async function revokeToken(encrypted: string, f: Fetch = fetch) {
++  try { await f(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(openJson(encrypted).refresh_token)}`, { method: "POST", signal: AbortSignal.timeout(10000) }); } catch { /* best effort */ }
++}
+diff --git a/src/lib/reputation/widgets.ts b/src/lib/reputation/widgets.ts
+new file mode 100644
+index 0000000..6a3c841
+--- /dev/null
++++ b/src/lib/reputation/widgets.ts
+@@ -0,0 +1,11 @@
++import { z } from "zod";
++
++export const WIDGET_COLUMNS = "id, name, public_token, min_rating, max_items, layout, theme, status, created_at";
++export const widgetInput = z.object({
++  name: z.string().trim().min(1).max(80).default("Reviews"),
++  min_rating: z.number().int().min(1).max(5).default(1),
++  max_items: z.number().int().min(1).max(20).default(6),
++  layout: z.enum(["grid", "list", "badge"]).default("grid"),
++  theme: z.enum(["light", "dark"]).default("light"),
++  status: z.enum(["active", "disabled"]).default("active"),
++});
+diff --git a/src/middleware.ts b/src/middleware.ts
+index 427f15b..ad566e8 100644
+--- a/src/middleware.ts
++++ b/src/middleware.ts
+@@ -4,7 +4,7 @@ import { AUTH_COOKIE, REFRESH_COOKIE, refreshSession, setSessionCookies } from "
+ // Public pages /book, /appointment and /review are customer-facing (token or slug).
+ // /api/automation/run, /api/comms/dispatch and /api/jobs/tick authenticate with AUTOMATION_SECRET (scheduler);
+ // /api/webhooks/* verify each provider's signature.
+-const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/automation\/run$/, /^\/api\/webhooks\//, /^\/api\/comms\/dispatch$/, /^\/api\/jobs\/tick$/, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/join\//, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
++const PUBLIC = [/^\/(robots\.txt|sitemap\.xml)$/, /^\/login/, /^\/report\//, /^\/proposal\//, /^\/rebuild\//, /^\/showcase\//, /^\/r\//, /^\/bridge\//, /^\/images\//, /^\/local-agent\//, /^\/api\/login/, /^\/api\/logout/, /^\/api\/public\//, /^\/api\/stripe\/webhook/, /^\/api\/automation\/run$/, /^\/api\/webhooks\//, /^\/api\/comms\/dispatch$/, /^\/api\/jobs\/tick$/, /^\/book\//, /^\/appointment\//, /^\/review\//, /^\/optout\//, /^\/s\//, /^\/f\//, /^\/i\//, /^\/join\//, /^\/w\//, /^\/api\/qr/, /^\/_next\//, /^\/favicon/];
+ 
+ async function expected(pass: string): Promise<string> {
+   const buf = new TextEncoder().encode("sunmarketing::" + pass);
+@@ -82,7 +82,7 @@ const APP_HOSTS = new Set(
+ );
+ const domainCache = new Map<string, { slug: string | null; until: number }>();
+ const SITE_PATH = /^\/$|^\/[a-z0-9][a-z0-9-]{0,62}$/;
+-const DOMAIN_PASSTHROUGH = [/^\/_next\//, /^\/favicon/, /^\/images\//, /^\/api\/public\//, /^\/book\//, /^\/appointment\//, /^\/f\//, /^\/review\//, /^\/optout\//, /^\/i\//, /^\/robots\.txt$/];
++const DOMAIN_PASSTHROUGH = [/^\/_next\//, /^\/favicon/, /^\/images\//, /^\/api\/public\//, /^\/book\//, /^\/appointment\//, /^\/f\//, /^\/review\//, /^\/optout\//, /^\/i\//, /^\/w\//, /^\/robots\.txt$/];
+ 
+ function isAppHost(host: string) {
+   return !host || APP_HOSTS.has(host) || host.startsWith("localhost") || host.startsWith("127.0.0.1") || host.endsWith(".netlify.app") || host.endsWith(".netlify.live");
+diff --git a/supabase/migrations/20261013120000_reputation_google.sql b/supabase/migrations/20261013120000_reputation_google.sql
+new file mode 100644
+index 0000000..c74ac1e
+--- /dev/null
++++ b/supabase/migrations/20261013120000_reputation_google.sql
+@@ -0,0 +1,141 @@
++-- Reputation: Google Business Profile connection and public review widgets.
++--   * review_connections: one Google connection per organization. The OAuth
++--     refresh token is encrypted by the application (APP_ENCRYPTION_KEY) and
++--     never readable through the API; syncing runs on the server.
++--   * review_widgets: an embeddable list of recent reviews with the true
++--     average and count of all reviews, so a filtered display never
++--     misrepresents the overall rating.
++
++-- Older reviews (imported history, CSV or first sync) go on the timeline but
++-- no longer open tasks or start automations; only fresh reviews do.
++create or replace function public.tg_reviews_created() returns trigger
++language plpgsql security definer set search_path = '' as $$
++declare v_label text := coalesce(nullif(new.author_name, ''), 'a customer'); v_fresh boolean := new.published_at >= now() - interval '14 days';
++begin
++  if new.contact_id is not null then
++    insert into public.activities(organization_id, contact_id, kind, direction, subject, body, metadata, actor_type)
++    values (new.organization_id, new.contact_id, 'review', 'inbound', left(format('Left a %s-star %s review', new.rating, initcap(new.platform)), 300),
++            left(new.body, 20000), jsonb_build_object('review_id', new.id), 'contact');
++  end if;
++  if not v_fresh then return null; end if;
++  if new.rating <= 2 then
++    insert into public.tasks(organization_id, title, description, priority, due_at, contact_id)
++    values (new.organization_id, left(format('Respond to %s-star %s review from %s', new.rating, initcap(new.platform), v_label), 200),
++            left(coalesce(new.body, ''), 4000), 'high', now() + interval '24 hours', new.contact_id);
++  end if;
++  perform public.emit_event(new.organization_id, 'review.received', new.contact_id, new.id,
++    jsonb_build_object('rating', new.rating, 'platform', new.platform));
++  return null;
++end $$;
++
++create table public.review_connections (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  provider text not null default 'google' check (provider in ('google')),
++  encrypted_credentials text not null check (length(encrypted_credentials) between 20 and 8000),
++  account_email text check (length(account_email) <= 254),
++  account_name text check (account_name ~ '^accounts/[0-9]{1,40}$'),
++  location_name text check (location_name ~ '^locations/[0-9]{1,40}$'),
++  location_title text check (length(location_title) <= 200),
++  source_id uuid,
++  status text not null default 'choose_location' check (status in ('choose_location', 'active', 'error', 'disabled')),
++  last_synced_at timestamptz,
++  last_error text check (length(last_error) <= 500),
++  created_by uuid,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  check (status <> 'active' or (account_name is not null and location_name is not null)),
++  foreign key (source_id, organization_id) references public.review_sources(id, organization_id) on delete set null (source_id)
++);
++create unique index review_connections_one on public.review_connections(organization_id, provider) where status <> 'disabled';
++create trigger review_connections_updated before update on public.review_connections for each row execute function public.tg_set_updated_at();
++
++-- People choose the location and can disable; sync state is the server's.
++create or replace function public.tg_review_connections_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if current_user not in ('authenticated', 'anon') then return new; end if;
++  if tg_op = 'INSERT' then
++    new.created_by := auth.uid(); new.last_synced_at := null; new.last_error := null;
++    if new.status not in ('choose_location') then new.status := 'choose_location'; end if;
++    return new;
++  end if;
++  if new.last_synced_at is distinct from old.last_synced_at or new.last_error is distinct from old.last_error
++     or new.organization_id <> old.organization_id or new.provider <> old.provider or new.created_by is distinct from old.created_by then
++    raise exception 'Sync details are maintained by the server.' using errcode = '42501';
++  end if;
++  if new.status = 'error' and old.status <> 'error' then
++    raise exception 'Sync details are maintained by the server.' using errcode = '42501';
++  end if;
++  return new;
++end $$;
++create trigger review_connections_guard before insert or update on public.review_connections
++  for each row execute function public.tg_review_connections_guard();
++
++create table public.review_widgets (
++  id uuid primary key default gen_random_uuid(),
++  organization_id uuid not null references public.organizations(id) on delete cascade,
++  name text not null default 'Reviews' check (length(btrim(name)) between 1 and 80),
++  public_token text not null unique default encode(extensions.gen_random_bytes(12), 'hex'),
++  min_rating smallint not null default 1 check (min_rating between 1 and 5),
++  max_items smallint not null default 6 check (max_items between 1 and 20),
++  layout text not null default 'grid' check (layout in ('grid', 'list', 'badge')),
++  theme text not null default 'light' check (theme in ('light', 'dark')),
++  status text not null default 'active' check (status in ('active', 'disabled')),
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now()
++);
++create trigger review_widgets_updated before update on public.review_widgets for each row execute function public.tg_set_updated_at();
++
++create or replace function public.tg_review_widgets_guard() returns trigger
++language plpgsql set search_path = '' as $$
++begin
++  if current_user in ('authenticated', 'anon') and tg_op = 'UPDATE' and new.public_token <> old.public_token then
++    raise exception 'The widget address cannot be changed; create a new widget instead.' using errcode = '42501';
++  end if;
++  if current_user in ('authenticated', 'anon') and tg_op = 'INSERT' then
++    new.public_token := encode(extensions.gen_random_bytes(12), 'hex');
++  end if;
++  return new;
++end $$;
++create trigger review_widgets_guard before insert or update on public.review_widgets
++  for each row execute function public.tg_review_widgets_guard();
++
++-- Public widget data: the true average and count of all reviews, plus the
++-- most recent reviews at or above the widget's minimum rating.
++create or replace function public.review_widget_data(p_token text) returns jsonb
++language sql stable security definer set search_path = '' as $$
++  select jsonb_build_object(
++    'business', coalesce(nullif(o.branding ->> 'display_name', ''), o.name),
++    'layout', w.layout, 'theme', w.theme, 'min_rating', w.min_rating,
++    'average', (select round(avg(r.rating)::numeric, 1) from public.reviews r where r.organization_id = w.organization_id),
++    'count', (select count(*) from public.reviews r where r.organization_id = w.organization_id),
++    'review_url', (select s.review_url from public.review_sources s where s.organization_id = w.organization_id and s.status = 'active' order by (s.platform = 'google') desc, s.position limit 1),
++    'reviews', coalesce((select jsonb_agg(x) from (
++        select jsonb_build_object('rating', r.rating, 'author', coalesce(nullif(split_part(btrim(r.author_name), ' ', 1), ''), 'A customer'),
++                                  'body', left(r.body, 600), 'platform', r.platform, 'published_at', r.published_at,
++                                  'reply', case when r.response_status = 'posted' then left(r.response_body, 400) end) as x
++          from public.reviews r
++         where r.organization_id = w.organization_id and r.rating >= w.min_rating and coalesce(btrim(r.body), '') <> ''
++         order by r.published_at desc limit w.max_items) q), '[]'::jsonb))
++  from public.review_widgets w join public.organizations o on o.id = w.organization_id and o.status = 'active'
++  where w.public_token = p_token and w.status = 'active'
++$$;
++
++alter table public.review_connections enable row level security;
++alter table public.review_widgets enable row level security;
++create policy review_connections_read on public.review_connections for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy review_connections_write on public.review_connections for all to authenticated
++  using (public.org_rank(organization_id) >= 4) with check (public.org_rank(organization_id) >= 4);
++create policy review_widgets_read on public.review_widgets for select to authenticated using (public.org_rank(organization_id) >= 1);
++create policy review_widgets_write on public.review_widgets for all to authenticated
++  using (public.org_rank(organization_id) >= 3) with check (public.org_rank(organization_id) >= 3);
++
++revoke all on public.review_connections, public.review_widgets from anon, authenticated;
++grant select (id, organization_id, provider, account_email, account_name, location_name, location_title, source_id, status, last_synced_at, last_error, created_by, created_at, updated_at)
++  on public.review_connections to authenticated;
++grant insert, update, delete on public.review_connections to authenticated;
++grant select, insert, update, delete on public.review_widgets to authenticated;
++grant all on public.review_connections, public.review_widgets to service_role;
++revoke execute on function public.review_widget_data(text) from public;
++grant execute on function public.review_widget_data(text) to anon, authenticated, service_role;
+diff --git a/supabase/tests/reputation_google.test.sql b/supabase/tests/reputation_google.test.sql
+new file mode 100644
+index 0000000..d7a72c8
+--- /dev/null
++++ b/supabase/tests/reputation_google.test.sql
+@@ -0,0 +1,111 @@
++-- Google review connection and review widget security tests.
++-- Run with scripts/test-db.sh.
++\set ON_ERROR_STOP 1
++set client_min_messages = notice;
++
++create or replace function pg_temp.as_user(p_uid uuid) returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, false);
++  execute 'set role authenticated';
++end $$;
++create or replace function pg_temp.as_service() returns void language plpgsql as $$
++begin
++  perform set_config('request.jwt.claims', '{"role":"service_role"}', false);
++  execute 'set role service_role';
++end $$;
++create or replace function pg_temp.reset_user() returns void language plpgsql as $$
++begin
++  execute 'reset role';
++  perform set_config('request.jwt.claims', '', false);
++end $$;
++create or replace function pg_temp.expect_error(p_sql text, p_label text) returns void language plpgsql as $$
++begin
++  begin execute p_sql; exception when others then raise notice 'ok   (denied) %', p_label; return; end;
++  raise exception 'FAIL expected an error: %', p_label;
++end $$;
++create or replace function pg_temp.expect(p_ok boolean, p_label text) returns void language plpgsql as $$
++begin
++  if not coalesce(p_ok, false) then raise exception 'FAIL %', p_label; end if;
++  raise notice 'ok   %', p_label;
++end $$;
++
++-- 1 = staff owner of agency A; 2 = owner of client G; 3 = member of G; 4 = owner of client H
++insert into auth.users values
++  ('62000000-0000-0000-0000-000000000001', 'staff@rg.test'), ('62000000-0000-0000-0000-000000000002', 'owner@rgg.test'),
++  ('62000000-0000-0000-0000-000000000003', 'member@rgg.test'), ('62000000-0000-0000-0000-000000000004', 'owner@rgh.test');
++insert into public.team_members(user_id, email, active) values ('62000000-0000-0000-0000-000000000001', 'staff@rg.test', true);
++create temp table ids (k text primary key, v uuid);
++grant all on ids to authenticated, service_role, anon;
++create temp table toks (k text primary key, v text);
++grant all on toks to authenticated, service_role, anon;
++select pg_temp.as_user('62000000-0000-0000-0000-000000000001');
++insert into ids select 'a', public.create_organization('Agency RG', 'agency');
++insert into ids select 'g', public.create_organization('Client RG G', 'client', (select v from ids where k = 'a'));
++insert into ids select 'h', public.create_organization('Client RG H', 'client', (select v from ids where k = 'a'));
++select public.add_member_by_email((select v from ids where k = 'g'), 'owner@rgg.test', 'owner');
++select public.add_member_by_email((select v from ids where k = 'g'), 'member@rgg.test', 'member');
++select public.add_member_by_email((select v from ids where k = 'h'), 'owner@rgh.test', 'owner');
++select pg_temp.reset_user();
++
++-- 1. Connections
++select pg_temp.as_user('62000000-0000-0000-0000-000000000003');
++select pg_temp.expect_error($$insert into public.review_connections(organization_id, encrypted_credentials) values ((select v from ids where k = 'g'), repeat('x', 40))$$, 'members cannot connect Google');
++select pg_temp.reset_user();
++select pg_temp.as_user('62000000-0000-0000-0000-000000000002');
++with c as (insert into public.review_connections(organization_id, encrypted_credentials, status, last_synced_at) values ((select v from ids where k = 'g'), repeat('x', 40), 'active', now()) returning id)
++insert into ids select 'conn', id from c;
++select pg_temp.expect((select status = 'choose_location' and last_synced_at is null from public.review_connections where id = (select v from ids where k = 'conn')), 'new connections start by choosing a location');
++select pg_temp.expect_error($$select encrypted_credentials from public.review_connections$$, 'the Google token is not readable');
++select pg_temp.expect_error($$update public.review_connections set last_synced_at = now()$$, 'people cannot fake sync state');
++update public.review_connections set account_name = 'accounts/123', location_name = 'locations/456', location_title = 'G Roofing', status = 'active' where id = (select v from ids where k = 'conn');
++select pg_temp.expect((select status = 'active' from public.review_connections where id = (select v from ids where k = 'conn')), 'owners choose the location');
++select pg_temp.expect_error($$insert into public.review_connections(organization_id, encrypted_credentials) values ((select v from ids where k = 'g'), repeat('y', 40))$$, 'one Google connection per account');
++select pg_temp.reset_user();
++select pg_temp.as_user('62000000-0000-0000-0000-000000000004');
++select pg_temp.expect((select count(*) = 0 from public.review_connections), 'other businesses cannot see the connection');
++select pg_temp.reset_user();
++select pg_temp.as_service();
++update public.review_connections set last_synced_at = now(), last_error = null where id = (select v from ids where k = 'conn');
++select pg_temp.expect((select last_synced_at is not null from public.review_connections where id = (select v from ids where k = 'conn')), 'the server records sync state');
++select pg_temp.reset_user();
++
++-- 2. Widgets show the true average of all reviews
++select pg_temp.as_user('62000000-0000-0000-0000-000000000003');
++insert into public.reviews(organization_id, platform, rating, author_name, body, published_at) values
++  ((select v from ids where k = 'g'), 'google', 5, 'Dana Wright', 'Great crew, fast work.', now() - interval '1 day'),
++  ((select v from ids where k = 'g'), 'google', 1, 'Sam Doe', 'Never showed up.', now() - interval '2 days'),
++  ((select v from ids where k = 'g'), 'google', 4, null, 'Good price.', now() - interval '3 days');
++select pg_temp.expect_error($$insert into public.review_widgets(organization_id, name) values ((select v from ids where k = 'g'), 'Home page')$$, 'members cannot create widgets');
++select pg_temp.reset_user();
++select pg_temp.as_user('62000000-0000-0000-0000-000000000002');
++with w as (insert into public.review_widgets(organization_id, name, min_rating, public_token) values ((select v from ids where k = 'g'), 'Home page', 4, 'chosen-token') returning public_token)
++insert into toks select 'w', public_token from w;
++select pg_temp.expect((select v <> 'chosen-token' from toks where k = 'w'), 'widget addresses are random');
++select pg_temp.expect_error($$update public.review_widgets set public_token = 'x' where organization_id = (select v from ids where k = 'g')$$, 'widget addresses cannot be changed');
++select pg_temp.reset_user();
++set role anon;
++select pg_temp.expect((select (public.review_widget_data((select v from toks where k = 'w')) ->> 'count')::int = 3), 'the widget counts every review');
++select pg_temp.expect((select (public.review_widget_data((select v from toks where k = 'w')) ->> 'average')::numeric = 3.3), 'the widget shows the true average, low ratings included');
++select pg_temp.expect((select jsonb_array_length(public.review_widget_data((select v from toks where k = 'w')) -> 'reviews') = 2), 'the list respects the minimum rating');
++select pg_temp.expect((select public.review_widget_data((select v from toks where k = 'w')) -> 'reviews' -> 0 ->> 'author' = 'Dana'), 'only first names are shown');
++select pg_temp.expect(public.review_widget_data('unknown') is null, 'unknown widgets show nothing');
++reset role;
++select pg_temp.as_user('62000000-0000-0000-0000-000000000002');
++update public.review_widgets set status = 'disabled' where organization_id = (select v from ids where k = 'g');
++select pg_temp.reset_user();
++set role anon;
++select pg_temp.expect(public.review_widget_data((select v from toks where k = 'w')) is null, 'disabled widgets show nothing');
++reset role;
++
++-- 3. Imported history does not flood tasks or automations
++select pg_temp.as_service();
++insert into public.reviews(organization_id, platform, external_id, rating, author_name, body, published_at)
++values ((select v from ids where k = 'h'), 'google', 'old-1', 1, 'Old Timer', 'Bad visit in 2023.', now() - interval '400 days');
++select pg_temp.expect((select count(*) = 0 from public.tasks where organization_id = (select v from ids where k = 'h')), 'old imported reviews do not open tasks');
++insert into public.reviews(organization_id, platform, external_id, rating, author_name, body, published_at)
++values ((select v from ids where k = 'h'), 'google', 'new-1', 2, 'Recent', 'Late again.', now() - interval '1 day');
++select pg_temp.expect((select count(*) = 1 from public.tasks where organization_id = (select v from ids where k = 'h')), 'fresh negative reviews still open a task');
++select pg_temp.expect_error($$insert into public.reviews(organization_id, platform, external_id, rating, published_at) values ((select v from ids where k = 'h'), 'google', 'new-1', 5, now())$$, 'each Google review is stored once');
++select pg_temp.reset_user();
++
++\echo 'ALL REPUTATION GOOGLE TESTS PASSED'
+diff --git a/tests/unit/reputation-google.test.ts b/tests/unit/reputation-google.test.ts
+new file mode 100644
+index 0000000..5008849
+--- /dev/null
++++ b/tests/unit/reputation-google.test.ts
+@@ -0,0 +1,90 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import type { SupabaseClient } from "@supabase/supabase-js";
++import { FakeDb } from "../support/fake-supabase";
++import { authUrl, listLocations, mapReview, postGoogleReply, sealToken, syncConnection } from "@/lib/reputation/google";
++import { widgetInput } from "@/lib/reputation/widgets";
++
++const ORG = "11111111-1111-4111-8111-111111111111";
++const db = (d: FakeDb) => d as unknown as SupabaseClient;
++const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
++
++beforeEach(() => {
++  vi.stubEnv("APP_ENCRYPTION_KEY", "k".repeat(40));
++  vi.stubEnv("GOOGLE_CLIENT_ID", "cid.apps.googleusercontent.com");
++  vi.stubEnv("GOOGLE_CLIENT_SECRET", "secret");
++});
++afterEach(() => vi.unstubAllEnvs());
++
++describe("Google review mapping", () => {
++  it("maps star ratings, anonymous reviewers and owner replies", () => {
++    expect(mapReview({ reviewId: "r1", starRating: "FOUR", reviewer: { displayName: "Dana Wright" }, comment: " Great work ", createTime: "2026-10-01T10:00:00Z", reviewReply: { comment: "Thanks Dana!" } }))
++      .toMatchObject({ external_id: "r1", rating: 4, author_name: "Dana Wright", body: "Great work", reply: "Thanks Dana!" });
++    expect(mapReview({ reviewId: "r2", starRating: "ONE", reviewer: { isAnonymous: true, displayName: "x" }, createTime: "2026-10-01T10:00:00Z" })).toMatchObject({ rating: 1, author_name: null, body: null, reply: null });
++    expect(mapReview({ reviewId: "r3", starRating: "STAR_RATING_UNSPECIFIED", createTime: "2026-10-01T10:00:00Z" })).toBeNull();
++  });
++  it("asks Google for offline access to business profiles only", () => {
++    const u = new URL(authUrl("st4te", "https://console.test"));
++    expect(u.searchParams.get("scope")).toContain("business.manage");
++    expect(u.searchParams.get("access_type")).toBe("offline");
++    expect(u.searchParams.get("redirect_uri")).toBe("https://console.test/api/reputation/google/callback");
++    expect(u.searchParams.get("state")).toBe("st4te");
++  });
++  it("widget settings are bounded", () => {
++    expect(widgetInput.safeParse({ min_rating: 0 }).success).toBe(false);
++    expect(widgetInput.safeParse({ max_items: 50 }).success).toBe(false);
++    expect(widgetInput.parse({})).toMatchObject({ min_rating: 1, max_items: 6, layout: "grid" });
++  });
++});
++
++describe("Google sync", () => {
++  const conn = () => ({ id: "c1", organization_id: ORG, account_name: "accounts/1", location_name: "locations/2", source_id: "s1", last_synced_at: null, encrypted_credentials: sealToken("refresh-1") });
++  it("adds new reviews, updates edited ones and records replies", async () => {
++    const d = new FakeDb();
++    d.tables.review_connections = [{ id: "c1", status: "active" }];
++    d.tables.reviews = [{ id: "x1", organization_id: ORG, platform: "google", external_id: "old", rating: 2, body: "Slow.", response_body: null, response_status: "none" }];
++    const calls: string[] = [];
++    const f = (async (url: string, init?: RequestInit) => {
++      calls.push(`${init?.method || "GET"} ${url.split("?")[0]}`);
++      if (url.includes("oauth2.googleapis.com/token")) return json({ access_token: "at" });
++      return json({ reviews: [
++        { reviewId: "new", starRating: "FIVE", reviewer: { displayName: "Mia" }, comment: "Perfect.", createTime: "2026-10-05T00:00:00Z" },
++        { reviewId: "old", starRating: "FOUR", reviewer: { displayName: "Sam" }, comment: "Slow, but fixed it.", createTime: "2026-09-01T00:00:00Z", reviewReply: { comment: "Thanks Sam" } },
++      ] });
++    }) as typeof fetch;
++    const r = await syncConnection(db(d), conn(), f, new Date("2026-10-07T00:00:00Z"));
++    expect(r).toMatchObject({ ok: true, added: 1, updated: 1 });
++    expect(d.table("reviews").find((x) => x.external_id === "new")).toMatchObject({ rating: 5, author_name: "Mia", source_id: "s1", platform: "google" });
++    expect(d.table("reviews").find((x) => x.external_id === "old")).toMatchObject({ rating: 4, body: "Slow, but fixed it.", response_status: "posted", response_body: "Thanks Sam" });
++    expect(d.table("review_connections")[0]).toMatchObject({ last_error: null, last_synced_at: "2026-10-07T00:00:00.000Z" });
++    expect(calls).toContain("GET https://mybusiness.googleapis.com/v4/accounts/1/locations/2/reviews");
++  });
++  it("marks the connection for reconnecting when Google access is revoked", async () => {
++    const d = new FakeDb();
++    d.tables.review_connections = [{ id: "c1", status: "active" }];
++    const f = (async () => json({ error: "invalid_grant" }, 400)) as typeof fetch;
++    const r = await syncConnection(db(d), conn(), f);
++    expect(r.ok).toBe(false);
++    expect(d.table("review_connections")[0]).toMatchObject({ status: "error" });
++    expect(String(d.table("review_connections")[0].last_error)).toMatch(/Reconnect Google/);
++  });
++  it("lists locations across accounts with their review links", async () => {
++    const f = (async (url: string) => url.includes("/v1/accounts") && !url.includes("/locations")
++      ? json({ accounts: [{ name: "accounts/1" }] })
++      : json({ locations: [{ name: "locations/2", title: "Acme Roofing", storefrontAddress: { addressLines: ["1 Main St"], locality: "Cherry Hill", administrativeArea: "NJ" }, metadata: { newReviewUri: "https://g.page/r/abc/review" } }] })) as typeof fetch;
++    expect(await listLocations("at", f)).toEqual([{ account: "accounts/1", location: "locations/2", title: "Acme Roofing", address: "1 Main St, Cherry Hill, NJ", review_url: "https://g.page/r/abc/review" }]);
++  });
++  it("posts replies only for Google reviews with an active connection", async () => {
++    const d = new FakeDb();
++    await expect(postGoogleReply(db(d), ORG, { platform: "yelp", external_id: "y" }, "Thanks")).rejects.toMatchObject({ status: 422 });
++    await expect(postGoogleReply(db(d), ORG, { platform: "google", external_id: "r1" }, "Thanks")).rejects.toMatchObject({ code: "integration_not_configured" });
++    d.tables.review_connections = [{ ...conn(), provider: "google", status: "active" }];
++    const sent: { url: string; body: string }[] = [];
++    const f = (async (url: string, init?: RequestInit) => {
++      if (url.includes("/token")) return json({ access_token: "at" });
++      sent.push({ url, body: String(init?.body) });
++      return json({ comment: "Thanks" });
++    }) as typeof fetch;
++    await postGoogleReply(db(d), ORG, { platform: "google", external_id: "r1" }, "Thanks", f);
++    expect(sent).toEqual([{ url: "https://mybusiness.googleapis.com/v4/accounts/1/locations/2/reviews/r1/reply", body: JSON.stringify({ comment: "Thanks" }) }]);
++  });
++});
+-- 
+2.43.0
+
