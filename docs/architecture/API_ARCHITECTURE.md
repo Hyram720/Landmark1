@@ -145,6 +145,16 @@ Plan limits surface as HTTP 402 with code `plan_limit`.
 | `POST /api/webhooks/voice/:agentId` | per-agent secret header (`x-sun-agent-secret`) | Vapi `tool-calls` (business_info, check_availability, book_appointment, take_message), `status-update`, `end-of-call-report` |
 | `GET /api/calls?filter=review|missed|booked|message`, `PATCH /api/calls/:id {reviewed, note}` | crm.read / crm.write | Call log; mark done, add a note |
 
+### Website chat
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET/POST /api/chat-widgets`, `PATCH/DELETE /api/chat-widgets/:id` | crm.read / sites.manage | Chat widget settings (greeting, color, position, calendar, AI on/off) |
+| `GET /api/chats?status=open|closed`, `GET /api/chats/:id` | crm.read | Staff chat inbox and transcripts (opening clears unread) |
+| `POST /api/chats/:id {action: reply|close|reopen|resume_ai|handled|link_contact}` | crm.write | Staff reply (takes over from the AI) and chat actions |
+| `GET /api/public/chat/:token[?v=visitor]`, `POST /api/public/chat/:token {visitor_id, message, page_url?}` | public, rate-limited (IP and visitor) | Widget settings and the visitor's conversation; one message in, AI reply out |
+| `GET /w/embed/:token.js`, `GET /w/chat/:token` | public | One-line embed script and the framable chat window |
+
 ### Reputation: Google and widgets
 
 | Method & path | Permission | Purpose |

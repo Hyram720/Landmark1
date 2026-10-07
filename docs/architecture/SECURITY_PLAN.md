@@ -127,6 +127,16 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Texting callers | Missed-call text-back is one transactional text, once per call, through the same compliance gate (opt-outs, do-not-contact, quiet hours) |
 | Recording disclosure | The app warns when the assistant records calls but its greeting doesn't say so |
 
+## 2i. Controls added for website chat
+
+| Control | Implementation |
+|---|---|
+| Visitor identity | A random ID kept in the visitor's browser; only its hash is stored; a visitor can read only their own open chat |
+| Abuse | Rate limits per IP (40 messages / 10 min) and per visitor (20 / 10 min); messages up to 1,000 characters; at most 4 AI rounds and 3 tool calls per round |
+| AI behavior | Same rules as the phone receptionist (shared code): approved facts only, bookings only at offered times, messages need a way to reach the visitor; visitor text is treated as data, not instructions |
+| Cost control | Every AI reply is checked against the plan's AI request limit and metered; when the limit is hit the chat hands off to the team |
+| Embedding | Only `/w/*` can be framed; the chat window closes only on messages from its own origin |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

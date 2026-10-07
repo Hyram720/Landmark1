@@ -234,6 +234,16 @@ Also: an inbound call from a contact now counts like an inbound text for the 24-
 
 Verified by `supabase/tests/voice_receptionist.test.sql` (17 assertions; 284 in total).
 
+### Website chat (`20261015120000_web_chat.sql`)
+
+| Table | Purpose and key rules |
+|---|---|
+| `chat_widgets` | Per-business chat settings with a random public address that cannot be changed |
+| `web_chats` | One open chat per visitor and widget; visitors stored only as a SHA-256 hash (not readable through the API); staff can change only status, hand-off, AI pause, contact and unread |
+| `web_chat_messages` | Append-only. People can only post staff replies, signed as themselves (a staff reply pauses the AI); visitor and AI messages come from the server; each AI reply is checked against and metered as an AI request |
+
+Verified by `supabase/tests/web_chat.test.sql` (19 assertions; 303 in total).
+
 ### Phase 7–8 (planned)
 - `price_overrides` (per-client price overrides beyond the current rates)
 - `sender_domains`
