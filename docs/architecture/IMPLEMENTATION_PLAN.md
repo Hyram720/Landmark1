@@ -108,6 +108,17 @@ Rollback: `drop table public.workflow_run_logs, public.workflow_runs, public.wor
 
 Rollback: `drop table public.outreach_messages, public.prospect_audits, public.prospects, public.prospect_searches cascade;` then drop the functions `outreach_unsubscribe` and `outreach_unsubscribe_token`.
 
+## 2e. Deploying Phase 5 (sites, forms, knowledge)
+
+1. Apply `supabase/migrations/20261010120000_phase5_sites_forms_knowledge.sql` (additive).
+2. No new environment variables. Public forms and sites need `SUPABASE_SERVICE_ROLE_KEY`; AI-written copy needs the OpenAI key.
+3. Add your facts in **Knowledge base** and approve them. Create a quote form in **Forms**. Then create a site in **Websites**, edit it, and publish as a manager.
+4. Smoke test:
+   - Submit the hosted form with the text box ticked. Confirm the contact, timeline entry, task and SMS consent (with its wording) in the CRM.
+   - Open `/s/<site>`, edit the draft, and confirm the live page does not change until you publish.
+
+Rollback: `drop table public.form_submissions, public.forms, public.site_pages, public.sites, public.knowledge_items cascade;` then drop the function `search_knowledge`.
+
 ## 3. Development workflow
 
 ```bash

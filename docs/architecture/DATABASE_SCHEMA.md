@@ -169,8 +169,20 @@ Original plan, for reference:
 
 Verified by `supabase/tests/phase4_leads.test.sql` (21 assertions; 155 in total).
 
-### Phase 5
-- (planned) Original Phase 4 note: `prospect_searches`, `prospects (org-scoped)`, `prospect_audits` (link to `audits`)
+### Phase 5 (part 1 implemented: `20261010120000_phase5_sites_forms_knowledge.sql`)
+
+| Table | Purpose and key rules |
+|---|---|
+| `forms` | Field definitions and settings; globally unique public link; managers create and edit |
+| `form_submissions` | Written only by the service role (public endpoint). A trigger counts them, writes the contact timeline and emits `form.submitted`. Stores a hashed IP, never the raw address |
+| `sites` | Status draft → published by managers only (who and when recorded) |
+| `site_pages` | `draft` (anyone ≥ member) and `published` (managers only). The database refuses a publish that is not an exact copy of the current draft; drafts never change the live page |
+| `knowledge_items` | Versioned; approval by managers only; content edits re-open approval; generated `tsvector` with GIN index; `search_knowledge()` returns approved items only |
+
+Verified by `supabase/tests/phase5_sites.test.sql` (22 assertions; 177 in total).
+
+### Phase 5 (planned remainder)
+- Original Phase 4 note, kept for reference: `prospect_searches`, `prospects (org-scoped)`, `prospect_audits` (link to `audits`)
 - `sites`, `pages`, `forms`, `form_submissions`, `templates`
 - `knowledge_items (type, content, version, status draft/approved, approved_by)` with `pgvector` embeddings
 

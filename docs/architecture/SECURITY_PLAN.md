@@ -75,6 +75,16 @@ Strengths already present: verified Telnyx (ed25519 + timestamp window) and Stri
 | Unsubscribe integrity | Tokens are random (144 bits), unreadable to staff, and released only to the sender during their own send. Unsubscribing is idempotent, needs no login, suppresses the address organization-wide (shared with the CRM), and cannot be undone by members. The unsubscribe page uses a button, so mail-scanner GETs never unsubscribe anyone |
 | SSRF | Audits and email discovery use the existing pinned `publicFetch`; directory search contacts only fixed public hosts |
 
+## 2d. Controls added in Phase 5 (sites, forms, knowledge)
+
+| Control | Implementation |
+|---|---|
+| Publishing | Drafts never change live pages. Managers alone publish, and the database refuses any publish that is not an exact copy of the current draft (so nobody can slip unreviewed content live) |
+| Page content | Server validation allows known sections only, hex colors (they are interpolated into CSS), and https, relative, anchor, `tel:` or `mailto:` links. React escapes all text; there is no raw HTML section |
+| Forms | Public submissions are written only by the service role and rate-limited per IP; honeypot field; values validated against the form definition (unknown keys dropped); IPs stored only as an org-salted hash; consent recorded only when the visitor ticks the box, with the exact wording, page and time |
+| Contact matching | Exact email, or phone only when that contact has no different email, so strangers cannot attach submissions or consent to someone else's record |
+| AI and facts | The operator and AI site copy use approved knowledge only; editing approved facts re-opens approval; AI-created knowledge is always a draft |
+
 ## 2. Controls implemented in Phase 1
 
 | Control | Implementation |

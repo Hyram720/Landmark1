@@ -11,7 +11,7 @@ Principle: **stable foundations before breadth.** Each phase ships behind the sa
 | 2 | Communications: unified inbox, SMS/email/voice provider layer, AI voice agents | Convert | **In progress** (messaging foundation implemented; voice next) |
 | 3 | Reputation & Trust Center, calendars, workflow automation | Protect · Convert | **Part 1 implemented** (reviews, booking, automations; platform sync next) |
 | 4 | Lead generation engine, audits at scale, AI prospecting | Acquire | **Part 1 implemented** (Lead Finder, Opportunity Score, compliant email outreach) |
-| 5 | Websites, funnels, forms, landing pages, knowledge base | Acquire | Planned |
+| 5 | Websites, funnels, forms, landing pages, knowledge base | Acquire | **Part 1 implemented** (hosted sites, forms, knowledge base) |
 | 6 | Billing, white-label SaaS, agency rebilling, plans and limits | — | Planned |
 | 7 | Analytics, attribution, AI revenue intelligence, ads | Retain · Acquire | Planned |
 | 8 | Marketplace, advanced autonomous agents, affiliates | — | Planned |
@@ -118,6 +118,29 @@ Exit criteria (verify after deploy):
 - Personalized outreach generated from audits, sent only on compliant channels: email to business addresses with CAN-SPAM footer; no cold SMS or robocalls without consent
 
 ## Phase 5: Websites and funnels
+
+**Part 1 implemented (patch 0007):**
+- **Forms:** a builder (field types, required, maps to contact fields, select choices, tag, task, thank-you message or redirect) and hosted pages at `/f/<link>`, also embeddable in site pages.
+  - Optional text and marketing-email consent boxes record consent with the exact wording, page, time and hashed IP.
+  - Every submission becomes or updates a contact, lands on the timeline, opens a follow-up task and emits `form.submitted`, a new automation trigger that can be filtered by form.
+  - Spam protection: a honeypot field and per-IP rate limits.
+- **Hosted websites** at `/s/<site>`:
+  - Built with the existing visual editor (Puck), with a section library for live sites: hero with a working call button, services, story, process, FAQ, gallery, lead form, online booking and footer.
+  - Seven industry templates that make no claims the owner would have to prove. Optionally, AI-written copy that uses only approved knowledge.
+  - Multi-page sites, a title and search description per page, and saved drafts that never change the live site. Only managers publish, and publishing copies the exact draft.
+  - Saved pages are validated: known sections only, hex colors, and https, relative or anchor links.
+- **Knowledge base:** versioned facts (services, pricing, hours, FAQs, policies, scripts, brand voice). Members draft and managers approve. Editing an approved item sends it back for approval. Full-text search returns approved items only.
+- **AI tools:**
+  - `search_knowledge` (read-only). The operator is told to state business facts only from approved knowledge.
+  - `add_knowledge`, which creates drafts only.
+  - `list_forms_and_sites` (read-only).
+
+**Remaining:**
+- Custom domains (Phase 6 white-label).
+- Surveys and quizzes, A/B variants, funnels with multiple steps.
+- Image uploads to storage (sites use image URLs today).
+- Vector search for the knowledge base.
+- Page analytics.
 
 - Multi-tenant hosted sites and funnels (Puck-based editor), templates by industry, forms, surveys, quizzes, appointment and thank-you pages, SEO metadata, A/B variants
 - "Build me a website for a roofing company": the AI asks only essential questions, then drafts structure, copy, forms, CTAs and SEO for approval

@@ -102,6 +102,19 @@ Legacy endpoints (`/api/businesses`, `/api/audits`, `/api/leads`, …) are uncha
 | `PATCH /api/prospecting/outreach/:id`, `POST {action: send/discard}` | crm.write | Edit a draft; send (as the signed-in person) or discard |
 | `POST /api/public/outreach-unsubscribe/:token` | public, rate-limited | One-click unsubscribe (RFC 8058) and the `/optout/:token` button |
 
+### Phase 5 endpoints (sites, forms, knowledge)
+
+| Method & path | Permission | Purpose |
+|---|---|---|
+| `GET/POST /api/forms`, `GET/PUT/DELETE /api/forms/:id` | crm.read / sites.manage | Forms; detail includes recent submissions |
+| `GET/POST /api/public/forms/:slug` | public, rate-limited | Form definition (with consent wording); submit `{values, consent_sms, consent_email, website (honeypot), page_url}` |
+| `GET/POST /api/sites` | crm.read / crm.write | Sites list and industries; create from a template or with `use_ai` (copy from approved knowledge only) |
+| `GET/PATCH /api/sites/:id`, `POST {action: publish/unpublish/archive}` | crm.read / crm.write (+ sites.manage to publish) | Site detail and pages; publishing publishes every changed page |
+| `POST /api/sites/:id/pages` | crm.write | Add a page (optionally copying another) |
+| `GET/PATCH/DELETE /api/sites/pages/:pageId`, `POST {action: publish/unpublish}` | crm.read / crm.write / sites.manage | Load and save drafts (validated), publish one page |
+| `GET/POST /api/knowledge`, `PATCH/DELETE /api/knowledge/:id` | crm.read / crm.write (approve: sites.manage) / crm.delete | Knowledge items |
+| `GET /s/:site/:page?`, `GET /f/:slug` | public | Live site pages (published copy only) and hosted forms |
+
 Outgoing workflow webhooks carry `X-Sun-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>`. They are sent with `publicFetch`, so private and internal addresses are refused, and time out after 10 seconds.
 
 ## 4. Conventions for new endpoints

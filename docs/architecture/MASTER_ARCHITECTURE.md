@@ -1,6 +1,6 @@
 # Sun Marketing Console — Master Architecture
 
-> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) and Phase 4 part 1 (Lead Finder) implemented (October 2026).
+> **Status:** Phase 1, Phase 2 part 1 (messaging) and Phase 3 part 1 (reputation, calendars, automations) Phase 4 part 1 (Lead Finder) and Phase 5 part 1 (sites, forms, knowledge) implemented (October 2026).
 > **Companion documents:** [PRODUCT_ROADMAP](PRODUCT_ROADMAP.md) · [DATABASE_SCHEMA](DATABASE_SCHEMA.md) · [API_ARCHITECTURE](API_ARCHITECTURE.md) · [SECURITY_PLAN](SECURITY_PLAN.md) · [IMPLEMENTATION_PLAN](IMPLEMENTATION_PLAN.md)
 
 ## 1. Product thesis
@@ -103,7 +103,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 | 7 | SMS and messaging | 🆕 (Phase 2 part 1) | Provider layer (Telnyx, Twilio, Resend) with failover, unified inbox, scheduling, consent/opt-out/quiet-hours gate, verified webhooks, STOP/START. **Missing:** web chat, WhatsApp, 10DLC registry UI, bulk sends (Phase 3 campaigns) |
 | 8 | Reputation and Trust Center | 🆕 (Phase 3 part 1) | Reviews (manual/CSV), reply drafts incl. AI, explained Reputation Health Score, non-gated review requests, complaint tasks. **Missing:** Google/Facebook sync, widgets, competitor comparison |
 | 9 | Lead generation engine | 🆕 (Phase 4 part 1) | Tenant-scoped Lead Finder, audits at scale with business-email discovery, explained Opportunity Score, CAN-SPAM email outreach with one-click unsubscribe and volume limits, convert to CRM, AI tools. **Missing:** paid data providers (ratings), reply detection, sequences |
-| 10 | Websites, funnels, forms | 🟡 | Website rebuild concepts, Puck builder, Campaign Studio funnels. **Missing:** hosted multi-tenant sites, forms/surveys builder, templates library |
+| 10 | Websites, funnels, forms | 🆕 (Phase 5 part 1) | Hosted multi-tenant sites on the Puck editor with industry templates, draft/publish by managers, forms builder with consent capture and automation trigger. **Missing:** custom domains, surveys/quizzes, A/B tests |
 | 11 | Workflow automation | 🆕 (Phase 3 part 1) | Event-triggered, versioned automations with templates, AI drafting, compliance-gated messaging, signed webhooks, per-step run logs. **Missing:** branching graphs, queue faster than the 15-minute scheduler |
 | 12 | Calendars | 🆕 (Phase 3 part 1) | Personal/round-robin/resource calendars, public booking, reminders, reschedule/cancel, no double booking, AI booking tools. **Missing:** Google/Microsoft sync, waitlists |
 | 13 | Email marketing | 🟡 | Resend broadcasts with approval. **Missing:** sequences, A/B, tracking, segmentation, provider abstraction |
@@ -111,7 +111,7 @@ Legend: ✅ exists · 🟡 partial · ❌ missing · 🆕 delivered in Phase 1
 | 15 | Ads and attribution | ❌ | — |
 | 16 | Affiliates and referrals | ❌ | — |
 | 17 | Payments and billing | 🟡 | Stripe Checkout for proposals. **Missing:** invoices, estimates, subscriptions, SaaS billing, rebilling, payment abstraction |
-| 18 | Knowledge base | ❌ | Receptionist FAQs only |
+| 18 | Knowledge base | 🆕 (Phase 5 part 1) | Versioned, approval-gated facts with full-text search, used by the AI operator and AI site copy. **Missing:** vector search, receptionist integration |
 | 19 | Analytics and revenue intelligence | 🟡 | Dashboard KPIs; the AI can answer pipeline questions via `pipeline_summary`. **Missing:** metrics store, attribution, AI analyst over all data |
 | 20 | Industry modules | 🟡 | Industry lists in receptionist and radar. **Missing:** installable template bundles |
 | 21 | Marketplace | ❌ | Tool registry is the seed (see §6) |
