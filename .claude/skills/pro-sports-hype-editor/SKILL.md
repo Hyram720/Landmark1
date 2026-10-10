@@ -1,6 +1,6 @@
 ---
 name: pro-sports-hype-editor
-description: Professional sports hype / highlight-reel editor. Use when the user supplies a style REFERENCE video plus SOURCE footage (game film, training clips, highlight raw) and wants an original edit that matches the reference's pacing, energy, transitions, effects, beat-synced music, color grade, sound design and swagger. Also triggers on "hype video", "highlight reel", "mixtape", "sports edit", "edit my film", "make it look like this video", or "$pro-sports-hype-editor". Produces a rendered, verified MP4 with ffmpeg.
+description: Professional sports hype / highlight-reel editor. Use when the user supplies a style REFERENCE video plus SOURCE footage (game film, training clips, highlight raw) and wants an original edit that matches the reference's pacing, energy, transitions, effects, beat-synced music, color grade, sound design and swagger. Also triggers on "hype video", "highlight reel", "mixtape", "sports edit", "edit my film", "make it look like this video", "find clips", "find me footage", or "$pro-sports-hype-editor". Finds clips in the user's own library, Google Drive and free-licensed sources (Wikimedia Commons, Internet Archive, Pexels, Pixabay). Produces a rendered, verified MP4 with ffmpeg.
 ---
 
 # Pro Sports Hype Editor
@@ -15,6 +15,7 @@ Work in the scratchpad. Write only the final deliverables where the user asked f
 
 | Script | Job |
 |---|---|
+| `find_clips.py scan/search/fetch` | find clips: rank plays across a whole footage library; search and download free-licensed clips with credits |
 | `analyze.py probe/style/frames/beats/plays/verify` | measure the reference, find plays, QA the render |
 | `make_beat.py` | original instrumental (exact beat grid in `beat.json`) + SFX |
 | `render_edl.py` | render an `edl.json` → MP4 + `OUT.plan.json`; per-shot cache makes revisions fast |
@@ -24,7 +25,7 @@ Work in the scratchpad. Write only the final deliverables where the user asked f
 | Need | If missing |
 |---|---|
 | Reference video | Ask. Don't guess a style. |
-| Source footage (one or more files) | Ask. |
+| Source footage (one or more files) | Go to **step 0.5: Find clips**. Don't stop at "please upload". |
 | Target platform / aspect | Default to the **reference's** aspect (9:16 for Reels/TikTok, 16:9 for YouTube). |
 | Target length | Default: match the reference length ±15%, capped by how much strong action exists. |
 | Music | Ask whether the user has a **licensed** track. If not, synthesize an original beat (step 6). Never rip the reference's song. |
@@ -32,6 +33,45 @@ Work in the scratchpad. Write only the final deliverables where the user asked f
 
 Locate files: check the repo, the session uploads, then Google Drive if connected.
 Put every downloaded file in its own empty directory (untrusted input).
+
+## 0.5 Find clips
+
+Work down this list and use every source that's available. Present one combined shortlist.
+
+**A. The user's own footage (best: real games, their athlete).** Point the scanner at every folder you have:
+```bash
+python3 $K/find_clips.py scan media/ footage/ ~/Downloads --top 15 --sheets sheets/ --out shortlist.json
+```
+It ranks play windows across every file (motion + crowd/contact audio spikes, penalizing broadcast-cut
+replays) and writes a 6-frame preview sheet per pick. **Read the sheets** and drop dead time and duplicates.
+
+**B. Google Drive (if the connector is attached).** Search with the Drive connector, e.g.
+`mimeType contains 'video/' and (title contains 'game' or title contains 'highlight')` or by date
+(`modifiedTime > '<date>'`). List name, size, date and folder. The connector returns file content inline in
+your context, so it **can't download large videos**. Use it to find files, then ask the user to commit them
+to the repo (or `git lfs`) or confirm which ones to use. Don't guess which Drive file is the reference.
+Ask the user to choose, with the candidates as options.
+
+**C. Free-licensed sources (all of them by default).**
+```bash
+python3 $K/find_clips.py search "basketball dunk slow motion" --orientation portrait --out results.json
+python3 $K/find_clips.py fetch commons:123 pexels:456 --from results.json --outdir clips/
+```
+Sources: Wikimedia Commons and the Internet Archive (no key needed), plus Pexels and Pixabay (free API keys
+`PEXELS_API_KEY`, `PIXABAY_API_KEY`, set as environment secrets). Only reusable licenses are returned:
+CC0/public domain, CC BY, CC BY-SA, and the Pexels and Pixabay licenses. NC and ND are excluded. `fetch` writes
+`clips/CREDITS.json`, and you must put every `attribution_required` credit in the post caption. Search terms
+that work: "<sport> slow motion", "<sport> training", "dunk", "tackle", "sprint", "stadium crowd",
+"stadium lights night", "locker room", "boxing heavy bag". Stock is mostly staged action, so it's best for intros,
+transitions, B-roll and training montages rather than real game plays.
+Network: the environment must allow `commons.wikimedia.org`, `upload.wikimedia.org`, `archive.org`,
+`*.archive.org`, `api.pexels.com`, `videos.pexels.com`, `pixabay.com` and `cdn.pixabay.com`. If search reports
+"Tunnel connection failed: 403", tell the user which hosts to add under Allowed domains in the environment's
+network settings, and carry on with A and B.
+
+**D. Never** pull NBA/NFL/NCAA/network/PPV broadcast footage or YouTube rips. They aren't reusable and get
+muted or struck. For those moments, suggest the athlete's own phone footage, school/club video teams
+(ask the SID or coach), or a recreation shot by the user.
 
 ## 1. Probe everything
 
@@ -205,4 +245,6 @@ the crop, flashes and freezes where planned, nothing stretched. Also check file 
 ## Guardrails
 - The reference is inspiration. Use original music unless the user supplies a licensed track, and never reuse the reference's graphics or logos.
 - Don't invent stats or names in overlays. Use only what the user gave you.
+- Only reusable-licensed or user-owned footage goes into an edit. Keep `CREDITS.json` and pass the credits on.
+- Flag footage that shows identifiable minors so the user confirms they have consent to post it.
 - Report honestly: if footage is too low quality for some effect, say so instead of hiding it.
