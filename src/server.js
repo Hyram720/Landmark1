@@ -185,6 +185,26 @@ app.get('/admin', requireAdmin, (req, res) => {
   <table><tr><th>Created</th><th>Status</th><th>Email</th><th>Style</th><th>Product</th><th>Source</th><th>Error</th><th></th></tr>${rows}</table>`);
 });
 
+// Confirms each API key works without exposing it. Returns only pass/fail per service.
+app.get('/admin/check', requireAdmin, async (req, res) => {
+  const probe = async (url, token) => {
+    if (!token) return 'not configured';
+    try {
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+      return r.ok ? 'ok' : `failed (HTTP ${r.status})`;
+    } catch (err) {
+      return `failed (${err.message})`;
+    }
+  };
+  const [openai, resend, printful, stripe] = await Promise.all([
+    probe('https://api.openai.com/v1/models', config.image.openaiKey),
+    probe('https://api.resend.com/domains', config.email.resendKey),
+    probe('https://api.printful.com/stores', config.printful.token),
+    probe('https://api.stripe.com/v1/balance', config.stripe.secretKey),
+  ]);
+  res.json({ openai, resend, printful, stripe });
+});
+
 app.post('/admin/retry/:id', requireAdmin, (req, res) => {
   const order = findOrder(req.params.id);
   if (!order) return res.sendStatus(404);
