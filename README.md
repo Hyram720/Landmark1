@@ -1,4 +1,6 @@
-# Pawtrait Royale: an automated AI pet portrait business
+# Custom Pet Portrait Studio (custompetportraitstudio.com)
+
+An automated AI pet portrait business.
 
 Customers upload a photo of their dog or cat, pick a style (The Royal, The Admiral, Astronaut, and others), and pay. Software paints 4 portraits, emails a private gallery, and ships a canvas print through print-on-demand. No inventory, no staff, no skill in the niche required.
 

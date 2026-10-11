@@ -1,5 +1,5 @@
 {
-  "name": "pawtrait-royale",
+  "name": "custom-pet-portrait-studio",
   "version": "1.0.0",
   "description": "Automated AI pet portrait store with SEO and marketing automation",
   "main": "src/server.js",

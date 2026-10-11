@@ -5,7 +5,7 @@ const config = {
   port: Number(env.PORT || 3000),
   baseUrl: (env.BASE_URL || `http://localhost:${env.PORT || 3000}`).replace(/\/$/, ''),
   dataDir: env.DATA_DIR || new URL('../data', import.meta.url).pathname,
-  brandName: env.BRAND_NAME || 'Pawtrait Royale',
+  brandName: env.BRAND_NAME || 'Custom Pet Portrait Studio',
   adminKey: env.ADMIN_KEY || '',
 
   // Set DEV_SKIP_PAYMENT=true to mark orders paid without Stripe (local testing only).
@@ -26,7 +26,7 @@ const config = {
 
   email: {
     resendKey: env.RESEND_API_KEY || '',
-    from: env.EMAIL_FROM || 'Pawtrait Royale <orders@example.com>',
+    from: env.EMAIL_FROM || 'Custom Pet Portrait Studio <orders@example.com>',
     alertTo: env.ALERT_EMAIL || '',
   },
 
