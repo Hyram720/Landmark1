@@ -71,8 +71,9 @@ export const STYLES = {
   },
 };
 
-// Products. Prices in cents. printfulVariantId is set via env so you can choose the exact
-// Printful canvas/poster variant from their catalog (GET https://api.printful.com/products).
+// Products. Prices in cents. Canvas sizes are 2:3 to match the 1024x1536 portraits (no cropping).
+// Defaults are Printful "Canvas (in)" variants: 19299 = 12x18 (~$24.99), 19303 = 16x24 (~$31.11)
+// before shipping. Override via env to use other sizes (GET https://api.printful.com/products/3).
 export const PRODUCTS = {
   digital: {
     name: 'Digital Portrait (4 hi-res versions)',
@@ -80,16 +81,16 @@ export const PRODUCTS = {
     physical: false,
   },
   canvas_small: {
-    name: '12x16" Gallery Canvas + Digital',
+    name: '12x18" Gallery Canvas + Digital',
     price: Number(env.PRICE_CANVAS_SMALL || 8900),
     physical: true,
-    printfulVariantId: Number(env.PRINTFUL_VARIANT_CANVAS_SMALL || 0),
+    printfulVariantId: Number(env.PRINTFUL_VARIANT_CANVAS_SMALL || 19299),
   },
   canvas_large: {
-    name: '16x20" Gallery Canvas + Digital',
+    name: '16x24" Gallery Canvas + Digital',
     price: Number(env.PRICE_CANVAS_LARGE || 12900),
     physical: true,
-    printfulVariantId: Number(env.PRINTFUL_VARIANT_CANVAS_LARGE || 0),
+    printfulVariantId: Number(env.PRINTFUL_VARIANT_CANVAS_LARGE || 19303),
   },
 };
 

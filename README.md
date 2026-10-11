@@ -26,12 +26,12 @@ What the data shows:
 
 ### Unit economics (estimates; check them against your own vendor pricing)
 
-| | Digital $29 | Canvas 12×16 $89 |
+| | Digital $29 | Canvas 12×18 $89 |
 |---|---|---|
 | AI image cost (4 images) | ~$1 | ~$1 |
 | Stripe fees | ~$1.14 | ~$2.88 |
-| Print + shipping (Printful) | n/a | ~$35–45 |
-| **Gross profit before ads** | **~$27 (93%)** | **~$40–50** |
+| Print + shipping (Printful) | n/a | ~$25 + ~$10–15 shipping |
+| **Gross profit before ads** | **~$27 (93%)** | **~$46–51** |
 
 There is no inventory and no upfront product cost. You pay for each image only after a customer has paid you.
 
@@ -78,7 +78,7 @@ Customer uploads photo ─► Stripe Checkout ─► webhook ─► AI paints 4 
 3. **Stripe:**
    - Add a webhook to `https://yourdomain.com/webhooks/stripe` for the `checkout.session.completed` event.
    - Create the promo codes `COMEBACK15` (15% off) and `FRIEND20` (20% off).
-4. **Printful:** Pick your canvas products and put their variant IDs in `PRINTFUL_VARIANT_CANVAS_SMALL` / `_LARGE`. Leave `PRINTFUL_AUTO_CONFIRM=false` for your first 10 orders, then switch it to `true`.
+4. **Printful:** The canvas sizes are preset to 12×18 and 16×24, which fit the portraits exactly. Create an API token and set `PRINTFUL_TOKEN`. Leave `PRINTFUL_AUTO_CONFIRM=false` for your first 10 orders, then switch it to `true`.
 5. **Quality check:** Place one real $29 order with your own pet's photo. Tune the prompts in `src/config.js` until you love the results.
 6. **Search engines:** Submit `https://yourdomain.com/sitemap.xml` to Google Search Console and Bing Webmaster Tools.
 7. **Marketing content:** Run `BASE_URL=https://yourdomain.com npm run content`, then follow `docs/MARKETING.md`.
