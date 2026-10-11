@@ -162,7 +162,7 @@ export function breedPage(slug) {
   <a class="btn" href="/?style=${b.style}&breed=${b.slug}#order">Paint my ${esc(b.name)} →</a>
 </section>
 <section><h2>Our pick for ${esc(b.name)}s: ${esc(style.name)}</h2>
-<p>${esc(b.name)} owners love the ${esc(style.name)} style — it suits ${esc(b.hook)} perfectly. Prefer something else? Choose from:</p><ul>${others}</ul></section>
+<p>${esc(b.name)} owners love the ${esc(style.name.replace(/^The /, ""))} style — it suits ${esc(b.hook)} perfectly. Prefer something else? Choose from:</p><ul>${others}</ul></section>
 <section><h2>Pricing</h2><ul>${priceList()}</ul><p>Every order includes ${config.image.variants} unique versions so you can pick your favorite.</p></section>
 ${faqHtml(items)}
 <section class="cta"><a class="btn" href="/?style=${b.style}&breed=${b.slug}#order">Start my ${esc(b.name)} portrait</a></section>`;
