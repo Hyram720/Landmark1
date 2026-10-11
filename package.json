@@ -1,0 +1,31 @@
+{
+  "name": "pawtrait-royale",
+  "version": "1.0.0",
+  "description": "Automated AI pet portrait store with SEO and marketing automation",
+  "main": "src/server.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "DEV_SKIP_PAYMENT=true IMAGE_PROVIDER=mock node --watch src/server.js",
+    "content": "node scripts/content-engine.js 30"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hyram720/Landmark1.git"
+  },
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Hyram720/Landmark1/issues"
+  },
+  "homepage": "https://github.com/Hyram720/Landmark1#readme",
+  "dependencies": {
+    "express": "^5.1.0",
+    "multer": "^2.0.2"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}
