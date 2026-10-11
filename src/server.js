@@ -53,6 +53,8 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, re
 app.use(express.json());
 app.use(express.static(publicDir, { extensions: ['html'] }));
 
+app.get('/health', (req, res) => res.json({ ok: true }));
+
 app.get('/api/catalog', (req, res) => {
   res.json({
     brand: config.brandName,
@@ -62,6 +64,9 @@ app.get('/api/catalog', (req, res) => {
 });
 
 app.post('/api/orders', upload.single('photo'), async (req, res) => {
+  if (!config.devSkipPayment && !config.stripe.secretKey) {
+    return res.status(503).json({ error: "We're opening very soon — please check back shortly!" });
+  }
   try {
     const { email, petName = '', style, product: productKey } = req.body;
     const product = PRODUCTS[productKey];
