@@ -7,7 +7,7 @@ import config from './config.js';
 
 export const PROMO_VIDEO_SOURCE =
   process.env.PROMO_VIDEO_URL ||
-  'https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/e29a7d63-4236-4ab1-bb6d-8dec72fd63c7.mp4';
+  'https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/83709c18-dc5a-4202-9493-89e04125aa2b.mp4';
 
 const dir = path.join(config.dataDir, 'media');
 export const promoVideoPath = path.join(dir, `infomercial-${path.basename(new URL(PROMO_VIDEO_SOURCE).pathname)}`);
