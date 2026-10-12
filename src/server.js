@@ -8,6 +8,10 @@ import { createCheckoutSession, verifyWebhook } from './stripe.js';
 import { enqueue, selectForPrint, resumePending } from './pipeline.js';
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
+import { setupStripe } from './stripe-setup.js';
+import { alertOwner } from './notify.js';
+
+let stripeSetupStatus = 'pending';
 
 const app = express();
 const publicDir = new URL('../public', import.meta.url).pathname;
@@ -64,7 +68,8 @@ app.get('/api/catalog', (req, res) => {
 });
 
 app.post('/api/orders', upload.single('photo'), async (req, res) => {
-  if (!config.devSkipPayment && !config.stripe.secretKey) {
+  // Don't take money until Stripe can also tell us about it (webhook secret in place).
+  if (!config.devSkipPayment && !(config.stripe.secretKey && config.stripe.webhookSecret)) {
     return res.status(503).json({ error: "We're opening very soon — please check back shortly!" });
   }
   try {
@@ -202,7 +207,7 @@ app.get('/admin/check', requireAdmin, async (req, res) => {
     probe('https://api.printful.com/stores', config.printful.token),
     probe('https://api.stripe.com/v1/balance', config.stripe.secretKey),
   ]);
-  res.json({ openai, resend, printful, stripe });
+  res.json({ openai, resend, printful, stripe, stripeSetup: stripeSetupStatus });
 });
 
 app.post('/admin/retry/:id', requireAdmin, (req, res) => {
@@ -225,4 +230,13 @@ app.listen(config.port, () => {
   if (config.devSkipPayment) console.warn('DEV_SKIP_PAYMENT is on — orders are not charged.');
   resumePending();
   startFollowupScheduler();
+  setupStripe()
+    .then((status) => {
+      stripeSetupStatus = status;
+      console.log(`Stripe setup: ${status}`);
+    })
+    .catch((err) => {
+      stripeSetupStatus = `failed: ${err.message}`;
+      alertOwner('Stripe setup failed', err.stack || err);
+    });
 });

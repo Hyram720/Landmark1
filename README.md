@@ -75,9 +75,7 @@ Customer uploads photo ─► Stripe Checkout ─► webhook ─► AI paints 4 
    - [Printful](https://printful.com) (free; print-on-demand)
    - a domain name
 2. **Deploy:** Railway, Render or any Node host. Mount a persistent volume at `/data`, copy `.env.example` into your host's environment variables, and fill them in. The start command is `npm start`.
-3. **Stripe:**
-   - Add a webhook to `https://yourdomain.com/webhooks/stripe` for the `checkout.session.completed` event.
-   - Create the promo codes `COMEBACK15` (15% off) and `FRIEND20` (20% off).
+3. **Stripe:** Set only `STRIPE_SECRET_KEY`. On startup the store creates its own webhook (and moves it when `BASE_URL` changes) and creates the `COMEBACK15` and `FRIEND20` promo codes. Check the result at `/admin/check`.
 4. **Printful:** The canvas sizes are preset to 12×18 and 16×24, which fit the portraits exactly. Create an API token and set `PRINTFUL_TOKEN`. Leave `PRINTFUL_AUTO_CONFIRM=false` for your first 10 orders, then switch it to `true`.
 5. **Quality check:** Place one real $29 order with your own pet's photo. Tune the prompts in `src/config.js` until you love the results.
 6. **Search engines:** Submit `https://yourdomain.com/sitemap.xml` to Google Search Console and Bing Webmaster Tools.
@@ -99,6 +97,7 @@ src/server.js       routes: checkout, webhook, gallery, SEO pages, admin
 src/pipeline.js     paid order → generate → email → print
 src/generate.js     AI portrait generation (OpenAI image edits; mock mode for testing)
 src/stripe.js       Stripe Checkout + webhook signature verification (no SDK)
+src/stripe-setup.js automatic webhook + promo code setup on boot
 src/printful.js     print-on-demand fulfillment
 src/followups.js    abandoned-checkout recovery, review + referral emails
 src/seo.js          38 breed pages + 7 gift-occasion pages, schema.org, sitemap, robots
