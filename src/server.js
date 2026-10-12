@@ -13,6 +13,7 @@ import { setupStripe } from './stripe-setup.js';
 import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
 import { generateMissingSamples, listShowcase, showcasePreview, masterPath } from './samples.js';
 import { alertOwner } from './notify.js';
+import { startHealthcheck } from './healthcheck.js';
 import { PROMO_VIDEO_SOURCE, promoVideoPath, promoVideoCached, cachePromoVideo } from './promo-video.js';
 
 let stripeSetupStatus = 'pending';
@@ -342,6 +343,7 @@ app.listen(config.port, () => {
   startRetryScheduler();
   startFollowupScheduler();
   startEmailDomainSetup();
+  startHealthcheck();
   cachePromoVideo().catch((err) => console.error('promo video', err.message));
   setupStripe()
     .then((status) => {
