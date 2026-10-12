@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Launch Offer: Custom Pet Portraits | Custom Pet Portrait Studio</title>
+  <meta name="description" content="Your dog or cat as a museum-style masterpiece. 4 hi-res portraits in minutes, canvas prints shipped. Launch offer applied automatically at checkout.">
+  <meta property="og:title" content="Your pet, painted like royalty — launch offer 👑">
+  <meta property="og:description" content="Upload one photo. Get 4 museum-style portraits in minutes.">
+  <meta property="og:image" content="https://custompetportraitstudio.com/showcase/bella-golden.webp?w=900">
+  <link rel="canonical" href="https://custompetportraitstudio.com/offer">
+  <link rel="stylesheet" href="/styles.css">
+  <!-- Ad pixels: paste the Meta Pixel / TikTok Pixel / GA4 snippets here (see docs/MARKETING.md). -->
+</head>
+<body class="offer">
+  <div class="banner" id="banner"></div>
+  <header class="nav"><a href="/" class="logo">🎨 Custom Pet Portrait Studio</a><a href="#cta" class="btn small" id="navCta">Claim offer</a></header>
+
+  <section class="hero2">
+    <div class="hero-copy">
+      <p class="eyebrow" id="eyebrow">Limited-time launch offer</p>
+      <h1>The gift every pet lover secretly wants.</h1>
+      <p>Send us one phone photo. We paint <strong>4 museum-style portraits</strong> of their dog or cat — delivered in minutes. Turn the favorite into a gallery canvas, shipped to their door.</p>
+      <a href="/#order" class="btn big" id="heroCta">Paint my pet →</a>
+      <div class="trust"><span>⚡ Minutes, not weeks</span><span>🖼️ 300 DPI, print-ready</span><span>🔁 Free repaint guarantee</span></div>
+    </div>
+    <div class="hero-frame" id="heroFrame" hidden><img id="heroImg" alt=""></div>
+  </section>
+
+  <section class="block" id="beforeAfterSection" hidden>
+    <h2 class="center">See the transformation</h2>
+    <p class="center sub">Same pet, same markings — painted like an heirloom.</p>
+    <div id="beforeAfter" class="ba-grid"></div>
+  </section>
+
+  <section class="block">
+    <div class="steps">
+      <div class="step"><b>1</b><h3>Upload</h3><p>Any clear phone photo where you can see the eyes.</p></div>
+      <div class="step"><b>2</b><h3>Choose a style</h3><p>Royal, Admiral, Duchess, Astronaut, Watercolor or Holiday.</p></div>
+      <div class="step"><b>3</b><h3>Delivered</h3><p>4 hi-res portraits in minutes. Add canvas and we ship it.</p></div>
+    </div>
+  </section>
+
+  <section class="block" id="gallerySection" hidden>
+    <h2 class="center">Real portraits from our studio</h2>
+    <div id="gallery" class="gallery-grid"></div>
+  </section>
+
+  <section class="block" id="cta">
+    <h2 class="center" id="ctaTitle">Pricing</h2>
+    <p class="center sub" id="ctaSub"></p>
+    <div id="pricing" class="pricing"></div>
+  </section>
+
+  <section class="block guarantee">
+    <h2>Love it, or we repaint it free</h2>
+    <p>Not quite right? Reply to your delivery email and we'll repaint it at no charge. The name on the nameplate is engraved exactly as you type it — and you can fix a typo yourself any time before printing.</p>
+  </section>
+
+  <section class="block">
+    <h2>Questions</h2>
+    <details><summary>Is it really delivered in minutes?</summary><p>Yes — digital portraits are usually in your inbox within minutes of checkout. Canvas prints ship in 3–5 business days.</p></details>
+    <details><summary>Will it look like my pet?</summary><p>We paint from your photo and keep the breed, markings, eye color and face shape. You get 4 versions to choose from, plus a free repaint if needed.</p></details>
+    <details><summary>Can I send it as a gift?</summary><p>Yes. Forward the gallery link, or ship the canvas straight to the recipient's address at checkout.</p></details>
+    <details><summary>How do I get the discount?</summary><p>It's applied automatically when you check out from this site — no code to remember.</p></details>
+  </section>
+
+  <section class="block center final-cta">
+    <a href="/#order" class="btn big">Start my portrait →</a>
+  </section>
+
+  <p id="support" class="center support"></p>
+  <footer><p>© <span id="year"></span> Custom Pet Portrait Studio · <a href="/">Home</a></p></footer>
+
+  <script type="module">
+    import { loadSite } from '/site.js';
+    const $ = (id) => document.getElementById(id);
+    // Keep ad attribution (utm_*) when sending buyers to the order form.
+    const qs = location.search;
+    document.querySelectorAll('a[href="/#order"]').forEach((a) => (a.href = `/${qs}#order`));
+
+    const { launch } = await loadSite();
+    $('year').textContent = new Date().getFullYear();
+    document.querySelectorAll('#pricing a').forEach((a) => (a.href = a.getAttribute('href').replace('/?', `/${qs ? qs + '&' : '?'}`)));
+    if (launch) {
+      $('ctaTitle').textContent = `Launch offer: ${launch.percent}% off everything`;
+      $('ctaSub').textContent = 'Discount applied automatically at checkout.';
+    } else {
+      $('eyebrow').textContent = 'Handcrafted digital & canvas portraits';
+    }
+  </script>
+</body>
+</html>

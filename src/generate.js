@@ -1,6 +1,7 @@
 // Turns the customer's pet photo into styled portraits.
 import fs from 'node:fs';
 import path from 'node:path';
+import sharp from 'sharp';
 import config, { STYLES } from './config.js';
 import { enhancePortrait } from './enhance.js';
 import { applyNameplate, lookFor } from './nameplate.js';
@@ -29,6 +30,23 @@ async function generateOpenAI(photoPath, mimeType, prompt) {
   const body = await res.json();
   if (!res.ok) throw new Error(`OpenAI: ${body.error?.message || res.status}`);
   return Buffer.from(body.data[0].b64_json, 'base64');
+}
+
+// Text-to-image, used only to create demo pet "customer photos" for the showcase gallery.
+export async function generatePhoto(prompt) {
+  if (config.image.provider === 'mock') {
+    return sharp({ create: { width: 1024, height: 1536, channels: 3, background: '#c9a46b' } }).png().toBuffer();
+  }
+  return withRetry(async () => {
+    const res = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.image.openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: config.image.model, prompt, size: '1024x1536', quality: 'high', n: 1 }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(`OpenAI: ${body.error?.message || res.status}`);
+    return Buffer.from(body.data[0].b64_json, 'base64');
+  });
 }
 
 // Retries transient failures (rate limits, timeouts) with backoff.

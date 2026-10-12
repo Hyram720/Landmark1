@@ -7,6 +7,8 @@ const config = {
   dataDir: env.DATA_DIR || new URL('../data', import.meta.url).pathname,
   brandName: env.BRAND_NAME || 'Custom Pet Portrait Studio',
   supportEmail: env.SUPPORT_EMAIL || '',
+  // Launch promotion shown site-wide and pre-applied at checkout. LAUNCH_ENDS is YYYY-MM-DD (ET).
+  launch: { code: env.LAUNCH_CODE || '', percent: Number(env.LAUNCH_PERCENT || 20), ends: env.LAUNCH_ENDS || '' },
   adminKey: env.ADMIN_KEY || '',
 
   // Set DEV_SKIP_PAYMENT=true to mark orders paid without Stripe (local testing only).
