@@ -10,6 +10,7 @@ import { cleanName } from './nameplate.js';
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
+import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
 import { generateMissingSamples, listSamples, samplePreview, samplesDir } from './samples.js';
 import { alertOwner } from './notify.js';
 
@@ -278,7 +279,7 @@ app.get('/admin/check', requireAdmin, async (req, res) => {
     probe('https://api.printful.com/stores', config.printful.token),
     probe('https://api.stripe.com/v1/balance', config.stripe.secretKey),
   ]);
-  res.json({ openai, resend, printful, stripe, stripeSetup: stripeSetupStatus });
+  res.json({ openai, resend, printful, stripe, stripeSetup: stripeSetupStatus, emailDomain: emailDomainStatus });
 });
 
 app.post('/admin/retry/:id', requireAdmin, (req, res) => {
@@ -305,6 +306,7 @@ app.listen(config.port, () => {
   resumePending();
   startRetryScheduler();
   startFollowupScheduler();
+  startEmailDomainSetup();
   setupStripe()
     .then((status) => {
       stripeSetupStatus = status;
