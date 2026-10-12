@@ -2,6 +2,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import config, { STYLES } from './config.js';
+import { enhancePortrait } from './enhance.js';
+
+// Appended to every style: keeps portraits bright and sharp instead of murky old-master darkness.
+const QUALITY = ' Lighting: bright, warm, even light on the face and fur; the pet is clearly lit and the brightest part of the image. Crisp fine detail, sharp focus on the eyes, rich but not dark colors, no murky shadows. Ultra high detail.';
 
 async function generateOpenAI(photoPath, mimeType, prompt) {
   const form = new FormData();
@@ -46,13 +50,14 @@ export async function generatePortraits({ photoPath, mimeType, style, petName, o
 
   const files = [];
   for (let i = 1; i <= config.image.variants; i++) {
-    const prompt = `${styleDef.prompt} Variation ${i}: vary the pose, framing and background details slightly.${
+    const prompt = `${styleDef.prompt}${QUALITY} Variation ${i}: vary the pose, framing and background details slightly.${
       petName ? ` Include a small elegant engraved brass nameplate at the bottom reading "${petName}".` : ''
     }`;
-    const png =
+    const raw =
       config.image.provider === 'mock'
         ? fs.readFileSync(photoPath)
         : await withRetry(() => generateOpenAI(photoPath, mimeType, prompt));
+    const png = await enhancePortrait(raw);
     const name = `portrait-${i}.png`;
     fs.writeFileSync(path.join(outDir, name), png);
     files.push(name);

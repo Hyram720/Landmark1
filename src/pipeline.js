@@ -4,6 +4,7 @@ import path from 'node:path';
 import config, { PRODUCTS } from './config.js';
 import { getOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { generatePortraits } from './generate.js';
+import { enhancePortrait, ENHANCE_ENABLED } from './enhance.js';
 import { sendEmail, alertOwner, portraitsReadyEmail } from './notify.js';
 import { createPrintOrder } from './printful.js';
 
@@ -59,6 +60,7 @@ async function processOrder(id) {
   const done = updateOrder(id, {
     status: order.physical ? 'awaiting_selection' : 'delivered',
     images,
+    enhanced: existing ? getOrder(id).enhanced : ENHANCE_ENABLED,
     error: null,
     deliveredAt: new Date().toISOString(),
   });
@@ -108,6 +110,24 @@ export function retryFailed(now = Date.now()) {
 
 export function startRetryScheduler() {
   setInterval(() => retryFailed(), 5 * 60_000).unref();
+}
+
+// One-time upgrade for portraits painted before enhancement existed (runs at startup).
+export async function enhanceExistingOrders() {
+  if (!ENHANCE_ENABLED) return;
+  for (const o of listOrders()) {
+    if (o.enhanced || !o.images?.length) continue;
+    try {
+      for (const name of o.images) {
+        const file = path.join(outputDir, o.id, name);
+        if (fs.existsSync(file)) fs.writeFileSync(file, await enhancePortrait(fs.readFileSync(file)));
+      }
+      updateOrder(o.id, { enhanced: true });
+      console.log(`Enhanced existing portraits for ${o.id}`);
+    } catch (err) {
+      console.error(`Enhancing ${o.id} failed`, err);
+    }
+  }
 }
 
 // After a restart, pick up anything that was mid-flight.

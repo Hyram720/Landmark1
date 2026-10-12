@@ -22,7 +22,8 @@
   "homepage": "https://github.com/Hyram720/Landmark1#readme",
   "dependencies": {
     "express": "^5.1.0",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "sharp": "^0.34.4"
   },
   "type": "module",
   "engines": {
