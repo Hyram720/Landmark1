@@ -49,12 +49,12 @@ export const STYLES = {
   royal: {
     name: 'The Royal',
     prompt:
-      'Transform this pet into a regal Renaissance oil painting portrait. Keep the exact same animal: identical breed, fur colors, markings, eye color and face shape. Dress it in an ornate royal robe with ermine fur trim, a jeweled gold crown and a medallion necklace, seated on a red velvet throne. Dramatic Rembrandt lighting, dark rich background, visible brushstrokes, museum-quality classical portrait, vertical composition.',
+      'Transform this pet into a regal Renaissance oil painting portrait. Keep the exact same animal: identical breed, fur colors, markings, eye color and face shape. Dress it in an ornate royal robe with ermine fur trim, a jeweled gold crown and a medallion necklace, seated on a red velvet throne. Warm golden light illuminating the face, deep red and gold background, visible brushstrokes, museum-quality classical portrait, vertical composition.',
   },
   admiral: {
     name: 'The Admiral',
     prompt:
-      'Transform this pet into a classical 18th-century naval admiral oil portrait. Keep the exact same animal: identical breed, fur colors, markings, eye color and face shape. Navy blue military coat with gold epaulettes, brass buttons and medals, stormy sea and tall ship behind. Old-master oil painting style, warm varnish tones, vertical composition.',
+      'Transform this pet into a classical 18th-century naval admiral oil portrait. Keep the exact same animal: identical breed, fur colors, markings, eye color and face shape. Navy blue military coat with gold epaulettes, brass buttons and medals, stormy sea and tall ship behind. Old-master oil painting style, warm luminous tones, vertical composition.',
   },
   duchess: {
     name: 'The Duchess',

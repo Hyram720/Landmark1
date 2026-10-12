@@ -5,7 +5,7 @@ import multer from 'multer';
 import config, { STYLES, PRODUCTS } from './config.js';
 import { newOrderId, getOrder, saveOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { createCheckoutSession, verifyWebhook } from './stripe.js';
-import { enqueue, selectForPrint, resumePending, startRetryScheduler } from './pipeline.js';
+import { enqueue, selectForPrint, resumePending, startRetryScheduler, enhanceExistingOrders } from './pipeline.js';
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
@@ -261,6 +261,7 @@ if (!fs.existsSync(path.join(publicDir, 'index.html'))) console.warn('public/ind
 app.listen(config.port, () => {
   console.log(`${config.brandName} listening on ${config.baseUrl}`);
   if (config.devSkipPayment) console.warn('DEV_SKIP_PAYMENT is on — orders are not charged.');
+  enhanceExistingOrders().catch((err) => console.error('enhanceExistingOrders', err));
   resumePending();
   startRetryScheduler();
   startFollowupScheduler();
