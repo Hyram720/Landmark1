@@ -31,6 +31,13 @@ export async function loadSite() {
     $('heroFrame').hidden = false;
   }
 
+  // Infomercial (loads only when played)
+  if ($('promoVideo') && catalog.promoVideo) {
+    $('promoVideo').src = catalog.promoVideo;
+    $('videoSection').hidden = false;
+    $('promoVideo').addEventListener('play', () => window.fbq && fbq('trackCustom', 'VideoPlay'), { once: true });
+  }
+
   // Before -> after
   const pairs = showcase.filter((s) => s.before).slice(0, 3);
   if ($('beforeAfter') && pairs.length) {

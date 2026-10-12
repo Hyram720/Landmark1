@@ -13,6 +13,7 @@ import { setupStripe } from './stripe-setup.js';
 import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
 import { generateMissingSamples, listShowcase, showcasePreview, masterPath } from './samples.js';
 import { alertOwner } from './notify.js';
+import { PROMO_VIDEO_SOURCE, promoVideoPath, promoVideoCached, cachePromoVideo } from './promo-video.js';
 
 let stripeSetupStatus = 'pending';
 
@@ -111,6 +112,7 @@ app.get('/api/catalog', (req, res) => {
     brand: config.brandName,
     supportEmail: config.supportEmail,
     launch: launchOffer(),
+    promoVideo: PROMO_VIDEO_SOURCE ? '/media/infomercial.mp4' : null,
     styles: Object.fromEntries(Object.entries(STYLES).map(([k, s]) => [k, s.name])),
     products: Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, { name: p.name, price: p.price }])),
   });
@@ -232,6 +234,13 @@ app.get('/u/:id', (req, res) => {
   res.send('<p style="font-family:sans-serif">You are unsubscribed from marketing emails.</p>');
 });
 
+// --- Infomercial: served from the volume copy (supports range requests), else the CDN ---
+app.get('/media/infomercial.mp4', (req, res) => {
+  if (!PROMO_VIDEO_SOURCE) return res.status(404).end();
+  if (!promoVideoCached()) return res.redirect(302, PROMO_VIDEO_SOURCE);
+  res.sendFile(promoVideoPath, { maxAge: '7d', headers: { 'Content-Type': 'video/mp4' } });
+});
+
 // --- Showcase gallery (homepage, /offer) and the internal review page ---
 app.get('/api/showcase', (req, res) => res.json(listShowcase()));
 app.get('/showcase/:file', async (req, res) => {
@@ -333,6 +342,7 @@ app.listen(config.port, () => {
   startRetryScheduler();
   startFollowupScheduler();
   startEmailDomainSetup();
+  cachePromoVideo().catch((err) => console.error('promo video', err.message));
   setupStripe()
     .then((status) => {
       stripeSetupStatus = status;
