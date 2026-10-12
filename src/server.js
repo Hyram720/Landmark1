@@ -14,6 +14,7 @@ import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
 import { generateMissingSamples, listShowcase, showcasePreview, masterPath } from './samples.js';
 import { alertOwner } from './notify.js';
 import { startHealthcheck } from './healthcheck.js';
+import { runPrintfulSelftest } from './printful-selftest.js';
 import { PROMO_VIDEO_SOURCE, promoVideoPath, promoVideoCached, cachePromoVideo } from './promo-video.js';
 
 let stripeSetupStatus = 'pending';
@@ -359,6 +360,7 @@ app.listen(config.port, () => {
   startFollowupScheduler();
   startEmailDomainSetup();
   startHealthcheck();
+  if (process.env.PRINTFUL_SELFTEST === 'true') setTimeout(() => runPrintfulSelftest(), 20_000);
   cachePromoVideo().catch((err) => console.error('promo video', err.message));
   setupStripe()
     .then((status) => {
