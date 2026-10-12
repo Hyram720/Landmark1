@@ -194,5 +194,5 @@ ${urls.map((u) => `<url><loc>${config.baseUrl}${u}</loc><lastmod>${today}</lastm
 }
 
 export function robots() {
-  return `User-agent: *\nAllow: /\nDisallow: /o/\nDisallow: /files/\nDisallow: /admin\nDisallow: /api/\nSitemap: ${config.baseUrl}/sitemap.xml\n`;
+  return `User-agent: *\nAllow: /\nDisallow: /o/\nDisallow: /files/\nDisallow: /admin\nDisallow: /api/\nDisallow: /samples\nSitemap: ${config.baseUrl}/sitemap.xml\n`;
 }
