@@ -124,7 +124,7 @@ function faq(subject) {
     ['How does it work?', `Upload a clear photo of your ${subject}, pick a style, and check out. Our studio paints ${config.image.variants} versions and emails you a private gallery link.`],
     ['How fast will I get it?', 'Digital portraits are usually delivered within minutes. Canvas prints ship in about 3–5 business days after you choose your favorite.'],
     ['What photo works best?', 'A well-lit, front-facing photo where the eyes are clearly visible. Phone photos are perfect.'],
-    ['What if I don\'t love it?', 'Reply to your delivery email and we will repaint it for free.'],
+    ['What if I don\'t love it?', 'You get 4 versions to choose from. If none feel right, use your one free repaint from your gallery within 7 days (before printing) for 4 new versions.'],
     ['Can I fix the name on the nameplate?', 'Yes. The name is engraved exactly as you type it, and you can correct the spelling on your gallery page at any time before your canvas is printed.'],
   ];
 }

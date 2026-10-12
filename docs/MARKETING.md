@@ -90,4 +90,4 @@ These run on their own once the env vars are set:
 1. Open `/admin`. Check revenue, failed orders, and the **Source** column, which shows which ad or page each order came from.
 2. In Meta Ads Manager, apply the kill/scale rules above.
 3. Run `npm run content` and schedule next week's posts and pins.
-4. Reply to any repaint requests.
+4. Nothing to do for repaints: customers get one self-serve repaint from their gallery.
