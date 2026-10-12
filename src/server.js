@@ -9,6 +9,7 @@ import { enqueue, selectForPrint, resumePending, startRetryScheduler, enhanceExi
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
+import { generateMissingSamples, listSamples, samplePreview, samplesDir } from './samples.js';
 import { alertOwner } from './notify.js';
 
 let stripeSetupStatus = 'pending';
@@ -167,7 +168,8 @@ app.post('/api/orders/:id/select', async (req, res) => {
 // Finished portraits. The order id is the unguessable access token (Printful also fetches from here).
 app.get('/files/:id/:name', (req, res) => {
   const order = findOrder(req.params.id);
-  if (!order || !(order.images || []).includes(req.params.name)) return res.sendStatus(404);
+  const allowed = [...(order?.images || []), order?.printFile].filter(Boolean);
+  if (!order || !allowed.includes(req.params.name)) return res.sendStatus(404);
   res.sendFile(path.join(outputDir, order.id, req.params.name));
 });
 
@@ -188,6 +190,25 @@ app.get('/u/:id', (req, res) => {
   const order = findOrder(req.params.id);
   if (order) updateOrder(order.id, { noMarketing: true });
   res.send('<p style="font-family:sans-serif">You are unsubscribed from marketing emails.</p>');
+});
+
+// --- Style samples (review + marketing). Not linked or indexed. ---
+app.get('/samples', (req, res) => {
+  const items = listSamples()
+    .map((k) => `<figure style="margin:0"><img src="/samples/${k}.jpg" style="width:100%;border-radius:8px"><figcaption style="text-align:center;padding:6px"><b>${STYLES[k].name}</b> · <a href="/samples/${k}.png">full 300 DPI</a></figcaption></figure>`)
+    .join('');
+  res.send(`<!doctype html><meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Style samples</title><body style="font-family:sans-serif;margin:16px;background:#fbf7f0">
+<h1>Style samples (${listSamples().length}/${Object.keys(STYLES).length})</h1>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">${items}</div>`);
+});
+app.get('/samples/:style.jpg', async (req, res) => {
+  if (!listSamples().includes(req.params.style)) return res.sendStatus(404);
+  res.type('jpeg').send(await samplePreview(req.params.style));
+});
+app.get('/samples/:style.png', (req, res) => {
+  if (!listSamples().includes(req.params.style)) return res.sendStatus(404);
+  res.sendFile(path.join(samplesDir(), `${req.params.style}.png`));
 });
 
 // --- SEO surface ---
@@ -261,7 +282,9 @@ if (!fs.existsSync(path.join(publicDir, 'index.html'))) console.warn('public/ind
 app.listen(config.port, () => {
   console.log(`${config.brandName} listening on ${config.baseUrl}`);
   if (config.devSkipPayment) console.warn('DEV_SKIP_PAYMENT is on — orders are not charged.');
-  enhanceExistingOrders().catch((err) => console.error('enhanceExistingOrders', err));
+  enhanceExistingOrders()
+    .then(() => generateMissingSamples())
+    .catch((err) => console.error('startup image tasks', err));
   resumePending();
   startRetryScheduler();
   startFollowupScheduler();

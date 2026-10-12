@@ -4,7 +4,7 @@ import path from 'node:path';
 import config, { PRODUCTS } from './config.js';
 import { getOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { generatePortraits } from './generate.js';
-import { enhancePortrait, ENHANCE_ENABLED } from './enhance.js';
+import { enhancePortrait, upgradeToMaster, makePrintFile, ENHANCE_ENABLED, MASTER_VERSION } from './enhance.js';
 import { sendEmail, alertOwner, portraitsReadyEmail } from './notify.js';
 import { createPrintOrder } from './printful.js';
 
@@ -61,6 +61,7 @@ async function processOrder(id) {
     status: order.physical ? 'awaiting_selection' : 'delivered',
     images,
     enhanced: existing ? getOrder(id).enhanced : ENHANCE_ENABLED,
+    master: existing ? getOrder(id).master : ENHANCE_ENABLED && MASTER_VERSION,
     error: null,
     deliveredAt: new Date().toISOString(),
   });
@@ -85,10 +86,16 @@ export async function selectForPrint(id, imageName) {
     if (!config.printful.token || !product.printfulVariantId) {
       throw new Error('Printful is not configured (PRINTFUL_TOKEN / variant id)');
     }
+    // Exact canvas size at 300 DPI (e.g. 16x24 -> 4800x7200 px).
+    const { w, h } = product.printInches;
+    const printFile = `print-${w}x${h}-${imageName.replace(/\.png$/, '')}.jpg`;
+    const outDir = path.join(outputDir, id);
+    fs.writeFileSync(path.join(outDir, printFile), await makePrintFile(fs.readFileSync(path.join(outDir, imageName)), { w, h }));
+    updateOrder(id, { printFile });
     const result = await createPrintOrder({
       order,
       variantId: product.printfulVariantId,
-      fileUrl: `${config.baseUrl}/files/${id}/${imageName}`,
+      fileUrl: `${config.baseUrl}/files/${id}/${printFile}`,
     });
     updateOrder(id, { status: 'sent_to_print', printOrderId: result.id });
   } catch (err) {
@@ -116,14 +123,16 @@ export function startRetryScheduler() {
 export async function enhanceExistingOrders() {
   if (!ENHANCE_ENABLED) return;
   for (const o of listOrders()) {
-    if (o.enhanced || !o.images?.length) continue;
+    if (!o.images?.length || o.master === MASTER_VERSION) continue;
     try {
+      // Never-toned images get the full treatment; already-toned ones are only resized.
+      const finish = o.enhanced ? upgradeToMaster : enhancePortrait;
       for (const name of o.images) {
         const file = path.join(outputDir, o.id, name);
-        if (fs.existsSync(file)) fs.writeFileSync(file, await enhancePortrait(fs.readFileSync(file)));
+        if (fs.existsSync(file)) fs.writeFileSync(file, await finish(fs.readFileSync(file)));
       }
-      updateOrder(o.id, { enhanced: true });
-      console.log(`Enhanced existing portraits for ${o.id}`);
+      updateOrder(o.id, { enhanced: true, master: MASTER_VERSION });
+      console.log(`Upgraded portraits to ${MASTER_VERSION} for ${o.id}`);
     } catch (err) {
       console.error(`Enhancing ${o.id} failed`, err);
     }

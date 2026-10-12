@@ -68,6 +68,7 @@ export const STYLES = {
   },
   watercolor: {
     name: 'Watercolor Classic',
+    tone: 'light',
     prompt:
       'Repaint this pet as a soft, elegant watercolor portrait. Keep the exact same animal: identical breed, fur colors, markings, eye color and face shape. Loose wet-on-wet washes, fine ink detail on the eyes and nose, clean white paper background with gentle color bleeds. Fine-art print quality, vertical composition.',
   },
@@ -92,12 +93,14 @@ export const PRODUCTS = {
     price: Number(env.PRICE_CANVAS_SMALL || 8900),
     physical: true,
     printfulVariantId: Number(env.PRINTFUL_VARIANT_CANVAS_SMALL || 19299),
+    printInches: { w: 12, h: 18 },
   },
   canvas_large: {
     name: '16x24" Gallery Canvas + Digital',
     price: Number(env.PRICE_CANVAS_LARGE || 12900),
     physical: true,
     printfulVariantId: Number(env.PRINTFUL_VARIANT_CANVAS_LARGE || 19303),
+    printInches: { w: 16, h: 24 },
   },
 };
 

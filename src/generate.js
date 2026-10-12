@@ -42,22 +42,26 @@ async function withRetry(fn, attempts = 3) {
   }
 }
 
-// Writes N variants to outDir and returns their filenames.
-export async function generatePortraits({ photoPath, mimeType, style, petName, outDir }) {
+// Paints one finished (enhanced, 300 DPI) portrait and returns the PNG buffer.
+export async function paintPortrait({ photoPath, mimeType, style, petName, variant = 1 }) {
   const styleDef = STYLES[style];
   if (!styleDef) throw new Error(`unknown style ${style}`);
-  fs.mkdirSync(outDir, { recursive: true });
+  const prompt = `${styleDef.prompt}${QUALITY} Variation ${variant}: vary the pose, framing and background details slightly.${
+    petName ? ` Include a small elegant engraved brass nameplate at the bottom reading "${petName}".` : ''
+  }`;
+  const raw =
+    config.image.provider === 'mock'
+      ? fs.readFileSync(photoPath)
+      : await withRetry(() => generateOpenAI(photoPath, mimeType, prompt));
+  return enhancePortrait(raw, { tone: styleDef.tone });
+}
 
+// Writes N variants to outDir and returns their filenames.
+export async function generatePortraits({ photoPath, mimeType, style, petName, outDir }) {
+  fs.mkdirSync(outDir, { recursive: true });
   const files = [];
   for (let i = 1; i <= config.image.variants; i++) {
-    const prompt = `${styleDef.prompt}${QUALITY} Variation ${i}: vary the pose, framing and background details slightly.${
-      petName ? ` Include a small elegant engraved brass nameplate at the bottom reading "${petName}".` : ''
-    }`;
-    const raw =
-      config.image.provider === 'mock'
-        ? fs.readFileSync(photoPath)
-        : await withRetry(() => generateOpenAI(photoPath, mimeType, prompt));
-    const png = await enhancePortrait(raw);
+    const png = await paintPortrait({ photoPath, mimeType, style, petName, variant: i });
     const name = `portrait-${i}.png`;
     fs.writeFileSync(path.join(outDir, name), png);
     files.push(name);
