@@ -5,7 +5,8 @@ import multer from 'multer';
 import config, { STYLES, PRODUCTS } from './config.js';
 import { newOrderId, getOrder, saveOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { createCheckoutSession, verifyWebhook } from './stripe.js';
-import { enqueue, selectForPrint, resumePending, startRetryScheduler, enhanceExistingOrders } from './pipeline.js';
+import { enqueue, selectForPrint, resumePending, startRetryScheduler, enhanceExistingOrders, renameOrder } from './pipeline.js';
+import { cleanName } from './nameplate.js';
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
@@ -87,6 +88,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 app.get('/api/catalog', (req, res) => {
   res.json({
     brand: config.brandName,
+    supportEmail: config.supportEmail,
     styles: Object.fromEntries(Object.entries(STYLES).map(([k, s]) => [k, s.name])),
     products: Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, { name: p.name, price: p.price }])),
   });
@@ -109,7 +111,7 @@ app.post('/api/orders', upload.single('photo'), async (req, res) => {
       createdAt: new Date().toISOString(),
       status: 'pending_payment',
       email: email.trim(),
-      petName: petName.trim().slice(0, 40),
+      petName: cleanName(petName),
       style,
       product: productKey,
       physical: product.physical,
@@ -145,6 +147,9 @@ const publicOrder = (o) => ({
   physical: o.physical,
   images: o.images || [],
   selectedImage: o.selectedImage || null,
+  rev: o.plateRev || 0, // cache-buster after a nameplate edit
+  canEditName: Boolean(o.images?.length) && !['printing', 'sent_to_print'].includes(o.status),
+  supportEmail: config.supportEmail,
 });
 
 
@@ -159,6 +164,18 @@ app.post('/api/orders/:id/select', async (req, res) => {
   if (!order) return res.status(404).json({ error: 'not found' });
   try {
     await selectForPrint(order.id, String(req.body.image || ''));
+    res.json(publicOrder(getOrder(order.id)));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Customer fixes the spelling (or removes) the name on the nameplate. Free and instant.
+app.post('/api/orders/:id/name', async (req, res) => {
+  const order = findOrder(req.params.id);
+  if (!order) return res.status(404).json({ error: 'not found' });
+  try {
+    await renameOrder(order.id, req.body.petName);
     res.json(publicOrder(getOrder(order.id)));
   } catch (err) {
     res.status(400).json({ error: err.message });

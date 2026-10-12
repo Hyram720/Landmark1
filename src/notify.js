@@ -12,7 +12,8 @@ export async function sendEmail({ to, subject, html }) {
       Authorization: `Bearer ${config.email.resendKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from: config.email.from, to, subject, html }),
+    // Customer replies go to the support inbox.
+    body: JSON.stringify({ from: config.email.from, to, subject, html, ...(config.supportEmail && { reply_to: config.supportEmail }) }),
   });
   if (!res.ok) throw new Error(`Resend: ${res.status} ${await res.text()}`);
 }
@@ -43,7 +44,8 @@ export function portraitsReadyEmail(order) {
         <p>We painted ${config.image.variants} versions of ${order.petName || 'your pet'}. Download them all in full resolution:</p>
         <p><a href="${link}" style="background:#7a1f1f;color:#fff;padding:12px 22px;border-radius:6px;text-decoration:none">View &amp; download</a></p>
         ${printLine}
-        <p style="color:#7d6b5a;font-size:13px">Keep this email — the link is your private gallery.</p>
+        <p>Please check the spelling on the nameplate — if anything is off, fix it on your gallery page and all portraits update instantly.</p>
+        <p style="color:#7d6b5a;font-size:13px">Keep this email — the link is your private gallery.${config.supportEmail ? ` Questions? Just reply or email ${config.supportEmail}.` : ''}</p>
       </div>`,
   };
 }

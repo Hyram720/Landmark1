@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import config, { STYLES } from './config.js';
 import { enhancePortrait } from './enhance.js';
+import { applyNameplate } from './nameplate.js';
 
 // Appended to every style: keeps portraits bright and sharp instead of murky old-master darkness.
 const QUALITY = ' Lighting: bright, warm, even light on the face and fur; the pet is clearly lit and the brightest part of the image. Crisp fine detail, sharp focus on the eyes, rich but not dark colors, no murky shadows. Ultra high detail.';
@@ -42,13 +43,12 @@ async function withRetry(fn, attempts = 3) {
   }
 }
 
-// Paints one finished (enhanced, 300 DPI) portrait and returns the PNG buffer.
-export async function paintPortrait({ photoPath, mimeType, style, petName, variant = 1 }) {
+// Paints one finished (enhanced, 300 DPI) portrait with no lettering and returns the PNG buffer.
+export async function paintPortrait({ photoPath, mimeType, style, variant = 1 }) {
   const styleDef = STYLES[style];
   if (!styleDef) throw new Error(`unknown style ${style}`);
-  const prompt = `${styleDef.prompt}${QUALITY} Variation ${variant}: vary the pose, framing and background details slightly.${
-    petName ? ` Include a small elegant engraved brass nameplate at the bottom reading "${petName}".` : ''
-  }`;
+  // No lettering from the AI: models misspell names. The nameplate is added by code afterwards.
+  const prompt = `${styleDef.prompt}${QUALITY} Variation ${variant}: vary the pose, framing and background details slightly. Do not include any text, letters, numbers, signatures, labels or nameplates anywhere in the image; keep the bottom edge of the painting simple.`;
   const raw =
     config.image.provider === 'mock'
       ? fs.readFileSync(photoPath)
@@ -59,11 +59,14 @@ export async function paintPortrait({ photoPath, mimeType, style, petName, varia
 // Writes N variants to outDir and returns their filenames.
 export async function generatePortraits({ photoPath, mimeType, style, petName, outDir }) {
   fs.mkdirSync(outDir, { recursive: true });
+  // clean/ keeps the unlettered master so the nameplate can be re-rendered if the name changes.
+  fs.mkdirSync(path.join(outDir, 'clean'), { recursive: true });
   const files = [];
   for (let i = 1; i <= config.image.variants; i++) {
-    const png = await paintPortrait({ photoPath, mimeType, style, petName, variant: i });
+    const clean = await paintPortrait({ photoPath, mimeType, style, variant: i });
     const name = `portrait-${i}.png`;
-    fs.writeFileSync(path.join(outDir, name), png);
+    fs.writeFileSync(path.join(outDir, 'clean', name), clean);
+    fs.writeFileSync(path.join(outDir, name), await applyNameplate(clean, petName));
     files.push(name);
   }
   return files;

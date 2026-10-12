@@ -108,7 +108,7 @@ ${jsonLd.map((j) => `<script type="application/ld+json">${JSON.stringify(j)}</sc
 </head><body>
 <header class="nav"><a href="/" class="logo">👑 ${esc(config.brandName)}</a><a href="/#order" class="btn small">Create yours</a></header>
 <main class="seo">${body}</main>
-<footer>${seoFooterLinks()}<p>© ${new Date().getFullYear()} ${esc(config.brandName)}</p></footer>
+<footer>${seoFooterLinks()}${config.supportEmail ? `<p>Questions? Email <a href="mailto:${esc(config.supportEmail)}">${esc(config.supportEmail)}</a></p>` : ''}<p>© ${new Date().getFullYear()} ${esc(config.brandName)}</p></footer>
 </body></html>`;
 }
 
@@ -124,6 +124,7 @@ function faq(subject) {
     ['How fast will I get it?', 'Digital portraits are usually delivered within minutes. Canvas prints ship in about 3–5 business days after you choose your favorite.'],
     ['What photo works best?', 'A well-lit, front-facing photo where the eyes are clearly visible. Phone photos are perfect.'],
     ['What if I don\'t love it?', 'Reply to your delivery email and we will repaint it for free.'],
+    ['Can I fix the name on the nameplate?', 'Yes. The name is engraved exactly as you type it, and you can correct the spelling on your gallery page at any time before your canvas is printed.'],
   ];
 }
 

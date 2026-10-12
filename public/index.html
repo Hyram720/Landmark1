@@ -43,7 +43,8 @@
       </div>
       <div><label>2. Style</label><div class="choices" id="styles"></div></div>
       <div><label>3. Format</label><div class="choices" id="products"></div></div>
-      <div><label for="petName">Pet's name (optional — added on a nameplate)</label><input type="text" id="petName" name="petName" maxlength="40" placeholder="e.g. Duke"></div>
+      <div><label for="petName">Pet's name (optional — engraved on a brass nameplate)</label><input type="text" id="petName" name="petName" maxlength="24" placeholder="e.g. Duke" autocomplete="off">
+        <p id="namePreview" class="name-preview" hidden>Nameplate will read: <strong id="namePreviewText"></strong> — please double-check the spelling. You can still fix it after your portraits are ready.</p></div>
       <div><label for="email">Email for delivery</label><input type="email" id="email" name="email" required placeholder="you@example.com"></div>
       <p class="error" id="error"></p>
       <button class="btn" id="submit" type="submit">Continue to secure checkout →</button>
@@ -58,6 +59,7 @@
     <details><summary>Do you do memorial portraits?</summary><p>Yes. Many customers honor a pet who has passed. Any clear photo works, even an older one.</p></details>
   </section>
 
+  <p id="support" class="center support"></p>
   <footer id="footer"></footer>
 
   <script>
@@ -65,12 +67,19 @@
     const params = new URLSearchParams(location.search);
     const usd = (c) => '$' + (c / 100).toFixed(0);
 
-    fetch('/api/catalog').then((r) => r.json()).then(({ styles, products }) => {
+    fetch('/api/catalog').then((r) => r.json()).then(({ styles, products, supportEmail }) => {
+      if (supportEmail) $('support').innerHTML = `Questions or problems with an order? Email <a href="mailto:${supportEmail}">${supportEmail}</a> — we reply within one business day.`;
       const wanted = params.get('style');
       $('styles').innerHTML = Object.entries(styles).map(([k, name], i) =>
         `<label class="choice"><input type="radio" name="style" value="${k}" ${(wanted ? k === wanted : i === 0) ? 'checked' : ''}><span>${name}</span></label>`).join('');
       $('products').innerHTML = Object.entries(products).map(([k, p], i) =>
         `<label class="choice"><input type="radio" name="product" value="${k}" ${i === 0 ? 'checked' : ''}><span>${p.name}<small>${usd(p.price)}</small></span></label>`).join('');
+    });
+
+    $('petName').addEventListener('input', () => {
+      const v = $('petName').value.replace(/\s+/g, ' ').trim();
+      $('namePreview').hidden = !v;
+      $('namePreviewText').textContent = v;
     });
 
     $('drop').addEventListener('click', () => $('photo').click());
