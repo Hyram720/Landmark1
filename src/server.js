@@ -17,6 +17,7 @@ import { alertOwner } from './notify.js';
 let stripeSetupStatus = 'pending';
 
 const app = express();
+app.set('trust proxy', true); // Railway terminates TLS; use X-Forwarded-* for host/protocol
 const publicDir = new URL('../public', import.meta.url).pathname;
 
 const ALLOWED_MIME = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
@@ -86,6 +87,18 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, re
     }
   }
   res.json({ received: true });
+});
+
+// One canonical host: send browsers on any other host for this domain (e.g. the bare domain)
+// to BASE_URL's host. GET/HEAD only, so webhooks and API posts are never redirected.
+const canonicalHost = new URL(config.baseUrl).hostname;
+app.use((req, res, next) => {
+  const host = req.hostname;
+  const sameSite = host === canonicalHost.replace(/^www\./, '') || host === `www.${canonicalHost}`;
+  if (sameSite && host !== canonicalHost && ['GET', 'HEAD'].includes(req.method)) {
+    return res.redirect(301, `${config.baseUrl}${req.originalUrl}`);
+  }
+  next();
 });
 
 app.use(express.json());
