@@ -5,7 +5,7 @@ import multer from 'multer';
 import config, { STYLES, PRODUCTS } from './config.js';
 import { newOrderId, getOrder, saveOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { createCheckoutSession, verifyWebhook } from './stripe.js';
-import { enqueue, selectForPrint, resumePending } from './pipeline.js';
+import { enqueue, selectForPrint, resumePending, startRetryScheduler } from './pipeline.js';
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
@@ -247,7 +247,7 @@ app.post('/admin/retry/:id', requireAdmin, (req, res) => {
   const order = findOrder(req.params.id);
   if (!order) return res.sendStatus(404);
   if (order.status === 'failed') {
-    updateOrder(order.id, { status: 'paid', error: null });
+    updateOrder(order.id, { status: 'paid', error: null, attempts: 0 });
     enqueue(order.id);
   } else if (order.status === 'print_failed') {
     updateOrder(order.id, { status: 'awaiting_selection', error: null });
@@ -262,6 +262,7 @@ app.listen(config.port, () => {
   console.log(`${config.brandName} listening on ${config.baseUrl}`);
   if (config.devSkipPayment) console.warn('DEV_SKIP_PAYMENT is on — orders are not charged.');
   resumePending();
+  startRetryScheduler();
   startFollowupScheduler();
   setupStripe()
     .then((status) => {

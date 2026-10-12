@@ -8,6 +8,8 @@ import { createPrintOrder } from './printful.js';
 
 // Single in-process queue keeps API usage predictable and avoids double-processing.
 const queue = [];
+const MAX_ATTEMPTS = 8;
+const RETRY_MINUTES = 30;
 let running = false;
 
 export function enqueue(orderId) {
@@ -23,8 +25,13 @@ async function drain() {
     try {
       await processOrder(id);
     } catch (err) {
-      updateOrder(id, { status: 'failed', error: String(err.message || err) });
-      await alertOwner(`Order ${id} failed`, err.stack || err);
+      const attempts = (getOrder(id)?.attempts || 0) + 1;
+      updateOrder(id, { status: 'failed', error: String(err.message || err), attempts, failedAt: new Date().toISOString() });
+      // Alert once on the first failure and again when retries are exhausted, not on every retry.
+      if (attempts === 1 || attempts === MAX_ATTEMPTS) {
+        const note = attempts < MAX_ATTEMPTS ? `Will retry automatically every ${RETRY_MINUTES} min.` : 'Retries exhausted — use the retry button in /admin.';
+        await alertOwner(`Order ${id} failed (attempt ${attempts})`, `${note}\n\n${err.stack || err}`);
+      }
     }
   }
   running = false;
@@ -74,6 +81,21 @@ export async function selectForPrint(id, imageName) {
     updateOrder(id, { status: 'print_failed', error: String(err.message || err) });
     await alertOwner(`Print order failed for ${id}`, err.stack || err);
   }
+}
+
+// Transient failures (e.g. an empty AI credit balance) resolve on their own once fixed, so paid
+// orders retry automatically instead of waiting for a human.
+export function retryFailed(now = Date.now()) {
+  for (const o of listOrders()) {
+    if (o.status !== 'failed' || (o.attempts || 0) >= MAX_ATTEMPTS) continue;
+    if (now - Date.parse(o.failedAt || o.updatedAt) < RETRY_MINUTES * 60_000) continue;
+    updateOrder(o.id, { status: 'paid' });
+    enqueue(o.id);
+  }
+}
+
+export function startRetryScheduler() {
+  setInterval(() => retryFailed(), 5 * 60_000).unref();
 }
 
 // After a restart, pick up anything that was mid-flight.
