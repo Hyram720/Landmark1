@@ -53,3 +53,8 @@ main.seo { max-width: 860px; margin: auto; padding: 0 16px 40px; }
 .cta { text-align: center; padding: 20px 0; }
 footer { border-top: 1px solid var(--line); padding: 24px 16px; color: var(--muted); font-size: 13px; max-width: 1100px; margin: 30px auto 0; }
 .seo-links a { color: var(--muted); }
+.name-preview { margin: 8px 0 0; font-size: 15px; color: var(--muted); }
+.name-preview strong { color: var(--accent); font-size: 17px; letter-spacing: .5px; }
+.support { color: var(--muted); font-size: 15px; padding: 0 16px; }
+.name-edit { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 16px auto; max-width: 560px; text-align: center; }
+.name-edit input { max-width: 260px; display: inline-block; margin: 6px; }

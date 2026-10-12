@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import config, { STYLES } from './config.js';
 import { getOrder, uploadsDir } from './store.js';
 import { paintPortrait } from './generate.js';
+import { applyNameplate } from './nameplate.js';
 
 const version = () => (process.env.SAMPLE_VERSION || '1').replace(/[^a-z0-9-]/gi, '');
 export const samplesDir = () => path.join(config.dataDir, 'samples', version());
@@ -26,12 +27,12 @@ export async function generateMissingSamples() {
     const file = path.join(samplesDir(), `${style}.png`);
     if (fs.existsSync(file)) continue;
     try {
-      const png = await paintPortrait({
+      const clean = await paintPortrait({
         photoPath: path.join(uploadsDir, order.photo),
         mimeType: order.photoMime,
         style,
-        petName: order.petName,
       });
+      const png = await applyNameplate(clean, order.petName);
       fs.writeFileSync(file, png);
       const meta = await sharp(png).metadata();
       console.log(`Sample ${style}: ${meta.width}x${meta.height} @ ${meta.density} DPI`);

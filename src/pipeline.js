@@ -4,6 +4,7 @@ import path from 'node:path';
 import config, { PRODUCTS } from './config.js';
 import { getOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { generatePortraits } from './generate.js';
+import { applyNameplate, cleanName } from './nameplate.js';
 import { enhancePortrait, upgradeToMaster, makePrintFile, ENHANCE_ENABLED, MASTER_VERSION } from './enhance.js';
 import { sendEmail, alertOwner, portraitsReadyEmail } from './notify.js';
 import { createPrintOrder } from './printful.js';
@@ -62,6 +63,7 @@ async function processOrder(id) {
     images,
     enhanced: existing ? getOrder(id).enhanced : ENHANCE_ENABLED,
     master: existing ? getOrder(id).master : ENHANCE_ENABLED && MASTER_VERSION,
+    nameplate: existing ? getOrder(id).nameplate : 'code',
     error: null,
     deliveredAt: new Date().toISOString(),
   });
@@ -119,6 +121,24 @@ export function startRetryScheduler() {
   setInterval(() => retryFailed(), 5 * 60_000).unref();
 }
 
+// Re-renders the nameplate on every portrait from the unlettered masters. No AI cost, ~1s.
+// Orders painted before code-drawn nameplates have no clean/ copy: their current image becomes
+// the base and the new plate is drawn over the AI's (possibly misspelled) one.
+export async function renameOrder(id, rawName) {
+  const order = getOrder(id);
+  if (!order?.images?.length) throw new Error('no portraits yet');
+  if (['printing', 'sent_to_print'].includes(order.status)) throw new Error('the canvas is already in production');
+  const petName = cleanName(rawName);
+  const outDir = path.join(outputDir, id);
+  fs.mkdirSync(path.join(outDir, 'clean'), { recursive: true });
+  for (const name of order.images) {
+    const cleanFile = path.join(outDir, 'clean', name);
+    if (!fs.existsSync(cleanFile)) fs.copyFileSync(path.join(outDir, name), cleanFile);
+    fs.writeFileSync(path.join(outDir, name), await applyNameplate(fs.readFileSync(cleanFile), petName));
+  }
+  return updateOrder(id, { petName, plateRev: (order.plateRev || 0) + 1, nameplate: 'code' });
+}
+
 // One-time upgrade for portraits painted before enhancement existed (runs at startup).
 export async function enhanceExistingOrders() {
   if (!ENHANCE_ENABLED) return;
@@ -135,6 +155,17 @@ export async function enhanceExistingOrders() {
       console.log(`Upgraded portraits to ${MASTER_VERSION} for ${o.id}`);
     } catch (err) {
       console.error(`Enhancing ${o.id} failed`, err);
+    }
+  }
+  // Replace AI-painted (possibly misspelled) nameplates with code-drawn ones.
+  for (const o of listOrders()) {
+    if (o.nameplate === 'code' || !o.images?.length || !o.petName) continue;
+    if (['printing', 'sent_to_print'].includes(o.status)) continue;
+    try {
+      await renameOrder(o.id, o.petName);
+      console.log(`Redrew nameplate for ${o.id}`);
+    } catch (err) {
+      console.error(`Nameplate for ${o.id} failed`, err);
     }
   }
 }

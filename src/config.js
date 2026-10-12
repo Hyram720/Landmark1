@@ -6,6 +6,7 @@ const config = {
   baseUrl: (env.BASE_URL || `http://localhost:${env.PORT || 3000}`).replace(/\/$/, ''),
   dataDir: env.DATA_DIR || new URL('../data', import.meta.url).pathname,
   brandName: env.BRAND_NAME || 'Custom Pet Portrait Studio',
+  supportEmail: env.SUPPORT_EMAIL || '',
   adminKey: env.ADMIN_KEY || '',
 
   // Set DEV_SKIP_PAYMENT=true to mark orders paid without Stripe (local testing only).
@@ -64,7 +65,7 @@ export const STYLES = {
   astronaut: {
     name: 'The Astronaut',
     prompt:
-      'Transform this pet into a heroic astronaut portrait. Keep the exact same animal: identical breed, fur colors, markings, eye color and face shape. White detailed space suit with mission patches, helmet visor open, Earth and stars glowing behind. Cinematic digital painting, crisp detail, vertical composition.',
+      'Transform this pet into a heroic astronaut portrait. Keep the exact same animal: identical breed, fur colors, markings, eye color and face shape. White detailed space suit with fictional mission patches (no real agency logos, no flags), helmet visor open, Earth and stars glowing behind. Cinematic digital painting, crisp detail, vertical composition.',
   },
   watercolor: {
     name: 'Watercolor Classic',

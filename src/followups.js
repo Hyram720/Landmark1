@@ -11,7 +11,7 @@ const REFERRAL_CODE = process.env.REFERRAL_CODE || 'FRIEND20';
 const REVIEW_URL = process.env.REVIEW_URL || '';
 
 const footer = (order) =>
-  `<p style="color:#9a8a7a;font-size:12px">${config.brandName} · <a href="${config.baseUrl}/u/${order.id}">Unsubscribe</a></p>`;
+  `<p style="color:#9a8a7a;font-size:12px">${config.brandName}${config.supportEmail ? ` · Help: ${config.supportEmail}` : ''} · <a href="${config.baseUrl}/u/${order.id}">Unsubscribe</a></p>`;
 
 function abandonedEmail(order) {
   return {
