@@ -11,7 +11,7 @@ import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
 import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
-import { generateMissingSamples, listSamples, samplePreview, samplesDir } from './samples.js';
+import { generateMissingSamples, listShowcase, showcasePreview, masterPath } from './samples.js';
 import { alertOwner } from './notify.js';
 
 let stripeSetupStatus = 'pending';
@@ -35,6 +35,13 @@ const findOrder = (id) => {
   } catch {
     return null;
   }
+};
+
+// Launch discount, auto-applied on Stripe Payment Links via prefilled_promo_code.
+const launchOffer = () => {
+  const { code, percent, ends } = config.launch;
+  if (!code || (ends && Date.now() > Date.parse(`${ends}T23:59:59-05:00`))) return null;
+  return { code, percent, ends };
 };
 
 const linkFor = (productKey) => !config.stripe.secretKey && config.stripe.paymentLinks[productKey];
@@ -90,6 +97,7 @@ app.get('/api/catalog', (req, res) => {
   res.json({
     brand: config.brandName,
     supportEmail: config.supportEmail,
+    launch: launchOffer(),
     styles: Object.fromEntries(Object.entries(STYLES).map(([k, s]) => [k, s.name])),
     products: Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, { name: p.name, price: p.price }])),
   });
@@ -128,7 +136,8 @@ app.post('/api/orders', upload.single('photo'), async (req, res) => {
     }
     const link = linkFor(productKey);
     if (link) {
-      const url = `${link}?client_reference_id=${order.id}&prefilled_email=${encodeURIComponent(order.email)}`;
+      const promo = launchOffer();
+      const url = `${link}?client_reference_id=${order.id}&prefilled_email=${encodeURIComponent(order.email)}${promo ? `&prefilled_promo_code=${encodeURIComponent(promo.code)}` : ''}`;
       return res.json({ url });
     }
     const session = await createCheckoutSession({ order, product });
@@ -210,23 +219,27 @@ app.get('/u/:id', (req, res) => {
   res.send('<p style="font-family:sans-serif">You are unsubscribed from marketing emails.</p>');
 });
 
-// --- Style samples (review + marketing). Not linked or indexed. ---
+// --- Showcase gallery (homepage, /offer) and the internal review page ---
+app.get('/api/showcase', (req, res) => res.json(listShowcase()));
+app.get('/showcase/:file', async (req, res) => {
+  const m = /^([a-z0-9-]+?)(-before)?\.webp$/.exec(req.params.file);
+  const width = [480, 900].includes(Number(req.query.w)) ? Number(req.query.w) : 900;
+  const img = m && (await showcasePreview(m[1], m[2] || '', width));
+  if (!img) return res.sendStatus(404);
+  res.set('Cache-Control', 'public, max-age=86400').type('webp').send(img);
+});
 app.get('/samples', (req, res) => {
-  const items = listSamples()
-    .map((k) => `<figure style="margin:0"><img src="/samples/${k}.jpg" style="width:100%;border-radius:8px"><figcaption style="text-align:center;padding:6px"><b>${STYLES[k].name}</b> · <a href="/samples/${k}.png">full 300 DPI</a></figcaption></figure>`)
+  const items = listShowcase()
+    .map((s) => `<figure style="margin:0"><img src="/showcase/${s.key}.webp" style="width:100%;border-radius:8px"><figcaption style="text-align:center;padding:6px"><b>${s.styleName}</b> · ${s.name} · <a href="/samples/${s.key}.png">full 300 DPI</a></figcaption></figure>`)
     .join('');
   res.send(`<!doctype html><meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Style samples</title><body style="font-family:sans-serif;margin:16px;background:#fbf7f0">
-<h1>Style samples (${listSamples().length}/${Object.keys(STYLES).length})</h1>
-<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">${items}</div>`);
+<title>Showcase review</title><body style="font-family:sans-serif;margin:16px;background:#fbf7f0">
+<h1>Showcase (${listShowcase().length})</h1><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">${items}</div>`);
 });
-app.get('/samples/:style.jpg', async (req, res) => {
-  if (!listSamples().includes(req.params.style)) return res.sendStatus(404);
-  res.type('jpeg').send(await samplePreview(req.params.style));
-});
-app.get('/samples/:style.png', (req, res) => {
-  if (!listSamples().includes(req.params.style)) return res.sendStatus(404);
-  res.sendFile(path.join(samplesDir(), `${req.params.style}.png`));
+app.get('/samples/:key.png', (req, res) => {
+  const file = masterPath(req.params.key);
+  if (!file || !fs.existsSync(file)) return res.sendStatus(404);
+  res.sendFile(file);
 });
 
 // --- SEO surface ---
