@@ -1,4 +1,5 @@
 // The automation: paid order -> generate portraits -> email customer -> (customer picks) -> print & ship.
+import fs from 'node:fs';
 import path from 'node:path';
 import config, { PRODUCTS } from './config.js';
 import { getOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
@@ -42,13 +43,18 @@ async function processOrder(id) {
   if (!order || !['paid', 'generating'].includes(order.status)) return;
 
   updateOrder(id, { status: 'generating' });
-  const images = await generatePortraits({
-    photoPath: path.join(uploadsDir, order.photo),
-    mimeType: order.photoMime,
-    style: order.style,
-    petName: order.petName,
-    outDir: path.join(outputDir, id),
-  });
+  // Reuse portraits from an earlier attempt instead of paying to paint them again.
+  const outDir = path.join(outputDir, id);
+  const existing = order.images?.length && order.images.every((f) => fs.existsSync(path.join(outDir, f)));
+  const images = existing
+    ? order.images
+    : await generatePortraits({
+        photoPath: path.join(uploadsDir, order.photo),
+        mimeType: order.photoMime,
+        style: order.style,
+        petName: order.petName,
+        outDir,
+      });
 
   const done = updateOrder(id, {
     status: order.physical ? 'awaiting_selection' : 'delivered',
@@ -56,7 +62,13 @@ async function processOrder(id) {
     error: null,
     deliveredAt: new Date().toISOString(),
   });
-  await sendEmail(portraitsReadyEmail(done));
+  // The gallery page already shows the portraits, so a failed email must not fail the order.
+  try {
+    await sendEmail(portraitsReadyEmail(done));
+  } catch (err) {
+    updateOrder(id, { emailError: String(err.message || err) });
+    await alertOwner(`Delivery email failed for ${id}`, `Portraits are ready at ${config.baseUrl}/o/${id}\n\n${err.message || err}`);
+  }
 }
 
 // Called when the customer taps "Print this one" in their gallery.
