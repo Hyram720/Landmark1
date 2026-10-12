@@ -3,6 +3,7 @@
 // that a big generic store doesn't target individually.
 import config, { STYLES, PRODUCTS } from './config.js';
 
+const plural = (name) => (/[^aeiou]y$/i.test(name) ? `${name.slice(0, -1)}ies` : `${name}s`);
 const usd = (cents) => `$${(cents / 100).toFixed(0)}`;
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -162,7 +163,7 @@ export function breedPage(slug) {
   <p class="lead">Nobody captures ${esc(b.hook)} like you see it. Upload your favorite photo and we'll paint your ${esc(b.name)} as a timeless work of art — delivered to your inbox in minutes.</p>
   <a class="btn" href="/?style=${b.style}&breed=${b.slug}#order">Paint my ${esc(b.name)} →</a>
 </section>
-<section><h2>Our pick for ${esc(b.name)}s: ${esc(style.name)}</h2>
+<section><h2>Our pick for ${esc(plural(b.name))}: ${esc(style.name)}</h2>
 <p>${esc(b.name)} owners love the ${esc(style.name.replace(/^The /, ""))} style — it suits ${esc(b.hook)} perfectly. Prefer something else? Choose from:</p><ul>${others}</ul></section>
 <section><h2>Pricing</h2><ul>${priceList()}</ul><p>Every order includes ${config.image.variants} unique versions so you can pick your favorite.</p></section>
 ${faqHtml(items)}
