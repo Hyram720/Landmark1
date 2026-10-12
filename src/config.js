@@ -14,6 +14,13 @@ const config = {
   stripe: {
     secretKey: env.STRIPE_SECRET_KEY || '',
     webhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
+    // Alternative to a secret key: Stripe Payment Links, one per product (buy.stripe.com/...).
+    // The order id travels as client_reference_id; the webhook confirms payment.
+    paymentLinks: {
+      digital: env.STRIPE_LINK_DIGITAL || '',
+      canvas_small: env.STRIPE_LINK_CANVAS_SMALL || '',
+      canvas_large: env.STRIPE_LINK_CANVAS_LARGE || '',
+    },
   },
 
   // IMAGE_PROVIDER=openai (default) or mock (copies the upload; for testing the pipeline).

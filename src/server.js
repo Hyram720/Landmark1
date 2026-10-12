@@ -26,6 +26,20 @@ const upload = multer({
   fileFilter: (req, file, cb) => cb(null, Boolean(ALLOWED_MIME[file.mimetype])),
 });
 
+const findOrder = (id) => {
+  try {
+    return getOrder(id);
+  } catch {
+    return null;
+  }
+};
+
+const linkFor = (productKey) => !config.stripe.secretKey && config.stripe.paymentLinks[productKey];
+const checkoutReady = () =>
+  config.devSkipPayment ||
+  (Boolean(config.stripe.webhookSecret) &&
+    (Boolean(config.stripe.secretKey) || Object.keys(PRODUCTS).every((k) => config.stripe.paymentLinks[k])));
+
 // Stripe needs the raw body for signature verification, so this route comes before json().
 app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, res) => {
   let event;
@@ -36,9 +50,19 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, re
   }
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
-    const id = session.metadata?.order_id;
-    const order = id && getOrder(id);
+    // API checkout puts the id in metadata; Payment Links carry it as client_reference_id.
+    // Other apps on the same Stripe account send events here too, so unknown ids are ignored.
+    const id = session.metadata?.order_id || session.client_reference_id;
+    const order = id && findOrder(id);
     if (order && order.status === 'pending_payment' && session.payment_status === 'paid') {
+      // A Payment Link buyer could pair a cheap link with a pricier order; make sure it matches.
+      const product = PRODUCTS[order.product];
+      const viaLink = !session.metadata?.order_id;
+      if (viaLink && (session.metadata?.product !== order.product || session.amount_subtotal < product.price)) {
+        updateOrder(id, { status: 'payment_mismatch', stripeSessionId: session.id, amountPaid: session.amount_total });
+        alertOwner(`Payment mismatch on order ${id}`, `Paid for ${session.metadata?.product} (${session.amount_subtotal}) but ordered ${order.product}. Refund or fulfil manually.`);
+        return res.json({ received: true });
+      }
       const details = session.collected_information?.shipping_details || session.shipping_details;
       updateOrder(id, {
         status: 'paid',
@@ -69,7 +93,7 @@ app.get('/api/catalog', (req, res) => {
 
 app.post('/api/orders', upload.single('photo'), async (req, res) => {
   // Don't take money until Stripe can also tell us about it (webhook secret in place).
-  if (!config.devSkipPayment && !(config.stripe.secretKey && config.stripe.webhookSecret)) {
+  if (!checkoutReady()) {
     return res.status(503).json({ error: "We're opening very soon — please check back shortly!" });
   }
   try {
@@ -98,6 +122,11 @@ app.post('/api/orders', upload.single('photo'), async (req, res) => {
       enqueue(order.id);
       return res.json({ url: `/o/${order.id}` });
     }
+    const link = linkFor(productKey);
+    if (link) {
+      const url = `${link}?client_reference_id=${order.id}&prefilled_email=${encodeURIComponent(order.email)}`;
+      return res.json({ url });
+    }
     const session = await createCheckoutSession({ order, product });
     updateOrder(order.id, { stripeSessionId: session.id });
     res.json({ url: session.url });
@@ -117,13 +146,6 @@ const publicOrder = (o) => ({
   selectedImage: o.selectedImage || null,
 });
 
-const findOrder = (id) => {
-  try {
-    return getOrder(id);
-  } catch {
-    return null;
-  }
-};
 
 app.get('/api/orders/:id', (req, res) => {
   const order = findOrder(req.params.id);
@@ -147,6 +169,17 @@ app.get('/files/:id/:name', (req, res) => {
   const order = findOrder(req.params.id);
   if (!order || !(order.images || []).includes(req.params.name)) return res.sendStatus(404);
   res.sendFile(path.join(outputDir, order.id, req.params.name));
+});
+
+// Payment Links return here with the Checkout Session id; the webhook links it to the order.
+app.get('/checkout/done', (req, res) => {
+  const sessionId = String(req.query.session_id || '');
+  const order = /^cs_[A-Za-z0-9_]+$/.test(sessionId) && listOrders().find((o) => o.stripeSessionId === sessionId);
+  if (order) return res.redirect(`/o/${order.id}?paid=1`);
+  res.send(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="2"><link rel="stylesheet" href="/styles.css">
+<section class="block center"><div class="spinner"></div><p>Payment received — opening your gallery…</p>
+<p style="color:#7d6b5a;font-size:14px">We've also emailed you a link.</p></section>`);
 });
 
 app.get('/o/:id', (req, res) => res.sendFile(path.join(publicDir, 'order.html')));
