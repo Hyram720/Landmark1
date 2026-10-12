@@ -1,10 +1,10 @@
 // The automation: paid order -> generate portraits -> email customer -> (customer picks) -> print & ship.
 import fs from 'node:fs';
 import path from 'node:path';
-import config, { PRODUCTS } from './config.js';
+import config, { PRODUCTS, STYLES } from './config.js';
 import { getOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { generatePortraits } from './generate.js';
-import { applyNameplate, cleanName } from './nameplate.js';
+import { applyNameplate, cleanName, lookFor } from './nameplate.js';
 import { enhancePortrait, upgradeToMaster, makePrintFile, ENHANCE_ENABLED, MASTER_VERSION } from './enhance.js';
 import { sendEmail, alertOwner, portraitsReadyEmail } from './notify.js';
 import { createPrintOrder } from './printful.js';
@@ -134,7 +134,7 @@ export async function renameOrder(id, rawName) {
   for (const name of order.images) {
     const cleanFile = path.join(outDir, 'clean', name);
     if (!fs.existsSync(cleanFile)) fs.copyFileSync(path.join(outDir, name), cleanFile);
-    fs.writeFileSync(path.join(outDir, name), await applyNameplate(fs.readFileSync(cleanFile), petName));
+    fs.writeFileSync(path.join(outDir, name), await applyNameplate(fs.readFileSync(cleanFile), petName, { look: lookFor(STYLES[order.style]) }));
   }
   return updateOrder(id, { petName, plateRev: (order.plateRev || 0) + 1, nameplate: 'code' });
 }

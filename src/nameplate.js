@@ -11,6 +11,9 @@ const font = opentype.loadSync(require.resolve('@fontsource/cinzel/files/cinzel-
 
 export const NAME_MAX = 24;
 
+// Which nameplate suits a style: light styles get ink lettering instead of a brass plate.
+export const lookFor = (styleDef) => (styleDef?.tone === 'light' ? 'ink' : 'brass');
+
 // Letters (any language), digits, spaces and a little punctuation; collapses whitespace.
 export function cleanName(input) {
   return String(input || '')
@@ -62,13 +65,36 @@ function plateSvg(width, height, name) {
 </svg>`;
 }
 
+// Light, artist-style title for delicate styles (e.g. watercolor): fine charcoal lettering
+// between two hairlines, no metal plate.
+function inkSvg(width, height, name) {
+  const areaW = width * 0.6;
+  let size = height * 0.032;
+  const advance = font.getAdvanceWidth(name, size);
+  if (advance > areaW) size *= areaW / advance;
+  const textW = font.getAdvanceWidth(name, size);
+  const tx = (width - textW) / 2;
+  const ty = height * 0.955;
+  const lineY = ty - size * 0.35;
+  const gap = size * 0.8;
+  const lineLen = Math.min(width * 0.12, (width - textW) / 2 - gap - width * 0.05);
+  const glyphs = font.getPath(name, tx, ty, size).toPathData(2);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+  <line x1="${r(tx - gap - lineLen)}" y1="${r(lineY)}" x2="${r(tx - gap)}" y2="${r(lineY)}" stroke="#5b4a3a" stroke-opacity="0.7" stroke-width="${r(size * 0.05)}"/>
+  <line x1="${r(tx + textW + gap)}" y1="${r(lineY)}" x2="${r(tx + textW + gap + lineLen)}" y2="${r(lineY)}" stroke="#5b4a3a" stroke-opacity="0.7" stroke-width="${r(size * 0.05)}"/>
+  <path d="${glyphs}" fill="#4a3b2e" fill-opacity="0.9"/>
+</svg>`;
+}
+
 // Returns the portrait with the nameplate composited (or unchanged when there's no name).
-export async function applyNameplate(cleanPng, name) {
+// look: 'brass' (engraved plate, default) or 'ink' (light styles).
+export async function applyNameplate(cleanPng, name, { look = 'brass' } = {}) {
   const text = cleanName(name);
   if (!text) return cleanPng;
   const { width, height } = await sharp(cleanPng).metadata();
+  const svg = look === 'ink' ? inkSvg(width, height, text) : plateSvg(width, height, text);
   return sharp(cleanPng)
-    .composite([{ input: Buffer.from(plateSvg(width, height, text)) }])
+    .composite([{ input: Buffer.from(svg) }])
     .withMetadata({ density: DPI })
     .png({ compressionLevel: 8 })
     .toBuffer();
