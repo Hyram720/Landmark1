@@ -13,6 +13,7 @@ import { createPrintOrder } from './printful.js';
 const queue = [];
 const MAX_ATTEMPTS = 8;
 const RETRY_MINUTES = 30;
+
 let running = false;
 
 export function enqueue(orderId) {
@@ -42,6 +43,7 @@ async function drain() {
 
 async function processOrder(id) {
   const order = getOrder(id);
+  if (order?.status === 'repainting') return processRepaint(order);
   if (!order || !['paid', 'generating'].includes(order.status)) return;
 
   updateOrder(id, { status: 'generating' });
@@ -76,11 +78,56 @@ async function processOrder(id) {
   }
 }
 
+// --- One free repaint per order: self-serve from the gallery, no human involved ---
+// Allowed once, within config.repaintDays of delivery, and only before anything is printed.
+export function repaintStatus(order) {
+  if (!order?.images?.length || !['delivered', 'awaiting_selection'].includes(order.status)) return { allowed: false };
+  if (order.repaintedAt || order.repaint) return { allowed: false, used: true };
+  const until = Date.parse(order.deliveredAt || order.updatedAt) + config.repaintDays * 86400_000;
+  if (Date.now() > until) return { allowed: false, expired: true };
+  return { allowed: true, until: new Date(until).toISOString() };
+}
+
+export function requestRepaint(id, styleKey) {
+  const order = getOrder(id);
+  if (!repaintStatus(order).allowed) throw new Error('This order has already used its free repaint, or the repaint window has passed.');
+  const style = styleKey && STYLES[styleKey] ? styleKey : order.style;
+  updateOrder(id, { status: 'repainting', repaint: { style, requestedAt: new Date().toISOString(), returnStatus: order.status } });
+  enqueue(id);
+}
+
+async function processRepaint(order) {
+  const { style, returnStatus } = order.repaint;
+  const outDir = path.join(outputDir, order.id);
+  const images = await generatePortraits({
+    photoPath: path.join(uploadsDir, order.photo),
+    mimeType: order.photoMime,
+    style,
+    petName: order.petName,
+    outDir,
+    prefix: 'repaint',
+  });
+  const done = updateOrder(order.id, {
+    status: returnStatus,
+    style,
+    previousImages: order.images, // the first set stays downloadable
+    images,
+    repaintedAt: new Date().toISOString(),
+    plateRev: (order.plateRev || 0) + 1,
+    error: null,
+  });
+  try {
+    await sendEmail(portraitsReadyEmail(done, { repaint: true }));
+  } catch (err) {
+    updateOrder(order.id, { emailError: String(err.message || err) });
+  }
+}
+
 // Called when the customer taps "Print this one" in their gallery.
 export async function selectForPrint(id, imageName) {
   const order = getOrder(id);
   if (!order || order.status !== 'awaiting_selection') throw new Error('order is not awaiting a print selection');
-  if (!order.images.includes(imageName)) throw new Error('unknown image');
+  if (![...order.images, ...(order.previousImages || [])].includes(imageName)) throw new Error('unknown image');
 
   const product = PRODUCTS[order.product];
   updateOrder(id, { status: 'printing', selectedImage: imageName });
@@ -112,7 +159,7 @@ export function retryFailed(now = Date.now()) {
   for (const o of listOrders()) {
     if (o.status !== 'failed' || (o.attempts || 0) >= MAX_ATTEMPTS) continue;
     if (now - Date.parse(o.failedAt || o.updatedAt) < RETRY_MINUTES * 60_000) continue;
-    updateOrder(o.id, { status: 'paid' });
+    updateOrder(o.id, { status: o.repaint && !o.repaintedAt ? 'repainting' : 'paid' });
     enqueue(o.id);
   }
 }
@@ -128,10 +175,11 @@ export async function renameOrder(id, rawName) {
   const order = getOrder(id);
   if (!order?.images?.length) throw new Error('no portraits yet');
   if (['printing', 'sent_to_print'].includes(order.status)) throw new Error('the canvas is already in production');
+  if (order.status === 'repainting') throw new Error('please wait until your repaint is finished');
   const petName = cleanName(rawName);
   const outDir = path.join(outputDir, id);
   fs.mkdirSync(path.join(outDir, 'clean'), { recursive: true });
-  for (const name of order.images) {
+  for (const name of [...order.images, ...(order.previousImages || [])]) {
     const cleanFile = path.join(outDir, 'clean', name);
     if (!fs.existsSync(cleanFile)) fs.copyFileSync(path.join(outDir, name), cleanFile);
     fs.writeFileSync(path.join(outDir, name), await applyNameplate(fs.readFileSync(cleanFile), petName, { look: lookFor(STYLES[order.style]) }));
@@ -172,5 +220,5 @@ export async function enhanceExistingOrders() {
 
 // After a restart, pick up anything that was mid-flight.
 export function resumePending() {
-  for (const o of listOrders()) if (['paid', 'generating'].includes(o.status)) enqueue(o.id);
+  for (const o of listOrders()) if (['paid', 'generating', 'repainting'].includes(o.status)) enqueue(o.id);
 }

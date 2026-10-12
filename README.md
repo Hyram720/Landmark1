@@ -59,7 +59,7 @@ Customer uploads photo ─► Stripe Checkout ─► webhook ─► AI paints 4 
 |---|---|
 | Checkout, payment, receipts | Glance at `/admin` once a day |
 | Portrait generation (with retries) | Click **retry** on the rare failed order (you get an email) |
-| Delivery email + private gallery | Answer "please repaint" replies |
+| Delivery email + private gallery | Nothing: repaints are self-serve (one per order) |
 | Print, pack, ship (Printful) | Approve Printful drafts if `PRINTFUL_AUTO_CONFIRM=false` |
 | Abandoned checkout recovery | Scale or cut ads every 3 days, using the rules in the playbook |
 | Review + referral asks | |

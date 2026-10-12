@@ -5,7 +5,7 @@ import multer from 'multer';
 import config, { STYLES, PRODUCTS } from './config.js';
 import { newOrderId, getOrder, saveOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { createCheckoutSession, verifyWebhook } from './stripe.js';
-import { enqueue, selectForPrint, resumePending, startRetryScheduler, enhanceExistingOrders, renameOrder } from './pipeline.js';
+import { enqueue, selectForPrint, requestRepaint, repaintStatus, resumePending, startRetryScheduler, enhanceExistingOrders, renameOrder } from './pipeline.js';
 import { cleanName } from './nameplate.js';
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
@@ -174,7 +174,10 @@ const publicOrder = (o) => ({
   images: o.images || [],
   selectedImage: o.selectedImage || null,
   rev: o.plateRev || 0, // cache-buster after a nameplate edit
-  canEditName: Boolean(o.images?.length) && !['printing', 'sent_to_print'].includes(o.status),
+  canEditName: Boolean(o.images?.length) && !['printing', 'sent_to_print', 'repainting'].includes(o.status),
+  previousImages: o.previousImages || [],
+  styleKey: o.style,
+  repaint: repaintStatus(o),
   supportEmail: config.supportEmail,
 });
 
@@ -196,6 +199,18 @@ app.post('/api/orders/:id/select', async (req, res) => {
   }
 });
 
+// One free, self-serve repaint (optionally in a different style).
+app.post('/api/orders/:id/repaint', (req, res) => {
+  const order = findOrder(req.params.id);
+  if (!order) return res.status(404).json({ error: 'not found' });
+  try {
+    requestRepaint(order.id, String(req.body.style || ''));
+    res.json(publicOrder(getOrder(order.id)));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Customer fixes the spelling (or removes) the name on the nameplate. Free and instant.
 app.post('/api/orders/:id/name', async (req, res) => {
   const order = findOrder(req.params.id);
@@ -211,7 +226,7 @@ app.post('/api/orders/:id/name', async (req, res) => {
 // Finished portraits. The order id is the unguessable access token (Printful also fetches from here).
 app.get('/files/:id/:name', (req, res) => {
   const order = findOrder(req.params.id);
-  const allowed = [...(order?.images || []), order?.printFile].filter(Boolean);
+  const allowed = [...(order?.images || []), ...(order?.previousImages || []), order?.printFile].filter(Boolean);
   if (!order || !allowed.includes(req.params.name)) return res.sendStatus(404);
   res.sendFile(path.join(outputDir, order.id, req.params.name));
 });

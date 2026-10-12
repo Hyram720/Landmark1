@@ -16,6 +16,7 @@
     const MESSAGES = {
       pending_payment: ['Waiting for payment confirmation…', true],
       paid: ['Payment received! Our studio is starting on your portrait…', true],
+      repainting: ['Repainting your portraits… this usually takes a few minutes. Your first set stays in your gallery, and we will email you when the new ones are ready.', true],
       generating: ['Painting your portraits… this usually takes a few minutes. You can close this page — we will email you.', true],
       printing: ['Sending your canvas to the print studio…', true],
       failed: ['We hit a snag painting this one. We retry automatically and our team has been notified — check back soon.', false],
@@ -23,11 +24,13 @@
       payment_mismatch: ['There was a problem matching your payment to this order. Our team has been notified and will contact you.', false],
     };
     let tracked = false;
+    let styles = {};
+    const stylesReady = fetch('/api/catalog').then((r) => r.json()).then((c) => { styles = c.styles || {}; }).catch(() => {});
     const supportLine = (email) => email ? `<p class="center support">Need help? Email <a href="mailto:${email}">${email}</a></p>` : '';
     const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
     async function load() {
-      const res = await fetch(`/api/orders/${id}`);
+      const [res] = await Promise.all([fetch(`/api/orders/${id}`), stylesReady]);
       if (!res.ok) { app.innerHTML = '<p class="center">Order not found.</p>'; return; }
       const o = await res.json();
       if (!tracked && new URLSearchParams(location.search).get('paid') && window.fbq) { fbq('track', 'Purchase'); tracked = true; }
@@ -50,14 +53,23 @@
           <form id="nameForm"><input type="text" id="newName" maxlength="24" value="${esc(o.petName || '')}" placeholder="Pet's name (leave blank for none)">
           <button class="btn small" type="submit">Update nameplate</button></form>
           <small>Spelling wrong? Fix it here — all ${o.images.length} portraits update in seconds.</small></div>` : '';
-      app.innerHTML = `<h1 class="center">${o.petName ? esc(o.petName) + "'s" : 'Your'} ${o.style || ''} portraits 👑</h1>${head}${nameEditor}
-        <div class="gallery">${o.images.map((img, i) => `
+      const tiles = (list) => `<div class="gallery">${list.map((img, i) => `
           <figure><img src="/files/${id}/${img}?v=${o.rev}" alt="Portrait version ${i + 1}" loading="lazy">
             <figcaption>
               <a class="btn small" href="/files/${id}/${img}?v=${o.rev}" download>Download</a>
               ${choose ? `<button class="btn small" data-img="${img}">Print this one</button>` : ''}
               ${o.selectedImage === img ? '<span>🖼️ Printing</span>' : ''}
-            </figcaption></figure>`).join('')}</div>
+            </figcaption></figure>`).join('')}</div>`;
+      const until = o.repaint?.until ? new Date(o.repaint.until).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+      const repaintBox = o.repaint?.allowed ? `<div class="name-edit repaint">
+          <div><strong>Not quite right?</strong> You have <strong>one free repaint</strong> (until ${until}, before printing).</div>
+          <form id="repaintForm"><select id="repaintStyle">${Object.entries(styles).map(([k, n]) => `<option value="${k}" ${k === o.styleKey ? 'selected' : ''}>${esc(n)}${k === o.styleKey ? ' (same style)' : ''}</option>`).join('')}</select>
+          <button class="btn small" type="submit">Repaint my portraits</button></form>
+          <small>We paint 4 brand-new versions. Your current set stays here too. This can only be used once.</small></div>` : '';
+      app.innerHTML = `<h1 class="center">${o.petName ? esc(o.petName) + "'s" : 'Your'} ${o.style || ''} portraits 👑</h1>${head}${nameEditor}
+        ${tiles(o.images)}
+        ${o.previousImages.length ? `<h2 class="center" style="margin-top:32px">Your first set</h2>${tiles(o.previousImages)}` : ''}
+        ${repaintBox}
         <p class="center" style="margin-top:24px">Love it? Share with a friend — they get 20% off with code <strong>FRIEND20</strong>.</p>${supportLine(o.supportEmail)}`;
 
       const nameForm = document.getElementById('nameForm');
@@ -67,6 +79,17 @@
         btn.disabled = true; btn.textContent = 'Updating…';
         const res = await fetch(`/api/orders/${id}/name`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ petName: document.getElementById('newName').value }) });
         if (!res.ok) alert((await res.json()).error || 'Could not update the name.');
+        load();
+      });
+
+      const repaintForm = document.getElementById('repaintForm');
+      if (repaintForm) repaintForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!confirm('Use your one free repaint? This can only be done once.')) return;
+        const btn = repaintForm.querySelector('button');
+        btn.disabled = true; btn.textContent = 'Starting…';
+        const res = await fetch(`/api/orders/${id}/repaint`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ style: document.getElementById('repaintStyle').value }) });
+        if (!res.ok) alert((await res.json()).error || 'Could not start the repaint.');
         load();
       });
 

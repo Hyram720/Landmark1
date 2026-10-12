@@ -75,14 +75,14 @@ export async function paintPortrait({ photoPath, mimeType, style, variant = 1 })
 }
 
 // Writes N variants to outDir and returns their filenames.
-export async function generatePortraits({ photoPath, mimeType, style, petName, outDir }) {
+export async function generatePortraits({ photoPath, mimeType, style, petName, outDir, prefix = 'portrait' }) {
   fs.mkdirSync(outDir, { recursive: true });
   // clean/ keeps the unlettered master so the nameplate can be re-rendered if the name changes.
   fs.mkdirSync(path.join(outDir, 'clean'), { recursive: true });
   const files = [];
   for (let i = 1; i <= config.image.variants; i++) {
     const clean = await paintPortrait({ photoPath, mimeType, style, variant: i });
-    const name = `portrait-${i}.png`;
+    const name = `${prefix}-${i}.png`;
     fs.writeFileSync(path.join(outDir, 'clean', name), clean);
     fs.writeFileSync(path.join(outDir, name), await applyNameplate(clean, petName, { look: lookFor(STYLES[style]) }));
     files.push(name);
