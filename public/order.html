@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Your Portrait Gallery | Custom Pet Portrait Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="nav"><a href="/" class="logo">🎨 Custom Pet Portrait Studio</a></header>
+  <section class="block" id="app"><div class="spinner"></div></section>
+  <script>
+    const id = location.pathname.split('/').pop();
+    const app = document.getElementById('app');
+    const MESSAGES = {
+      pending_payment: ['Waiting for payment confirmation…', true],
+      paid: ['Payment received! Our studio is starting on your portrait…', true],
+      generating: ['Painting your portraits… this usually takes a few minutes. You can close this page — we will email you.', true],
+      printing: ['Sending your canvas to the print studio…', true],
+      failed: ['We hit a snag painting this one. Our team has been notified and will email you shortly.', false],
+      print_failed: ['We hit a snag sending your print. Our team has been notified and will email you shortly.', false],
+    };
+    let tracked = false;
+
+    async function load() {
+      const res = await fetch(`/api/orders/${id}`);
+      if (!res.ok) { app.innerHTML = '<p class="center">Order not found.</p>'; return; }
+      const o = await res.json();
+      if (!tracked && new URLSearchParams(location.search).get('paid') && window.fbq) { fbq('track', 'Purchase'); tracked = true; }
+
+      if (MESSAGES[o.status]) {
+        const [msg, spin] = MESSAGES[o.status];
+        app.innerHTML = `<h1 class="center">${o.petName ? o.petName + "'s" : 'Your'} portrait</h1>${spin ? '<div class="spinner"></div>' : ''}<p class="center">${msg}</p>`;
+        if (spin) setTimeout(load, 5000);
+        return;
+      }
+
+      const choose = o.status === 'awaiting_selection';
+      const head = choose
+        ? '<p class="center"><strong>Pick your favorite to print on canvas.</strong> All 4 are yours to download either way.</p>'
+        : o.status === 'sent_to_print'
+          ? '<p class="center">✅ Your canvas is in production and will ship soon. Tracking arrives by email.</p>'
+          : '<p class="center">Right-click or long-press to save — or use the download buttons.</p>';
+      app.innerHTML = `<h1 class="center">${o.petName ? o.petName + "'s" : 'Your'} ${o.style || ''} portraits 👑</h1>${head}
+        <div class="gallery">${o.images.map((img, i) => `
+          <figure><img src="/files/${id}/${img}" alt="Portrait version ${i + 1}" loading="lazy">
+            <figcaption>
+              <a class="btn small" href="/files/${id}/${img}" download>Download</a>
+              ${choose ? `<button class="btn small" data-img="${img}">Print this one</button>` : ''}
+              ${o.selectedImage === img ? '<span>🖼️ Printing</span>' : ''}
+            </figcaption></figure>`).join('')}</div>
+        <p class="center" style="margin-top:24px">Love it? Share with a friend — they get 20% off with code <strong>FRIEND20</strong>.</p>`;
+
+      app.querySelectorAll('[data-img]').forEach((b) => b.addEventListener('click', async () => {
+        if (!confirm('Print this version on canvas?')) return;
+        b.disabled = true;
+        await fetch(`/api/orders/${id}/select`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: b.dataset.img }) });
+        load();
+      }));
+    }
+    load();
+  </script>
+</body>
+</html>
