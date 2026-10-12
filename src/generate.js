@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import config, { STYLES } from './config.js';
 import { enhancePortrait } from './enhance.js';
-import { applyNameplate } from './nameplate.js';
+import { applyNameplate, lookFor } from './nameplate.js';
 
 // Appended to every style: keeps portraits bright and sharp instead of murky old-master darkness.
 const QUALITY = ' Lighting: bright, warm, even light on the face and fur; the pet is clearly lit and the brightest part of the image. Crisp fine detail, sharp focus on the eyes, rich but not dark colors, no murky shadows. Ultra high detail.';
@@ -66,7 +66,7 @@ export async function generatePortraits({ photoPath, mimeType, style, petName, o
     const clean = await paintPortrait({ photoPath, mimeType, style, variant: i });
     const name = `portrait-${i}.png`;
     fs.writeFileSync(path.join(outDir, 'clean', name), clean);
-    fs.writeFileSync(path.join(outDir, name), await applyNameplate(clean, petName));
+    fs.writeFileSync(path.join(outDir, name), await applyNameplate(clean, petName, { look: lookFor(STYLES[style]) }));
     files.push(name);
   }
   return files;
