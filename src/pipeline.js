@@ -70,6 +70,7 @@ async function processOrder(id) {
     deliveredAt: new Date().toISOString(),
   });
   // The gallery page already shows the portraits, so a failed email must not fail the order.
+  if (!done.email) return; // Etsy orders: the gallery link goes to the buyer via Etsy messages
   try {
     await sendEmail(portraitsReadyEmail(done));
   } catch (err) {
@@ -116,6 +117,7 @@ async function processRepaint(order) {
     plateRev: (order.plateRev || 0) + 1,
     error: null,
   });
+  if (!done.email) return;
   try {
     await sendEmail(portraitsReadyEmail(done, { repaint: true }));
   } catch (err) {

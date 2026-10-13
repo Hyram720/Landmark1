@@ -20,7 +20,7 @@ export async function createPrintOrder({ order, variantId, fileUrl }) {
         state_code: s.address.state,
         country_code: s.address.country,
         zip: s.address.postal_code,
-        email: order.email,
+        email: order.email || undefined,
         phone: s.phone || undefined,
       },
       items: [{ variant_id: variantId, quantity: 1, files: [{ url: fileUrl }] }],
