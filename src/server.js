@@ -297,6 +297,34 @@ app.get('/robots.txt', (req, res) => res.type('text/plain').send(robots()));
 const requireAdmin = (req, res, next) =>
   config.adminKey && req.query.key === config.adminKey ? next() : res.sendStatus(401);
 
+// Short links to say out loud in videos / put in a bio; they keep TikTok attribution.
+for (const p of ['/tiktok', '/tt']) app.get(p, (req, res) => res.redirect(302, '/offer?utm_source=tiktok&utm_campaign=bio'));
+
+// Gift portraits (giveaway winners, creators): same pipeline as a paid digital order, $0, no Stripe.
+app.post('/admin/gift', requireAdmin, upload.single('photo'), (req, res) => {
+  const { email, petName = '', style, note = '' } = req.body;
+  if (!req.file || !STYLES[style] || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) {
+    return res.status(400).send('Photo, style and a valid email are required. <a href="javascript:history.back()">Back</a>');
+  }
+  const order = saveOrder({
+    id: newOrderId(),
+    createdAt: new Date().toISOString(),
+    status: 'paid',
+    email: email.trim(),
+    petName: cleanName(petName),
+    style,
+    product: 'digital',
+    physical: false,
+    photo: req.file.filename,
+    photoMime: req.file.mimetype,
+    source: `gift${note ? `|${String(note).slice(0, 80)}` : ''}`,
+    gift: true,
+    amountPaid: 0,
+  });
+  enqueue(order.id);
+  res.redirect(`/admin?key=${encodeURIComponent(req.query.key)}&gifted=${order.id}`);
+});
+
 app.get('/admin', requireAdmin, (req, res) => {
   const orders = listOrders();
   const paid = orders.filter((o) => o.paidAt);
@@ -311,6 +339,16 @@ app.get('/admin', requireAdmin, (req, res) => {
     .join('');
   res.send(`<!doctype html><title>Admin</title><style>body{font-family:sans-serif;padding:16px}td,th{padding:4px 8px;border-bottom:1px solid #ddd;font-size:13px;text-align:left}</style>
   <h1>${config.brandName}</h1><p><strong>${paid.length}</strong> paid orders · <strong>$${(revenue / 100).toFixed(2)}</strong> revenue · ${orders.length - paid.length} unpaid</p>
+  ${req.query.gifted ? `<p style="background:#e8f5e9;padding:8px">🎁 Gift started — portraits will be emailed in a few minutes. <a href="/o/${encodeURIComponent(req.query.gifted)}" target="_blank">Gallery link</a></p>` : ''}
+  <details style="margin:12px 0"><summary><strong>🎁 Gift a free portrait</strong> (giveaway winners, creators)</summary>
+  <form method="post" enctype="multipart/form-data" action="/admin/gift?key=${encodeURIComponent(req.query.key)}" style="display:grid;gap:8px;max-width:420px;margin-top:8px">
+    <label>Pet photo <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required></label>
+    <label>Style <select name="style">${Object.entries(STYLES).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('')}</select></label>
+    <label>Pet name <input name="petName" maxlength="24"></label>
+    <label>Their email <input type="email" name="email" required></label>
+    <label>Note (e.g. "TikTok giveaway @username") <input name="note" maxlength="80"></label>
+    <button>Paint &amp; email it (costs ~$1 in AI)</button>
+  </form></details>
   <table><tr><th>Created</th><th>Status</th><th>Email</th><th>Style</th><th>Product</th><th>Source</th><th>Error</th><th></th></tr>${rows}</table>`);
 });
 

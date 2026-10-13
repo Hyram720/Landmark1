@@ -25,7 +25,7 @@ Every link carries `utm_source=tiktok`, so TikTok orders show up as TikTok in th
    > 1 photo → 4 portraits in minutes
    > Canvas shipped 🇺🇸🇨🇦 · 20% off launch ⬇️
 6. **Switch to a Business account:** Settings → Account → *Switch to Business Account* → category *Art & Crafts*. It's free, and it unlocks analytics.
-7. **Website link:** `custompetportraitstudio.com/offer?utm_source=tiktok`. If TikTok doesn't offer the website field yet (new accounts sometimes have to wait until 1,000 followers), do two things meanwhile:
+7. **Website link:** `custompetportraitstudio.com/tiktok`. If TikTok doesn't offer the website field yet (new accounts sometimes have to wait until 1,000 followers), do two things meanwhile:
    - put `custompetportraitstudio.com` in the bio text
    - pin a comment with the link on every video
 8. **Warm up the account before your first post:** spend 10–15 minutes scrolling and liking pet videos (#dogsoftiktok, #petportrait). This teaches TikTok who the account is for.
