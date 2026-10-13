@@ -14,6 +14,7 @@ import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
 import { generateMissingSamples, listShowcase, showcasePreview, masterPath } from './samples.js';
 import { alertOwner } from './notify.js';
 import { startHealthcheck } from './healthcheck.js';
+import { INDEXNOW_KEY, submitIndexNow } from './indexnow.js';
 import { runPrintfulSelftest } from './printful-selftest.js';
 import { PROMO_VIDEO_SOURCE, promoVideoPath, promoVideoCached, cachePromoVideo } from './promo-video.js';
 
@@ -292,6 +293,7 @@ app.get('/gifts/:slug', (req, res) => {
   html ? res.send(html) : res.sendStatus(404);
 });
 app.get('/sitemap.xml', (req, res) => res.type('application/xml').send(sitemap()));
+app.get(`/${INDEXNOW_KEY}.txt`, (req, res) => res.type('text/plain').send(INDEXNOW_KEY));
 app.get('/robots.txt', (req, res) => res.type('text/plain').send(robots()));
 
 // --- Owner dashboard: the ~5% that needs a human ---
@@ -428,6 +430,7 @@ app.listen(config.port, () => {
   startFollowupScheduler();
   startEmailDomainSetup();
   startHealthcheck();
+  setTimeout(() => submitIndexNow().catch((e) => console.error('IndexNow', e.message)), 30_000);
   if (process.env.PRINTFUL_SELFTEST === 'true') setTimeout(() => runPrintfulSelftest(), 20_000);
   cachePromoVideo().catch((err) => console.error('promo video', err.message));
   setupStripe()

@@ -186,8 +186,10 @@ ${faqHtml(items)}
   return layout({ title: o.title, description, path: `/gifts/${o.slug}`, body, jsonLd: [productLd(o.title, description), faqLd(items)] });
 }
 
+export const sitePaths = () => ['/', '/offer', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
+
 export function sitemap() {
-  const urls = ['/', '/offer', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
+  const urls = sitePaths();
   const today = new Date().toISOString().slice(0, 10);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
