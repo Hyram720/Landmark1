@@ -178,6 +178,7 @@ const publicOrder = (o) => ({
   canEditName: Boolean(o.images?.length) && !['printing', 'sent_to_print', 'repainting'].includes(o.status),
   previousImages: o.previousImages || [],
   styleKey: o.style,
+  channel: o.channel || 'web',
   repaint: repaintStatus(o),
   supportEmail: config.supportEmail,
 });
@@ -300,29 +301,51 @@ const requireAdmin = (req, res, next) =>
 // Short links to say out loud in videos / put in a bio; they keep TikTok attribution.
 for (const p of ['/tiktok', '/tt']) app.get(p, (req, res) => res.redirect(302, '/offer?utm_source=tiktok&utm_campaign=bio'));
 
-// Gift portraits (giveaway winners, creators): same pipeline as a paid digital order, $0, no Stripe.
-app.post('/admin/gift', requireAdmin, upload.single('photo'), (req, res) => {
-  const { email, petName = '', style, note = '' } = req.body;
-  if (!req.file || !STYLES[style] || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) {
-    return res.status(400).send('Photo, style and a valid email are required. <a href="javascript:history.back()">Back</a>');
+// Manual orders: Etsy sales (paid on Etsy) and gifts (giveaway winners, creators). Same paint →
+// gallery → print pipeline as a website order, without Stripe. Email is optional: for Etsy the
+// gallery link is sent to the buyer through Etsy messages instead.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+app.post(['/admin/gift', '/admin/manual-order'], requireAdmin, upload.single('photo'), (req, res) => {
+  const b = req.body;
+  const channel = b.channel === 'etsy' ? 'etsy' : 'gift';
+  const productKey = PRODUCTS[b.product] ? b.product : 'digital';
+  const product = PRODUCTS[productKey];
+  const email = String(b.email || '').trim();
+  const back = ' <a href="javascript:history.back()">Back</a>';
+  if (!req.file || !STYLES[b.style]) return res.status(400).send(`A photo and a style are required.${back}`);
+  if (email && !EMAIL_RE.test(email)) return res.status(400).send(`That email doesn't look right.${back}`);
+  if (channel === 'gift' && !email) return res.status(400).send(`Gifts need the recipient's email.${back}`);
+  let shipping = null;
+  if (product.physical) {
+    const need = ['shipName', 'line1', 'city', 'state', 'zip'];
+    if (need.some((k) => !String(b[k] || '').trim())) return res.status(400).send(`Canvas orders need the full shipping address.${back}`);
+    shipping = {
+      name: b.shipName.trim(),
+      phone: String(b.phone || '').trim() || undefined,
+      address: { line1: b.line1.trim(), line2: String(b.line2 || '').trim() || undefined, city: b.city.trim(), state: b.state.trim().toUpperCase(), postal_code: b.zip.trim(), country: (b.country || 'US').trim().toUpperCase() },
+    };
   }
+  const note = String(b.note || '').slice(0, 80);
   const order = saveOrder({
     id: newOrderId(),
     createdAt: new Date().toISOString(),
     status: 'paid',
-    email: email.trim(),
-    petName: cleanName(petName),
-    style,
-    product: 'digital',
-    physical: false,
+    email,
+    petName: cleanName(b.petName),
+    style: b.style,
+    product: productKey,
+    physical: product.physical,
+    shipping,
     photo: req.file.filename,
     photoMime: req.file.mimetype,
-    source: `gift${note ? `|${String(note).slice(0, 80)}` : ''}`,
-    gift: true,
+    source: `${channel}${note ? `|${note}` : ''}`,
+    channel,
+    gift: channel === 'gift',
+    noMarketing: channel === 'etsy', // Etsy buyers may only be contacted about their order
     amountPaid: 0,
   });
   enqueue(order.id);
-  res.redirect(`/admin?key=${encodeURIComponent(req.query.key)}&gifted=${order.id}`);
+  res.redirect(`/admin?key=${encodeURIComponent(req.query.key)}&created=${order.id}`);
 });
 
 app.get('/admin', requireAdmin, (req, res) => {
@@ -339,16 +362,23 @@ app.get('/admin', requireAdmin, (req, res) => {
     .join('');
   res.send(`<!doctype html><title>Admin</title><style>body{font-family:sans-serif;padding:16px}td,th{padding:4px 8px;border-bottom:1px solid #ddd;font-size:13px;text-align:left}</style>
   <h1>${config.brandName}</h1><p><strong>${paid.length}</strong> paid orders · <strong>$${(revenue / 100).toFixed(2)}</strong> revenue · ${orders.length - paid.length} unpaid</p>
-  ${req.query.gifted ? `<p style="background:#e8f5e9;padding:8px">🎁 Gift started — portraits will be emailed in a few minutes. <a href="/o/${encodeURIComponent(req.query.gifted)}" target="_blank">Gallery link</a></p>` : ''}
-  <details style="margin:12px 0"><summary><strong>🎁 Gift a free portrait</strong> (giveaway winners, creators)</summary>
-  <form method="post" enctype="multipart/form-data" action="/admin/gift?key=${encodeURIComponent(req.query.key)}" style="display:grid;gap:8px;max-width:420px;margin-top:8px">
+  ${req.query.created ? (() => { const link = `${config.baseUrl}/o/${encodeURIComponent(req.query.created)}`; return `<p style="background:#e8f5e9;padding:10px">✅ Order started. Portraits will be ready in a few minutes.<br>Gallery link to send the customer: <input value="${link}" readonly style="width:100%;max-width:520px" onclick="this.select()"> <a href="${link}" target="_blank">open</a></p>`; })() : ''}
+  <details style="margin:12px 0" ${req.query.created ? '' : 'open'}><summary><strong>➕ Etsy order / 🎁 gift portrait</strong></summary>
+  <form method="post" enctype="multipart/form-data" action="/admin/manual-order?key=${encodeURIComponent(req.query.key)}" style="display:grid;gap:8px;max-width:460px;margin-top:8px">
+    <label>Type <select name="channel" id="mo-channel"><option value="etsy">Etsy order (paid on Etsy)</option><option value="gift">Gift (giveaway winner / creator)</option></select></label>
     <label>Pet photo <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required></label>
     <label>Style <select name="style">${Object.entries(STYLES).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('')}</select></label>
-    <label>Pet name <input name="petName" maxlength="24"></label>
-    <label>Their email <input type="email" name="email" required></label>
-    <label>Note (e.g. "TikTok giveaway @username") <input name="note" maxlength="80"></label>
-    <button>Paint &amp; email it (costs ~$1 in AI)</button>
+    <label>Pet name for the nameplate (blank = none) <input name="petName" maxlength="24"></label>
+    <label>Product <select name="product" id="mo-product">${Object.entries(PRODUCTS).map(([k, p]) => `<option value="${k}">${p.name}</option>`).join('')}</select></label>
+    <label>Customer email (optional for Etsy) <input type="email" name="email"></label>
+    <fieldset id="mo-ship" style="display:none;gap:6px"><legend>Shipping address (canvas)</legend>
+      <input name="shipName" placeholder="Full name"> <input name="line1" placeholder="Street address"> <input name="line2" placeholder="Apt / suite (optional)">
+      <input name="city" placeholder="City"> <input name="state" placeholder="State (e.g. NJ)" maxlength="3"> <input name="zip" placeholder="ZIP">
+      <select name="country"><option value="US">United States</option><option value="CA">Canada</option></select> <input name="phone" placeholder="Phone (optional)"></fieldset>
+    <label>Note (e.g. "Etsy #3456789" or "TikTok winner @user") <input name="note" maxlength="80"></label>
+    <button>Paint it (~$1 in AI)</button>
   </form></details>
+  <script>(function(){const p=document.getElementById('mo-product'),f=document.getElementById('mo-ship');const t=()=>{f.style.display=p.value==='digital'?'none':'grid'};p.addEventListener('change',t);t();})();</script>
   <table><tr><th>Created</th><th>Status</th><th>Email</th><th>Style</th><th>Product</th><th>Source</th><th>Error</th><th></th></tr>${rows}</table>`);
 });
 

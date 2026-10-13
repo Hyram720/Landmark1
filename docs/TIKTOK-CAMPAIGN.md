@@ -4,6 +4,22 @@
 **Budget:** about $40 in AI costs, about $1 per gifted portrait. No ad spend.
 **Bio link:** `custompetportraitstudio.com/tiktok`. It's short enough to say out loud, and every order through it is tagged as TikTok in the admin page.
 
+## What's already working for similar products (research), and how we copy it
+
+| Proven play | Who | Proof | Our version |
+|---|---|---|---|
+| **The pet reacting to its own portrait** | Crown & Paw (largest pet-portrait brand): *"My dog is taking his portrait way too seriously"* | Pet-reaction clips regularly go viral; TIME covered a dog suspicious of its own portrait | **Khabba meets Khabba.** Film him seeing his canvas for the first time, then make a reaction video for each new style. |
+| **Emotional memorial content plus a sale** | Crown & Paw: *"Keep your pet's memory alive…"* sale video | **1.7M likes, 2,265 comments** | One gentle memorial video a week (watercolor style). Pair it with the launch offer in November. |
+| **Sale / urgency framing** | Crown & Paw "up to 30% off" | Same 1.7M-like video | "20% off until Nov 30" and "Order canvas by Dec 10 for Christmas" countdowns |
+| **Giving portraits to real people's pets** | Most fast-growing pet-art accounts | Comment volume drives TikTok reach | The daily **#PaintMyPet** giveaway below |
+
+**The single best $37 you can spend:** order **one real 12×18 canvas of Khabba** (Royal style). Use the admin page's **➕ Etsy order / 🎁 gift portrait** form: choose Gift, 12x18 Canvas, and your own address. You only pay Printful's cost (about $37 shipped). It gives you:
+- real **reaction videos** (the #1 format in this niche)
+- a real **unboxing**
+- real **product photos** for Etsy and TikTok
+
+AI mockups can't match a real dog with a real canvas. It also checks the full customer experience from start to finish.
+
 ## The big idea: "We paint one pet a day, free"
 
 Every post invites people to **comment their pet's name and breed**. Each day the team picks one commenter and paints their pet for free. The winner's reveal becomes the next day's video.
