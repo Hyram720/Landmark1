@@ -4967,7 +4967,7 @@ Thank you for considering this request.`
       const name = (c.business || {}).legalName || c.name;
       UI.printDoc('90-day business credit plan — ' + name, [`90-DAY BUSINESS CREDIT PLAN — ${name}`, `Prepared ${UI.date(T())} by ${S().settings.company.name || ''} · started ${UI.date(ps.startedAt)}`, '', ...ps.steps.map(st => `[${st.complete ? 'x' : ' '}] Day ${st.day} (${UI.date(st.due)}): ${st.title}\n    ${st.how}${st.url ? '\n    ' + st.url : ''}`), '', 'STARTER VENDORS (confirm reporting with each vendor before relying on it)', ...root.Business.STARTER_VENDORS.map(v => `• ${v.vendor} — ${v.category}, ${v.terms}. ${v.reportsTo}`), '', 'Business credit builds from real accounts paid on time. Results depend on lenders and bureaus; no score or approval is guaranteed.'].join('\n'));
     },
-    'aq-listings': () => { const st = (document.getElementById('aq-state') || {}).value; window.open(root.Acquisition.LINKS.listings(st), '_blank', 'noopener'); },
+    'aq-listings': () => { const st = (document.getElementById('aq-state') || {}).value; const a = document.createElement('a'); a.href = root.Acquisition.LINKS.listings(st); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); },
     'aq-add': el => aqModal(Store.get.client(el.dataset.id)),
     'aq-edit': el => { const c = Store.get.client(el.dataset.id); aqModal(c, (c.deals || []).find(d => d.id === el.dataset.deal)); },
     'aq-note': el => {
