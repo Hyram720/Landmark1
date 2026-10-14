@@ -804,6 +804,100 @@ Signed: ______________________   Date: __________`;
       ['FTC Endorsement Guides', 'Disclose referral fees and affiliate relationships clearly when recommending products.']
     ] },
 
+    // ---------- Collections ----------
+    { tab: 'collections', title: 'Collections — how they report', intro: 'A collection can come from the original creditor’s own collection department, a third-party agency, or a debt buyer that purchased the account. Each one reports differently.', items: [
+      ['Who reports what', 'The collector or debt buyer reports its own tradeline (account type collection or debt buyer, status 93) and names the original creditor in the K1 segment. Once the original creditor sells or transfers the debt, its tradeline should show 0 balance and transferred/sold (status 05 or the K2 segment). Only the current owner may report a balance.'],
+      ['Date of First Delinquency (DOFD)', 'A collector must report the original DOFD (FCRA § 623(a)(5)). The 7-year clock runs from 180 days after that delinquency (§ 605(c)) and does not restart when the debt is sold. A later DOFD on the collection than on the original account is re-aging.'],
+      ['Date Opened on a collection', 'The date the collector opened its file, not when the debt began. It does not control the reporting period — the DOFD does.'],
+      ['Paid collections and scores', 'FICO 9, FICO 10 and VantageScore 3.0/4.0 ignore paid collections. FICO 8 and the older FICO versions most mortgage lenders use still count them. Paying can help with newer models and with lenders who review the report manually.'],
+      ['Medical collections', 'Equifax, Experian and TransUnion do not report paid medical collections, medical collections under $500, or medical debt less than one year past due (voluntary bureau policy since 2022–2023). The CFPB rule that would have removed all medical debt from reports was vacated by a federal court in Texas on July 11, 2025, so it is not in effect. Several states have their own medical-debt reporting limits — check the client’s state.'],
+      ['Statute of limitations vs. reporting period', 'The statute of limitations (set by state law, often 3–6 years) controls whether the collector can sue. The 7-year FCRA period controls reporting. They are separate: a debt can be too old to sue on and still report, or vice versa. In some states a payment or written promise restarts the lawsuit clock — never tell a client to pay an old debt without checking.'],
+      ['Settling or paying', 'Get any settlement or pay-for-delete agreement in writing before the client pays. Pay-for-delete is a request, not a right — collectors may refuse. A paid settlement should report a 0 balance, paid status, and usually special comment AU (paid for less than full balance).']
+    ] },
+    { tab: 'collections', title: 'Collections — laws that support the letters', items: [
+      ['FDCPA § 809(a) / Reg F § 1006.34 — validation notice', 'Within 5 days of first contact, a debt collector must send validation information: the amount, an itemization since a set date, the creditor’s name, and the consumer’s rights. The validation period ends 30 days after the consumer receives it (Reg F assumes receipt 5 business days after mailing).'],
+      ['FDCPA § 809(b) — collection must stop', 'If the consumer disputes in writing or asks for the original creditor’s name within the validation period, the collector must stop collecting until it mails verification or the original creditor’s name. Supports the debt validation letter.'],
+      ['FDCPA § 807(8) — report the dispute', 'A collector may not communicate credit information it knows or should know is false, including failing to report that a disputed debt is disputed. If a collector keeps reporting without the XB dispute code after a dispute, cite this.'],
+      ['FDCPA § 807(2) — false amount', 'A collector may not misrepresent the amount or legal status of a debt. Supports disputes over added interest, fees, or inflated balances.'],
+      ['FDCPA § 808(1) — unauthorized amounts', 'Collecting any amount (interest, fees, charges) not authorized by the agreement or by law is unfair.'],
+      ['FDCPA § 805(c) — stop contacting', 'If the consumer writes that they refuse to pay or want contact to stop, the collector must stop, except to confirm it is ending collection or to give notice of a specific action.'],
+      ['Reg F § 1006.30(a) — no “parking” debts', 'A collector may not report a debt to a bureau before communicating with the consumer about it (a call or a letter, then waiting a reasonable time — 14 days — for a notice of undeliverability).'],
+      ['Reg F § 1006.26(b) — time-barred debts', 'A collector may not sue or threaten to sue on a debt past the statute of limitations.'],
+      ['FCRA § 623(a)(3) — disputed accounts', 'A furnisher that is told a consumer disputes an account must report it as disputed (compliance code XB).'],
+      ['FCRA § 623(a)(5) — correct DOFD', 'Furnishers must report the month and year of the original delinquency within 90 days of reporting the account as placed for collection or charged off. Supports re-aging disputes.'],
+      ['FCRA § 623(a)(8) / Reg V § 1022.43 — direct dispute', 'The consumer can dispute directly with the collector. The collector must investigate within 30 days and report the result.'],
+      ['FCRA § 623(b) — after a bureau dispute', 'When the bureau forwards a dispute, the collector must review all relevant information provided and correct or delete inaccurate, incomplete or unverifiable information with every bureau it reports to.'],
+      ['FCRA § 611(a)(5)(A) — unverifiable', 'If the information cannot be verified, the bureau must delete or modify it.'],
+      ['FCRA § 615(f) and § 605B — identity theft', 'A collector told that a debt resulted from identity theft must notify the creditor and, on request, provide the consumer with the account documents. The bureau must block identity-theft debts within 4 business days of receiving the required documents.'],
+      ['FDCPA § 813 — the consumer’s right to sue', 'A consumer can recover actual damages, up to $1,000 in statutory damages, and attorney’s fees. The deadline is 1 year from the violation. Refer clients with possible claims to a consumer attorney.']
+    ] },
+    { tab: 'collections', title: 'Collections — evidence, letter order and sample wording', intro: 'Use the sample wording only when it is true for this client. Paste it into the dispute’s discrepancy field and adapt it.', items: [
+      ['Evidence checklist', 'Collector’s validation notice (and the envelope or date received), the client’s account statements, proof of payment or settlement letter, original creditor tradeline showing the DOFD, any sale/assignment notice, FTC identity-theft report if fraud, and the report pages showing every place the debt appears.'],
+      ['Letter order', '1. Debt validation request (FDCPA § 809(b)) — within the validation period when possible; it can still be sent later. 2. Bureau dispute (§ 611) naming the specific error. 3. Direct dispute to the collector (§ 623). 4. Method of verification, then final notice to the furnisher and a CFPB complaint. 5. Consumer attorney review.'],
+      ['Validation vs. verification', 'Validation is between the consumer and the collector (FDCPA). Verification is the bureau confirming data with the furnisher (FCRA). A bureau saying “verified” does not mean the collector has documents — ask with a method-of-verification letter.'],
+      ['Sample: validation request', 'I am disputing this debt and requesting validation under 15 U.S.C. § 1692g(b). Please provide the name and address of the original creditor, an itemization of the amount you claim, and documents showing you own or are authorized to collect this debt. Please stop collection until you have provided this, and report the account as disputed.'],
+      ['Sample: re-aged collection', 'Your account reports a date of first delinquency of [month/year]. The original account with [original creditor] first became delinquent in [month/year] and never became current again (see attached). Under 15 U.S.C. § 1681s-2(a)(5), the date of first delinquency must match the original delinquency. Please correct it.'],
+      ['Sample: duplicate reporting', '[Original creditor] and [collector] both report a balance of $[amount] for the same debt. Only one entity can own this debt. Please correct the reporting so that only the current owner reports a balance, and the other account reports $0.'],
+      ['Sample: paid collection still shows a balance', 'I paid this account in full [or settled it] on [date] (proof attached). It still reports a balance of $[amount]. Please update it to a $0 balance and a paid status.'],
+      ['Sample: disputed but not marked disputed', 'I disputed this debt with you in writing on [date]. Your reporting does not show that it is disputed, as required by 15 U.S.C. § 1681s-2(a)(3) and § 1692e(8). Please report it as disputed.']
+    ] },
+
+    // ---------- Judgments ----------
+    { tab: 'judgments', title: 'Judgments — how they report', intro: 'A judgment is a court decision that a person owes money. It is a public court record, not a credit account.', items: [
+      ['Big-three credit reports', 'Since July 2017, under the National Consumer Assistance Plan, Equifax, Experian and TransUnion stopped including civil judgments that lacked full identifiers (name, address, and SSN or date of birth). In practice they no longer show civil judgments, and since April 2018 they no longer show tax liens. A judgment showing on a current big-three report is worth questioning.'],
+      ['Where judgments still appear', 'Court records, LexisNexis Risk Solutions and other specialty reports, background checks and tenant screening reports. These companies are consumer reporting agencies, so the FCRA applies to them.'],
+      ['The underlying debt', 'The collection or charge-off that led to the lawsuit can still report as its own tradeline. After a judgment is paid or settled, that tradeline should show a 0 balance.'],
+      ['How long they can be reported', 'FCRA § 605(a)(2): civil judgments may be reported for 7 years from the date of entry, or until the statute of limitations has expired, whichever is longer. Exceptions in § 605(b): credit or insurance of $150,000 or more and jobs paying $75,000 or more.'],
+      ['Common errors', 'Judgment belongs to someone else (matched by name only), satisfied judgment shown as unpaid, vacated or dismissed case shown as a judgment, wrong amount, the same case listed twice, or a judgment past its reporting period.'],
+      ['Satisfaction of judgment', 'When a judgment is paid, the creditor should file a satisfaction (release) with the court. If it hasn’t, the client can ask the creditor or the court. Get a certified copy — it is the best evidence for disputes.'],
+      ['Vacating a judgment', 'A court can set aside a judgment, for example a default judgment where the client was never properly served. Deadlines and rules vary by state and the outcome needs a court order. This is legal work: refer the client to a consumer attorney or legal aid. A credit repair company cannot give legal advice or represent the client in court.']
+    ] },
+    { tab: 'judgments', title: 'Judgments — laws that support the letters', items: [
+      ['FCRA § 607(b) — maximum possible accuracy', 'Every consumer reporting agency must follow reasonable procedures to assure maximum possible accuracy. Matching public records by name only, or ignoring a satisfaction or vacatur, fails that standard.'],
+      ['FCRA § 609 — file disclosure and sources', 'The client can request everything in their file, including the sources of the information. Use it first with LexisNexis or a background company to see exactly what is reported and where it came from.'],
+      ['FCRA § 611 — reinvestigation', 'The agency must reinvestigate within 30 days and delete or correct information that is inaccurate, incomplete or cannot be verified.'],
+      ['FCRA § 611(a)(7) — method of verification', 'After a “verified” result, the client can ask how it was verified. A public record verified only through a data vendor, without checking the court file, is weak.'],
+      ['FCRA § 605(a)(2) — obsolete judgments', 'Judgments older than 7 years from entry (or the statute of limitations, if longer) cannot be reported, with the § 605(b) exceptions.'],
+      ['FCRA § 613 — public records for employment', 'An agency reporting public records for employment must either notify the consumer when it reports them or use strict procedures to keep them complete and up to date.'],
+      ['CROA § 1679b(a)(1) — no false statements', 'Never state that a judgment was paid, vacated or not the client’s if that is not true. Dispute only real errors, backed by court documents.']
+    ] },
+    { tab: 'judgments', title: 'Judgments — evidence, letter order and sample wording', intro: 'Use the sample wording only when it is true for this client.', items: [
+      ['Evidence checklist', 'Court docket printout and case number, certified satisfaction of judgment, order vacating or dismissing, payment receipts or settlement agreement, and the client’s ID (to show different identifiers when it is someone else’s judgment).'],
+      ['Letter order', '1. File disclosure request (§ 609) to the specialty agency. 2. Dispute (§ 611) with the agency, attaching court documents. 3. Method of verification. 4. CFPB complaint. 5. Consumer attorney review. If the underlying debt still reports a balance after payment, dispute that tradeline with the bureau and the collector too.'],
+      ['Sample: judgment on a big-three report', 'Your report lists a civil judgment, [case number], from [court]. Please provide the source of this information and how you verified it. I dispute it as [not mine / satisfied / vacated — choose what is true]. Please delete or correct it.'],
+      ['Sample: satisfied judgment', 'The judgment in [case number], [court], was satisfied on [date] (certified satisfaction attached). Your report shows it as unpaid. Please update it to show it was satisfied.'],
+      ['Sample: vacated or dismissed', 'The judgment in [case number] was vacated [or the case was dismissed] by order of [court] on [date] (copy attached). Reporting it as an active judgment is inaccurate. Please delete it.'],
+      ['Sample: not the client’s', 'The judgment in [case number] is not mine. The defendant’s identifiers do not match mine (my ID and proof of address are attached). Please delete it and tell me what identifiers you used to connect it to me.']
+    ] },
+
+    // ---------- Evictions ----------
+    { tab: 'evictions', title: 'Evictions — how they report', intro: 'An eviction case is a court record. It hurts rental applications far more than credit scores.', items: [
+      ['Big-three credit reports', 'Eviction filings and judgments do not appear on Equifax, Experian or TransUnion credit reports. What can appear is unpaid rent or damages sent to a collection agency, which reports as a collection.'],
+      ['Tenant screening reports', 'Eviction records show up on tenant screening reports. Tenant screening companies are consumer reporting agencies, so the FCRA applies to them: they must be accurate, give a free file disclosure, and investigate disputes.'],
+      ['Common errors', 'A case matched to the client by name only, a filing listed without its outcome (dismissed, tenant won, settled), a sealed or masked case still reported, one case listed several times, the amount the landlord asked for shown instead of the final judgment, and records older than 7 years.'],
+      ['Sealed and masked records', 'Many states and cities seal eviction cases (some automatically when the tenant wins or the case is dismissed) or limit how long they can be reported. A sealed record should not be on a screening report. Check the client’s state and local rules.'],
+      ['Enforcement example', 'In October 2023 the FTC and CFPB required TransUnion Rental Screening Solutions to pay $15 million over tenant screening reports that included sealed eviction records, duplicate entries for one case, wrong case outcomes and mislabeled amounts, and for not disclosing its data sources.'],
+      ['Unpaid rent in collections', 'If the landlord sent a balance to a collector, the collection rules apply: validation, accurate DOFD and amount, and dispute rights. Damages are often disputed — compare the charges with the lease, move-out photos and the security deposit accounting.'],
+      ['Facing an eviction now', 'Refer the client to legal aid or a tenant attorney right away. Many areas have right-to-counsel programs and rental assistance. Credit repair cannot stop an eviction case.']
+    ] },
+    { tab: 'evictions', title: 'Evictions — laws that support the letters', items: [
+      ['FCRA § 607(b) — maximum possible accuracy', 'Screening companies must use reasonable procedures for accuracy. In a 2021 advisory opinion the CFPB said matching records by name only is not a reasonable procedure.'],
+      ['FCRA § 609 — file disclosure and sources', 'The client can get a free copy of their tenant screening file, including where each record came from. Ask for it first.'],
+      ['FCRA § 611 — reinvestigation', 'The screening company must reinvestigate within 30 days and delete or correct inaccurate, incomplete or unverifiable records, and tell the client the result.'],
+      ['FCRA § 615(a) — adverse action notice', 'A landlord who denies an application, asks for a higher deposit, or requires a co-signer because of a screening report must tell the applicant, name the screening company, and explain the right to a free copy within 60 days and to dispute.'],
+      ['FCRA § 605(a)(2) and (a)(5) — reporting period', 'Civil suits and judgments: 7 years from entry, or the statute of limitations if longer. Other adverse items: 7 years.'],
+      ['State sealing and screening laws', 'Some states seal eviction cases or limit what screening companies can report. Reporting a sealed case is also inaccurate under the FCRA.'],
+      ['FDCPA — rent collections', 'Third-party collectors of unpaid rent must follow § 809 validation and § 807 accuracy rules, the same as any collection.']
+    ] },
+    { tab: 'evictions', title: 'Evictions — evidence, letter order and sample wording', intro: 'Use the sample wording only when it is true for this client.', items: [
+      ['Evidence checklist', 'Court docket with the outcome, dismissal or judgment for the tenant, sealing order, settlement agreement, lease, rent ledger and payment receipts, move-out inspection and photos, security deposit itemization, the landlord’s adverse action notice, and the client’s ID.'],
+      ['Letter order', '1. File disclosure request (§ 609) to the screening company named in the adverse action notice. 2. Dispute (§ 611) with court documents. 3. If a collection is reporting: validation (§ 809) to the collector and a bureau dispute (§ 611). 4. Method of verification and a CFPB complaint. 5. Tenant or consumer attorney review.'],
+      ['Sample: dismissed or tenant won', 'Your report lists eviction case [case number], [court]. That case was dismissed [or decided in my favor] on [date] (court record attached). Reporting it without that outcome is incomplete and misleading. Please delete it or report the correct outcome.'],
+      ['Sample: sealed record', 'Eviction case [case number] was sealed by [court / state law] on [date] (attached). Sealed records should not appear on consumer reports. Please delete it.'],
+      ['Sample: not the client’s', 'Eviction case [case number] is not mine. I never lived at [address] (proof of my addresses attached). Please delete it and tell me what identifiers you used to match it to me.'],
+      ['Sample: duplicate or wrong amount', 'Your report lists the same eviction case [case number] [number] times [or shows $[amount], which is the amount the landlord asked for, not the final judgment of $[amount]]. Please correct it.']
+    ] },
+
     // ---------- Timelines ----------
     { tab: 'timelines', title: 'How long items stay on a credit report', intro: 'Measured from the Date of First Delinquency unless noted. Bureau policies can shorten these.', items: [
       ['Late payments', '7 years from the late payment.'],
@@ -814,7 +908,8 @@ Signed: ______________________   Date: __________`;
       ['Chapter 13 bankruptcy', 'Up to 10 years by law; the bureaus remove it 7 years after filing.'],
       ['Accounts included in bankruptcy', '7 years from their own DOFD, reporting a 0 balance.'],
       ['Hard inquiries', '2 years; usually only the last 12 months affect FICO scores.'],
-      ['Civil judgments and tax liens', 'No longer included on bureau reports since 2017–2018.'],
+      ['Civil judgments and tax liens', 'No longer included on Equifax, Experian or TransUnion reports since 2017–2018. Judgments can still appear on specialty and tenant screening reports for 7 years from entry (or the statute of limitations, if longer).'],
+      ['Eviction records', 'Not on the big-three credit reports. On tenant screening reports, up to 7 years (unless sealed). Unpaid rent in collections follows the collection timeline.'],
       ['Medical collections', 'Not reported if paid, under $500, or less than one year old (bureau policy).'],
       ['Closed accounts in good standing', 'Usually up to 10 years after closing — they help the score.'],
       ['Positive open accounts', 'Remain as long as the account is open.']
@@ -927,6 +1022,7 @@ Signed: ______________________   Date: __________`;
 
   const TABS = [
     ['overview', 'Overview'], ['fields', 'Metro 2 field guide'], ['metro2', 'Metro 2 codes'], ['errors', 'Errors & evidence'],
+    ['collections', 'Collections'], ['judgments', 'Judgments'], ['evictions', 'Evictions'],
     ['letters', 'Letters & deadlines'], ['laws', 'Laws'], ['timelines', 'Reporting timelines'], ['scores', 'Credit scores'],
     ['business', 'Business credit'], ['contacts', 'Bureaus & contacts'], ['glossary', 'Glossary'], ['scripts', 'Scripts & FAQ'], ['sources', 'Sources']
   ];
@@ -2400,6 +2496,9 @@ Thank you for considering this request.`
         <li><a href="https://law.justia.com/codes/us/title-15/chapter-41/subchapter-ii-a" target="_blank" rel="noopener">15 U.S.C. ch. 41 subch. II-A — Credit Repair Organizations (Justia)</a></li>
         <li><a href="https://www.govinfo.gov/link/uscode/15/1679b" target="_blank" rel="noopener">15 U.S.C. § 1679b — Prohibited practices (GovInfo)</a></li>
         <li><a href="https://www.law.cornell.edu/uscode/text/15/1681i" target="_blank" rel="noopener">15 U.S.C. § 1681i — FCRA reinvestigations</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681s-2" target="_blank" rel="noopener">§ 1681s-2 — furnisher duties</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681c" target="_blank" rel="noopener">§ 1681c — obsolete information</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681c-2" target="_blank" rel="noopener">§ 1681c-2 — identity theft block</a></li>
+        <li><a href="https://www.law.cornell.edu/uscode/text/15/1692g" target="_blank" rel="noopener">15 U.S.C. § 1692g — FDCPA validation</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1692e" target="_blank" rel="noopener">§ 1692e — false representations</a> · <a href="https://www.law.cornell.edu/cfr/text/12/part-1006" target="_blank" rel="noopener">12 C.F.R. part 1006 — Regulation F</a></li>
+        <li><a href="https://www.ftc.gov/news-events/news/press-releases/2023/10/ftc-cfpb-settlement-require-trans-union-pay-15-million-over-charges-it-failed-ensure-accuracy-tenant" target="_blank" rel="noopener">FTC/CFPB $15M TransUnion Rental Screening settlement — eviction records (2023)</a></li>
+        <li><a href="https://www.consumerfinance.gov/rules-policy/final-rules/prohibition-on-creditors-and-consumer-reporting-agencies-concerning-medical-information-regulation-v/" target="_blank" rel="noopener">CFPB medical debt rule — vacated July 11, 2025 (CFPB page)</a></li>
         <li><a href="https://www.law.cornell.edu/cfr/text/12/1022.43" target="_blank" rel="noopener">12 C.F.R. § 1022.43 — direct disputes (Regulation V)</a></li>
         <li><a href="https://docs.tech.sofi.com/pro/page/metro-2-base-segment" target="_blank" rel="noopener">Metro 2 Base Segment field layout & compliance condition codes (Galileo/SoFi furnisher docs)</a></li>
         <li><a href="https://metro2.switchlabs.dev/metro2/glossary" target="_blank" rel="noopener">Metro 2 glossary — DOFD, account status, CRRG (Switch Labs)</a></li>
@@ -2407,7 +2506,7 @@ Thank you for considering this request.`
         <li><a href="https://intercom.help/crc-support/en/articles/9190950" target="_blank" rel="noopener">Credit Repair Cloud help — client-selected disputes</a> · <a href="https://dupple.com/reviews/credit" target="_blank" rel="noopener">Credit repair software feature review</a></li></ul>
         <p class="small muted" style="margin-top:12px">The CDIA Credit Reporting Resource Guide is the authoritative Metro 2 specification and is licensed by CDIA. Ledger is workflow software, not legal advice.</p>`)
     }[tab] || sectionTab(tab);
-    return head('Library', 'Credit repair reference: Metro 2, the law, evidence, scores, business credit and scripts', '') + `<div class="lib-search"><input id="lib-q" type="search" placeholder="Search the library — e.g. DOFD, medical, re-aging, freeze…" autocomplete="off"><div id="lib-results"></div></div><div class="tabs">${tabs.map(([k, l]) => `<a href="#/library?tab=${k}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</div>` + body;
+    return head('Library', 'Credit repair reference: Metro 2, the law, evidence, scores, business credit and scripts', '') + `<div class="lib-search"><input id="lib-q" type="search" placeholder="Search the library — e.g. judgment, eviction, validation, DOFD…" autocomplete="off"><div id="lib-results"></div></div><div class="tabs">${tabs.map(([k, l]) => `<a href="#/library?tab=${k}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</div>` + body;
   }
 
   // ---------- Business credit ----------

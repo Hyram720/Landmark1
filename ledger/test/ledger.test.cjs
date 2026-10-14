@@ -199,4 +199,7 @@ test('library has content for every section tab and search finds terms', () => {
   assert.ok(Library.search('re-aging').some(h => h.tab === 'glossary'));
   assert.ok(Library.search('DOFD').length >= 5);
   assert.strictEqual(Library.search('x').length, 0);
+  for (const t of ['collections', 'judgments', 'evictions']) assert.ok(Library.TABS.some(([k]) => k === t) && Library.SECTIONS.filter(x => x.tab === t).length === 3);
+  assert.ok(Library.search('sealed').some(h => h.tab === 'evictions'));
+  assert.ok(Library.search('satisfaction').some(h => h.tab === 'judgments'));
 });
