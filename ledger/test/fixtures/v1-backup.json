@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "clients": [
+    {
+      "id": "930c9491-3c96-4bc7-947b-5f26f4da42f1",
+      "name": "Jordan Sample",
+      "kind": "personal",
+      "email": "jordan@example.test",
+      "address": "100 Example Street",
+      "createdAt": "2026-10-14T02:08:09.636Z"
+    }
+  ],
+  "reports": [
+    {
+      "source": "Synthetic QA report",
+      "bureau": "Experian",
+      "date": "2026-10-13",
+      "accounts": [
+        {
+          "id": "account-1",
+          "creditor": "Example Bank",
+          "type": "revolving",
+          "balance": 240,
+          "limit": 1000,
+          "status": "current",
+          "issue": "Incorrect balance",
+          "evidence": "Synthetic statement shows zero"
+        }
+      ],
+      "id": "8ac4e17c-30a5-44b5-b9f2-5efd38343ed0",
+      "clientId": "930c9491-3c96-4bc7-947b-5f26f4da42f1"
+    }
+  ],
+  "letters": [
+    {
+      "status": "approved",
+      "text": "Jordan Sample\n100 Example Street\n\nTo: Experian\nRe: Request to investigate reported account information\n\nI am requesting an investigation of information on my Synthetic QA report report dated 2026-10-13.\n\nCreditor: Example Bank\nSpecific discrepancy: Incorrect balance\nSupporting evidence: Synthetic statement shows zero\n\nPlease investigate the information identified above and correct any information found to be inaccurate. Please provide the results of your investigation.\n\nSincerely,\nJordan Sample\n\n[Review recipient address, account identifiers, attachments and all statements before sending.]",
+      "id": "a51aee37-4dda-4e3f-aa92-af035ecf0aa7",
+      "clientId": "930c9491-3c96-4bc7-947b-5f26f4da42f1",
+      "reportId": "8ac4e17c-30a5-44b5-b9f2-5efd38343ed0",
+      "accountId": "account-1",
+      "createdAt": "2026-10-14T02:08:31.969Z",
+      "approvedAt": "2026-10-14T02:08:31.984Z"
+    }
+  ],
+  "tasks": [],
+  "referrals": [],
+  "activity": [
+    {
+      "id": "9a0ec6f4-17af-436b-814a-e94dfbc50dbf",
+      "at": "2026-10-14T02:08:31.984Z",
+      "text": "Letter approved for export"
+    },
+    {
+      "id": "43c3cae5-4227-4e77-9c43-2df19508aee2",
+      "at": "2026-10-14T02:08:31.969Z",
+      "text": "Created draft for review"
+    },
+    {
+      "id": "e2440ba7-160b-4f99-8539-7b620de67eb2",
+      "at": "2026-10-14T02:08:31.928Z",
+      "text": "Imported report with source and date"
+    },
+    {
+      "id": "284443e5-2a7a-47ca-b73d-fcb400c5af92",
+      "at": "2026-10-14T02:08:09.636Z",
+      "text": "Added Jordan Sample"
+    }
+  ]
+}
