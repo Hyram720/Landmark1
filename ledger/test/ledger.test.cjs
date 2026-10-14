@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'partners.js', 'business.js', 'metro2.js', 'letters.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'metro2.js', 'results.js', 'letters.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample, Partners, Business } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -154,4 +154,41 @@ test('business correction letter', () => {
   const r = Letters.build('business_correction', { client: { name: 'Avery Placeholder' }, recipient: { name: 'Dun & Bradstreet', address: 'x' }, items: [{ creditor: 'Uline', discrepancy: 'Payment reported 30 days late; paid on invoice terms.' }], today: 'x', business: { legalName: 'Example Bakery LLC', duns: '00-000-0000' } });
   assert.ok(r.ok);
   assert.match(r.text, /Example Bakery LLC/);
+});
+
+test('new report marks disputed items removed or corrected and closes the dispute', () => {
+  const prev = { id: 'p', clientId: 'c', bureau: 'Experian', date: '2026-08-01', accounts: [
+    { id: 'a1', creditor: 'Example Bank', accountNumber: 'XXXX1111', status: '11', balance: 240, pastDue: 75 },
+    { id: 'a2', creditor: 'Placeholder Recovery', accountNumber: 'XXXX2222', status: '93', balance: 600 },
+    { id: 'a3', creditor: 'Demo Card', accountNumber: 'XXXX3333', status: '97', balance: 900, dofd: '2023-01-01' }] };
+  const next = { id: 'n', clientId: 'c', bureau: 'Experian', date: '2026-10-01', accounts: [
+    { id: 'b1', creditor: 'Example Bank', accountNumber: 'XXXX1111', status: '11', balance: 0, pastDue: 0 },
+    { id: 'b3', creditor: 'Demo Card', accountNumber: 'XXXX3333', status: '97', balance: 900, dofd: '2023-01-01' }] };
+  const ws = { reports: [prev, next], disputes: [
+    { id: 'd1', clientId: 'c', type: 'cra_611', recipient: 'Experian', sentAt: '2026-08-05', outcome: null, items: [
+      { accountId: 'a1', creditor: 'Example Bank', accountNumber: 'XXXX1111', bureau: 'Experian' },
+      { accountId: 'a2', creditor: 'Placeholder Recovery', accountNumber: 'XXXX2222', bureau: 'Experian' }] },
+    { id: 'd2', clientId: 'c', type: 'cra_611', recipient: 'Experian', sentAt: '2026-08-05', outcome: null, items: [
+      { accountId: 'a3', creditor: 'Demo Card', accountNumber: 'XXXX3333', bureau: 'Experian' }] }] };
+  const out = Results.applyNewReport(ws, next, '2026-10-02');
+  assert.strictEqual(out.wins.length, 2);
+  assert.strictEqual(ws.disputes[0].items[0].result, 'corrected');
+  assert.strictEqual(ws.disputes[0].items[1].result, 'deleted');
+  assert.strictEqual(ws.disputes[0].outcome, 'corrected');
+  assert.strictEqual(ws.disputes[1].outcome, 'verified', 'unchanged item counts as still reporting');
+  assert.match(Results.winsText('Jordan Sample', out.wins), /Placeholder Recovery was removed from your Experian report/);
+});
+
+test('strategy ladder escalates letter 1 → 2 → 3 → attorney review', () => {
+  assert.strictEqual(Law.strategyStep('cra_611'), 1);
+  const n1 = Law.nextStrategy('cra_611', 'verified', 'bureau');
+  assert.strictEqual(n1.step, 2); assert.strictEqual(n1.type, 'mov_611a7'); assert.strictEqual(n1.alsoType, 'furnisher_623');
+  const n2 = Law.nextStrategy('furnisher_623', 'verified', 'furnisher');
+  assert.strictEqual(n2.step, 3); assert.strictEqual(n2.type, 'furnisher_final');
+  const n3 = Law.nextStrategy('furnisher_final', 'verified', 'furnisher');
+  assert.strictEqual(n3.step, 4); assert.strictEqual(n3.type, null);
+  assert.strictEqual(Law.nextStrategy('cra_611', 'deleted', 'bureau'), null);
+  const item = [{ creditor: 'Demo Card', discrepancy: 'Balance reported as $900 but it was paid in full in March.' }];
+  assert.match(Letters.build('furnisher_final', { client: { name: 'J S' }, recipient: { name: 'Demo Card' }, items: item, today: 'x' }).text, /1681s-2/);
+  assert.match(Letters.build('cfpb_complaint', { client: { name: 'J S' }, recipient: { name: 'Experian' }, recipientName: 'Experian', items: item, today: 'x' }).text, /consumerfinance\.gov/);
 });

@@ -158,3 +158,15 @@ test('Ledger AI needs an API key and sees the client file', async () => {
   assert.match(ctx, /CLIENT FILE — Jordan Sample/);
   assert.match(ctx, /CROA:/);
 });
+
+test('AI scan and round plan are gated on an API key; HTML reports are flattened to text', async () => {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  assert.strictEqual((await owner('POST', `/api/clients/${clientId}/ai-plan`)).status, 501);
+  assert.strictEqual((await owner('POST', `/api/clients/${clientId}/files/nope/scan`)).status, 501);
+  if (saved) process.env.ANTHROPIC_API_KEY = saved;
+  const { htmlToText } = await import('../server/ai.js');
+  const t = htmlToText('<table><tr><td>Creditor</td><td>Example Bank</td></tr><tr><td>Balance</td><td>$240</td></tr></table><script>x()</script>');
+  assert.match(t, /Creditor \| Example Bank/);
+  assert.ok(!t.includes('x()'));
+});

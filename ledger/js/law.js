@@ -87,6 +87,10 @@
       note: 'Bureau must certify accuracy with the furnisher and notify the consumer within 5 business days of reinserting deleted information.' },
     business_correction: { label: 'Business bureau correction request', cite: 'Bureau correction process (business files are not covered by the FCRA)', recipient: 'bureau', days: 0,
       note: 'Send to Dun & Bradstreet, Experian Business or Equifax Business with documents that prove the correct information.' },
+    furnisher_final: { label: 'Final notice to furnisher', cite: 'FCRA § 623(a)(1)–(3), (a)(8), (b)', recipient: 'furnisher', days: 30,
+      note: 'Escalation after a verified result: restates the specific inaccuracy, the evidence, and the furnisher’s duties to investigate, correct and report the account as disputed.' },
+    cfpb_complaint: { label: 'CFPB complaint narrative', cite: 'consumerfinance.gov/complaint', recipient: 'regulator', days: 15,
+      note: 'For the consumer to file at consumerfinance.gov. Companies generally respond within 15 days. Never file a complaint without the consumer’s review and consent.' },
     goodwill: { label: 'Goodwill adjustment request', cite: 'Courtesy request — not a dispute', recipient: 'furnisher', days: 0,
       note: 'Asks a creditor to reconsider accurate late payments. Never describe accurate information as inaccurate.' }
   };
@@ -171,9 +175,30 @@ Signed: ______________________   Date: __________`;
     return out;
   }
 
+  /**
+   * Escalation ladder for an inaccurate item. Each step is lawful only while the consumer still
+   * says the item is inaccurate and can document it; accurate items leave the ladder.
+   */
+  const STRATEGY = [
+    { step: 1, title: 'Letter 1 — Dispute with the bureau', types: ['cra_611', 'obsolete_605', 'block_605b', 'validation_809', 'business_correction'], when: 'Start here for every confirmed inaccuracy.' },
+    { step: 2, title: 'Letter 2 — Method of verification + direct dispute', types: ['mov_611a7', 'furnisher_623', 'reinsertion_611'], when: 'The bureau verified, or the 30/45 days passed with no answer.' },
+    { step: 3, title: 'Letter 3 — Final notice + CFPB complaint', types: ['furnisher_final', 'cfpb_complaint'], when: 'Still verified despite your evidence.' },
+    { step: 4, title: 'Step 4 — Attorney review', types: [], when: 'Documented inaccuracy still reporting after Letter 3. FCRA §§ 616–617 allow actual and statutory damages and attorney fees; many consumer attorneys take these cases at no cost to the consumer.' }
+  ];
+  function strategyStep(type) { const s = STRATEGY.find(x => x.types.includes(type)); return s ? s.step : 1; }
+  /** What to send next after a dispute of `type` ended with `outcome`. */
+  function nextStrategy(type, outcome, recipientType) {
+    if (['deleted', 'corrected', 'blocked'].includes(outcome)) return null;
+    const step = strategyStep(type);
+    if (outcome === 'frivolous') return { step, type, reason: 'Re-send with the information the bureau said it needs.' };
+    if (step === 1) return { step: 2, type: recipientType === 'furnisher' ? 'furnisher_final' : 'mov_611a7', alsoType: 'furnisher_623', reason: 'Ask how it was verified and dispute directly with the furnisher, with new evidence.' };
+    if (step === 2) return { step: 3, type: 'furnisher_final', alsoType: 'cfpb_complaint', reason: 'Send a final notice to the furnisher and file a CFPB complaint with the consumer.' };
+    return { step: 4, type: null, reason: STRATEGY[3].when };
+  }
+
   const api = {
     iso, parse, addDays, addBusinessDays, daysBetween, federalHolidays, isBusinessDay, isCroaBusinessDay,
-    croaCancelDeadline, BUREAUS, DISPUTE_TYPES, responseDue, CROA_DISCLOSURE, cancellationNotice, contractTerms, lintText, RISK_PHRASES
+    croaCancelDeadline, BUREAUS, DISPUTE_TYPES, STRATEGY, strategyStep, nextStrategy, responseDue, CROA_DISCLOSURE, cancellationNotice, contractTerms, lintText, RISK_PHRASES
   };
   root.Law = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

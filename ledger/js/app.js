@@ -244,8 +244,9 @@
         }
         Object.assign(r, { bureau: d.bureau, date: d.date, source: d.source, scores: d.score ? { [d.bureau]: Number(d.score) } : {} });
         if (isNew) { Object.assign(r, { id: Store.uid(), clientId: cid, accounts }); S().reports.push(r); }
+        const wins = isNew ? root.AIFlow.afterImport([r]) : [];
         commit(isNew ? `Imported ${r.bureau} report (${accounts.length} tradelines)` : `Updated ${r.bureau} report`, cid);
-        if (isNew) go(`#/clients/${cid}/reports`);
+        if (isNew) { go(`#/clients/${cid}/reports`); if (wins.length) setTimeout(() => root.AIFlow.showWins(cid, wins), 50); }
       }
     });
   }
@@ -365,7 +366,7 @@
   function generateLetter(d) {
     const c = Store.get.client(d.clientId);
     const prior = S().disputes.filter(p => p.clientId === d.clientId && p.recipient === d.recipient && p.round < d.round && p.sentAt).sort((a, b) => b.round - a.round)[0];
-    const res = Letters.build(d.type, { client: c, recipient: recipientFor(d), items: d.items, today: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), report: d.items[0] && Store.get.report(d.items[0].reportId), priorSentAt: prior && prior.sentAt, business: c.business });
+    const res = Letters.build(d.type, { client: c, recipient: recipientFor(d), recipientName: d.recipient, items: d.items, today: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), report: d.items[0] && Store.get.report(d.items[0].reportId), priorSentAt: prior && prior.sentAt, business: c.business });
     if (!res.ok) { toast(res.errors[0]); return; }
     let l = d.letterId && Store.get.letter(d.letterId);
     if (!l) { l = { id: Store.uid(), clientId: d.clientId, disputeId: d.id, type: d.type, status: 'draft', createdAt: Store.now(), approvedAt: null }; S().letters.push(l); d.letterId = l.id; }
@@ -517,9 +518,11 @@
     },
     'next-round': el => {
       const d = Store.get.dispute(el.dataset.id);
-      const items = d.items.map(it => Object.assign({}, it));
-      const type = d.outcome === 'verified' && d.type === 'cra_611' ? 'mov_611a7' : d.type;
-      newDisputeModal(d.clientId, { title: `Round ${d.round + 1} follow-up`, type, recipient: d.recipient, recipientAddress: d.recipientAddress, items, notes: `Follow-up to round ${d.round} (${d.outcome}).` });
+      const items = d.items.filter(it => !['deleted', 'corrected'].includes(it.result)).map(it => Object.assign({}, it, { result: undefined, resultAt: undefined }));
+      const next = Law.nextStrategy(d.type, d.outcome, (Law.DISPUTE_TYPES[d.type] || {}).recipient);
+      if (!next || !next.type) { toast(next ? next.reason : 'Nothing left to escalate'); return; }
+      const toFurnisher = Law.DISPUTE_TYPES[next.type].recipient === 'furnisher';
+      newDisputeModal(d.clientId, { title: `Letter ${next.step} — ${Law.DISPUTE_TYPES[next.type].label}`, type: next.type, recipient: toFurnisher ? (items[0] || {}).creditor || d.recipient : d.recipient, recipientAddress: toFurnisher ? '' : d.recipientAddress, items, notes: `Strategy letter ${next.step}: ${next.reason} Follows round ${d.round} (${d.outcome}).${next.alsoType ? ' Also consider: ' + Law.DISPUTE_TYPES[next.alsoType].label + '.' : ''}` });
     },
     'letter-edit': () => {},
     'new-invoice': el => invoiceModal(el.dataset.client || (S().clients[0] || {}).id),
@@ -644,7 +647,7 @@
     results: ['Results arrived', c => `Hi ${c.firstName || c.name}, we received results from the bureaus. Log in to your portal to see the updates, and forward any letters you receive by mail.`],
     business: ['Business credit next steps', c => `Hi ${c.firstName || c.name}, your business credit checklist is updated. The next item is listed in your portal. Let us know when it is done.`]
   };
-  function messageModal(cid, channel) {
+  function messageModal(cid, channel, preset) {
     const c = Store.get.client(cid);
     modal({
       title: `${channel === 'sms' ? 'Text' : 'Email'} ${c.name}`,
@@ -653,7 +656,7 @@
         ${field('Message', 'body', '', { type: 'textarea', rows: 6, cls: 'span2', help: channel === 'sms' ? (c.smsConsent ? 'SMS consent on file. Keep texts short and include how to opt out.' : 'No SMS consent recorded — record consent before texting (TCPA).') : 'To: ' + (c.email || 'no email on file') })}
         ${channel === 'sms' ? `<label class="check span2 small"><input type="checkbox" name="smsConsent" ${c.smsConsent ? 'checked' : ''}> Client gave written consent to receive texts</label>` : ''}</div>`,
       foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Send</button>',
-      onOpen: f => { f.elements.tpl.onchange = () => { const t = TEMPLATES[f.elements.tpl.value]; if (t) { f.elements.body.value = t[1](c); if (f.elements.subject) f.elements.subject.value = t[0]; } }; },
+      onOpen: f => { if (preset) { f.elements.body.value = preset.body || ''; if (f.elements.subject && preset.subject) f.elements.subject.value = preset.subject; } f.elements.tpl.onchange = () => { const t = TEMPLATES[f.elements.tpl.value]; if (t) { f.elements.body.value = t[1](c); if (f.elements.subject) f.elements.subject.value = t[0]; } }; },
       onSubmit: d => {
         if (!d.body) { toast('Write a message'); return false; }
         if (channel === 'sms') { if (d.smsConsent && !c.smsConsent) { c.smsConsent = true; c.smsConsentAt = T(); } if (!c.smsConsent) { toast('Record SMS consent first'); return false; } if (!c.phone) { toast('No phone number on file'); return false; } }
@@ -872,6 +875,6 @@
     wire();
     render();
   }
-  root.App = { boot, render, A, api };
+  root.App = { boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
   document.addEventListener('DOMContentLoaded', boot);
 })(window);

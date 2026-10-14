@@ -54,6 +54,17 @@ Deploy it like the main site: one Node service with a persistent volume mounted 
 - Guardrails: it separates provable errors from items the client must document and from accurate negatives, and it refuses mass disputes, CPNs, false identity-theft claims and promised results. It also flags CROA problems it notices.
 - Staff only. Runs on Claude Opus 5.5 with automatic fallback if a request is declined. Rate-limited to 60 questions per staff member per hour. Every question is logged in the audit trail (not the content).
 
+**AI dispute engine:**
+- **Scan with AI:** upload a MyFreeScoreNow, IdentityIQ or SmartCredit report (PDF, HTML or screenshot) and click **✦ Scan with AI** on the Documents tab. Claude reads every tradeline per bureau into Metro 2 fields, and you review the table before importing. The Metro 2 audit runs immediately.
+- **AI plan next round:** on the Disputes tab, Claude reviews the reports, findings and dispute history and proposes the next round. That means which letters, to whom, for which items, at which strategy step, plus a list of accurate items *not* to dispute and a client update. You tick what to send, confirm the client agreed, and the drafts and letters are created.
+- **Removal tracking:** whenever a newer report is imported (scanned, CSV or manual), Ledger compares it with the previous report from that bureau. Disputed items that disappeared are marked **Removed**, changed ones **Corrected**, and the rest **Still reporting**. Disputes close automatically, a task is created, and a ready-to-send "good news" text or email pops up. Clients see their results in the portal.
+- **Strategy letters (Letter 1 → 2 → 3 → 4):**
+  1. Bureau dispute (§ 611).
+  2. Method of verification (§ 611(a)(7)) plus a direct dispute to the furnisher (§ 623).
+  3. Final notice to the furnisher plus a CFPB complaint narrative.
+  4. Attorney review (FCRA §§ 616–617).
+  Each dispute shows where it stands, and **Draft Letter N** creates the next one.
+
 **Business credit:**
 - Personal, business-only, or personal-plus-business clients.
 - Business profile: entity, EIN last 4, NAICS, D-U-N-S, and more.

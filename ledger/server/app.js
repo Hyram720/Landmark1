@@ -7,6 +7,7 @@ import express from 'express';
 import multer from 'multer';
 import { commsConfig, sendEmail, sendSms } from './comms.js';
 import { askAssistant, assistantConfigured } from './assistant.js';
+import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
 import { hashPassword, verifyPassword, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
 import { Law, Partners, Store } from './shared.js';
@@ -194,8 +195,9 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     ws.reports.filter(r => r.clientId === c.id).sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach(r => Object.entries(r.scores || {}).forEach(([b, v]) => { if (v) (scores[b] = scores[b] || []).push({ date: r.date, score: Number(v) }); }));
     const disputes = ws.disputes.filter(d => d.clientId === c.id).map(d => ({
       id: d.id, recipient: d.recipient, type: (Law.DISPUTE_TYPES[d.type] || {}).label, round: d.round, state: Store.disputeState(d),
-      sentAt: d.sentAt, dueAt: d.dueAt, respondedAt: d.respondedAt, items: d.items.map(i => i.creditor)
+      sentAt: d.sentAt, dueAt: d.dueAt, respondedAt: d.respondedAt, items: d.items.map(i => i.creditor + (i.result === 'deleted' ? ' (removed)' : i.result === 'corrected' ? ' (corrected)' : ''))
     }));
+    const removed = []; ws.disputes.filter(d => d.clientId === c.id).forEach(d => d.items.forEach(i => { if (i.result === 'deleted' || i.result === 'corrected' || (!i.result && ['deleted', 'corrected'].includes(d.outcome))) removed.push({ creditor: i.creditor, bureau: i.bureau || d.recipient, result: i.result || d.outcome, at: i.resultAt || d.respondedAt }); }));
     const recs = (ws.partnerReferrals || []).filter(r => r.clientId === c.id && r.status !== 'declined').map(r => {
       const o = ws.offers.find(x => x.id === r.offerId) || {};
       return { id: r.id, name: o.name, category: o.category, why: r.note || o.note, url: `/go/${r.id}`, status: r.status };
@@ -205,7 +207,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       company: { name: company().name, phone: company().phone, email: company().email },
       croa: { required: cs.required, steps: cs.steps.map(s => ({ label: s.label, done: s.done, date: s.date })), deadline: cs.deadline, inWindow: cs.inWindow, cancelled: cs.cancelled,
         disclosureSigned: !!(c.onboarding || {}).disclosureSignedAt, contractSigned: !!(c.onboarding || {}).contractSignedAt },
-      documents: documentsFor(c), uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
+      documents: documentsFor(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
       business: c.kind !== 'personal' ? { name: (c.business || {}).legalName || '', checklist: c.businessChecklist || {}, scores: c.businessScores || [] } : null
     });
   });
@@ -322,6 +324,34 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       commitWorkspace(req.user.email, 'message.send', `${channel} to ${clientId}`);
       res.json({ ok: true, version: D().workspaceVersion });
     } catch (e) { res.status(502).json({ error: e.message }); }
+  });
+
+  // ---------- AI report scanning & round planning ----------
+  const aiError = (res, e) => {
+    const status = e.status === 404 ? 404 : e.status === 429 ? 429 : e.status >= 400 && e.status < 500 ? 400 : 502;
+    res.status(status).json({ error: status === 429 ? 'The AI service is busy. Try again in a minute.' : e.message });
+  };
+  app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
+    if (!assistantConfigured()) return res.status(501).json({ error: 'AI scanning needs ANTHROPIC_API_KEY set on the server' });
+    if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
+    const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    try {
+      const out = await scanReport({ buffer: readFile(doc.id), mime: doc.mime });
+      db.audit({ actor: req.user.email, action: 'ai.scan', detail: doc.name });
+      db.persist();
+      res.json(out);
+    } catch (e) { aiError(res, e); }
+  });
+  app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
+    if (!assistantConfigured()) return res.status(501).json({ error: 'AI planning needs ANTHROPIC_API_KEY set on the server' });
+    if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
+    try {
+      const out = await planRound({ ws: workspace(), clientId: req.params.id });
+      db.audit({ actor: req.user.email, action: 'ai.plan', detail: req.params.id });
+      db.persist();
+      res.json(out);
+    } catch (e) { aiError(res, e); }
   });
 
   // ---------- documents ----------

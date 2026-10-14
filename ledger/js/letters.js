@@ -97,6 +97,29 @@ ${items.map(itemBlock).join('\n\n')}
 
 Supporting documents are enclosed. Please correct the file and confirm the update in writing.`,
 
+    furnisher_final: (c, items, ctx) => `Re: Final notice of inaccurate reporting — FCRA § 623
+
+I previously disputed the information below${ctx.priorSentAt ? ' (dispute sent ' + ctx.priorSentAt + ')' : ''}, and it continues to be reported inaccurately. I am providing the specific inaccuracy and my supporting documents again:
+
+${items.map(itemBlock).join('\n\n')}
+
+As a furnisher you must not report information you know or have reasonable cause to believe is inaccurate, must correct and update information you determine is incomplete or inaccurate, must report the account as disputed while it is disputed, and must conduct a reasonable investigation of disputes (15 U.S.C. § 1681s-2(a)(1)–(3), (a)(8), (b)). Please correct the reporting with every consumer reporting agency you furnished it to and confirm in writing. I am keeping copies of this correspondence.`,
+
+    cfpb_complaint: (c, items, ctx) => `CFPB COMPLAINT NARRATIVE — for ${c.name} to review and submit at consumerfinance.gov/complaint
+
+Company: ${ctx.recipientName || '[company name]'}
+Product: Credit reporting
+
+What happened:
+I disputed inaccurate information in my credit file. The information was verified without a reasonable investigation and is still reported inaccurately:
+
+${items.map(itemBlock).join('\n\n')}
+
+What I want the company to do:
+Conduct a reasonable investigation of the documents I provided, correct or delete the inaccurate information, and confirm the correction in writing.
+
+[Attach copies of the dispute letters, mailing receipts, the bureau's results and the supporting documents listed above. Read every statement before submitting — it must be true and complete.]`,
+
     goodwill: (c, items) => `Re: Request for a goodwill adjustment
 
 I am writing about my account(s) listed below. I am not disputing the accuracy of this information. I am asking you to consider a courtesy adjustment of the late payment reporting in light of my payment history since then.

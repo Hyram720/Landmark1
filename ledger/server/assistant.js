@@ -26,7 +26,7 @@ How you work:
 - Point out CROA problems you notice in the file (missing disclosure, work or billing inside the cancellation window).
 - Be concise and practical: lead with the answer, then steps. Use short headings and bullets when they help. You are not a lawyer; flag questions that need an attorney.`;
 
-function clientContext(ws, clientId) {
+function clientContext(ws, clientId, opts = {}) {
   const c = ws.clients.find(x => x.id === clientId);
   if (!c) return null;
   const cs = Store.croaStatus(c);
@@ -38,7 +38,7 @@ function clientContext(ws, clientId) {
   const latest = Object.values(byBureau);
   latest.forEach(r => {
     lines.push(`\n${r.bureau} report dated ${r.date} (source: ${r.source || 'n/a'})${r.scores?.[r.bureau] ? `, score ${r.scores[r.bureau]}` : ''}:`);
-    r.accounts.forEach(a => lines.push(`- ${a.creditor} ${a.accountNumber || ''} | type ${a.type || '?'} | status ${a.status} (${Metro2.ACCOUNT_STATUS[a.status] || 'unknown'}) | bal ${a.balance} | past due ${a.pastDue} | limit ${a.limit} | high ${a.highCredit} | opened ${a.opened || '?'} | closed ${a.closed || '-'} | DOFD ${a.dofd || '-'} | last pay ${a.lastPayment || '-'} | ECOA ${a.ecoa || '?'} | CCC ${a.complianceCode || '-'} | CII ${a.cii || '-'} | history ${a.paymentHistory || '-'}${a.originalCreditor ? ` | original creditor ${a.originalCreditor}` : ''}${a.issue ? ` | CONSUMER SAYS: ${a.issue}` : ''}${a.evidence ? ` | evidence: ${a.evidence}` : ''}${a.consumerDisputed ? ' | disputed' : ''}`));
+    r.accounts.forEach(a => lines.push(`- ${opts.withIds ? `[id=${a.id}] ` : ''}${a.creditor} ${a.accountNumber || ''} | type ${a.type || '?'} | status ${a.status} (${Metro2.ACCOUNT_STATUS[a.status] || 'unknown'}) | bal ${a.balance} | past due ${a.pastDue} | limit ${a.limit} | high ${a.highCredit} | opened ${a.opened || '?'} | closed ${a.closed || '-'} | DOFD ${a.dofd || '-'} | last pay ${a.lastPayment || '-'} | ECOA ${a.ecoa || '?'} | CCC ${a.complianceCode || '-'} | CII ${a.cii || '-'} | history ${a.paymentHistory || '-'}${a.originalCreditor ? ` | original creditor ${a.originalCreditor}` : ''}${a.issue ? ` | CONSUMER SAYS: ${a.issue}` : ''}${a.evidence ? ` | evidence: ${a.evidence}` : ''}${a.consumerDisputed ? ' | disputed' : ''}`));
     const findings = Metro2.auditReport(r);
     if (findings.length) {
       lines.push(`  Automated Metro 2 findings for ${r.bureau}:`);
@@ -53,7 +53,7 @@ function clientContext(ws, clientId) {
   const ds = ws.disputes.filter(d => d.clientId === c.id);
   if (ds.length) {
     lines.push('\nDisputes:');
-    ds.forEach(d => lines.push(`- Round ${d.round} ${Law.DISPUTE_TYPES[d.type]?.label || d.type} to ${d.recipient}: ${d.outcome || d.status}${d.sentAt ? `, mailed ${d.sentAt}` : ''}${d.dueAt ? `, due ${d.dueAt}` : ''}. Items: ${d.items.map(i => `${i.creditor} (${i.discrepancy})`).join('; ')}`));
+    ds.forEach(d => lines.push(`- Round ${d.round} ${Law.DISPUTE_TYPES[d.type]?.label || d.type} to ${d.recipient}: ${d.outcome || d.status}${d.sentAt ? `, mailed ${d.sentAt}` : ''}${d.dueAt ? `, due ${d.dueAt}` : ''}. Items: ${d.items.map(i => `${i.creditor}${i.bureau ? ' @' + i.bureau : ''} (${i.discrepancy})${i.result ? ' → ' + i.result.toUpperCase() : ''}`).join('; ')}`));
   }
   if (c.kind !== 'personal') {
     const b = c.business || {};
@@ -94,4 +94,4 @@ export async function askAssistant({ ws, clientId, history }) {
   return { text: text || '(No answer returned — try again.)', model: response.model, truncated: response.stop_reason === 'max_tokens' };
 }
 
-export { clientContext };
+export { clientContext, SYSTEM };
