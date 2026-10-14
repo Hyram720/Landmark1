@@ -46,6 +46,7 @@
     let el = document.getElementById('ai-drawer');
     if (!el) { el = document.createElement('aside'); el.id = 'ai-drawer'; el.className = 'ai-drawer'; document.body.appendChild(el); }
     el.classList.toggle('open', state.open);
+    document.body.classList.toggle('ai-open', state.open);
     if (!state.open) return;
     const clients = Store.state.clients;
     const quick = state.clientId ? QUICK.client : QUICK.general;

@@ -333,6 +333,8 @@ tr.cmp-changed td { background: var(--med-soft); }
 /* Empty-workspace banner */
 .empty-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
 .empty-banner .row { gap: 8px; flex-wrap: wrap; }
+/* Keep the page usable while Ledger AI is open: on wide screens the page shifts left instead of being covered. */
+@media (min-width: 1100px) { body.ai-open .main { padding-right: 440px; } body.ai-open .ai-fab { display: none; } }
 
 </style>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3EL%3C/text%3E%3C/svg%3E">
@@ -5564,6 +5566,7 @@ Thank you for considering this request.`
     let el = document.getElementById('ai-drawer');
     if (!el) { el = document.createElement('aside'); el.id = 'ai-drawer'; el.className = 'ai-drawer'; document.body.appendChild(el); }
     el.classList.toggle('open', state.open);
+    document.body.classList.toggle('ai-open', state.open);
     if (!state.open) return;
     const clients = Store.state.clients;
     const quick = state.clientId ? QUICK.client : QUICK.general;
