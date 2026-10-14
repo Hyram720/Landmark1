@@ -228,7 +228,7 @@
     const isNew = !c;
     c = c || Object.assign({ status: 'lead', kind: 'personal' }, defaults || {});
     modal({
-      title: isNew ? 'New client' : 'Edit client',
+      title: isNew ? (c.kind === 'business' ? 'New business client' : 'New client') : 'Edit client',
       body: `<div class="form-grid">
         ${field('First name', 'firstName', c.firstName, { required: true })}${field('Last name', 'lastName', c.lastName, { required: true })}
         ${field('Email', 'email', c.email, { type: 'email' })}${field('Phone', 'phone', c.phone)}
@@ -440,6 +440,14 @@
         go(`#/clients/${c.id}/acquisition?deal=${d.id}`);
       }
     });
+  }
+  /** Copy text; if the browser blocks the clipboard, show it in a box to copy by hand. */
+  function copyText(text, label, okMsg) {
+    const show = () => modal({ title: label || 'Copy link', body: `<p class="small muted" style="margin-top:0">Select the link and copy it.</p><input readonly value="${esc(text)}" class="mono small" onclick="this.select()" id="copy-box">`, foot: '<button type="button" class="btn primary" data-close>Done</button>', onOpen: f => setTimeout(() => { const i = f.querySelector('#copy-box'); i.focus(); i.select(); }, 50) });
+    try {
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(() => toast(okMsg || 'Link copied'), show);
+      else show();
+    } catch (e) { show(); }
   }
   // ---------- invoice documents ----------
   function invoicePdf(id) {
@@ -843,7 +851,7 @@
     'invoice-email': el => invoiceEmail(el.dataset.id),
     analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id); },
     'bill-now': () => { runEngine(true).then(n => { toast(n ? `${n} item(s) created` : 'Nothing due'); render(); }); },
-    'invoice-link': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const url = `${location.origin}/pay/${i.payToken}`; (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Payment link copied'), () => prompt('Payment link', url)); },
+    'invoice-link': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const url = `${location.origin}/pay/${i.payToken}`; copyText(url, 'Payment link', 'Payment link copied'); },
     'invoice-check': el => { Remote.flushNow().then(() => api('POST', `/api/invoices/${el.dataset.id}/check`)).then(r => Remote.reload().then(() => toast(r.paid ? 'Payment found — marked paid' : 'No payment found yet')), e => toast(e.message)); },
     'pending-import': el => { const p = (S().pendingImports || []).find(x => x.id === el.dataset.id); if (!p) return; root.AIFlow.reviewScan(p.clientId, p.result, p.docName, p.docId); },
     'pending-dismiss': el => { S().pendingImports = (S().pendingImports || []).filter(x => x.id !== el.dataset.id); commit(); },
@@ -861,7 +869,7 @@
     'addr-add': () => modal({ title: 'Add a creditor address', body: `<div class="form-grid">${field('Company name (as it appears on reports)', 'name', '', { required: true, cls: 'span2' })}${field('Dispute / correspondence address', 'address', '', { type: 'textarea', rows: 3, cls: 'span2', help: 'Last line: City, ST 12345' })}${field('Type', 'category', '', { type: 'select', options: ['collection agency', 'debt buyer', 'card issuer', 'bank', 'auto lender', 'student loan servicer', 'mortgage servicer', 'specialty bureau', 'other'] })}</div>`,
       onSubmit: d => { if (!d.name || !d.address) return false; root.Furnishers.remember(S(), d.name, d.address, d.category); commit('Saved address for ' + d.name); } }),
     'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId); } },
-    'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Sign-up link copied'), () => prompt('Sign-up link', url)); },
+    'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; copyText(url, 'Partner sign-up link', 'Sign-up link copied'); },
     'ref-invite': el => { const r = S().referrals.find(x => x.id === el.dataset.id); Remote.flushNow().then(() => api('POST', '/api/invites', { role: 'partner', referralId: r.id, name: r.name, email: r.email })).then(x => modal({ title: 'Partner portal invitation', body: `<p class="small">Send this one-time link to ${esc(r.name)}. It expires in ${x.expiresInDays} days.</p><input readonly value="${esc(x.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); },
     'ref-payout': el => { const r = S().referrals.find(x => x.id === el.dataset.id); const k = root.Sales.commissions(S(), r, T()); modal({ title: 'Record payout — ' + r.name, body: `<div class="form-grid">${field('Amount ($)', 'amount', k.owed, { type: 'number', attrs: 'step="0.01" min="0"' })}${field('Date paid', 'date', T(), { type: 'date' })}${field('Note', 'note', '', { cls: 'span2' })}</div>`, onSubmit: d => { if (!(Number(d.amount) > 0)) return false; r.payouts = r.payouts || []; r.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note }); commit(`Recorded ${UI.money(d.amount)} payout to ${r.name}`); } }); },
     'mail-lob': el => {
@@ -1074,8 +1082,7 @@
       const r = S().partnerReferrals.find(x => x.id === el.dataset.id);
       const o = S().offers.find(x => x.id === r.offerId) || {};
       const link = Store.remote ? `${location.origin}/go/${r.id}` : (o.affiliateUrl || o.url);
-      const done = () => toast(Store.remote ? 'Tracked link copied' : 'Link copied (tracking works when running on the server)');
-      if (navigator.clipboard) navigator.clipboard.writeText(link).then(done, () => prompt('Copy this link', link)); else prompt('Copy this link', link);
+      copyText(link, 'Partner link', Store.remote ? 'Tracked link copied' : 'Link copied (tracking works when running on the server)');
     },
     'offer-toggle': el => { const o = S().offers.find(x => x.id === el.dataset.id); o.enabled = el.checked; commit(); },
     'new-offer': () => modal({

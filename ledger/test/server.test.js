@@ -340,3 +340,13 @@ test('invoices can be emailed with the PDF attached', async () => {
     assert.strictEqual(inv.emailedTo, 'm@example.test');
   } finally { globalThis.fetch = realFetch; delete process.env.LEDGER_RESEND_KEY; delete process.env.LEDGER_EMAIL_FROM; }
 });
+
+test('pages stamp scripts with a build version and are never cached', async () => {
+  const r = await anon('GET', '/');
+  assert.match(r.body, /src="js\/app\.js\?v=[\w-]+"/);
+  assert.match(r.body, /href="css\/app\.css\?v=[\w-]+"/);
+  assert.strictEqual(r.headers.get('cache-control'), 'no-store');
+  const js = await anon('GET', '/js/app.js?v=x');
+  assert.strictEqual(js.status, 200);
+  assert.strictEqual(js.headers.get('cache-control'), 'no-cache');
+});

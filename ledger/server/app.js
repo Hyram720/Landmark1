@@ -674,13 +674,21 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   });
 
   // ---------- static ----------
-  const page = (f) => (req, res) => res.sendFile(path.join(ledgerDir, f));
+  // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old
+  // file with a new one after an update.
+  const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
+  const pageCache = {};
+  const page = (f) => (req, res) => {
+    if (!pageCache[f]) pageCache[f] = fs.readFileSync(path.join(ledgerDir, f), 'utf8').replace(/(src|href)="((?:js|css)\/[\w.-]+\.(?:js|css))"/g, `$1="$2?v=${BUILD}"`);
+    res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).send(pageCache[f]);
+  };
   app.get(['/', '/app'], page('index.html'));
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
   app.get('/partner', page('partner.html'));
-  app.use('/css', express.static(path.join(ledgerDir, 'css')));
-  app.use('/js', express.static(path.join(ledgerDir, 'js')));
+  const fresh = { setHeaders: res => res.set('Cache-Control', 'no-cache') };
+  app.use('/css', express.static(path.join(ledgerDir, 'css'), fresh));
+  app.use('/js', express.static(path.join(ledgerDir, 'js'), fresh));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
   return { app, db };
