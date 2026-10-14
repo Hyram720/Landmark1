@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'metro2.js', 'letters.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'metro2.js', 'letters.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -126,9 +126,32 @@ test('CROA status gates services until the window closes', () => {
 
 test('demo workspace builds and audits', () => {
   const ws = Sample.build();
-  assert.strictEqual(ws.clients.length, 3);
+  assert.strictEqual(ws.clients.length, 4);
+  assert.ok(ws.offers.length >= 10);
+  assert.strictEqual(ws.partnerReferrals.length, 4);
   const findings = ws.reports.filter(r => r.accounts.length).flatMap(r => Metro2.auditReport(r));
   assert.ok(findings.some(f => f.code === 'M2-CURRENT-PASTDUE'));
   assert.ok(findings.some(f => f.code === 'M2-DOFD-MISSING'));
   assert.ok(findings.some(f => f.code === 'FCRA-OBSOLETE'));
+});
+
+test('business-only clients are outside CROA gating; fundability scores', () => {
+  const biz = { kind: 'business', onboarding: {} };
+  assert.strictEqual(Store.croaStatus(biz).cleared, true);
+  assert.strictEqual(Store.croaStatus({ kind: 'both', onboarding: {} }).cleared, false);
+  assert.strictEqual(Business.fundability({ businessChecklist: { ein: '2026-01-01', duns: '2026-01-01' } }).done, 2);
+});
+
+test('partner catalog covers requested programs with sources', () => {
+  ['creditstrong', 'creditsesame', 'nav'].forEach(k => assert.ok(Partners.CATALOG.some(c => c.key === k), k));
+  Partners.CATALOG.filter(c => c.status !== 'free').forEach(c => assert.ok(c.sources.length, c.key + ' needs a source'));
+  assert.strictEqual(Partners.seedOffers().find(o => o.key === 'creditsesame').enabled, false);
+  const ws = Store.migrate({ version: 2, clients: [], offers: [] });
+  assert.ok(ws.offers.length >= 10, 'migration adds new catalog offers');
+});
+
+test('business correction letter', () => {
+  const r = Letters.build('business_correction', { client: { name: 'Avery Placeholder' }, recipient: { name: 'Dun & Bradstreet', address: 'x' }, items: [{ creditor: 'Uline', discrepancy: 'Payment reported 30 days late; paid on invoice terms.' }], today: 'x', business: { legalName: 'Example Bakery LLC', duns: '00-000-0000' } });
+  assert.ok(r.ok);
+  assert.match(r.text, /Example Bakery LLC/);
 });

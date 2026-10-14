@@ -17,7 +17,8 @@
         defaultFee: 'A flat fee of $__ per dispute letter prepared and mailed, billed only after the letter is mailed',
         mailTransitDays: 5
       },
-      clients: [], reports: [], disputes: [], letters: [], tasks: [], invoices: [], referrals: [], activity: []
+      clients: [], reports: [], disputes: [], letters: [], tasks: [], invoices: [], referrals: [], activity: [],
+      offers: root.Partners ? root.Partners.seedOffers() : [], partnerReferrals: [], signatures: [], messages: [], documents: []
     };
   }
 
@@ -27,7 +28,16 @@
   /** Accepts a v1 backup (ledger-workspace-backup) or a v2 workspace and returns a v2 workspace. */
   function migrate(data) {
     if (!data || typeof data !== 'object') throw new Error('Not a workspace backup.');
-    if (data.version === 2) return Object.assign(empty(), data, { settings: Object.assign(empty().settings, data.settings || {}) });
+    if (data.version === 2) {
+      const base = empty();
+      const seed = base.offers;
+      const ws = Object.assign(base, data, { settings: Object.assign(base.settings, data.settings || {}) });
+      // Add catalog offers introduced after this workspace was created.
+      const have = new Set((ws.offers || []).map(o => o.key));
+      ws.offers = (ws.offers || []).concat(seed.filter(o => !have.has(o.key)));
+      ['partnerReferrals', 'signatures', 'messages', 'documents'].forEach(k => { if (!Array.isArray(ws[k])) ws[k] = []; });
+      return ws;
+    }
     if (data.version !== 1) throw new Error('Unsupported backup version: ' + data.version);
     const ws = empty();
     ws.clients = (data.clients || []).map(c => {
@@ -82,11 +92,16 @@
     if (!state) state = empty();
     return state;
   }
+  // When `remote` is set (server mode) saves go to the API instead of this browser.
+  let remote = null;
+  function setRemote(r) { remote = r; }
   function save() {
-    try { root.localStorage && root.localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* storage full or blocked */ }
+    if (remote) remote.push(state);
+    else { try { root.localStorage && root.localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* storage full or blocked */ } }
     listeners.forEach(fn => fn(state));
   }
   function replace(ws) { state = ws; save(); }
+  function adopt(ws) { state = migrate(ws || empty()); }
   function log(text, clientId) { state.activity.unshift({ id: uid(), at: now(), text, clientId: clientId || null }); if (state.activity.length > 2000) state.activity.length = 2000; }
 
   const get = {
@@ -107,6 +122,7 @@
   function croaStatus(c, onDate) {
     const o = c.onboarding || {};
     const t = onDate || today();
+    const required = c.kind !== 'business';
     const deadline = o.contractSignedAt ? Law.croaCancelDeadline(o.contractSignedAt) : null;
     const steps = [
       { key: 'disclosureSignedAt', label: 'Rights disclosure acknowledged (§ 1679c)', done: !!o.disclosureSignedAt, date: o.disclosureSignedAt },
@@ -116,12 +132,12 @@
       { key: 'addressProofReceived', label: 'Proof of address received', done: !!o.addressProofReceived, date: o.addressProofReceived },
       { key: 'authorizationAt', label: 'Signed authorization to prepare disputes', done: !!o.authorizationAt, date: o.authorizationAt }
     ];
-    const required = steps.slice(0, 3);
+    const requiredSteps = steps.slice(0, 3);
     const disclosureOrder = !o.disclosureSignedAt || !o.contractSignedAt || o.disclosureSignedAt <= o.contractSignedAt;
     return {
       steps, deadline, cancelled: !!o.cancelledAt, disclosureOrder,
-      cleared: required.every(s => s.done) && disclosureOrder,
-      inWindow: !!deadline && t <= deadline && !o.cancelledAt,
+      required, cleared: !required || (requiredSteps.every(s => s.done) && disclosureOrder),
+      inWindow: required && !!deadline && t <= deadline && !o.cancelledAt,
       retainUntil: o.disclosureSignedAt ? Law.addDays(o.disclosureSignedAt, 730) : null
     };
   }
@@ -133,7 +149,7 @@
     return d.status;
   }
 
-  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; } };
+  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; } };
   root.Store = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

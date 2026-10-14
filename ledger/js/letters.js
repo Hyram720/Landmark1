@@ -89,6 +89,14 @@ ${items.map(itemBlock).join('\n\n')}
 
 I did not receive the written notice of reinsertion required within five business days. Please provide the furnisher’s certification of accuracy and the notice required by law, or delete the reinserted information.`,
 
+    business_correction: (c, items, ctx) => `Re: Request to correct business credit file${ctx.business && ctx.business.legalName ? ' — ' + ctx.business.legalName : ''}${ctx.business && ctx.business.duns ? ' (D-U-N-S ' + ctx.business.duns + ')' : ''}
+
+I am an authorized representative of ${ctx.business && ctx.business.legalName ? ctx.business.legalName : 'the business named above'}. The following information in our business credit file is inaccurate:
+
+${items.map(itemBlock).join('\n\n')}
+
+Supporting documents are enclosed. Please correct the file and confirm the update in writing.`,
+
     goodwill: (c, items) => `Re: Request for a goodwill adjustment
 
 I am writing about my account(s) listed below. I am not disputing the accuracy of this information. I am asking you to consider a courtesy adjustment of the late payment reporting in light of my payment history since then.

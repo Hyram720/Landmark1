@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Free Credit Consultation</title>
+  <meta name="description" content="Request a free consultation for personal or business credit.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    .hero { background: var(--side); color: #fff; padding: 56px 16px 96px; text-align: center; }
+    .hero h1 { font-size: clamp(26px, 5vw, 40px); max-width: 720px; margin: 0 auto 10px; }
+    .hero p { color: var(--side-ink); max-width: 620px; margin: 0 auto; font-size: 16px; }
+    .wrap { max-width: 720px; margin: -64px auto 48px; padding: 0 16px; }
+    .kinds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .kinds label { border: 1px solid var(--border-strong); border-radius: 10px; padding: 12px; cursor: pointer; display: block; }
+    .kinds input { margin-right: 6px; }
+    .kinds label:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    @media (max-width: 640px) { .kinds { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <section class="hero"><h1>Get clear on your credit — personal and business</h1><p>Tell us where you are and where you want to go. We’ll review your situation and explain your options in a free consultation.</p></section>
+  <div class="wrap">
+    <form class="card" id="intake"><div class="card-b stack">
+      <div><span class="small" style="font-weight:600">What do you need help with?</span>
+        <div class="kinds" style="margin-top:8px">
+          <label><input type="radio" name="kind" value="personal" checked>Personal credit</label>
+          <label><input type="radio" name="kind" value="business">Business credit</label>
+          <label><input type="radio" name="kind" value="both">Both</label>
+        </div></div>
+      <div class="form-grid">
+        <label class="field"><span>First name</span><input name="firstName" required autocomplete="given-name"></label>
+        <label class="field"><span>Last name</span><input name="lastName" required autocomplete="family-name"></label>
+        <label class="field"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>
+        <label class="field"><span>Phone</span><input name="phone" type="tel" autocomplete="tel"></label>
+        <label class="field"><span>State</span><input name="state" maxlength="2" placeholder="TX"></label>
+        <label class="field"><span>How did you hear about us?</span><input name="source"></label>
+      </div>
+      <div class="form-grid" id="biz" hidden>
+        <label class="field"><span>Business name</span><input name="businessName"></label>
+        <label class="field"><span>Entity type</span><select name="entityType"><option></option><option>LLC</option><option>S-Corp</option><option>C-Corp</option><option>Partnership</option><option>Sole proprietor</option></select></label>
+        <label class="field span2"><span>Business website</span><input name="businessWebsite"></label>
+      </div>
+      <label class="field"><span>Your goals</span><textarea name="goals" rows="3" placeholder="e.g. buy a home next year, qualify for an equipment loan…"></textarea></label>
+      <input name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
+      <label class="check small"><input type="checkbox" name="smsConsent"> You may text me about my request. Message and data rates may apply. Reply STOP to opt out.</label>
+      <label class="check small"><input type="checkbox" name="consent"> I agree to be contacted by email, phone or text about my request. Do not enter your Social Security number here.</label>
+      <div id="msg" class="small"></div>
+      <button class="btn primary" style="height:42px">Request my free consultation</button>
+      <p class="small muted">You have the right to dispute inaccurate information in your credit report with the credit bureaus directly, for free. No one can legally remove accurate, current and verifiable information. We never charge before services are performed.</p>
+    </div></form>
+  </div>
+  <script src="js/ui.js"></script>
+  <script>
+    (function () {
+      var f = document.getElementById('intake');
+      f.addEventListener('change', function () { document.getElementById('biz').hidden = f.elements.kind.value === 'personal'; });
+      f.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var d = UI.formData(f); d.kind = f.elements.kind.value; d.ref = new URLSearchParams(location.search).get('ref') || '';
+        var msg = document.getElementById('msg');
+        fetch('/api/intake', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) })
+          .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error); return j; }); })
+          .then(function () { f.innerHTML = '<div class="card-b"><h2>Thank you!</h2><p class="muted">We received your request and will contact you within one business day.</p></div>'; })
+          .catch(function (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message === 'Failed to fetch' || !err.message ? 'Preview only — this form submits when running on the Ledger server.' : err.message; });
+      });
+    })();
+  </script>
+</body>
+</html>

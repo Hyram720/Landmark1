@@ -9,12 +9,17 @@
     const d = n => Law.addDays(t, n);
     ws.settings.company = { name: 'Ledger Credit Advocates (demo)', address: '200 Example Plaza, Suite 4\nSpringfield, IL 62701', phone: '(555) 010-0100', email: 'help@example.test', website: 'example.test', state: 'IL', bondNumber: 'DEMO-BOND-0001', registration: 'DEMO-REG-0001' };
 
-    const c1 = { id: Store.uid(), name: 'Jordan Sample', firstName: 'Jordan', lastName: 'Sample', kind: 'personal', email: 'jordan@example.test', phone: '(555) 010-0101', address: '100 Example Street', city: 'Springfield', state: 'IL', zip: '62701', dob: '1988-04-12', ssnLast4: '0000', status: 'active', createdAt: d(-101) + 'T15:00:00Z', notes: 'Prefers email. Mortgage pre-approval target in Q1.', referralId: '',
+    const c1 = { id: Store.uid(), name: 'Jordan Sample', firstName: 'Jordan', lastName: 'Sample', kind: 'personal', email: 'jordan@example.test', phone: '(555) 010-0101', address: '100 Example Street', city: 'Springfield', state: 'IL', zip: '62701', dob: '1988-04-12', ssnLast4: '0000', status: 'active', addedBy: 'Owner', smsConsent: true, smsConsentAt: d(-100), createdAt: d(-101) + 'T15:00:00Z', notes: 'Prefers email. Mortgage pre-approval target in Q1.', referralId: '',
       onboarding: { disclosureSignedAt: d(-100), contractSignedAt: d(-100), idReceived: d(-99), addressProofReceived: d(-99), authorizationAt: d(-100) } };
-    const c2 = { id: Store.uid(), name: 'Riley Example', firstName: 'Riley', lastName: 'Example', kind: 'personal', email: 'riley@example.test', phone: '(555) 010-0102', address: '42 Placeholder Ave', city: 'Columbus', state: 'OH', zip: '43004', dob: '1979-09-30', ssnLast4: '1111', status: 'onboarding', createdAt: d(-1) + 'T15:00:00Z', notes: '', referralId: '',
+    const c2 = { id: Store.uid(), name: 'Riley Example', firstName: 'Riley', lastName: 'Example', kind: 'personal', email: 'riley@example.test', phone: '(555) 010-0102', address: '42 Placeholder Ave', city: 'Columbus', state: 'OH', zip: '43004', dob: '1979-09-30', ssnLast4: '1111', status: 'onboarding', addedBy: 'Website', createdAt: d(-1) + 'T15:00:00Z', notes: '', referralId: '',
       onboarding: { disclosureSignedAt: d(-1), contractSignedAt: d(-1) } };
-    const c3 = { id: Store.uid(), name: 'Casey Testcase', firstName: 'Casey', lastName: 'Testcase', kind: 'personal', email: 'casey@example.test', phone: '', address: '9 Fictional Rd', city: 'Austin', state: 'TX', zip: '73301', dob: '1992-02-02', ssnLast4: '2222', status: 'lead', createdAt: d(-3) + 'T15:00:00Z', notes: 'Consult booked.', referralId: '', onboarding: {} };
-    ws.clients.push(c1, c2, c3);
+    const c3 = { id: Store.uid(), name: 'Casey Testcase', firstName: 'Casey', lastName: 'Testcase', kind: 'personal', email: 'casey@example.test', phone: '', address: '9 Fictional Rd', city: 'Austin', state: 'TX', zip: '73301', dob: '1992-02-02', ssnLast4: '2222', status: 'lead', addedBy: 'Owner', createdAt: d(-3) + 'T15:00:00Z', notes: 'Consult booked.', referralId: '', onboarding: {} };
+    const c4 = { id: Store.uid(), name: 'Avery Placeholder', firstName: 'Avery', lastName: 'Placeholder', kind: 'business', email: 'avery@example-bakery.test', phone: '(555) 010-0104', address: '77 Demo Market St', city: 'Denver', state: 'CO', zip: '80202', dob: '', ssnLast4: '', status: 'active', addedBy: 'Owner', createdAt: d(-40) + 'T15:00:00Z', notes: 'Wants a $50k equipment line within 12 months.', referralId: '', onboarding: {},
+      business: { legalName: 'Example Bakery LLC', dba: 'Example Bakes', entityType: 'LLC', stateOfFormation: 'CO', formedOn: '2023-05-01', einLast4: '4321', naics: '311811', duns: '00-000-0000', phone: '(555) 010-0199', website: 'example-bakery.test' },
+      businessChecklist: { entity: d(-40), ein: d(-40), nameMatch: d(-30), address: d(-40), phone: d(-28), web: d(-40), bank: d(-40), duns: d(-21), naics: d(-21) },
+      businessScores: [{ id: Store.uid(), model: 'paydex', score: 72, date: d(-30), source: 'Nav' }, { id: Store.uid(), model: 'paydex', score: 80, date: d(-2), source: 'Nav' }, { id: Store.uid(), model: 'intelliscore', score: 54, date: d(-2), source: 'Nav' }],
+      vendorAccounts: [{ id: Store.uid(), vendor: 'Uline', category: 'Shipping & packaging', terms: 'Net 30', reportsTo: 'D&B (verify)', limit: 1000, opened: d(-35), status: 'current' }, { id: Store.uid(), vendor: 'Quill', category: 'Office supplies', terms: 'Net 30', reportsTo: 'D&B (verify)', limit: 500, opened: d(-33), status: 'current' }] };
+    ws.clients.push(c1, c2, c3, c4);
 
     const ref = { id: Store.uid(), name: 'Morgan Broker (demo)', email: 'morgan@example.test', company: 'Example Mortgage Co.', commission: 'Flat $25 per enrolled client', createdAt: d(-90) };
     ws.referrals.push(ref);
@@ -57,6 +62,13 @@
       createdAt: d(-80) + 'T12:00:00Z', sentAt: d(-79), receivedAt: d(-74), dueAt: d(-44), tracking: '', outcome: 'corrected', respondedAt: d(-50), notes: 'Furnisher updated to $0 with two of three bureaus.' };
     ws.disputes.push(disp2);
 
+    const offer = k => (ws.offers.find(o => o.key === k) || {}).id;
+    ws.partnerReferrals.push(
+      { id: Store.uid(), clientId: c1.id, offerId: offer('creditstrong'), status: 'signed_up', recommendedAt: d(-30), convertedAt: d(-27), clicks: 2, payout: '', note: 'Adds an installment account with on-time history while disputes are in progress.' },
+      { id: Store.uid(), clientId: c1.id, offerId: offer('experian-boost'), status: 'recommended', recommendedAt: d(-30), clicks: 0, payout: '', note: 'Free — counts your phone and utility payments on Experian.' },
+      { id: Store.uid(), clientId: c4.id, offerId: offer('nav'), status: 'paid', recommendedAt: d(-38), convertedAt: d(-36), paidAt: d(-5), clicks: 1, payout: 40, note: 'Monitor D&B, Experian and Equifax business files in one place.' },
+      { id: Store.uid(), clientId: c4.id, offerId: offer('creditstrong-business'), status: 'clicked', recommendedAt: d(-20), clicks: 1, payout: '', note: 'Builds an additional reporting business tradeline.' }
+    );
     ws.tasks.push(
       { id: Store.uid(), clientId: c1.id, title: 'Request Equifax report refresh after round 1', due: d(3), done: false, createdAt: Store.now() },
       { id: Store.uid(), clientId: c2.id, title: 'Collect photo ID and proof of address', due: d(2), done: false, createdAt: Store.now() },

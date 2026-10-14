@@ -246,3 +246,5 @@ pre.doc { white-space: pre-wrap; font: 13px/1.65 var(--font); background: var(--
   .shell { display: block; }
   body { background: #fff; }
 }
+
+td.actions .btn { padding: 0 8px; margin-right: 3px; }

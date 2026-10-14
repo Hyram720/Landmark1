@@ -41,6 +41,7 @@
       if (['lead', 'cancelled', 'completed'].includes(c.status)) return;
       const cs = Store.croaStatus(c);
       const link = `#/clients/${c.id}/compliance`;
+      if (!cs.required) return;
       if (!c.onboarding || !c.onboarding.disclosureSignedAt) out.push({ sev: 'high', text: `${c.name}: rights disclosure (§ 1679c) not recorded`, link });
       if (!cs.disclosureOrder) out.push({ sev: 'high', text: `${c.name}: disclosure was acknowledged after the contract was signed`, link });
       if (cs.inWindow) out.push({ sev: 'low', text: `${c.name}: cancellation period open until ${date(cs.deadline)} — no services or billing yet`, link });
@@ -140,32 +141,40 @@
   // ---------- Clients ----------
   function clients(params) {
     const filter = params.q || 'all';
-    const list = S().clients.filter(c => filter === 'all' || c.status === filter).sort((a, b) => a.name.localeCompare(b.name));
+    const kindF = params.kind || '';
+    const list = S().clients.filter(c => (filter === 'all' || c.status === filter) && (!kindF || c.kind === kindF || (kindF !== 'personal' && c.kind === 'both'))).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const tabs = ['all', 'lead', 'onboarding', 'active', 'paused', 'completed', 'cancelled'];
-    return head('Clients', `${S().clients.length} total`, `<button class="btn" data-act="import-client-csv">${icon('upload')} Import</button><button class="btn primary" data-act="new-client">${icon('plus')} New client</button>`) +
-      `<div class="tabs">${tabs.map(tb => `<a href="#/clients?q=${tb}" class="${tb === filter ? 'active' : ''}">${tb === 'all' ? 'All' : UI.CSTATE[tb][0]} <span class="muted">${tb === 'all' ? S().clients.length : S().clients.filter(c => c.status === tb).length}</span></a>`).join('')}</div>` +
-      card('', list.length ? `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Status</th><th>CROA onboarding</th><th class="num">Findings</th><th class="num">Open disputes</th><th>Latest scores</th><th>Added</th></tr></thead><tbody>
+    const btn = (act, id, label, cls, title) => `<button class="btn sm ${cls || ''}" data-act="${act}" data-id="${id}" title="${title || label}">${label}</button>`;
+    return head('Clients', `${S().clients.length} profiles · ${S().clients.filter(c => c.kind !== 'personal').length} with business credit`,
+      `<button class="btn" data-act="onboarding-link">${icon('mail')} Client onboarding link</button><button class="btn" data-act="import-client-csv">${icon('upload')} Import</button><button class="btn primary" data-act="new-client">${icon('plus')} Add profile</button>`) +
+      `<div class="tabs">${tabs.map(tb => `<a href="#/clients?q=${tb}${kindF ? '&kind=' + kindF : ''}" class="${tb === filter ? 'active' : ''}">${tb === 'all' ? 'All' : UI.CSTATE[tb][0]} <span class="muted">${tb === 'all' ? S().clients.length : S().clients.filter(c => c.status === tb).length}</span></a>`).join('')}
+        <span style="margin-left:auto" class="row">${[['', 'All types'], ['personal', 'Personal'], ['business', 'Business']].map(([k, l]) => `<a href="#/clients?q=${filter}${k ? '&kind=' + k : ''}" class="${k === kindF ? 'active' : ''}">${l}</a>`).join('')}</span></div>` +
+      `<div class="row" id="bulk-bar" style="margin-bottom:10px;display:none"><b class="small" id="bulk-count"></b><button class="btn sm" data-act="bulk-email">${icon('mail')} Email selected</button><button class="btn sm" data-act="bulk-export">${icon('download')} Export selected</button><button class="btn sm" data-act="bulk-task">${icon('plus')} Task for selected</button></div>` +
+      card('', list.length ? `<div class="table-wrap"><table><thead><tr><th style="width:34px"><input type="checkbox" data-act="select-all" title="Select all"></th><th>Full name</th><th>Status</th><th>Added by</th><th>Email</th><th>Date added</th><th>CROA</th><th class="num" title="Metro 2 findings">Issues</th><th>Actions</th></tr></thead><tbody>
         ${list.map(c => {
           const cs = Store.croaStatus(c);
-          const f = clientFindings(c.id).filter(x => x.severity !== 'low').length;
-          const od = openDisputes().filter(d => d.clientId === c.id).length;
-          const scores = Store.get.latestByBureau(c.id).map(r => r.scores && r.scores[r.bureau] ? `${r.bureau[0]}${r.bureau === 'TransUnion' ? 'U' : r.bureau === 'Equifax' ? 'Q' : 'X'} ${r.scores[r.bureau]}` : '').filter(Boolean).join(' · ');
-          return `<tr class="click" data-href="#/clients/${c.id}"><td><b>${esc(c.name)}</b><div class="small muted">${esc(c.email || c.phone || '')}</div></td><td>${cBadge(c.status)}</td>
-            <td>${cs.cancelled ? '<span class="badge b-high">Cancelled</span>' : cs.cleared ? '<span class="badge b-ok">Cleared</span>' : cs.inWindow ? `<span class="badge b-info">Window to ${date(cs.deadline)}</span>` : `<span class="badge b-low">${cs.steps.filter(x => x.done).length}/6 steps</span>`}</td>
-            <td class="num">${f || '<span class="muted">0</span>'}</td><td class="num">${od || '<span class="muted">0</span>'}</td><td class="small">${scores || '<span class="muted">—</span>'}</td><td class="small muted nowrap">${date(c.createdAt)}</td></tr>`;
-        }).join('')}</tbody></table></div>` : empty('No clients here', 'Add a client to start onboarding.', `<button class="btn primary" data-act="new-client" style="margin-top:8px">${icon('plus')} New client</button>`), { flush: true });
+          const f = c.kind === 'business' ? 0 : clientFindings(c.id).filter(x => x.severity !== 'low').length;
+          const docs = (S().documents || []).filter(d => d.clientId === c.id).length;
+          return `<tr class="click" data-href="#/clients/${c.id}"><td><input type="checkbox" class="pick" value="${c.id}"></td>
+            <td class="nowrap"><b>${esc(c.name)}</b>${c.kind !== 'personal' ? '<br>' + kindBadge(c.kind) : ''}<div class="small muted">${esc((c.business && c.business.legalName) || '')}</div></td><td>${cBadge(c.status)}</td>
+            <td class="small">${esc(c.addedBy || (c.notes && c.notes.includes('Heard about us') ? 'Website' : '—'))}</td><td class="small" style="word-break:break-all;min-width:140px">${esc(c.email || '—')}</td><td class="small muted nowrap">${date(c.createdAt)}</td>
+            <td>${!cs.required ? '<span class="badge b-low plain">N/A</span>' : cs.cancelled ? '<span class="badge b-high">Cancelled</span>' : cs.cleared ? '<span class="badge b-ok">Cleared</span>' : cs.inWindow ? `<span class="badge b-info">Until ${date(cs.deadline)}</span>` : `<span class="badge b-low">${cs.steps.filter(x => x.done).length}/6</span>`}</td>
+            <td class="num">${f || '<span class="muted">0</span>'}</td>
+            <td class="nowrap actions">${btn('message', c.id, 'SMS', '', 'Text message')}${btn('message-email', c.id, 'Email')}${btn('edit-client', c.id, '✎', '', 'Edit profile')}${btn('docs', c.id, '📄' + (docs ? ' ' + docs : ''), '', 'Documents')}${btn('upload-report', c.id, icon('upload') + ' Report', 'primary', 'Upload credit report')}</td></tr>`;
+        }).join('')}</tbody></table></div>` : empty('No clients here', 'Share your onboarding link or add a profile.', `<button class="btn primary" data-act="new-client" style="margin-top:8px">${icon('plus')} Add profile</button>`), { flush: true });
   }
 
   function client(params) {
     const c = Store.get.client(params.id);
     if (!c) return empty('Client not found', '<a href="#/clients">Back to clients</a>');
     const tab = params.tab || 'overview';
-    const tabs = [['overview', 'Overview'], ['reports', 'Credit reports'], ['audit', 'Metro 2 audit'], ['disputes', 'Disputes'], ['billing', 'Billing'], ['compliance', 'Agreements'], ['activity', 'Activity']];
+    const tabs = [['overview', 'Overview']].concat(c.kind !== 'personal' ? [['business', 'Business credit']] : [], c.kind !== 'business' ? [['reports', 'Credit reports'], ['audit', 'Metro 2 audit']] : [],
+      [['disputes', 'Disputes'], ['documents', 'Documents'], ['messages', 'Messages'], ['partners', 'Recommendations'], ['billing', 'Billing'], ['compliance', 'Agreements'], ['activity', 'Activity']]);
     const cs = Store.croaStatus(c);
     const nFind = clientFindings(c.id).filter(f => f.severity !== 'low').length;
-    const body = { overview: clientOverview, reports: clientReports, audit: clientAudit, disputes: clientDisputes, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab](c, cs);
-    return head(`${esc(c.name)} ${cBadge(c.status)}`, [c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
-      `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button><button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="add-report" data-id="${c.id}">${icon('plus')} Add report</button>`,
+    const body = ({ overview: clientOverview, business: clientBusiness, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs);
+    return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
+      `${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button><button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="add-report" data-id="${c.id}">${icon('plus')} Add report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
       (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>Cancellation period open until midnight ${date(cs.deadline)}</b>No services may be performed and no fees collected until it ends (15 U.S.C. §§ 1679d(a)(2), 1679e).</div>` : '') +
       `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/clients/${c.id}/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'audit' && nFind ? ` <span class="badge b-high plain">${nFind}</span>` : ''}</a>`).join('')}</div>` + body;
@@ -189,8 +198,9 @@
     const wins = ds.filter(d => ['deleted', 'corrected', 'blocked'].includes(d.outcome)).length;
     const tasks = S().tasks.filter(x => x.clientId === c.id && !x.done);
     const ref = c.referralId && S().referrals.find(r => r.id === c.referralId);
-    return scoreCards(c) + `<div class="grid g-main" style="margin-top:16px"><div class="stack">
-      ${card('Onboarding (CROA)', `<ul class="steps">${cs.steps.map(s => `<li><span class="tick ${s.done ? 'on' : ''}">${s.done ? '✓' : ''}</span><div class="grow">${esc(s.label)}<div class="small muted">${s.date ? date(s.date) : 'Not recorded'}</div></div></li>`).join('')}</ul>`, { actions: `<a class="btn sm" href="#/clients/${c.id}/compliance">Manage</a>` })}
+    return (c.kind === 'business' ? '' : scoreCards(c)) + `<div class="grid g-main" style="${c.kind === 'business' ? '' : 'margin-top:16px'}"><div class="stack">
+      ${!cs.required ? card('Business credit progress', (() => { const fz = root.Business.fundability(c); return `<div class="row between"><div><div class="muted small">Fundability foundation</div><div class="score">${fz.pct}%</div></div><a class="btn sm" href="#/clients/${c.id}/business">Open business credit</a></div><div class="bar" style="margin-top:10px"><i style="width:${fz.pct}%"></i></div><p class="small muted" style="margin-top:10px">Business-only services fall outside CROA. If you also work on the owner’s personal credit, change the client type to “Personal + business”.</p>`; })()) : ''}
+      ${cs.required ? card('Onboarding (CROA)', `<ul class="steps">${cs.steps.map(s => `<li><span class="tick ${s.done ? 'on' : ''}">${s.done ? '✓' : ''}</span><div class="grow">${esc(s.label)}<div class="small muted">${s.date ? date(s.date) : 'Not recorded'}</div></div></li>`).join('')}</ul>`, { actions: `<a class="btn sm" href="#/clients/${c.id}/compliance">Manage</a>` }) : ''}
       ${card('Dispute summary', `<div class="grid g3"><div><div class="muted small">Disputes</div><div class="score">${ds.length}</div></div><div><div class="muted small">Items disputed</div><div class="score">${items}</div></div><div><div class="muted small">Corrected / deleted</div><div class="score" style="color:var(--ok)">${wins}</div></div></div>`, { actions: `<a class="btn sm" href="#/clients/${c.id}/audit">Run audit</a>` })}
     </div><div class="stack">
       ${card('Profile', `<div class="small stack" style="--gap:6px">
@@ -278,6 +288,20 @@
     </div></div>`;
   }
 
+  const DOC_LABEL = { report: 'Credit report', id: 'Photo ID', address: 'Proof of address', 'bureau-response': 'Bureau response', agreement: 'Signed agreement', other: 'Other' };
+  function clientDocuments(c) {
+    const docs = (S().documents || []).filter(d => d.clientId === c.id);
+    const sigs = (S().signatures || []).filter(x => x.clientId === c.id);
+    return `<div class="grid g-main"><div>${card('Documents', docs.length ? `<ul class="list">${docs.map(d => `<li><div class="grow"><b>${esc(d.name)}</b><div class="meta">${esc(DOC_LABEL[d.type] || d.type)} · ${Math.max(1, Math.round(d.size / 1024))} KB · ${date(d.uploadedAt)} · by ${esc(d.uploadedBy || '')}</div></div>${Store.remote ? `<a class="btn sm" href="/api/files/${d.id}">${icon('download')} Download</a>` : ''}</li>`).join('')}</ul>` : empty('No documents yet', Store.remote ? 'Upload credit reports, ID, proof of address and bureau responses. Clients can also upload from their portal.' : 'File uploads are stored on the Ledger server. Run it with npm run ledger.'),
+      { flush: true, actions: `<button class="btn sm primary" data-act="upload-doc" data-id="${c.id}">${icon('upload')} Upload</button>` })}</div>
+      <div>${card('E-signatures', sigs.length ? `<ul class="list">${sigs.map(x => `<li><div class="grow"><b>${x.doc === 'disclosure' ? 'Rights disclosure' : 'Services agreement'}</b><div class="meta">Signed “${esc(x.typedName)}” · ${date(x.at)} ${new Date(x.at).toLocaleTimeString()} · IP ${esc(x.ip)}</div><div class="meta mono">SHA-256 ${esc(x.documentSha256.slice(0, 16))}…</div></div></li>`).join('')}</ul>` : empty('No e-signatures', 'Invite the client to the portal to sign electronically.'), { flush: true })}</div></div>`;
+  }
+  function clientMessages(c) {
+    const msgs = (S().messages || []).filter(m => m.clientId === c.id);
+    return card('Communication log', msgs.length ? `<ul class="list">${msgs.map(m => `<li><span class="badge ${m.channel === 'sms' ? 'b-info' : 'b-accent'} plain">${m.channel === 'sms' ? 'SMS' : 'Email'}</span><div class="grow">${m.subject ? `<b>${esc(m.subject)}</b><br>` : ''}<span class="small" style="white-space:pre-wrap">${esc(m.body)}</span><div class="meta">${date(m.at)} · ${esc(m.status === 'sent' ? 'sent by server' : 'opened in your ' + (m.channel === 'sms' ? 'messaging' : 'email') + ' app')} · ${esc(m.by || '')}</div></div></li>`).join('')}</ul>` : empty('No messages yet', 'Send updates by SMS or email. Every message is logged here.'),
+      { flush: true, sub: c.smsConsent ? 'SMS consent on file' : 'No SMS consent recorded', actions: `<button class="btn sm" data-act="message" data-id="${c.id}">SMS</button><button class="btn sm primary" data-act="message-email" data-id="${c.id}">Email</button>` });
+  }
+
   function clientActivity(c) {
     const acts = S().activity.filter(a => a.clientId === c.id);
     return card('Activity', acts.length ? `<ul class="list">${acts.map(a => `<li><div class="grow">${esc(a.text)}</div><div class="meta nowrap">${date(a.at)}</div></li>`).join('')}</ul>` : empty('No activity yet', ''), { flush: true });
@@ -289,7 +313,7 @@
     const all = S().disputes.filter(d => !cid || d.clientId === cid);
     const cols = [['draft', 'Draft'], ['ready', 'Approved'], ['sent', 'Awaiting response'], ['overdue', 'Overdue'], ['done', 'Resolved']];
     const bucket = d => { const st = Store.disputeState(d); return d.outcome || st === 'closed' ? 'done' : st; };
-    return head('Disputes', 'Every dispute, round and statutory deadline in one pipeline', `<select data-act="filter-client" style="width:auto"><option value="">All clients</option>${S().clients.map(c => `<option value="${c.id}" ${c.id === cid ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button class="btn primary" data-act="new-dispute">${icon('plus')} New dispute</button>`) +
+    return head('Disputes', 'Every dispute, round and statutory deadline in one pipeline', `<select data-act="filter-client" style="width:auto"><option value="">All clients</option>${S().clients.map(c => `<option value="${c.id}" ${c.id === cid ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button class="btn" data-act="mail-room">${icon('print')} Send round (${all.filter(d => d.status === 'ready').length} ready)</button><button class="btn primary" data-act="new-dispute">${icon('plus')} New dispute</button>`) +
       `<div class="board">${cols.map(([k, l]) => { const items = all.filter(d => bucket(d) === k); return `<div class="col"><h3>${l}<span>${items.length}</span></h3>${items.map(d => `<a class="ticket" href="#/disputes/${d.id}"><div class="row between"><b>${esc(d.recipient)}</b>${k === 'done' ? dBadge(d.outcome || 'closed') : `<span class="small muted">R${d.round}</span>`}</div><div class="meta">${clientName(d.clientId)} · ${esc(Law.DISPUTE_TYPES[d.type].label)}</div><div class="meta">${d.items.length} item(s)${d.dueAt && !d.outcome ? ' · due ' + date(d.dueAt) : ''}</div></a>`).join('') || '<div class="small muted" style="padding:8px">—</div>'}</div>`; }).join('')}</div>`;
   }
 
@@ -364,8 +388,8 @@
     const co = s.settings.company;
     const al = alerts();
     const program = [
-      ['Separate rights disclosure before contract (§ 1679c)', s.clients.filter(c => c.status !== 'lead').every(c => c.onboarding && c.onboarding.disclosureSignedAt)],
-      ['Written contract with terms, total cost, timing and cancellation form (§ 1679d, § 1679e)', s.clients.filter(c => c.status !== 'lead').every(c => c.onboarding && c.onboarding.contractSignedAt)],
+      ['Separate rights disclosure before contract (§ 1679c)', s.clients.filter(c => c.status !== 'lead' && c.kind !== 'business').every(c => c.onboarding && c.onboarding.disclosureSignedAt)],
+      ['Written contract with terms, total cost, timing and cancellation form (§ 1679d, § 1679e)', s.clients.filter(c => c.status !== 'lead' && c.kind !== 'business').every(c => c.onboarding && c.onboarding.contractSignedAt)],
       ['No fees before services are fully performed (§ 1679b(b))', !al.some(a => a.text.includes('1679b'))],
       ['No services during the 3-business-day cancellation period (§ 1679d(a)(2))', !al.some(a => a.text.includes('before onboarding'))],
       ['Company details on file for documents', !!(co.name && co.address)],
@@ -375,7 +399,7 @@
       `<div class="grid g-main"><div class="stack">
         ${card('Open alerts', al.length ? `<ul class="list">${al.map(a => `<li><span class="dot" style="background:var(--${a.sev === 'high' ? 'high' : a.sev === 'medium' ? 'med' : 'low'})"></span><div class="grow"><a href="${a.link}">${esc(a.text)}</a></div>${sevBadge(a.sev)}</li>`).join('')}</ul>` : `<div class="callout good" style="margin:16px"><b>No open alerts</b></div>`, { flush: true })}
         ${card('Letter & marketing checker', `<p class="small muted">Paste any letter, ad, script or web copy. Ledger flags claims that are deceptive under CROA § 1679b(a) or the FTC Act.</p><textarea id="lint-in" rows="6" placeholder="e.g. We guarantee to remove all negative items in 30 days…"></textarea><div class="row" style="margin-top:10px"><button class="btn primary" data-act="lint">Check text</button></div><div id="lint-out" style="margin-top:12px"></div>`)}
-        ${card('Client agreement status', `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Disclosure</th><th>Contract</th><th>Cancel deadline</th><th>Retain records until</th></tr></thead><tbody>${s.clients.filter(c => c.status !== 'lead').map(c => { const cs = Store.croaStatus(c); const o = c.onboarding || {}; return `<tr class="click" data-href="#/clients/${c.id}/compliance"><td>${esc(c.name)}</td><td>${o.disclosureSignedAt ? date(o.disclosureSignedAt) : '<span class="badge b-high">Missing</span>'}</td><td>${o.contractSignedAt ? date(o.contractSignedAt) : '<span class="badge b-high">Missing</span>'}</td><td>${cs.deadline ? date(cs.deadline) : '—'}</td><td>${cs.retainUntil ? date(cs.retainUntil) : '—'}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">No enrolled clients</td></tr>'}</tbody></table></div>`, { flush: true })}
+        ${card('Client agreement status', `<div class="table-wrap"><table><thead><tr><th>Client</th><th>Disclosure</th><th>Contract</th><th>Cancel deadline</th><th>Retain records until</th></tr></thead><tbody>${s.clients.filter(c => c.status !== 'lead' && c.kind !== 'business').map(c => { const cs = Store.croaStatus(c); const o = c.onboarding || {}; return `<tr class="click" data-href="#/clients/${c.id}/compliance"><td>${esc(c.name)}</td><td>${o.disclosureSignedAt ? date(o.disclosureSignedAt) : '<span class="badge b-high">Missing</span>'}</td><td>${o.contractSignedAt ? date(o.contractSignedAt) : '<span class="badge b-high">Missing</span>'}</td><td>${cs.deadline ? date(cs.deadline) : '—'}</td><td>${cs.retainUntil ? date(cs.retainUntil) : '—'}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">No enrolled clients</td></tr>'}</tbody></table></div>`, { flush: true })}
       </div><div class="stack">
         ${card('Program checklist', `<ul class="steps">${program.map(([l, ok]) => `<li><span class="tick ${ok ? 'on' : ''}">${ok ? '✓' : ''}</span><div class="grow small">${esc(l)}</div></li>`).join('')}</ul>`)}
         ${card('Standing rules', `<ul class="small" style="padding-left:18px;margin:0">
@@ -430,10 +454,83 @@
     return head('Library', 'Reference material used by the audit engine and letter builder') + `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/library?tab=${k}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</div>` + body;
   }
 
+  // ---------- Business credit ----------
+  const KIND = { personal: ['Personal', 'b-low'], business: ['Business', 'b-info'], both: ['Personal + business', 'b-accent'] };
+  const kindBadge = k => { const [l, c] = KIND[k] || KIND.personal; return `<span class="badge ${c} plain">${l}</span>`; };
+
+  function clientBusiness(c) {
+    const B = root.Business;
+    const b = c.business || {};
+    const fz = B.fundability(c);
+    const done = c.businessChecklist || {};
+    const scores = (c.businessScores || []).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)));
+    const latest = {};
+    scores.forEach(s => { if (!latest[s.model]) latest[s.model] = s; });
+    const vendors = c.vendorAccounts || [];
+    return `<div class="grid g4" style="margin-bottom:16px">
+      ${kpi('Fundability foundation', fz.pct + '%', `${fz.done} of ${fz.total} items in place`)}
+      ${B.SCORE_MODELS.filter(m => ['paydex', 'intelliscore', 'eqx-payment'].includes(m.key)).map(m => { const s = latest[m.key]; return kpi(m.bureau + ' · ' + m.name, s ? s.score : '—', s ? `as of ${date(s.date)} · ${m.lowerIsBetter ? (s.score <= m.good ? 'strong' : 'needs work') : (s.score >= m.good ? 'strong' : 'needs work')}` : `Range ${m.min}–${m.max}`); }).join('')}
+    </div>
+    <div class="grid g-main"><div class="stack">
+      ${card('Fundability checklist', `<form data-form="biz-checklist" data-id="${c.id}"><ul class="steps">${B.FOUNDATION.map(f => `<li><input type="checkbox" name="${f.key}" ${done[f.key] ? 'checked' : ''} style="margin-top:3px"><div class="grow"><b style="font-weight:550">${esc(f.label)}</b><div class="small muted">${esc(f.why)}${done[f.key] ? ' · done ' + date(done[f.key]) : ''}</div></div></li>`).join('')}</ul><div class="row" style="margin-top:8px"><button class="btn primary">Save checklist</button><div class="bar" style="flex:1;max-width:260px"><i style="width:${fz.pct}%"></i></div></div></form>`, { sub: 'What lenders and business bureaus check before extending credit' })}
+      ${card('Vendor & credit tradelines', vendors.length ? `<div class="table-wrap"><table><thead><tr><th>Account</th><th>Terms</th><th>Reports to</th><th class="num">Limit</th><th>Opened</th><th>Status</th><th></th></tr></thead><tbody>${vendors.map(v => `<tr><td><b>${esc(v.vendor)}</b><div class="small muted">${esc(v.category || '')}</div></td><td class="small">${esc(v.terms || '')}</td><td class="small">${esc(v.reportsTo || '')}</td><td class="num">${money(v.limit)}</td><td class="small nowrap">${date(v.opened)}</td><td><span class="badge ${v.status === 'current' ? 'b-ok' : v.status === 'late' ? 'b-high' : 'b-low'}">${esc(v.status || 'applied')}</span></td><td class="right"><button class="btn sm ghost" data-act="edit-vendor" data-id="${c.id}" data-vid="${v.id}">Edit</button></td></tr>`).join('')}</tbody></table></div>` : empty('No tradelines yet', 'Track net-30 vendors and business cards as they start reporting.'),
+        { flush: true, actions: `<button class="btn sm" data-act="edit-vendor" data-id="${c.id}">${icon('plus')} Account</button>` })}
+      ${card('Starter vendors', `<p class="small muted" style="margin-bottom:10px">Reporting practices change. Confirm with the vendor that it reports, and to which bureau, before counting on it.</p><div class="table-wrap"><table><tbody>${B.STARTER_VENDORS.map((v, i) => `<tr><td><b>${esc(v.vendor)}</b><div class="small muted">${esc(v.category)} · ${esc(v.terms)}</div></td><td class="small">${esc(v.reportsTo)}</td><td class="right"><button class="btn sm" data-act="add-starter-vendor" data-id="${c.id}" data-i="${i}">Track</button></td></tr>`).join('')}</tbody></table></div>`, { flush: false })}
+    </div><div class="stack">
+      ${card('Business profile', `<div class="small stack">${[['Legal name', b.legalName], ['DBA', b.dba], ['Entity', b.entityType], ['State of formation', b.stateOfFormation], ['Formed', b.formedOn ? date(b.formedOn) : ''], ['EIN', b.einLast4 ? '••-•••' + esc(b.einLast4) : ''], ['NAICS', b.naics], ['D-U-N-S', b.duns], ['Business phone', b.phone], ['Website', b.website]].map(([l, v]) => `<div class="row between"><span class="muted">${l}</span><span>${v ? esc(v) : '—'}</span></div>`).join('')}</div>`, { actions: `<button class="btn sm" data-act="edit-client" data-id="${c.id}">Edit</button>` })}
+      ${card('Business scores', scores.length ? `<ul class="list">${scores.map(s => { const m = B.SCORE_MODELS.find(x => x.key === s.model) || {}; return `<li><div class="grow"><b>${esc(m.bureau || '')} ${esc(m.name || s.model)}</b><div class="meta">${date(s.date)}${s.source ? ' · ' + esc(s.source) : ''}</div></div><div class="score" style="font-size:20px">${esc(s.score)}</div></li>`; }).join('')}</ul>` : empty('No scores recorded', 'Pull business reports from Nav or the bureaus and log scores here.'), { flush: true, actions: `<button class="btn sm" data-act="add-biz-score" data-id="${c.id}">${icon('plus')} Score</button>` })}
+      ${card('Correcting business files', `<p class="small">Business credit is not covered by the FCRA, so business bureaus take corrections through their own processes:</p><ul class="small" style="padding-left:18px;margin:6px 0">${Object.entries(B.BUREAU_CONTACTS).map(([k, v]) => `<li><b>${esc(k)}</b> — ${esc(v)}</li>`).join('')}</ul><button class="btn sm" data-act="new-dispute" data-client="${c.id}" data-type="business_correction">Draft correction request</button>`)}
+      ${card('Score guide', `<ul class="small" style="padding-left:18px;margin:0">${B.SCORE_MODELS.map(m => `<li><b>${esc(m.name)}</b> (${esc(m.bureau)}, ${m.min}–${m.max}): ${esc(m.note)}</li>`).join('')}</ul>`)}
+    </div></div>`;
+  }
+
+  // ---------- Partner recommendations ----------
+  const stageLabel = k => (root.Partners.REFERRAL_STAGES.find(s => s[0] === k) || [k, k])[1];
+  const offerStatus = st => { const [l, c] = root.Partners.STATUS_LABEL[st] || [st, 'b-low']; return `<span class="badge ${c}">${esc(l)}</span>`; };
+  const trackedLink = r => (Store.remote ? location.origin : '') + '/go/' + r.id;
+  function referralRows(list, showClient) {
+    if (!list.length) return empty('No recommendations yet', 'Recommend a credit-builder or monitoring service that fits the client’s goals.');
+    return `<div class="table-wrap"><table><thead><tr>${showClient ? '<th>Client</th>' : ''}<th>Offer</th><th>Stage</th><th>Recommended</th><th class="num">Clicks</th><th class="num">Commission</th><th></th></tr></thead><tbody>${list.map(r => {
+      const o = S().offers.find(x => x.id === r.offerId) || {};
+      return `<tr>${showClient ? `<td>${clientName(r.clientId)}</td>` : ''}<td><b>${esc(o.name || 'Removed offer')}</b><div class="small muted">${esc(o.category || '')}</div></td>
+        <td><select data-act="ref-stage" data-id="${r.id}" style="width:auto;padding:4px 8px">${root.Partners.REFERRAL_STAGES.map(([k, l]) => `<option value="${k}" ${k === r.status ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+        <td class="small nowrap">${date(r.recommendedAt)}</td><td class="num">${r.clicks || 0}</td><td class="num">${r.payout ? money(r.payout) : '—'}</td>
+        <td class="right nowrap"><button class="btn sm ghost" data-act="copy-ref-link" data-id="${r.id}" title="Copy tracked link">Copy link</button><button class="btn sm ghost" data-act="edit-ref" data-id="${r.id}">Edit</button></td></tr>`;
+    }).join('')}</tbody></table></div>`;
+  }
+  function clientPartners(c) {
+    const list = (S().partnerReferrals || []).filter(r => r.clientId === c.id);
+    return `<div class="callout" style="margin-bottom:16px"><b>Recommend on merit</b>Only suggest products that help this client's goals, and tell the client you may be paid a referral fee. Products are always optional. Recommendations appear in the client portal with a disclosure.</div>` +
+      card('Recommendations', referralRows(list, false), { flush: true, actions: `<button class="btn sm primary" data-act="new-ref" data-client="${c.id}">${icon('plus')} Recommend</button>` });
+  }
+  function partners() {
+    const s = S();
+    const refs = s.partnerReferrals || [];
+    const earned = refs.filter(r => ['approved', 'paid'].includes(r.status)).reduce((a, r) => a + Number(r.payout || 0), 0);
+    const paid = refs.filter(r => r.status === 'paid').reduce((a, r) => a + Number(r.payout || 0), 0);
+    const clicks = refs.reduce((a, r) => a + (r.clicks || 0), 0) + s.offers.reduce((a, o) => a + (o.clicks || 0), 0);
+    return head('Partner offers', 'Credit-builder, monitoring and business-credit programs you can refer clients to', `<button class="btn" data-act="new-offer">${icon('plus')} Custom offer</button><button class="btn primary" data-act="new-ref">${icon('plus')} Recommend to client</button>`) +
+      `<div class="grid g4" style="margin-bottom:16px">${kpi('Recommendations', refs.length, `${refs.filter(r => r.status === 'signed_up' || r.status === 'approved' || r.status === 'paid').length} signed up`)}${kpi('Link clicks', clicks)}${kpi('Commissions earned', money(earned), 'approved + paid')}${kpi('Paid out', money(paid))}</div>
+      <div class="callout warn" style="margin-bottom:16px"><b>Check terms before promoting</b>Affiliate payouts change often and third-party listings disagree. Each offer shows how well its terms were confirmed as of the research date. Paste your own affiliate link from each program's dashboard. Tracked links (<span class="mono">/go/…</span>) count clicks, then redirect.</div>
+      <div class="grid g2">${s.offers.map(o => card(`${esc(o.name)} ${kindBadge(o.audience === 'business' ? 'business' : 'personal')}`, `
+        <div class="row between small" style="margin-bottom:6px"><span class="muted">${esc(o.category)}</span>${offerStatus(o.status)}</div>
+        <div class="grid g2 small" style="gap:6px 16px;margin-bottom:10px"><div><span class="muted">Program</span><br>${esc(o.program)}</div><div><span class="muted">Referral bonus</span><br><b>${esc(o.bonus)}</b></div><div><span class="muted">Cookie</span><br>${esc(o.cookie)}</div><div><span class="muted">Clicks</span><br>${(o.clicks || 0) + refs.filter(r => r.offerId === o.id).reduce((a, r) => a + (r.clicks || 0), 0)}</div></div>
+        <p class="small">${esc(o.note || '')}</p>
+        <form data-form="offer" data-id="${o.id}" class="row" style="margin-top:8px;flex-wrap:nowrap"><input name="affiliateUrl" value="${esc(o.affiliateUrl || '')}" placeholder="Paste your affiliate / referral link (https://…)" class="small"><button class="btn sm">Save</button></form>
+        <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
+      <div style="margin-top:16px">${card('Referral pipeline', referralRows(refs.slice().sort((a, b) => String(b.recommendedAt).localeCompare(String(a.recommendedAt))), true), { flush: true })}</div>
+      <div style="margin-top:16px">${card('Client-facing disclosure', `<p class="small">${esc(root.Partners.DISCLOSURE)}</p><p class="small muted">This appears next to recommendations in the client portal. The FTC requires clear disclosure of material connections such as referral fees.</p>`)}</div>`;
+  }
+
+  // ---------- Team (server mode) ----------
+  function team() {
+    return head('Team & security', 'Staff accounts, client portal access and the audit log') + `<div id="team-root">${card('', '<p class="muted">Loading…</p>')}</div>`;
+  }
+
   // ---------- Referrals ----------
   function referrals() {
     const list = S().referrals;
-    return head('Referral partners', 'Mortgage brokers, realtors and auto dealers who send clients', `<button class="btn primary" data-act="new-referral">${icon('plus')} Partner</button>`) +
+    return head('Referral sources', 'Mortgage brokers, realtors, dealers and others who send clients to you', `<button class="btn primary" data-act="new-referral">${icon('plus')} Partner</button>`) +
       card('', list.length ? `<div class="table-wrap"><table><thead><tr><th>Partner</th><th>Company</th><th>Commission</th><th class="num">Clients referred</th><th class="num">Active</th><th></th></tr></thead><tbody>${list.map(r => { const cl = S().clients.filter(c => c.referralId === r.id); return `<tr><td><b>${esc(r.name)}</b><div class="small muted">${esc(r.email || '')}</div></td><td>${esc(r.company || '')}</td><td class="small">${esc(r.commission || '—')}</td><td class="num">${cl.length}</td><td class="num">${cl.filter(c => c.status === 'active').length}</td><td class="right"><button class="btn sm ghost" data-act="edit-referral" data-id="${r.id}">Edit</button></td></tr>`; }).join('')}</tbody></table></div>` : empty('No partners yet', 'Track who refers clients and what you owe them.'), { flush: true });
   }
 
@@ -459,5 +556,5 @@
     </div></div>`;
   }
 
-  root.Views = { dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, settings, clientFindings, alerts, openDisputes, repeatRisk };
+  root.Views = { dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
 })(typeof window !== 'undefined' ? window : globalThis);

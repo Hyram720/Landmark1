@@ -88,6 +88,29 @@ Ledger checks tradelines for errors that can be shown from the data itself. It d
 | Team activity log | Workspace and client activity history |
 | Compliance tooling | Compliance center: CROA gating, disclosure order checks, retention dates, repeat/frivolous dispute guard, deceptive-claim checker |
 
+## 4. Partner referral programs (researched October 2026)
+
+Affiliate terms change often and third-party listings disagree. Treat these as starting points and confirm them in each program's dashboard.
+
+| Program | Who it's for | Referral bonus | How confirmed |
+|---|---|---|---|
+| CreditStrong | Personal credit builder | **$25 per successful referral** (Referral Rock) | Official refer-a-friend page. Its page description still says $10 |
+| CreditStrong Business | Business credit builder | Same referral program; business payout not published | Company pages list Equifax Business, PayNet and SBFE reporting. D&B reporting not confirmed |
+| Nav | Business credit monitoring | $5–$50 per sale reported by networks; ~$40 for Nav Prime; 45-day cookie | Program confirmed on Nav's official partner page (impact.com). Rate not published |
+| Credit Sesame | Free score and monitoring | $3–$6 per approved sign-up reported | **Still operating, but affiliate program status in 2026 is unconfirmed**; listings conflict and one campaign shows as paused. Disabled for clients by default |
+| Self | Credit builder | $10–$12 per account reported | Network listings |
+| Kikoff | Credit builder | $5–$33 reported | Program confirmed on Kikoff's affiliate page (impact.com) |
+| IdentityIQ / MyScoreIQ (IDIQ) | 3-bureau monitoring (report pulls) | ~$35–$40 per enrollment typical | Program confirmed on IDIQ's partner page |
+| MyFreeScoreNow (MFSN) | 3-bureau monitoring (report pulls) | $6 per trial to $50–$60 per sale reported; 1-day cookie | Listings conflict; some network listings closed |
+| SmartCredit | 3-bureau monitoring | $10–$24 reported | Listings conflict; one network shows closed |
+| Experian Boost, D-U-N-S Number | Free tools | None | Recommend on merit |
+
+**Rules for referral income:**
+- Disclose referral fees to clients (FTC Endorsement Guides).
+- Never require a client to buy a partner product.
+- Referral fees from a partner aren't fees charged to the consumer, but don't let them influence advice.
+- Paying or receiving referral fees connected to mortgages can trigger RESPA. Check with counsel.
+
 ## Sources
 
 - [15 U.S.C. § 1679c — CROA disclosures (Cornell LII)](https://www.law.cornell.edu/uscode/text/15/1679c)
@@ -102,5 +125,7 @@ Ledger checks tradelines for errors that can be shown from the data itself. It d
 - [Credit Repair Cloud help center — Client's Choice](https://intercom.help/crc-support/en/articles/9190950)
 - [Credit repair software hands-on review (Dupple)](https://dupple.com/reviews/credit) · [Credit Money Machine (GetApp)](https://www.getapp.com/all-software/a/credit-money-machine/) · [UltraDispute (G2)](https://www.g2.com/sellers/ultradispute)
 - FCRA sections cited above: [§ 1681c](https://www.law.cornell.edu/uscode/text/15/1681c), [§ 1681c-2](https://www.law.cornell.edu/uscode/text/15/1681c-2), [§ 1681g](https://www.law.cornell.edu/uscode/text/15/1681g), [§ 1681i](https://www.law.cornell.edu/uscode/text/15/1681i), [§ 1681s-2](https://www.law.cornell.edu/uscode/text/15/1681s-2), [12 C.F.R. § 1022.43](https://www.law.cornell.edu/cfr/text/12/1022.43)
+
+Partner programs: [CreditStrong refer-a-friend](https://www.creditstrong.com/refer-a-friend/) · [CreditStrong business FAQ](https://www.creditstrong.com/business/business-faq) · [Nav partner program](https://www.nav.com/partner-program/) · [Nav (Lasso)](https://getlasso.co/affiliate/nav/) · [Credit Sesame (Commissiondex)](https://commissiondex.com/programs/credit-sesame/) · [Credit Sesame (UpPromote)](https://uppromote.com/affiliate-program-directory/credit-sesame/) · [Credit Sesame review (Creator Hero)](https://www.creator-hero.com/blog/credit-sesame-affiliate-program-in-depth-review-pros-and-cons) · [Kikoff affiliates](https://about.kikoff.com/affiliate) · [Self (FlexOffers)](https://www.flexoffers.com/affiliate-programs/self-inc-affiliate-program) · [IDIQ affiliate partners](https://www.idiq.com/partnerships/affiliate-partners) · [IdentityIQ (Awin)](https://ui.awin.com/merchant-profile/18765) · [MyFreeScoreNow (Lasso)](https://getlasso.co/affiliate/myfreescorenow-com/) · [MyFreeScoreNow (FlexOffers)](https://www.flexoffers.com/affiliate-programs/myfreescorenow-com-affiliate-program/) · [SmartCredit (FlexOffers)](https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/)
 
 The official CRRG is licensed by CDIA. Buy the current edition before relying on exact code tables or field positions in production.

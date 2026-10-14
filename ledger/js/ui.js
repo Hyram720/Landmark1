@@ -105,6 +105,16 @@
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   }
+  function printDocs(title, texts) {
+    const w = window.open('', '_blank');
+    if (!w) { toast('Allow pop-ups to print'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
+      body{font:12pt/1.55 Georgia,'Times New Roman',serif;color:#000;margin:0}
+      .page{max-width:6.5in;margin:0.9in auto;white-space:pre-wrap;page-break-after:always}
+      @page{margin:0.75in}@media print{.page{margin:0}}</style></head><body>${texts.map(t => `<div class="page">${esc(t)}</div>`).join('')}
+      <script>window.onload=()=>{window.print()}<\/script></body></html>`);
+    w.document.close();
+  }
   function printDoc(title, text) {
     const w = window.open('', '_blank');
     if (!w) { toast('Allow pop-ups to print'); return; }
@@ -126,5 +136,5 @@
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, field };
+  root.UI = { esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, field };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client Portal</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3EL%3C/text%3E%3C/svg%3E">
+  <style>
+    .portal-top { background: var(--side); color: #fff; padding: 18px 16px; }
+    .portal-top .inner, .portal-main { max-width: 980px; margin: 0 auto; }
+    .portal-main { padding: 24px 16px 64px; }
+    .doc-box { white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; max-height: 320px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <header class="portal-top"><div class="inner row between"><div class="brand" style="padding:0"><div class="brand-mark">L</div><div><b id="co-name">Client Portal</b><small>Your credit file, in one place</small></div></div><div id="portal-user" class="row"></div></div></header>
+  <main class="portal-main" id="portal"><p class="muted">Loading…</p></main>
+  <script src="js/law.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/portal.js"></script>
+</body>
+</html>

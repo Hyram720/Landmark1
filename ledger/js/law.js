@@ -85,6 +85,8 @@
       note: 'Requests all information in the consumer’s file and sources. No special wording is required.' },
     reinsertion_611: { label: 'Reinsertion without notice', cite: 'FCRA § 611(a)(5)(B)', recipient: 'bureau', days: 30,
       note: 'Bureau must certify accuracy with the furnisher and notify the consumer within 5 business days of reinserting deleted information.' },
+    business_correction: { label: 'Business bureau correction request', cite: 'Bureau correction process (business files are not covered by the FCRA)', recipient: 'bureau', days: 0,
+      note: 'Send to Dun & Bradstreet, Experian Business or Equifax Business with documents that prove the correct information.' },
     goodwill: { label: 'Goodwill adjustment request', cite: 'Courtesy request — not a dispute', recipient: 'furnisher', days: 0,
       note: 'Asks a creditor to reconsider accurate late payments. Never describe accurate information as inaccurate.' }
   };

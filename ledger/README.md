@@ -1,12 +1,64 @@
 # Ledger — credit dispute workspace
 
-Ledger is a rebuild of the Ledger workspace (backup format v1). It is a credit dispute workspace that understands Metro 2 and builds in CROA and FCRA safeguards. It runs entirely in the browser with no build step and no server.
+Ledger is a rebuild of the Ledger workspace (backup format v1). It is a credit repair business platform for personal and business clients that understands Metro 2 and builds in CROA and FCRA safeguards. It has a staff workspace, a client portal, a public onboarding form and a Node/Express backend, with no build step.
 
-**Open it:** double-click `ledger/index.html`, or serve the folder (`python3 -m http.server -d ledger 8080`) and visit http://localhost:8080. To explore, choose **Settings → Load demo data**. Every name, number and address in the demo is fictional.
+## Run it
 
-**Bring your old data:** go to **Settings → Import backup** and pick your `ledger-workspace-backup.json`. A v1 backup is upgraded automatically: clients, reports, letters and activity carry over, and each v1 letter becomes a round-1 dispute so its deadline can be tracked.
+**Full business setup (server, logins, client portal):**
+
+```bash
+npm install
+LEDGER_ENCRYPTION_KEY='a long random secret' npm run ledger
+```
+
+Then open http://localhost:4100. The first visit creates the **owner** account.
+
+| Address | Who uses it |
+|---|---|
+| `/` | You and your staff: the full workspace |
+| `/portal` | Clients: e-sign the CROA disclosure and agreement, upload ID and bureau letters, follow disputes and scores, see recommendations, cancel within 3 days |
+| `/apply` | Prospects: public onboarding form (personal, business or both). Every submission becomes a lead with a call task. Add `?ref=<source id>` to credit a referral source |
+| `/go/<id>` | Tracked partner links: counts the click, then redirects to your affiliate link |
+
+**Quick preview (no server):** open `ledger/index.html`, then choose **Settings → Load demo data**. Data stays in that browser, and logins, the portal, uploads and messaging are turned off.
+
+### Server settings
+
+| Variable | Purpose |
+|---|---|
+| `LEDGER_PORT` / `PORT` | Port (default 4100) |
+| `LEDGER_DATA_DIR` | Where the database and uploaded files live (default `data/ledger`, which git ignores) |
+| `LEDGER_ENCRYPTION_KEY` | Encrypts the database and every uploaded file with AES-256-GCM. **Set this in production and keep it safe** — the data can't be read without it |
+| `LEDGER_RESEND_KEY` (or `RESEND_API_KEY`) + `LEDGER_EMAIL_FROM` | Sends client emails from the app through Resend. Without these, Email opens your mail app and logs the message |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Sends texts through Twilio. Texts go only to clients with SMS consent on file (TCPA). Business texting also needs A2P 10DLC registration |
+
+Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
 
 ## What's inside
+
+**Day-to-day workflow (the M2Phenom-style tools):**
+- **Client profiles:** search; filter by status and personal/business; select several for bulk email, export or tasks.
+- **Row actions on each client:** **SMS**, **Email**, **Edit**, **Documents** and **Upload report**.
+- **Client onboarding link:** a shareable `/apply` link, plus a tracked link for each referral source.
+- **Upload report:** stores MyFreeScoreNow / IdentityIQ / SmartCredit report files (PDF/HTML), encrypted, then you enter tradelines by hand or by CSV. Automatic parsing of each provider's format needs sample exports.
+- **Communication:** templates (welcome, report needed, ID and proof of address, round mailed, results, business next steps) and a per-client message log.
+- **Send round:** print every approved letter in one batch, then mark them all mailed with deadlines and follow-up tasks.
+- **Team & security:** owner and staff logins, invitations, an audit log, and client portal invitations.
+
+**Business credit:**
+- Personal, business-only, or personal-plus-business clients.
+- Business profile: entity, EIN last 4, NAICS, D-U-N-S, and more.
+- A 14-point fundability checklist and a business score log covering PAYDEX, Intelliscore Plus, FSR, the Equifax Payment Index / Credit Risk / Failure scores, and FICO SBSS.
+- Vendor (net-30) tradeline tracker with starter vendors, and business-bureau correction letters.
+- Business-only work is outside CROA, so it isn't gated.
+
+**Partner offers (referral income):**
+- Researched programs for CreditStrong, CreditStrong Business, Nav, Credit Sesame, Self, Kikoff, IdentityIQ, MyFreeScoreNow, SmartCredit, MyScoreIQ, Experian Boost and D-U-N-S.
+- Each program shows its bonus, network, cookie window, how well the terms were confirmed, and sources.
+- Paste your affiliate link once. Then recommend offers to clients, share tracked links, and track stages (recommended → clicked → signed up → approved → paid) and the commissions you've earned.
+- Recommendations appear in the portal with an FTC-style disclosure.
+
+**Credit repair core:**
 
 - **Dashboard.** Response deadlines, compliance alerts, outcomes, revenue, tasks and activity.
 - **Clients.** Lead → onboarding → active pipeline, profile (SSN stored as last 4 only), score history and a printable progress report.
@@ -16,13 +68,22 @@ Ledger is a rebuild of the Ledger workspace (backup format v1). It is a credit d
 - **Billing.** Invoices are tied to completed services. Ledger refuses to issue an advance fee (§ 1679b(b)) or bill during the cancellation window.
 - **Compliance center.** Program checklist, per-client agreement status, records-retention dates, and printable § 1679c disclosure, agreement and duplicate Notice of Cancellation. It also has a checker that flags deceptive claims in letters and marketing copy.
 - **Library.** Metro 2 code tables, dispute types and deadlines, bureau addresses, how the system works, and sources.
-- **Referral partners**, dark mode, and a mobile layout.
+- **Referral sources** (brokers, realtors and others who send you clients), dark mode, and a mobile layout.
 
 See [RESEARCH.md](RESEARCH.md) for the research behind each feature, with sources.
 
 ## Data & security
 
-All data is stored in the browser's `localStorage` on the device in use. Export backups regularly from Settings, and keep the backup files encrypted, because they contain personal information. Using Ledger with more than one staff member or across devices needs a backend with authentication and encrypted storage. The `Store` module in `js/store.js` is the single place to swap in that persistence.
+In server mode everything is saved on your server:
+
+- Passwords are hashed with scrypt.
+- Sessions are signed HttpOnly cookies, and logins are rate-limited.
+- Saves use version checks, so two people can't silently overwrite each other.
+- The audit log records every save, login, signature, upload, download and referral click.
+- The database and files are encrypted when `LEDGER_ENCRYPTION_KEY` is set.
+- Only the last 4 digits of SSNs and EINs are stored.
+
+In preview mode, data stays in the browser. The JSON-file database fits a small team on one server. Move `server/db.js` to Postgres when you outgrow it.
 
 ## Code layout
 
@@ -34,6 +95,9 @@ All data is stored in the browser's `localStorage` on the device in use. Export 
 | `js/store.js` | Workspace state, persistence, v1 → v2 migration, CROA status |
 | `js/views.js`, `js/app.js`, `js/ui.js` | Pages, actions/modals, DOM helpers |
 | `js/sample.js` | Synthetic demo workspace |
+| `js/partners.js`, `js/business.js` | Partner program catalog; business-credit scores, checklist and vendors |
+| `js/portal.js`, `portal.html`, `apply.html` | Client portal and public onboarding form |
+| `server/` | Express API: auth, workspace sync, portal, e-sign, intake, uploads, messaging, tracked links |
 
 Tests: `npm run test:ledger`
 
