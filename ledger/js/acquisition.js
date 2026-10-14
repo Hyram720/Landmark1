@@ -20,6 +20,18 @@
     listings: st => st && STATES[st] ? `https://www.bizbuysell.com/${slug(STATES[st])}-businesses-for-sale/` : 'https://www.bizbuysell.com/businesses-for-sale/'
   };
 
+  // Sellers of aged "shelf" companies (entities formed and held inactive by the seller, then sold).
+  // Inventory, states and prices change daily — the seller's site is the live source. Seller
+  // claims ("clean", "no debts") must be verified with the state and the checklist below.
+  const SHELF_SELLERS = [
+    { name: 'Wyoming Corporate Services', url: 'https://wyomingcompany.com/aged-corporation/', states: 'Wyoming plus other states', note: 'Long-running seller; lists thousands of aged corporations and LLCs with certificates of good standing. Sales are non-refundable.' },
+    { name: 'Corporations Today', url: 'https://corporationstoday.com/', states: 'About 25 states', note: 'Aged corporations and LLCs sold without an EIN or activity.' },
+    { name: 'Asset Profile', url: 'https://assetprofile.com/shelf-companies-for-sale/', states: 'Multiple states (DE, NV, WY and others)', note: 'Ready-made and aged shelf companies.' },
+    { name: 'ShelfCompany.info', url: 'https://shelfcompany.info/', states: 'Says all 50 states', note: 'Pre-registered shelf companies; confirm the exact state and formation date before paying.' },
+    { name: 'Tresp Corporate Services', url: 'https://trespcs.com/aged-shelf-companies/', states: 'Wyoming', note: 'Aged Wyoming LLCs and corporations.' },
+    { name: 'DealStream — shelf companies', url: 'https://dealstream.com/d/financial/shelf/2inx70', states: 'Listings from many sellers (DE, NV, CA, TX, FL…)', note: 'Marketplace; each listing is a different seller.' }
+  ];
+
   // Due-diligence checks. `link` returns a live search URL where one exists.
   const CHECKS = [
     // Identity & standing
@@ -91,7 +103,7 @@
     return L.join('\n');
   }
 
-  const api = { STATES, LINKS, CHECKS, STATUS, evaluate, report, yearsBetween };
+  const api = { STATES, LINKS, SHELF_SELLERS, CHECKS, STATUS, evaluate, report, yearsBetween };
   root.Acquisition = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
