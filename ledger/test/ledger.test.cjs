@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'partners.js', 'business.js', 'metro2.js', 'results.js', 'letters.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -191,4 +191,12 @@ test('strategy ladder escalates letter 1 → 2 → 3 → attorney review', () =>
   const item = [{ creditor: 'Demo Card', discrepancy: 'Balance reported as $900 but it was paid in full in March.' }];
   assert.match(Letters.build('furnisher_final', { client: { name: 'J S' }, recipient: { name: 'Demo Card' }, items: item, today: 'x' }).text, /1681s-2/);
   assert.match(Letters.build('cfpb_complaint', { client: { name: 'J S' }, recipient: { name: 'Experian' }, recipientName: 'Experian', items: item, today: 'x' }).text, /consumerfinance\.gov/);
+});
+
+test('library has content for every section tab and search finds terms', () => {
+  const sectionTabs = new Set(Library.SECTIONS.map(s => s.tab));
+  ['fields', 'errors', 'laws', 'timelines', 'scores', 'business', 'contacts', 'glossary', 'scripts'].forEach(t => assert.ok(sectionTabs.has(t), t));
+  assert.ok(Library.search('re-aging').some(h => h.tab === 'glossary'));
+  assert.ok(Library.search('DOFD').length >= 5);
+  assert.strictEqual(Library.search('x').length, 0);
 });

@@ -415,18 +415,30 @@
   }
 
   // ---------- Library ----------
+  function sectionTab(tab) {
+    const secs = root.Library.SECTIONS.filter(x => x.tab === tab);
+    if (!secs.length) return '';
+    return `<div class="stack">${secs.map(sec => card(esc(sec.title), `${sec.intro ? `<p class="small muted" style="margin-bottom:10px">${esc(sec.intro)}</p>` : ''}<dl class="lib-dl">${sec.items.map(([t, b]) => `<div><dt>${esc(t)}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl>`)).join('')}</div>`;
+  }
+  function libraryResults(q) {
+    const hits = root.Library.search(q);
+    if (String(q || '').trim().length < 2) return '';
+    if (!hits.length) return '<p class="small muted" style="padding:8px 2px">No matches.</p>';
+    const label = Object.fromEntries(root.Library.TABS);
+    return `<ul class="list card" style="margin-top:8px">${hits.slice(0, 25).map(h => `<li><div class="grow"><a href="#/library?tab=${h.tab}"><b>${esc(h.term)}</b></a> <span class="badge b-low plain">${esc(label[h.tab] || h.tab)}</span><div class="small">${esc(h.text)}</div></div></li>`).join('')}</ul>`;
+  }
+
   function library(params) {
-    const tab = params.tab || 'metro2';
-    const tabs = [['metro2', 'Metro 2 codes'], ['timelines', 'Dispute types & deadlines'], ['bureaus', 'Bureau addresses'], ['how', 'How it works'], ['sources', 'Sources']];
+    const tab = params.tab || 'overview';
+    const tabs = root.Library.TABS;
     const table = (obj, h1, h2) => `<div class="table-wrap"><table><thead><tr><th style="width:90px">${h1}</th><th>${h2}</th></tr></thead><tbody>${Object.entries(obj).map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</tbody></table></div>`;
     const body = {
       metro2: `<div class="grid g2">${card('Account Status (Base 17A)', table(Metro2.ACCOUNT_STATUS, 'Code', 'Meaning'), { flush: true })}<div class="stack">${card('Payment History Profile (Base 18)', table(Metro2.PAYMENT_HISTORY, 'Char', 'Meaning'), { flush: true, sub: '24 months, most recent month first' })}${card('Compliance Condition Codes (Base 20)', table(Metro2.COMPLIANCE_CONDITION, 'Code', 'Meaning'), { flush: true })}</div>
         ${card('ECOA (Base 37)', table(Metro2.ECOA, 'Code', 'Meaning'), { flush: true })}${card('Consumer Information Indicator (Base 38)', table(Metro2.CONSUMER_INFO_INDICATOR, 'Code', 'Meaning'), { flush: true })}
         ${card('Portfolio type', table(Metro2.PORTFOLIO_TYPE, 'Code', 'Meaning'), { flush: true })}${card('Special comments (selected)', table(Metro2.SPECIAL_COMMENT, 'Code', 'Meaning'), { flush: true })}</div>`,
-      timelines: card('', `<div class="table-wrap"><table><thead><tr><th>Type</th><th>Law</th><th>Recipient</th><th>Window</th><th>Notes</th></tr></thead><tbody>${Object.values(Law.DISPUTE_TYPES).map(t => `<tr><td><b>${esc(t.label)}</b></td><td class="small">${esc(t.cite)}</td><td class="small">${esc(t.recipient)}</td><td class="small nowrap">${t.days ? t.days + (t.businessDays ? ' business days' : ' days') : '—'}</td><td class="small">${esc(t.note)}</td></tr>`).join('')}</tbody></table></div>`, { flush: true }) +
+      letters: card('Strategy ladder', `<ul class="steps">${Law.STRATEGY.map(x => `<li><span class="tick">${x.step}</span><div class="grow"><b>${esc(x.title)}</b><div class="small muted">${esc(x.when)}</div></div></li>`).join('')}</ul>`) + '<div style="height:16px"></div>' + card('Letter types and response windows', `<div class="table-wrap"><table><thead><tr><th>Type</th><th>Law</th><th>Recipient</th><th>Window</th><th>Notes</th></tr></thead><tbody>${Object.values(Law.DISPUTE_TYPES).map(t => `<tr><td><b>${esc(t.label)}</b></td><td class="small">${esc(t.cite)}</td><td class="small">${esc(t.recipient)}</td><td class="small nowrap">${t.days ? t.days + (t.businessDays ? ' business days' : ' days') : '—'}</td><td class="small">${esc(t.note)}</td></tr>`).join('')}</tbody></table></div>`, { flush: true }) +
         `<div class="grid g3" style="margin-top:16px">${card('Reporting periods', '<ul class="small" style="padding-left:18px;margin:0"><li>Most negative items: 7 years from 180 days after the DOFD (§ 605(a), (c))</li><li>Bankruptcies: 10 years from the order for relief</li><li>Hard inquiries: generally 2 years (bureau policy)</li></ul>')}${card('Bureau duties', '<ul class="small" style="padding-left:18px;margin:0"><li>Notify the furnisher within 5 business days of a dispute</li><li>Delete information that cannot be verified</li><li>Send results within 5 business days of completion</li><li>Notice of a frivolous determination within 5 business days</li></ul>')}${card('Furnisher duties', '<ul class="small" style="padding-left:18px;margin:0"><li>Investigate disputes forwarded by a bureau (§ 623(b))</li><li>Report the account as disputed (§ 623(a)(3))</li><li>Report the DOFD within 90 days (§ 623(a)(5))</li><li>Correct and update inaccurate data (§ 623(a)(2))</li></ul>')}</div>`,
-      bureaus: `<div class="grid g3">${Object.entries(Law.BUREAUS).map(([k, b]) => card(k, `<p><b>${esc(b.name)}</b><br>${esc(b.address).replace(/\n/g, '<br>')}</p><p class="small muted">Dispute mailing address. Confirm on the bureau’s current dispute page before mailing.</p>`)).join('')}</div>`,
-      how: card('How Metro 2 dispute software works', `<div class="prose">
+      overview: card('How Metro 2 dispute software works', `<div class="prose">
         <p>Furnishers (banks, lenders, collectors) send account data to Equifax, Experian and TransUnion every month in the <b>Metro 2® format</b> published by the Consumer Data Industry Association in its Credit Reporting Resource Guide. Each tradeline is a fixed-length Base Segment of 426 characters with fields such as Account Status, Payment Rating, a 24-month Payment History Profile, Current Balance, Amount Past Due, Date of First Delinquency, Compliance Condition Code and ECOA code.</p>
         <p>Because the fields depend on each other, many errors are detectable: an account cannot be “current” (status 11) and also show an amount past due; a paid account (status 13 or 61–65) must report a zero balance; a charged-off or collection account must carry a Date of First Delinquency. When the same account looks different at each bureau, at least one bureau has it wrong.</p>
         <h3>The workflow Ledger implements</h3>
@@ -451,8 +463,8 @@
         <li><a href="https://www.consumerfinancemonitor.com/2017/09/06/the-cfpb-shuts-down-another-credit-repair-service/" target="_blank" rel="noopener">CFPB enforcement against mass-dispute credit repair (Ballard Spahr)</a></li>
         <li><a href="https://intercom.help/crc-support/en/articles/9190950" target="_blank" rel="noopener">Credit Repair Cloud help — client-selected disputes</a> · <a href="https://dupple.com/reviews/credit" target="_blank" rel="noopener">Credit repair software feature review</a></li></ul>
         <p class="small muted" style="margin-top:12px">The CDIA Credit Reporting Resource Guide is the authoritative Metro 2 specification and is licensed by CDIA. Ledger is workflow software, not legal advice.</p>`)
-    }[tab];
-    return head('Library', 'Reference material used by the audit engine and letter builder') + `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/library?tab=${k}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</div>` + body;
+    }[tab] || sectionTab(tab);
+    return head('Library', 'Credit repair reference: Metro 2, the law, evidence, scores, business credit and scripts', '') + `<div class="lib-search"><input id="lib-q" type="search" placeholder="Search the library — e.g. DOFD, medical, re-aging, freeze…" autocomplete="off"><div id="lib-results"></div></div><div class="tabs">${tabs.map(([k, l]) => `<a href="#/library?tab=${k}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</div>` + body;
   }
 
   // ---------- Business credit ----------
@@ -559,5 +571,5 @@
     </div></div>`;
   }
 
-  root.Views = { dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
+  root.Views = { libraryResults, dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
 })(typeof window !== 'undefined' ? window : globalThis);

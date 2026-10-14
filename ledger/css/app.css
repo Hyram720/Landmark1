@@ -279,3 +279,13 @@ td.actions .btn { padding: 0 8px; margin-right: 3px; }
 .drop { flex: 1; min-height: 140px; border: 2px dashed var(--border-strong); border-radius: 12px; display: grid; place-content: center; text-align: center; gap: 4px; cursor: pointer; background: var(--surface); padding: 16px; }
 .drop:hover, .drop.over { border-color: var(--accent); }
 @media (max-width: 820px) { .up-grid { grid-template-columns: 1fr; } .up-main { grid-row: auto; } }
+
+/* Library */
+.lib-search { margin-bottom: 16px; max-width: 720px; }
+.lib-search input { height: 42px; font-size: 15px; }
+.lib-dl { margin: 0; display: grid; gap: 0; }
+.lib-dl > div { display: grid; grid-template-columns: minmax(160px, 260px) 1fr; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.lib-dl > div:last-child { border-bottom: 0; }
+.lib-dl dt { font-weight: 600; }
+.lib-dl dd { margin: 0; color: var(--ink-2); }
+@media (max-width: 820px) { .lib-dl > div { grid-template-columns: 1fr; gap: 4px; } }

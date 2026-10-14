@@ -813,6 +813,7 @@
     });
     let timer;
     document.addEventListener('input', e => {
+      if (e.target.id === 'lib-q') { document.getElementById('lib-results').innerHTML = Views.libraryResults(e.target.value); return; }
       if (e.target.matches('[data-act="letter-edit"]')) {
         const l = Store.get.letter(e.target.dataset.id);
         l.text = e.target.value;
