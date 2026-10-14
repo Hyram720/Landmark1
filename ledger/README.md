@@ -20,6 +20,8 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `/apply` | Prospects: public onboarding form (personal, business or both). Every submission becomes a lead with a call task. Add `?ref=<source id>` to credit a referral source |
 | `/go/<id>` | Tracked partner links: counts the click, then redirects to your affiliate link |
 
+**Master file (personal use, no login):** `ledger/dist/ledger-master.html` is the whole workspace in one file. Double-click it to open it in your browser. It needs no login and no server, and it saves everything in that browser. Use **Settings → Export backup** regularly, and keep the file and backups private. Rebuild it after changes with `npm run ledger:master`. The client portal, uploads, text/email sending and AI features need the server.
+
 **Quick preview (no server):** open `ledger/index.html`, then choose **Settings → Load demo data**. Data stays in that browser, and logins, the portal, uploads and messaging are turned off.
 
 ### Server settings

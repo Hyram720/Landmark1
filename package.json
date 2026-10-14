@@ -11,7 +11,8 @@
     "dev": "DEV_SKIP_PAYMENT=true IMAGE_PROVIDER=mock node --watch src/server.js",
     "content": "node scripts/content-engine.js 30",
     "test:ledger": "node --test ledger/test/ledger.test.cjs ledger/test/server.test.js",
-    "ledger": "node ledger/server/index.js"
+    "ledger": "node ledger/server/index.js",
+    "ledger:master": "node ledger/build-master.cjs"
   },
   "repository": {
     "type": "git",
