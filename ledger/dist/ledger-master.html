@@ -338,6 +338,7 @@ tr.cmp-changed td { background: var(--med-soft); }
         <a href="#/audit" data-nav="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg>Metro 2 audit</a>
         <a href="#/disputes" data-nav="disputes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="6" rx="1"/></svg>Disputes<span class="count"></span></a>
         <a href="#/sequences" data-nav="sequences"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 6h5a3 3 0 0 1 3 3v1M7 18h5a3 3 0 0 0 3-3v-1"/></svg>Sequences<span class="count"></span></a>
+        <a href="#/business" data-nav="business"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg>Business credit</a>
         <a href="#/billing" data-nav="billing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19M6 15h4"/></svg>Billing</a>
         <div class="nav-label">Program</div>
         <a href="#/compliance" data-nav="compliance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>Compliance<span class="count"></span></a>
@@ -3503,7 +3504,7 @@ Thank you for considering this request.`
     const nFind = clientFindings(c.id).filter(f => f.severity !== 'low').length;
     const body = ({ overview: clientOverview, business: clientBusiness, acquisition: clientAcquisition, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs, params);
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
-      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}${c.status === 'lead' ? `<button class="btn" data-act="analysis" data-id="${c.id}">${icon('print')} Credit analysis</button>` : `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button>`}<button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
+      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}${c.status === 'lead' ? `<button class="btn" data-act="analysis" data-id="${c.id}">${icon('print')} Credit analysis</button>` : `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button>`}${c.kind === 'personal' ? `<button class="btn" data-act="biz-enable" data-id="${c.id}">+ Business credit</button>` : ''}<button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
       (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>Cancellation period open until midnight ${date(cs.deadline)}</b>No services may be performed and no fees collected until it ends (15 U.S.C. §§ 1679d(a)(2), 1679e).</div>` : '') +
       `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/clients/${c.id}/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'audit' && nFind ? ` <span class="badge b-high plain">${nFind}</span>` : ''}</a>`).join('')}</div>` + body;
@@ -3995,6 +3996,43 @@ Thank you for considering this request.`
         { actions: `<button class="btn sm" data-act="aq-edit" data-id="${c.id}" data-deal="${sel.id}">Edit</button><button class="btn sm" data-act="aq-print" data-id="${c.id}" data-deal="${sel.id}">${icon('print')} Report</button><button class="btn sm ghost danger" data-act="aq-delete" data-id="${c.id}" data-deal="${sel.id}">Remove</button>` })}
       <p class="small muted">This checklist organizes the review; it is not legal, tax or accounting advice. Have an attorney and CPA review the purchase agreement and structure before closing.</p></div>`;
   }
+  // ---------- Business credit hub (sidebar) ----------
+  function business(params) {
+    const B = root.Business, Aq = root.Acquisition, t = T();
+    const tab = params.tab || 'clients';
+    const bizClients = S().clients.filter(c => c.kind !== 'personal');
+    const TABS = [['clients', 'Business clients'], ['plan', '90-day credit plan'], ['buy', 'Buy a business'], ['vendors', 'Starter vendors'], ['scores', 'Scores & bureaus'], ['checklist', 'Fundability checklist']];
+    const pick = act => bizClients.length ? `<select id="biz-client" style="width:auto">${bizClients.map(c => `<option value="${c.id}">${esc((c.business || {}).legalName || c.name)} — ${esc(c.name)}</option>`).join('')}</select><button class="btn primary" data-act="${act}">Open for this client</button>` : `<button class="btn primary" data-act="biz-new">+ Add a business client</button>`;
+    let body = '';
+    if (tab === 'clients') {
+      body = card('', bizClients.length ? `<div class="table-wrap"><table><thead><tr><th>Business</th><th>Owner</th><th>Fundability</th><th>90-day plan</th><th>PAYDEX</th><th>Reporting accounts</th><th>Businesses evaluated</th><th></th></tr></thead><tbody>${bizClients.map(c => {
+        const fz = B.fundability(c), ps = B.planStatus(c, t);
+        const pdx = (c.businessScores || []).filter(x => x.model === 'paydex').sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+        return `<tr class="click" data-href="#/clients/${c.id}/business"><td><b>${esc((c.business || {}).legalName || '—')}</b><div class="small muted">${esc([(c.business || {}).entityType, (c.business || {}).stateOfFormation].filter(Boolean).join(' · '))}</div></td><td>${esc(c.name)}</td>
+          <td><div class="row" style="gap:8px"><div class="bar" style="width:80px"><i style="width:${fz.pct}%"></i></div><span class="small">${fz.pct}%</span></div></td>
+          <td class="small">${ps ? `${ps.done}/${ps.total} steps${ps.steps.some(x => x.overdue) ? ' <span class="badge b-high plain">overdue</span>' : ''}` : '<span class="muted">Not started</span>'}</td>
+          <td>${pdx ? esc(pdx.score) : '—'}</td><td>${(c.vendorAccounts || []).length}</td><td>${(c.deals || []).length}</td>
+          <td class="right nowrap"><a class="btn sm" href="#/clients/${c.id}/business">Credit</a><a class="btn sm ghost" href="#/clients/${c.id}/acquisition">Buy a business</a></td></tr>`; }).join('')}</tbody></table></div>`
+        : empty('No business clients yet', 'Add a business client, or open any personal client and click “Add business credit” to work on the owner’s company too.', '<button class="btn primary" data-act="biz-new" style="margin-top:8px">+ Add a business client</button>'), { flush: true });
+    }
+    if (tab === 'plan') body = card('90-day business credit plan', `<p class="small">A dated plan for a new company. Starting it for a client creates a task for every step; steps tied to the fundability checklist tick off automatically.</p><div class="row" style="gap:8px;margin-bottom:14px">${pick('biz-open-plan')}</div><ul class="steps">${B.FAST_TRACK.map(st => `<li><span class="tick">${st.day}</span><div class="grow"><b style="font-weight:550">Day ${st.day} · ${esc(st.title)}</b><div class="small muted">${esc(st.how)}${st.url ? ` <a href="${esc(st.url)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div></div></li>`).join('')}</ul>`);
+    if (tab === 'buy') {
+      const deals = bizClients.flatMap(c => (c.deals || []).map(d => ({ c, d, e: Aq.evaluate(d, t) })));
+      body = card('Find a business to buy', `<p class="small">Search live listings of operating businesses for sale, then add candidates to a client and work through the 24-point due-diligence checklist (state standing, liens, judgments, bankruptcy, taxes, financials, leases, licenses, deal structure).</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap"><select id="aq-state" style="width:auto"><option value="">All states</option>${Object.entries(Aq.STATES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select><button class="btn" data-act="aq-listings">Open live listings ↗</button><a class="btn ghost" href="${Aq.LINKS.sba()}" target="_blank" rel="noopener">SBA guide ↗</a></div>
+        <div class="row" style="gap:8px;margin-top:12px">${pick('biz-open-buy')}</div>
+        <p class="small muted" style="margin-top:10px">Business credit history belongs to the legal entity. In a stock or membership-interest purchase the entity keeps its EIN, D-U-N-S Number and history; in an asset purchase the buyer’s company starts its own file. Always disclose the change of ownership accurately to lenders.</p>`) +
+        card('Businesses being evaluated', deals.length ? `<div class="table-wrap"><table><thead><tr><th>Business</th><th>For client</th><th>Due diligence</th><th>Issues</th><th>Asking</th><th>Price ÷ earnings</th></tr></thead><tbody>${deals.map(({ c, d, e }) => `<tr class="click" data-href="#/clients/${c.id}/acquisition?deal=${d.id}"><td><b>${esc(d.name)}</b><div class="small muted">${esc(Aq.STATES[d.state] || '')}</div></td><td>${esc(c.name)}</td><td>${e.pct}%</td><td>${e.issues ? `<span class="badge b-high plain">${e.issues}</span>` : '0'}</td><td>${d.askingPrice ? money(d.askingPrice) : '—'}</td><td>${e.multiple === null ? '—' : e.multiple + '×'}</td></tr>`).join('')}</tbody></table></div>` : empty('None yet', 'Pick a client above and add a business to start its checklist.'), { flush: true }) +
+        card('Due-diligence checklist', [...new Set(Aq.CHECKS.map(x => x.group))].map(g => `<h3 style="margin:12px 0 6px">${esc(g)}</h3><ul class="small" style="padding-left:18px;margin:0">${Aq.CHECKS.filter(x => x.group === g).map(x => `<li><b>${esc(x.label)}</b> — ${esc(x.why)}</li>`).join('')}</ul>`).join(''));
+    }
+    if (tab === 'vendors') body = card('Starter vendor (net-30) accounts', `<p class="small muted">Reporting practices change and sources disagree. Confirm with each vendor’s credit department that it reports, and to which bureau, before relying on it. Track accounts on each client’s Business credit tab.</p><div class="table-wrap"><table><thead><tr><th>Vendor</th><th>Type</th><th>Terms</th><th>Reports to</th></tr></thead><tbody>${B.STARTER_VENDORS.map(v => `<tr><td><b>${esc(v.vendor)}</b></td><td class="small">${esc(v.category)}</td><td class="small">${esc(v.terms)}</td><td class="small">${esc(v.reportsTo)}</td></tr>`).join('')}</tbody></table></div>`);
+    if (tab === 'scores') body = `<div class="grid g2">${card('Business credit scores', `<div class="table-wrap"><table><thead><tr><th>Score</th><th>Bureau</th><th>Range</th><th>Good</th></tr></thead><tbody>${B.SCORE_MODELS.map(m => `<tr><td><b>${esc(m.name)}</b><div class="small muted">${esc(m.note)}</div></td><td class="small">${esc(m.bureau)}</td><td class="small nowrap">${m.min}–${m.max}</td><td class="small">${m.lowerIsBetter ? '≤ ' : '≥ '}${m.good}</td></tr>`).join('')}</tbody></table></div>`, { flush: true })}
+      ${card('Correcting business credit files', `<p class="small">Business credit is not covered by the FCRA, so each bureau takes corrections through its own process:</p><ul class="small" style="padding-left:18px">${Object.entries(B.BUREAU_CONTACTS).map(([k, v]) => `<li><b>${esc(k)}</b> — ${esc(v)}</li>`).join('')}</ul><p class="small">Get a free D-U-N-S Number at <a href="https://www.dnb.com/en-us/smb/duns/get-a-duns.html" target="_blank" rel="noopener">dnb.com ↗</a> (up to 30 business days). Draft a correction letter from a client’s Business credit tab.</p>`)}</div>`;
+    if (tab === 'checklist') body = card('Fundability checklist', `<p class="small muted">What lenders and business bureaus check before extending credit. Tick items off on each client’s Business credit tab.</p><ul class="steps">${B.FOUNDATION.map((f, i) => `<li><span class="tick">${i + 1}</span><div class="grow"><b style="font-weight:550">${esc(f.label)}</b><div class="small muted">${esc(f.why)}</div></div></li>`).join('')}</ul>`);
+    return head('Business credit', 'Build business credit, follow the 90-day plan, and evaluate businesses to buy', `<button class="btn primary" data-act="biz-new">+ Business client</button>`) +
+      `<div class="grid g4" style="margin-bottom:16px">${kpi('Business clients', bizClients.length)}${kpi('Plans in progress', bizClients.filter(c => B.planStatus(c, t)).length)}${kpi('Avg. fundability', bizClients.length ? Math.round(bizClients.reduce((a, c) => a + B.fundability(c).pct, 0) / bizClients.length) + '%' : '—')}${kpi('Businesses evaluated', bizClients.reduce((a, c) => a + (c.deals || []).length, 0))}</div>` +
+      `<div class="tabs">${TABS.map(([k, l]) => `<a href="#/business?tab=${k}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}</div>` + body;
+  }
   // ---------- Partner recommendations ----------
   const stageLabel = k => (root.Partners.REFERRAL_STAGES.find(s => s[0] === k) || [k, k])[1];
   const offerStatus = st => { const [l, c] = root.Partners.STATUS_LABEL[st] || [st, 'b-low']; return `<span class="badge ${c}">${esc(l)}</span>`; };
@@ -4074,7 +4112,7 @@ Thank you for considering this request.`
     </div></div>`;
   }
 
-  root.Views = { pipeline, automations, violations, addressBook, addressList, sequences, seqCard, libraryResults, dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
+  root.Views = { business, pipeline, automations, violations, addressBook, addressList, sequences, seqCard, libraryResults, dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -4303,9 +4341,9 @@ Thank you for considering this request.`
   }
 
   // ---------- modals ----------
-  function clientModal(c) {
+  function clientModal(c, defaults) {
     const isNew = !c;
-    c = c || { status: 'lead', kind: 'personal' };
+    c = c || Object.assign({ status: 'lead', kind: 'personal' }, defaults || {});
     modal({
       title: isNew ? 'New client' : 'Edit client',
       body: `<div class="form-grid">
@@ -4884,6 +4922,10 @@ Thank you for considering this request.`
 
   // ---------- actions ----------
   const A = {
+    'biz-new': () => clientModal(null, { kind: 'business', status: 'lead' }),
+    'biz-enable': el => { const c = Store.get.client(el.dataset.id); if (!confirm(`Add business credit services for ${c.name}? Their client type becomes “Personal + business” and the Business credit and Buy a business tabs appear.`)) return; c.kind = 'both'; c.business = c.business || {}; commit(`Added business credit services for ${c.name}`, c.id); go(`#/clients/${c.id}/business`); },
+    'biz-open-plan': () => { const id = (document.getElementById('biz-client') || {}).value; if (id) go(`#/clients/${id}/business`); },
+    'biz-open-buy': () => { const id = (document.getElementById('biz-client') || {}).value; if (id) go(`#/clients/${id}/acquisition`); },
     'plan-start': el => {
       const c = Store.get.client(el.dataset.id);
       c.creditPlan = { startedAt: T(), done: {} };

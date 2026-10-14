@@ -222,9 +222,9 @@
   }
 
   // ---------- modals ----------
-  function clientModal(c) {
+  function clientModal(c, defaults) {
     const isNew = !c;
-    c = c || { status: 'lead', kind: 'personal' };
+    c = c || Object.assign({ status: 'lead', kind: 'personal' }, defaults || {});
     modal({
       title: isNew ? 'New client' : 'Edit client',
       body: `<div class="form-grid">
@@ -803,6 +803,10 @@
 
   // ---------- actions ----------
   const A = {
+    'biz-new': () => clientModal(null, { kind: 'business', status: 'lead' }),
+    'biz-enable': el => { const c = Store.get.client(el.dataset.id); if (!confirm(`Add business credit services for ${c.name}? Their client type becomes “Personal + business” and the Business credit and Buy a business tabs appear.`)) return; c.kind = 'both'; c.business = c.business || {}; commit(`Added business credit services for ${c.name}`, c.id); go(`#/clients/${c.id}/business`); },
+    'biz-open-plan': () => { const id = (document.getElementById('biz-client') || {}).value; if (id) go(`#/clients/${id}/business`); },
+    'biz-open-buy': () => { const id = (document.getElementById('biz-client') || {}).value; if (id) go(`#/clients/${id}/acquisition`); },
     'plan-start': el => {
       const c = Store.get.client(el.dataset.id);
       c.creditPlan = { startedAt: T(), done: {} };
