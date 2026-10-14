@@ -6,11 +6,11 @@ export function commsConfig(env = process.env) {
   };
 }
 
-export async function sendEmail({ to, subject, text }, env = process.env) {
+export async function sendEmail({ to, subject, text, attachments }, env = process.env) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.LEDGER_RESEND_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.LEDGER_EMAIL_FROM, to: [to], subject, text })
+    body: JSON.stringify(Object.assign({ from: env.LEDGER_EMAIL_FROM, to: [to], subject, text }, attachments && attachments.length ? { attachments } : {}))
   });
   if (!res.ok) throw new Error(`Email provider error ${res.status}`);
   return (await res.json()).id;

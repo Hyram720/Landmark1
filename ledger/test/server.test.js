@@ -319,3 +319,24 @@ test('a report uploaded in the portal creates an import task when AI is off', as
     assert.ok(w.tasks.some(t => t.clientId === 'c9' && /Import the credit report/.test(t.title)));
   } finally { if (saved) process.env.ANTHROPIC_API_KEY = saved; }
 });
+
+test('invoices can be emailed with the PDF attached', async () => {
+  assert.strictEqual((await owner('POST', '/api/invoices/inv9abc/email', {})).status, 501, 'email off until Resend is configured');
+  process.env.LEDGER_RESEND_KEY = 're_test'; process.env.LEDGER_EMAIL_FROM = 'billing@example.test';
+  let sent;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url).startsWith('https://api.resend.com/')) { sent = JSON.parse(opts.body); return new Response(JSON.stringify({ id: 'em_1' }), { status: 200, headers: { 'content-type': 'application/json' } }); }
+    return realFetch(url, opts);
+  };
+  try {
+    const r = await owner('POST', '/api/invoices/inv9abc/email', { message: 'Thanks for your business.' });
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+    assert.deepStrictEqual(sent.to, ['m@example.test']);
+    assert.match(sent.subject, /^Invoice INV-/);
+    const pdf = Buffer.from(sent.attachments[0].content, 'base64').toString('latin1');
+    assert.ok(pdf.startsWith('%PDF-1.4') && pdf.includes('Morgan Mailer'));
+    assert.match(sent.attachments[0].filename, /\.pdf$/);
+    const inv = (await owner('GET', '/api/workspace')).body.data.invoices.find(i => i.id === 'inv9abc');
+    assert.strictEqual(inv.emailedTo, 'm@example.test');
+  } finally { globalThis.fetch = realFetch; delete process.env.LEDGER_RESEND_KEY; delete process.env.LEDGER_EMAIL_FROM; }
+});

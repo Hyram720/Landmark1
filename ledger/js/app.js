@@ -416,6 +416,48 @@
     commit(`Generated ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
+  // ---------- invoice documents ----------
+  function invoicePdf(id) {
+    const inv = S().invoices.find(x => x.id === id);
+    const origin = location.protocol.startsWith('http') ? location.origin : '';
+    const b = S().settings.billing || {};
+    const payLink = b.provider === 'link' && b.payLink ? b.payLink : b.provider === 'authorizenet' && Store.remote ? root.Invoices.payUrl(inv, origin) : '';
+    UI.download(root.Invoices.filename(S(), inv), root.Invoices.pdfBytes(S(), inv, { payLink }), 'application/pdf');
+  }
+  function invoiceEmail(id) {
+    const inv = S().invoices.find(x => x.id === id);
+    const c = Store.get.client(inv.clientId) || {};
+    modal({
+      title: `Email invoice ${root.Invoices.number(inv)}`,
+      body: `<div class="form-grid">${field('To', 'to', c.email || '', { type: 'email', cls: 'span2' })}${field('Personal note (optional)', 'message', '', { type: 'textarea', rows: 3, cls: 'span2' })}</div>
+        <p class="small muted">${Store.remote ? 'The invoice PDF is attached, with a pay-online link if online payments are on.' : 'This opens your email app with the invoice text. The PDF downloads at the same time — attach it before sending.'}</p>`,
+      foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Send</button>',
+      onSubmit: d => {
+        if (!/^\S+@\S+\.\S+$/.test(d.to)) { toast('Enter a valid email address'); return false; }
+        if (Store.remote) {
+          Remote.flushNow().then(() => api('POST', `/api/invoices/${id}/email`, { to: d.to, message: d.message }))
+            .then(() => Remote.reload().then(() => toast('Invoice emailed to ' + d.to)), e => toast(e.message));
+        } else {
+          const co = S().settings.company;
+          const body = `${d.message ? d.message + '\n\n' : ''}${root.Invoices.text(S(), inv)}`;
+          invoicePdf(id);
+          location.href = `mailto:${encodeURIComponent(d.to)}?subject=${encodeURIComponent(`Invoice ${root.Invoices.number(inv)} from ${co.name || ''}`)}&body=${encodeURIComponent(body)}`;
+          inv.emailedAt = Store.now(); inv.emailedTo = d.to;
+          commit(`Prepared invoice email to ${d.to}`, inv.clientId);
+        }
+      }
+    });
+  }
+  function invoiceReady(id) {
+    const inv = S().invoices.find(x => x.id === id);
+    const c = Store.get.client(inv.clientId) || {};
+    modal({
+      title: `Invoice ${root.Invoices.number(inv)} created`,
+      body: `<p><b>${esc(c.name || '')}</b> · ${UI.money(inv.amount)}${inv.dueAt ? ' · due ' + UI.date(inv.dueAt) : ''}</p><p class="small muted">${esc(inv.description)}</p>`,
+      foot: `<button type="button" class="btn" data-close>Close</button><button type="button" class="btn" data-pdf>${icon('download')} Download PDF</button><button type="button" class="btn primary" data-mail>${icon('mail')} Email to client</button>`,
+      onOpen: f => { f.querySelector('[data-pdf]').onclick = () => invoicePdf(id); f.querySelector('[data-mail]').onclick = () => invoiceEmail(id); }
+    });
+  }
   // ---------- automation engine: billing + rules ----------
   let engineBusy = false;
   async function runEngine(manual) {
@@ -689,8 +731,10 @@
         ${field('Client', 'clientId', cid, { type: 'select', options: S().clients.map(c => [c.id, c.name]), cls: 'span2' })}
         <label class="field span2"><span>Completed service</span><select name="disputeId"></select><small>Only mailed disputes not yet invoiced are listed.</small></label>
         ${field('Description', 'description', '', { cls: 'span2' })}
-        ${field('Service completed on', 'serviceCompletedAt', '', { type: 'date' })}${field('Amount ($)', 'amount', '', { type: 'number', attrs: 'step="0.01" min="0"' })}</div>`,
-      foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Issue invoice</button>',
+        ${field('Service completed on', 'serviceCompletedAt', '', { type: 'date' })}${field('Amount ($)', 'amount', '', { type: 'number', attrs: 'step="0.01" min="0"' })}
+        ${field('Due date', 'dueAt', Law.addDays(T(), Number((S().settings.billing || {}).dueDays) || 7), { type: 'date' })}<div></div>
+        ${field('Note on the invoice (optional)', 'notes', '', { type: 'textarea', rows: 2, cls: 'span2' })}</div>`,
+      foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Create invoice</button>',
       onOpen: f => {
         const fill = () => {
           const list = done(f.elements.clientId.value);
@@ -713,8 +757,11 @@
         if (d.serviceCompletedAt > T()) { toast('Blocked: you cannot bill for a service not yet performed (§ 1679b(b))'); return false; }
         if (cs.deadline && d.serviceCompletedAt <= cs.deadline) { toast('Blocked: service date falls inside the cancellation period'); return false; }
         if (!(Number(d.amount) > 0) || !d.description) { toast('Add a description and amount'); return false; }
-        S().invoices.push({ id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), paidAt: null });
-        commit(`Issued invoice ${UI.money(d.amount)} — ${d.description}`, d.clientId);
+        const inv = { id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), dueAt: d.dueAt || null, notes: d.notes || '', paidAt: null, payToken: root.Billing.payToken() };
+        inv.number = root.Invoices.number(inv);
+        S().invoices.push(inv);
+        commit(`Issued invoice ${inv.number} ${UI.money(d.amount)} — ${d.description}`, d.clientId);
+        setTimeout(() => invoiceReady(inv.id), 50);
       }
     });
   }
@@ -733,6 +780,8 @@
 
   // ---------- actions ----------
   const A = {
+    'invoice-pdf': el => invoicePdf(el.dataset.id),
+    'invoice-email': el => invoiceEmail(el.dataset.id),
     analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id); },
     'bill-now': () => { runEngine(true).then(n => { toast(n ? `${n} item(s) created` : 'Nothing due'); render(); }); },
     'invoice-link': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const url = `${location.origin}/pay/${i.payToken}`; (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Payment link copied'), () => prompt('Payment link', url)); },

@@ -10,7 +10,7 @@ import { askAssistant, assistantConfigured, setKeyProvider, checkKey } from './a
 import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
 import { hashPassword, verifyPassword, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
-import { Law, Partners, Store, Sales } from './shared.js';
+import { Law, Partners, Store, Sales, Invoices } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
 import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
 
@@ -626,6 +626,33 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
     if (!anet()) return res.status(501).json({ error: 'Authorize.net is not connected' });
     try { const paid = await confirmPayment(inv); res.json({ paid, version: D().workspaceVersion }); } catch (e) { res.status(502).json({ error: 'Authorize.net: ' + e.message }); }
+  });
+
+  // ---------- invoices: email with PDF attached ----------
+  app.post('/api/invoices/:id/email', need('owner', 'staff'), async (req, res) => {
+    const ws = workspace();
+    const inv = (ws.invoices || []).find(i => i.id === req.params.id);
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    const c = ws.clients.find(x => x.id === inv.clientId);
+    const to = String((req.body || {}).to || (c && c.email) || '').trim();
+    if (!/^\S+@\S+\.\S+$/.test(to)) return res.status(400).json({ error: 'The client has no email address. Add one on their profile.' });
+    if (!commsConfig().email) return res.status(501).json({ error: 'Email sending is not set up on the server (Resend). Download the PDF and attach it to your own email instead.' });
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const billing = (ws.settings || {}).billing || {};
+    const payLink = billing.provider === 'link' && billing.payLink ? billing.payLink : billing.provider === 'authorizenet' && inv.payToken ? `${origin}/pay/${inv.payToken}` : '';
+    const co = company();
+    const note = String((req.body || {}).message || '').trim();
+    const body = `Hi ${(c && (c.firstName || c.name)) || ''},\n\n${note ? note + '\n\n' : ''}Your invoice ${Invoices.number(inv)} for ${Invoices.money(inv.amount)} is attached.${payLink && inv.status !== 'paid' ? `\n\nPay securely online: ${payLink}` : ''}\n\n${Invoices.text(ws, inv, { payLink })}\n\nThank you,\n${co.name || ''}${co.phone ? '\n' + co.phone : ''}`;
+    try {
+      const pdf = Buffer.from(Invoices.pdf(ws, inv, { payLink }), 'latin1').toString('base64');
+      const providerId = await sendEmail({ to, subject: `Invoice ${Invoices.number(inv)} from ${co.name || 'us'} — ${Invoices.money(inv.amount)}`, text: body, attachments: [{ filename: Invoices.filename(ws, inv), content: pdf }] });
+      inv.number = Invoices.number(inv);
+      inv.emailedAt = new Date().toISOString(); inv.emailedTo = to;
+      ws.messages = ws.messages || [];
+      ws.messages.unshift({ id: uid(), clientId: inv.clientId, channel: 'email', to, subject: `Invoice ${inv.number}`, body, at: new Date().toISOString(), by: req.user.email, status: 'sent', providerId });
+      commitWorkspace(req.user.email, 'invoice.email', inv.id);
+      res.json({ ok: true, version: D().workspaceVersion });
+    } catch (e) { res.status(502).json({ error: e.message }); }
   });
 
   // ---------- referral partner portal ----------

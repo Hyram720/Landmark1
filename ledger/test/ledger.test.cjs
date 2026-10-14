@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'sequences.js', 'furnishers.js', 'violations.js', 'billing.js', 'automations.js', 'sales.js', 'reports.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'sequences.js', 'furnishers.js', 'violations.js', 'billing.js', 'automations.js', 'sales.js', 'reports.js', 'invoices.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates, Sequences, Furnishers, Violations, Billing, Automations, Sales, Reports } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates, Sequences, Furnishers, Violations, Billing, Automations, Sales, Reports, Invoices } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -353,4 +353,20 @@ test('new letter types: inquiry, personal info, authorized user', () => {
     const out = Letters.build(t, { client, recipient: { name: 'X', address: 'Y' }, items: [{ creditor: 'Example Bank', discrepancy: 'I did not authorize this inquiry dated March 2026.' }], today: 'today' });
     assert.ok(out.ok && Law.DISPUTE_TYPES[t], t);
   });
+});
+
+test('invoices render as a valid PDF with number, client and total', () => {
+  const ws = Sample.build();
+  const inv = ws.invoices[1];
+  const pdf = Invoices.pdf(ws, inv, { payLink: 'https://pay.example.test/x' });
+  assert.ok(pdf.startsWith('%PDF-1.4') && pdf.trimEnd().endsWith('%%EOF'));
+  const xref = Number(pdf.match(/startxref\n(\d+)/)[1]);
+  assert.strictEqual(pdf.slice(xref, xref + 4), 'xref', 'xref offset is exact');
+  const offs = [...pdf.matchAll(/(\d{10}) 00000 n /g)].map(m => Number(m[1]));
+  offs.forEach((o, i) => assert.strictEqual(pdf.slice(o, o + String(i + 1).length + 6), `${i + 1} 0 obj`));
+  assert.ok(pdf.includes(Invoices.number(inv)) && pdf.includes('Jordan Sample') && pdf.includes('$49.00') && pdf.includes('pay.example.test'));
+  const len = Number(pdf.match(/\/Length (\d+)/)[1]);
+  const start = pdf.indexOf('stream\n') + 7;
+  assert.strictEqual(pdf.slice(start + len, start + len + 10), '\nendstream');
+  assert.match(Invoices.text(ws, inv), /TOTAL: \$49\.00/);
 });
