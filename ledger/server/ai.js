@@ -1,12 +1,10 @@
 // AI report scanning and dispute-round planning with Claude structured outputs.
-import Anthropic from '@anthropic-ai/sdk';
 import { Law, AIPrompts } from './shared.js';
 
 const { REPORT_SCHEMA, SCAN_PROMPT, SCAN_SYSTEM, htmlToText } = AIPrompts;
-import { MODEL, clientContext } from './assistant.js';
+import { MODEL, clientContext, getClient } from './assistant.js';
 
-let client;
-const api = () => (client = client || new Anthropic());
+const api = () => getClient();
 const str = { type: 'string' };
 
 async function structured({ content, schema, system, maxTokens }) {

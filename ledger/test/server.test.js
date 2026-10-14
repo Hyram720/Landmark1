@@ -179,3 +179,27 @@ test('pasted-text AI scan is gated on an API key and validates input', async () 
   assert.strictEqual((await owner('POST', `/api/clients/${clientId}/scan-text`, { text: 'too short' })).status, 400);
   if (saved) process.env.ANTHROPIC_API_KEY = saved; else delete process.env.ANTHROPIC_API_KEY;
 });
+
+test('owner can save, view and remove the AI key in Settings; it never leaks', async () => {
+  const savedEnv = process.env.ANTHROPIC_API_KEY, savedBase = process.env.ANTHROPIC_BASE_URL;
+  delete process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:9'; // unreachable: key is saved but not verified
+  assert.strictEqual((await owner('GET', '/api/settings/ai')).body.configured, false);
+  assert.strictEqual((await owner('PUT', '/api/settings/ai', { anthropicKey: 'not-a-key' })).status, 400);
+  const key = 'sk-ant-api03-' + 'x'.repeat(40) + 'WXYZ';
+  const r = await owner('PUT', '/api/settings/ai', { anthropicKey: key });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.configured, true);
+  assert.strictEqual(r.body.source, 'settings');
+  assert.strictEqual(r.body.last4, 'WXYZ');
+  assert.ok(!JSON.stringify(r.body).includes(key));
+  assert.strictEqual((await owner('GET', '/api/config')).body.assistant, true);
+  assert.ok(!JSON.stringify((await owner('GET', '/api/workspace')).body).includes(key), 'key is not in the workspace or backups');
+  assert.ok(!fs.readFileSync(db.file, 'utf8').includes(key), 'key is encrypted at rest');
+  const staff = client();
+  await staff('POST', '/api/login', { email: 'staff@example.test', password: 'staff password 1' });
+  assert.strictEqual((await staff('GET', '/api/settings/ai')).status, 403);
+  assert.strictEqual((await owner('DELETE', '/api/settings/ai')).body.configured, false);
+  if (savedEnv) process.env.ANTHROPIC_API_KEY = savedEnv;
+  if (savedBase) process.env.ANTHROPIC_BASE_URL = savedBase; else delete process.env.ANTHROPIC_BASE_URL;
+});

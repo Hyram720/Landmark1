@@ -66,20 +66,33 @@ function clientContext(ws, clientId, opts = {}) {
   return lines.join('\n');
 }
 
-let client;
-export function assistantConfigured(env = process.env) { return Boolean(env.ANTHROPIC_API_KEY); }
+// The key comes from ANTHROPIC_API_KEY or, if unset, from the owner's Settings (stored encrypted).
+let keyProvider = () => '';
+let client = null, clientKey = null;
+export function setKeyProvider(fn) { keyProvider = fn; }
+export function currentKey(env = process.env) { return env.ANTHROPIC_API_KEY || keyProvider() || ''; }
+export function assistantConfigured(env = process.env) { return Boolean(currentKey(env)); }
+export function getClient() {
+  const key = currentKey();
+  if (!client || clientKey !== key) { client = new Anthropic({ apiKey: key }); clientKey = key; }
+  return client;
+}
+/** Checks a key with a cheap Models API call. Returns 'ok', 'invalid' or 'unreachable'. */
+export async function checkKey(key) {
+  try { await new Anthropic({ apiKey: key, maxRetries: 0, timeout: 15000 }).models.retrieve(MODEL); return 'ok'; }
+  catch (e) { return e.status === 401 || e.status === 403 ? 'invalid' : 'unreachable'; }
+}
 
 /**
  * history: [{ role: 'user'|'assistant', content: string }], newest last.
  * Returns { text, model }.
  */
 export async function askAssistant({ ws, clientId, history }) {
-  client = client || new Anthropic();
   const ctx = clientId ? clientContext(ws, clientId) : null;
   const msgs = history.slice(-20).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 20000) }));
   if (!msgs.length || msgs[msgs.length - 1].role !== 'user') throw new Error('Ask a question first');
   if (ctx) msgs[0] = { role: 'user', content: `<client_file>\n${ctx}\n</client_file>\n\n${msgs[0].content}` };
-  const response = await client.beta.messages.create({
+  const response = await getClient().beta.messages.create({
     model: MODEL,
     max_tokens: 16000,
     betas: ['server-side-fallback-2026-07-01'],

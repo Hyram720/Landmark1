@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import express from 'express';
 import multer from 'multer';
 import { commsConfig, sendEmail, sendSms } from './comms.js';
-import { askAssistant, assistantConfigured } from './assistant.js';
+import { askAssistant, assistantConfigured, setKeyProvider, checkKey } from './assistant.js';
 import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
 import { hashPassword, verifyPassword, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
@@ -28,6 +28,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
   const fileKey = encryptionKey ? crypto.createHash('sha256').update('files:' + encryptionKey).digest() : null;
   const D = () => db.data;
+  setKeyProvider(() => (db.data.secrets && db.data.secrets.anthropicKey) || '');
   const app = express();
   app.set('trust proxy', true);
   app.disable('x-powered-by');
@@ -289,10 +290,34 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   });
 
   // ---------- communications ----------
+  // ---------- owner settings: AI key ----------
+  const keyInfo = () => {
+    const env = process.env.ANTHROPIC_API_KEY, saved = D().secrets && D().secrets.anthropicKey;
+    const k = env || saved || '';
+    return { configured: !!k, source: env ? 'server' : saved ? 'settings' : null, last4: k ? k.slice(-4) : '', savedAt: (D().secrets || {}).anthropicKeySavedAt || null };
+  };
+  app.get('/api/settings/ai', need('owner'), (req, res) => res.json(keyInfo()));
+  app.put('/api/settings/ai', need('owner'), async (req, res) => {
+    const key = String((req.body || {}).anthropicKey || '').trim();
+    if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(key)) return res.status(400).json({ error: 'That doesn’t look like an Anthropic API key. It starts with sk-ant-.' });
+    const check = await checkKey(key);
+    if (check === 'invalid') return res.status(400).json({ error: 'Anthropic rejected this key. Copy it again from console.anthropic.com.' });
+    D().secrets = Object.assign(D().secrets || {}, { anthropicKey: key, anthropicKeySavedAt: new Date().toISOString() });
+    db.audit({ actor: req.user.email, action: 'settings.ai_key', detail: `saved …${key.slice(-4)} (${check})` });
+    db.persist();
+    res.json(Object.assign(keyInfo(), { verified: check === 'ok' }));
+  });
+  app.delete('/api/settings/ai', need('owner'), (req, res) => {
+    if (D().secrets) { delete D().secrets.anthropicKey; delete D().secrets.anthropicKeySavedAt; }
+    db.audit({ actor: req.user.email, action: 'settings.ai_key', detail: 'removed' });
+    db.persist();
+    res.json(keyInfo());
+  });
+
   app.get('/api/config', need('owner', 'staff'), (req, res) => res.json(Object.assign(commsConfig(), { assistant: assistantConfigured() })));
   const aiLimit = rateLimiter(60, 60 * 60 * 1000);
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
-    if (!assistantConfigured()) return res.status(501).json({ error: 'Ledger AI needs ANTHROPIC_API_KEY set on the server' });
+    if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
     const { clientId, history } = req.body || {};
     if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });
@@ -332,7 +357,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     res.status(status).json({ error: status === 429 ? 'The AI service is busy. Try again in a minute.' : e.message });
   };
   app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
-    if (!assistantConfigured()) return res.status(501).json({ error: 'AI scanning needs ANTHROPIC_API_KEY set on the server' });
+    if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
     if (!doc) return res.status(404).json({ error: 'Document not found' });
@@ -344,7 +369,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     } catch (e) { aiError(res, e); }
   });
   app.post('/api/clients/:id/scan-text', need('owner', 'staff'), async (req, res) => {
-    if (!assistantConfigured()) return res.status(501).json({ error: 'AI scanning needs ANTHROPIC_API_KEY set on the server' });
+    if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const text = String((req.body || {}).text || '');
     if (text.trim().length < 200) return res.status(400).json({ error: 'Paste the full report text (select all on the report page, copy, then paste).' });
@@ -358,7 +383,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     } catch (e) { aiError(res, e); }
   });
   app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
-    if (!assistantConfigured()) return res.status(501).json({ error: 'AI planning needs ANTHROPIC_API_KEY set on the server' });
+    if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     try {
       const out = await planRound({ ws: workspace(), clientId: req.params.id });

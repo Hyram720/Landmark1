@@ -32,6 +32,7 @@
     }
     document.getElementById('view').innerHTML = html;
     if (nav === 'team') loadTeam();
+    if (nav === 'settings') loadAiSettings();
     document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('active', el.dataset.nav === nav));
     const open = Views.openDisputes().length;
     const al = Views.alerts().filter(x => x.sev === 'high').length;
@@ -122,6 +123,37 @@
         location.reload();
       } catch (err) { document.getElementById('auth-err').textContent = err.message; }
     });
+  }
+
+  async function loadAiSettings() {
+    const el = document.getElementById('ai-settings');
+    if (!el || !Store.remote) return;
+    if (Remote.user.role !== 'owner') { el.innerHTML = '<p class="small muted">Only the owner can change the AI key.</p>'; return; }
+    let info;
+    try { info = await api('GET', '/api/settings/ai'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    const status = info.configured
+      ? `<span class="badge b-ok">AI is on</span> <span class="small">Key ending <span class="mono">…${esc(info.last4)}</span>${info.source === 'server' ? ' (set in Railway variables)' : info.savedAt ? ' · saved ' + UI.date(info.savedAt) : ''}</span>`
+      : '<span class="badge b-high">AI is off</span> <span class="small">Add your key to turn on Ledger AI, AI report scanning and AI round planning.</span>';
+    el.innerHTML = `<div class="stack"><div>${status}</div>
+      ${info.source === 'server' ? '<p class="small muted">This key comes from the server settings (ANTHROPIC_API_KEY in Railway). To manage it here instead, delete that variable in Railway.</p>' : `
+      <form id="ai-key-form" class="stack">
+        <label class="field"><span>Anthropic API key</span><input name="anthropicKey" type="password" autocomplete="off" placeholder="sk-ant-…"><small>Get it at console.anthropic.com → API keys. It is stored encrypted on your server, never shown again in full, and not included in backups.</small></label>
+        <div class="row"><button class="btn primary">Save & test key</button>${info.configured ? '<button type="button" class="btn danger" id="ai-key-remove">Remove key</button>' : ''}<a class="btn ghost" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key ↗</a></div>
+        <div id="ai-key-msg" class="small"></div>
+      </form>`}</div>`;
+    const form = document.getElementById('ai-key-form');
+    if (form) form.onsubmit = async e => {
+      e.preventDefault();
+      const msg = document.getElementById('ai-key-msg');
+      msg.style.color = ''; msg.textContent = 'Testing the key with Anthropic…';
+      try {
+        const r = await api('PUT', '/api/settings/ai', { anthropicKey: form.elements.anthropicKey.value.trim() });
+        toast(r.verified ? 'Key saved and verified — AI is on' : 'Key saved. Anthropic could not be reached to verify it; try an AI scan.');
+        loadAiSettings();
+      } catch (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message; }
+    };
+    const rm = document.getElementById('ai-key-remove');
+    if (rm) rm.onclick = async () => { await api('DELETE', '/api/settings/ai'); toast('Key removed — AI is off'); loadAiSettings(); };
   }
 
   async function loadTeam() {
@@ -865,6 +897,7 @@
         authScreen(session); return;
       }
       await Remote.start(session.user);
+      const foot = document.querySelector('.side-foot'); if (foot) foot.textContent = 'Saved securely on your Ledger server. Workflow software — not legal advice.';
       document.getElementById('who').innerHTML = `<span id="sync" class="badge plain b-ok">Saved</span><a class="btn ghost sm" href="#/team">${esc(session.user.name)}</a>`;
     } else {
       Store.load();
