@@ -712,7 +712,6 @@
     'message': el => messageModal(el.dataset.id, 'sms'),
     'message-email': el => messageModal(el.dataset.id, 'email'),
     'docs': el => go(`#/clients/${el.dataset.id}/documents`),
-    'upload-report': el => uploadModal(el.dataset.id, 'report'),
     'upload-doc': el => uploadModal(el.dataset.id, 'other'),
     'select-all': el => { document.querySelectorAll('.pick').forEach(x => { x.checked = el.checked; }); updateBulk(); },
     'bulk-email': () => { const emails = picked().map(id => Store.get.client(id)).filter(c => c && c.email).map(c => c.email); if (!emails.length) return toast('No emails on the selected profiles'); location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}`; },

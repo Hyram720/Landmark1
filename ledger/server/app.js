@@ -343,6 +343,20 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       res.json(out);
     } catch (e) { aiError(res, e); }
   });
+  app.post('/api/clients/:id/scan-text', need('owner', 'staff'), async (req, res) => {
+    if (!assistantConfigured()) return res.status(501).json({ error: 'AI scanning needs ANTHROPIC_API_KEY set on the server' });
+    if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
+    const text = String((req.body || {}).text || '');
+    if (text.trim().length < 200) return res.status(400).json({ error: 'Paste the full report text (select all on the report page, copy, then paste).' });
+    if (!workspace().clients.some(c => c.id === req.params.id)) return res.status(404).json({ error: 'Client not found' });
+    try {
+      const isHtml = /<(table|div|td|html)\b/i.test(text);
+      const out = await scanReport({ buffer: Buffer.from(text.slice(0, 600000), 'utf8'), mime: isHtml ? 'text/html' : 'text/plain' });
+      db.audit({ actor: req.user.email, action: 'ai.scan', detail: 'pasted text' });
+      db.persist();
+      res.json(out);
+    } catch (e) { aiError(res, e); }
+  });
   app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI planning needs ANTHROPIC_API_KEY set on the server' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });

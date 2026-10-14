@@ -283,6 +283,15 @@ td.actions .btn { padding: 0 8px; margin-right: 3px; }
 .ai-fab { position: fixed; right: max(20px, env(safe-area-inset-right, 0px)); bottom: max(20px, env(safe-area-inset-bottom, 0px)); z-index: 30; border-radius: 99px; height: 44px; padding: 0 18px; box-shadow: var(--shadow-lg); }
 @media print { .ai-drawer, .ai-fab { display: none !important; } }
 
+/* Upload hub */
+.up-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.up-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.up-card h3 { font-size: 14px; }
+.up-main { grid-row: span 2; border-color: var(--accent); background: var(--accent-soft); }
+.drop { flex: 1; min-height: 140px; border: 2px dashed var(--border-strong); border-radius: 12px; display: grid; place-content: center; text-align: center; gap: 4px; cursor: pointer; background: var(--surface); padding: 16px; }
+.drop:hover, .drop.over { border-color: var(--accent); }
+@media (max-width: 820px) { .up-grid { grid-template-columns: 1fr; } .up-main { grid-row: auto; } }
+
 </style>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3EL%3C/text%3E%3C/svg%3E">
 </head>
@@ -1802,7 +1811,7 @@ Thank you for considering this request.`
     const maxO = Math.max(1, ...outcomes.map(o => o[1]));
 
     return head('Dashboard', new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
-      `<button class="btn" data-act="new-task">${icon('plus')} Task</button><button class="btn primary" data-act="new-client">${icon('plus')} New client</button>`) +
+      `<button class="btn" data-act="new-task">${icon('plus')} Task</button><button class="btn" data-act="upload-report">${icon('upload')} Upload report</button><button class="btn primary" data-act="new-client">${icon('plus')} New client</button>`) +
       `<div class="grid g4">
         ${kpi('Active clients', active, `${s.clients.filter(c => c.status === 'onboarding').length} onboarding · ${s.clients.filter(c => c.status === 'lead').length} leads`)}
         ${kpi('Open disputes', open.length, `${sent.length} awaiting response`)}
@@ -1862,7 +1871,7 @@ Thank you for considering this request.`
     const nFind = clientFindings(c.id).filter(f => f.severity !== 'low').length;
     const body = ({ overview: clientOverview, business: clientBusiness, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs);
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
-      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button><button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="add-report" data-id="${c.id}">${icon('plus')} Add report</button>`,
+      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button><button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
       (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>Cancellation period open until midnight ${date(cs.deadline)}</b>No services may be performed and no fees collected until it ends (15 U.S.C. §§ 1679d(a)(2), 1679e).</div>` : '') +
       `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/clients/${c.id}/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'audit' && nFind ? ` <span class="badge b-high plain">${nFind}</span>` : ''}</a>`).join('')}</div>` + body;
@@ -1903,7 +1912,7 @@ Thank you for considering this request.`
 
   function clientReports(c) {
     const reps = Store.get.reportsFor(c.id);
-    if (!reps.length) return card('', empty('No reports yet', 'Add a report manually, paste CSV tradelines, or import from a monitoring-service export.', `<button class="btn primary" data-act="add-report" data-id="${c.id}" style="margin-top:8px">${icon('plus')} Add report</button>`));
+    if (!reps.length) return card('', empty('No reports yet', 'Upload a PDF or web page from MyFreeScoreNow, IdentityIQ or SmartCredit and AI reads every account, or import a CSV, or enter it by hand.', `<button class="btn primary" data-act="upload-report" data-id="${c.id}" style="margin-top:8px">${icon('upload')} Upload credit report</button>`));
     return `<div class="stack">${reps.map(r => card(`${esc(r.bureau)} · ${date(r.date)}`, r.accounts.length ? `<div class="table-wrap"><table><thead><tr><th>Creditor</th><th>Type</th><th>Status</th><th class="num">Balance</th><th class="num">Past due</th><th class="num">Limit / high</th><th>Opened</th><th>DOFD</th><th>24-mo history</th><th></th></tr></thead><tbody>
       ${r.accounts.map(a => `<tr><td><b>${esc(a.creditor)}</b><div class="small muted mono">${esc(a.accountNumber)}${a.originalCreditor ? ' · for ' + esc(a.originalCreditor) : ''}</div></td>
         <td class="small">${esc(Metro2.PORTFOLIO_TYPE[a.type] || a.type || '—')}</td>
@@ -2241,6 +2250,7 @@ Thank you for considering this request.`
       ${card('Your data', `<p class="small muted">Everything is stored in this browser only. Export regular backups — the file contains client personal information, so keep it encrypted and private.</p>
         <div class="row" style="margin-top:10px"><button class="btn" data-act="export">${icon('download')} Export backup</button><button class="btn" data-act="import">${icon('upload')} Import backup</button><button class="btn" data-act="csv-template">${icon('download')} Tradeline CSV template</button></div>
         <p class="small muted" style="margin-top:10px">Imports accept Ledger v1 backups (<span class="mono">ledger-workspace-backup.json</span>) and v2 workspaces. v1 letters become round-1 disputes so their deadlines can be tracked.</p>`)}
+      ${Store.remote ? '' : card('AI in this browser', `<p class="small">${root.AIDirect && root.AIDirect.getKey() ? '<span class="badge b-ok">On</span> AI scanning works in this file using your Anthropic API key.' : 'Add your own Anthropic API key to scan credit reports with AI right here — no server needed. The key stays in this browser and is never included in backups.'}</p><div class="row" style="margin-top:10px"><button class="btn primary" data-act="ai-key">${root.AIDirect && root.AIDirect.getKey() ? 'Change key' : 'Add API key'}</button><a class="btn ghost" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key ↗</a></div>`)}
       ${card('Demo & reset', `<div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn danger" data-act="reset">Erase workspace</button></div>`)}
     </div></div>`;
   }
@@ -2964,7 +2974,6 @@ Thank you for considering this request.`
     'message': el => messageModal(el.dataset.id, 'sms'),
     'message-email': el => messageModal(el.dataset.id, 'email'),
     'docs': el => go(`#/clients/${el.dataset.id}/documents`),
-    'upload-report': el => uploadModal(el.dataset.id, 'report'),
     'upload-doc': el => uploadModal(el.dataset.id, 'other'),
     'select-all': el => { document.querySelectorAll('.pick').forEach(x => { x.checked = el.checked; }); updateBulk(); },
     'bulk-email': () => { const emails = picked().map(id => Store.get.client(id)).filter(c => c && c.email).map(c => c.email); if (!emails.length) return toast('No emails on the selected profiles'); location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}`; },
@@ -3236,6 +3245,168 @@ Thank you for considering this request.`
 
 </script>
   <script>
+/*
+ * Shared AI report-scan prompt, JSON schema and HTML-to-text helper. Used by the server and by
+ * the browser (master file mode, where the user's own API key calls Claude directly).
+ */
+(function (root) {
+  'use strict';
+  const str = { type: 'string' };
+const ACCOUNT_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    creditor: str, accountNumber: str, originalCreditor: str,
+    type: { type: 'string', enum: ['R', 'I', 'M', 'O', 'C', ''] },
+    status: str, balance: str, pastDue: str, limit: str, highCredit: str, chargeOff: str,
+    opened: str, closed: str, lastPayment: str, dofd: str, reportedDate: str,
+    ecoa: str, complianceCode: str, paymentHistory: str, remarks: str
+  },
+  required: ['creditor', 'accountNumber', 'originalCreditor', 'type', 'status', 'balance', 'pastDue', 'limit', 'highCredit', 'chargeOff', 'opened', 'closed', 'lastPayment', 'dofd', 'reportedDate', 'ecoa', 'complianceCode', 'paymentHistory', 'remarks']
+};
+const REPORT_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    reportDate: str, source: str,
+    bureaus: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      properties: { bureau: { type: 'string', enum: ['Equifax', 'Experian', 'TransUnion'] }, score: str, accounts: { type: 'array', items: ACCOUNT_SCHEMA } },
+      required: ['bureau', 'score', 'accounts']
+    } },
+    notes: str
+  },
+  required: ['reportDate', 'source', 'bureaus', 'notes']
+};
+
+const SCAN_PROMPT = `Extract every tradeline (credit account and collection account) from this consumer credit report into Metro 2 terms, separately for each bureau shown (Equifax, Experian, TransUnion). A 3-bureau report lists the same account once per bureau — output it under each bureau with that bureau's own values.
+
+Rules:
+- Use only what the report shows. Use "" for anything not shown. Never guess or fill in values.
+- type: R revolving/credit card, I installment/auto/student/personal loan, M mortgage, O open/collection/charge accounts, C line of credit.
+- status: map the bureau's wording to the Metro 2 Account Status code: 11 current/pays as agreed, 13 paid or closed with $0, 61–65 paid after a derogatory event, 71 30 days late, 78 60, 80 90, 82 120, 83 150, 84 180+, 93 collection, 94 foreclosure, 95 voluntary surrender, 96 repossession, 97 charge-off, 05 transferred/sold. Put the bureau's own wording in remarks.
+- Money as plain numbers without $ or commas. Dates as YYYY-MM-DD (use day 01 when only month/year is shown).
+- paymentHistory: up to 24 characters, newest month first, using 0 (current/OK), 1–6 (30–180 days late), G collection, L charge-off, B/D for no data.
+- dofd: the Date of First Delinquency if shown (also called date of first delinquency, or the delinquency date used for removal).
+- accountNumber: keep the masked format shown.
+- Skip inquiries, public-record summaries, addresses and employment.
+- reportDate: the date the report was generated. source: the provider (e.g. MyFreeScoreNow, IdentityIQ, SmartCredit, annualcreditreport.com).
+- notes: anything you could not read or were unsure about.`;
+
+function htmlToText(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<\/(td|th)>/gi, ' | ').replace(/<\/(tr|p|div|li|h\d)>|<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+}
+
+  const SCAN_SYSTEM = 'You extract credit report data precisely. You never invent values.';
+  const api = { ACCOUNT_SCHEMA, REPORT_SCHEMA, SCAN_PROMPT, SCAN_SYSTEM, htmlToText };
+  root.AIPrompts = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * Browser-direct Claude calls for the no-login master file (no server). The user's own Anthropic
+ * API key is kept in this browser's localStorage only and is never included in backups.
+ * Raw HTTP because the master file is a single static page with no build step for the SDK.
+ */
+(function (root) {
+  'use strict';
+  const KEY = 'ledger-anthropic-key';
+  const MODEL = 'claude-opus-5-5';
+
+  function getKey() { try { return root.localStorage.getItem(KEY) || ''; } catch (e) { return ''; } }
+  function setKey(v) { try { if (v) root.localStorage.setItem(KEY, v); else root.localStorage.removeItem(KEY); } catch (e) { /* storage blocked */ } }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1]);
+      r.onerror = () => reject(new Error('Could not read the file'));
+      r.readAsDataURL(file);
+    });
+  }
+  function fileToText(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(new Error('Could not read the file'));
+      r.readAsText(file);
+    });
+  }
+
+  /** Builds the user content for a scan from a File or pasted text. Shared by server-less mode. */
+  async function scanContent({ file, text }) {
+    const P = root.AIPrompts;
+    if (file && file.type === 'application/pdf') return [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: await fileToBase64(file) } }, { type: 'text', text: P.SCAN_PROMPT }];
+    if (file && /^image\/(png|jpeg|webp|gif)$/.test(file.type)) return [{ type: 'image', source: { type: 'base64', media_type: file.type, data: await fileToBase64(file) } }, { type: 'text', text: P.SCAN_PROMPT }];
+    const raw = file ? await fileToText(file) : String(text || '');
+    const body = /<(table|div|td|html)\b/i.test(raw) ? P.htmlToText(raw) : raw;
+    return `<credit_report>\n${body.slice(0, 600000)}\n</credit_report>\n\n${P.SCAN_PROMPT}`;
+  }
+
+  /** Streams a structured-output request and returns the parsed JSON. */
+  async function structured({ content, schema, system, maxTokens }) {
+    const key = getKey();
+    if (!key) throw new Error('Add your Anthropic API key in Settings → AI in this browser');
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'server-side-fallback-2026-07-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: MODEL, max_tokens: maxTokens || 64000, stream: true, fallbacks: 'default',
+        output_config: { effort: 'medium', format: { type: 'json_schema', schema } },
+        system, messages: [{ role: 'user', content }]
+      })
+    });
+    if (!res.ok) {
+      let msg = `AI request failed (${res.status})`;
+      try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) { /* not JSON */ }
+      if (res.status === 401) msg = 'Your Anthropic API key was rejected. Check it in Settings.';
+      if (res.status === 429) msg = 'The AI service is busy or your key hit its limit. Try again in a minute.';
+      throw new Error(msg);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', text = '', stop = null;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        const line = chunk.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5)); } catch (e) { continue; }
+        if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') text += ev.delta.text;
+        else if (ev.type === 'message_delta' && ev.delta) stop = ev.delta.stop_reason || stop;
+        else if (ev.type === 'error') throw new Error((ev.error && ev.error.message) || 'AI stream error');
+      }
+    }
+    if (stop === 'refusal') throw new Error('The AI declined this request.');
+    if (stop === 'max_tokens') throw new Error('The report is too long to scan in one pass. Split it by bureau and scan each part.');
+    return JSON.parse(text);
+  }
+
+  async function scan({ file, text }) {
+    const P = root.AIPrompts;
+    return structured({ content: await scanContent({ file, text }), schema: P.REPORT_SCHEMA, system: P.SCAN_SYSTEM });
+  }
+
+  root.AIDirect = { getKey, setKey, scan, structured, MODEL };
+})(window);
+
+</script>
+  <script>
 /* AI-assisted workflow: scan uploaded reports, plan the next round, and report removals. */
 (function (root) {
   'use strict';
@@ -3280,10 +3451,16 @@ Thank you for considering this request.`
     toast('Scanning the report with AI… this can take a minute');
     let out;
     try { out = await App().api('POST', `/api/clients/${cid}/files/${docId}/scan`); } catch (e) { toast(e.message); return; }
+    reviewScan(cid, out, doc ? doc.name : 'report', docId);
+  }
+
+  /** Shows what the AI read and imports the selected bureaus as reports. */
+  function reviewScan(cid, out, label, docId) {
+    const doc = { name: label };
     const bureaus = out.bureaus || [];
     if (!bureaus.length) { toast('No tradelines were found in this file'); return; }
     modal({
-      title: `AI scan — ${doc ? doc.name : 'report'}`, wide: true,
+      title: `AI scan — ${esc(label)}`, wide: true,
       body: `<p class="small">Review what the AI read before importing. ${out.source ? `Source: <b>${esc(out.source)}</b>. ` : ''}${out.reportDate ? `Report date: <b>${esc(out.reportDate)}</b>.` : ''}</p>
         ${out.notes ? `<div class="callout warn" style="margin:8px 0"><b>AI notes</b>${esc(out.notes)}</div>` : ''}
         ${bureaus.map((b, bi) => `<h3 style="margin:14px 0 6px"><label class="check"><input type="checkbox" name="b[]" value="${bi}" checked> ${esc(b.bureau)} · ${b.accounts.length} tradelines${b.score ? ' · score ' + esc(b.score) : ''}</label></h3>
@@ -3295,12 +3472,12 @@ Thank you for considering this request.`
         const added = picked.map(i => {
           const b = bureaus[i];
           const accounts = b.accounts.map(a => App().tradelineFrom(Object.assign({}, a, { reportedDate: a.reportedDate || date, issue: '', evidence: '' })));
-          const r = { id: Store.uid(), clientId: cid, bureau: b.bureau, date, source: (out.source || 'AI scan') + ' (AI scan)', scores: Number(b.score) ? { [b.bureau]: Number(b.score) } : {}, accounts, sourceDocId: docId };
+          const r = { id: Store.uid(), clientId: cid, bureau: b.bureau, date, source: (out.source || 'AI scan') + ' (AI scan)', scores: Number(b.score) ? { [b.bureau]: Number(b.score) } : {}, accounts, sourceDocId: docId || null };
           S().reports.push(r);
           return r;
         });
         const wins = afterImport(added);
-        App().commit(`AI imported ${added.length} bureau report(s) from ${doc ? doc.name : 'an uploaded file'}`, cid);
+        App().commit(`AI imported ${added.length} bureau report(s) from ${label}`, cid);
         App().go(`#/clients/${cid}/audit`);
         if (wins.length) setTimeout(() => showWins(cid, wins), 50);
       }
@@ -3347,11 +3524,116 @@ Thank you for considering this request.`
     });
   }
 
+
+  // ---------- upload hub ----------
+  const mode = () => (Store.remote ? 'server' : root.AIDirect && root.AIDirect.getKey() ? 'direct' : 'none');
+  function mergeScans(list) {
+    const merged = { reportDate: '', source: '', notes: '', bureaus: [] };
+    list.forEach(o => {
+      merged.reportDate = merged.reportDate || o.reportDate;
+      merged.source = merged.source || o.source;
+      if (o.notes) merged.notes += (merged.notes ? ' ' : '') + o.notes;
+      (o.bureaus || []).forEach(b => {
+        const ex = merged.bureaus.find(x => x.bureau === b.bureau);
+        if (ex) { ex.accounts = ex.accounts.concat(b.accounts); ex.score = ex.score || b.score; } else merged.bureaus.push(Object.assign({}, b));
+      });
+    });
+    return merged;
+  }
+  async function scanFiles(cid, files) {
+    const m = mode();
+    if (m === 'none') { toast('Turn on AI first: Settings → AI in this browser'); return; }
+    const results = [];
+    let firstDoc = null;
+    for (const [i, file] of files.entries()) {
+      if (file.size > 15 * 1024 * 1024) { toast(`${file.name} is over 15 MB`); continue; }
+      toast(`AI is reading ${file.name}${files.length > 1 ? ` (${i + 1} of ${files.length})` : ''}… this can take a minute`);
+      try {
+        if (m === 'server') {
+          const fd = new FormData(); fd.append('type', 'report'); fd.append('file', file);
+          if (Store.remote.flushNow) await Store.remote.flushNow();
+          const r = await fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' });
+          const j = await r.json(); if (!r.ok) throw new Error(j.error);
+          firstDoc = firstDoc || j.doc.id;
+          await Store.remote.reload();
+          results.push(await App().api('POST', `/api/clients/${cid}/files/${j.doc.id}/scan`));
+        } else {
+          results.push(await root.AIDirect.scan({ file }));
+        }
+      } catch (e) { toast(`${file.name}: ${e.message}`); }
+    }
+    if (!results.length) return;
+    const out = mergeScans(results);
+    if (!out.bureaus.length) { toast('The AI found no accounts in that report'); return; }
+    reviewScan(cid, out, files.length === 1 ? files[0].name : `${files.length} files`, firstDoc);
+  }
+  async function scanText(cid, text) {
+    const m = mode();
+    if (m === 'none') { toast('Turn on AI first: Settings → AI in this browser'); return; }
+    if (String(text).trim().length < 200) { toast('Paste the full report text (select all on the report page, copy, paste)'); return; }
+    toast('AI is reading the pasted report… this can take a minute');
+    try {
+      const out = m === 'server' ? await App().api('POST', `/api/clients/${cid}/scan-text`, { text }) : await root.AIDirect.scan({ text });
+      if (!out.bureaus || !out.bureaus.length) { toast('The AI found no accounts in that text'); return; }
+      reviewScan(cid, out, 'pasted report');
+    } catch (e) { toast(e.message); }
+  }
+
+  function uploadHub(cid) {
+    const clients = S().clients;
+    if (!clients.length) { toast('Add a client first'); return; }
+    cid = cid || (location.hash.match(/^#\/clients\/([^/?]+)/) || [])[1] || '';
+    const m = mode();
+    const aiNote = m === 'none'
+      ? `<div class="callout warn"><b>AI scanning is off</b>${Store.remote ? 'Set ANTHROPIC_API_KEY on the server to turn it on.' : 'Add your Anthropic API key in <a href="#/settings" data-close>Settings → AI in this browser</a> to read reports automatically.'} You can still import a CSV or enter accounts by hand.</div>`
+      : `<div class="callout good"><b>✦ AI scan is on</b>Drop the report and AI reads every account for each bureau. You review everything before it is saved.</div>`;
+    const offers = S().offers.filter(o => ['myfreescorenow', 'identityiq', 'smartcredit'].includes(o.key));
+    modal({
+      title: 'Upload credit report', wide: true,
+      body: `<div class="form-grid">${field('Client', 'cid', cid, { type: 'select', options: [['', 'Choose a client…']].concat(clients.map(c => [c.id, c.name])), cls: 'span2' })}</div>
+        <div style="margin:14px 0">${aiNote}</div>
+        <div class="up-grid">
+          <section class="up-card up-main"><h3>✦ AI scan a report file</h3><p class="small muted">PDF, saved web page (.html) or screenshots from MyFreeScoreNow, IdentityIQ, SmartCredit or annualcreditreport.com. Several files at once is fine.</p>
+            <label class="drop" id="drop"><input type="file" id="up-files" multiple accept=".pdf,.html,.htm,.txt,.png,.jpg,.jpeg,.webp" hidden><b>Drop report files here</b><span class="small muted">or click to choose</span></label></section>
+          <section class="up-card"><h3>✦ AI scan pasted text</h3><p class="small muted">On the report page press Ctrl+A, Ctrl+C, then paste here.</p><textarea id="up-text" rows="5" placeholder="Paste the full credit report…"></textarea><button type="button" class="btn sm primary" data-up="text" style="margin-top:8px">Scan pasted text</button></section>
+          <section class="up-card"><h3>Spreadsheet (CSV)</h3><p class="small muted">One row per account with Metro 2 columns. Download the template from Settings.</p><button type="button" class="btn sm" data-up="csv">Import CSV</button></section>
+          <section class="up-card"><h3>Enter by hand</h3><p class="small muted">Create the report, then add each account.</p><button type="button" class="btn sm" data-up="manual">Add report manually</button></section>
+          ${Store.remote ? `<section class="up-card"><h3>Ask the client to upload</h3><p class="small muted">They upload it in their portal and it appears in Documents for scanning.</p><button type="button" class="btn sm" data-up="ask">Message client</button></section>` : ''}
+          <section class="up-card"><h3>Need a report first?</h3><p class="small muted">3-bureau monitoring with downloadable reports:</p><div class="row small">${offers.map(o => `<a href="${esc(o.affiliateUrl || o.url)}" target="_blank" rel="noopener">${esc(o.name)} ↗</a>`).join('')}<a href="https://www.annualcreditreport.com" target="_blank" rel="noopener">AnnualCreditReport.com (free) ↗</a></div></section>
+        </div>`,
+      foot: '<button type="button" class="btn" data-close>Close</button>',
+      onOpen: f => {
+        const pick = () => { const v = f.elements.cid.value; if (!v) toast('Choose the client first'); return v; };
+        const go = files => { const id = pick(); if (!id || !files.length) return; UI.close(); scanFiles(id, Array.from(files)); };
+        const drop = f.querySelector('#drop'), inp = f.querySelector('#up-files');
+        inp.onchange = () => go(inp.files);
+        ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+        ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+        drop.addEventListener('drop', e => go(e.dataTransfer.files));
+        f.querySelectorAll('[data-up]').forEach(b => b.onclick = () => {
+          const id = pick(); if (!id) return;
+          const k = b.dataset.up;
+          if (k === 'text') { const t = f.querySelector('#up-text').value; UI.close(); scanText(id, t); }
+          if (k === 'csv' || k === 'manual') { UI.close(); App().A['add-report']({ dataset: { id } }); }
+          if (k === 'ask') { UI.close(); App().messageModal(id, 'email', { subject: 'Please upload your credit report', body: TEMPLATE_ASK(Store.get.client(id)) }); }
+        });
+      }
+    });
+  }
+  const TEMPLATE_ASK = c => `Hi ${c.firstName || c.name}, please download your 3-bureau credit report as a PDF and upload it in your client portal under "Your documents" (choose "Credit report"). If you don't have one yet, reply and we'll send you a link. Thank you!`;
+
   Object.assign(root.App.A, {
+    'upload-report': el => uploadHub(el.dataset.id || el.dataset.client),
+    'ai-key': () => {
+      modal({ title: 'AI in this browser', body: `<p class="small">Paste your Anthropic API key (from console.anthropic.com → API keys). It is saved only in this browser, never in backups, and is used to scan reports directly from this file.</p>${field('Anthropic API key', 'key', root.AIDirect.getKey() ? '••••••••' + root.AIDirect.getKey().slice(-4) : '', { attrs: 'autocomplete="off"' })}<p class="small muted">Anyone who can open this browser can use the key. Remove it on shared computers.</p>`,
+        foot: '<button type="button" class="btn danger" data-rm style="margin-right:auto">Remove key</button><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>',
+        onOpen: f => { f.querySelector('[data-rm]').onclick = () => { root.AIDirect.setKey(''); UI.close(); toast('Key removed'); App().render(); }; },
+        onSubmit: d => { if (d.key.startsWith('••')) return; if (!/^sk-ant-/.test(d.key)) { toast('That does not look like an Anthropic API key (it starts with sk-ant-)'); return false; } root.AIDirect.setKey(d.key); toast('AI scan is on for this browser'); App().render(); } });
+    },
     'ai-scan': el => (Store.remote ? scanDoc(el.dataset.client, el.dataset.id) : toast('AI scanning runs on the Ledger server')),
     'ai-plan': el => (Store.remote ? planRound(el.dataset.id) : toast('AI round planning runs on the Ledger server with ANTHROPIC_API_KEY set'))
   });
-  root.AIFlow = { afterImport, showWins, scanDoc, planRound };
+  root.AIFlow = { afterImport, showWins, scanDoc, planRound, uploadHub, scanFiles, scanText, reviewScan };
 })(window);
 
 </script>

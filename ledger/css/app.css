@@ -270,3 +270,12 @@ td.actions .btn { padding: 0 8px; margin-right: 3px; }
 .ai-foot { padding: 0 16px 12px; }
 .ai-fab { position: fixed; right: max(20px, env(safe-area-inset-right, 0px)); bottom: max(20px, env(safe-area-inset-bottom, 0px)); z-index: 30; border-radius: 99px; height: 44px; padding: 0 18px; box-shadow: var(--shadow-lg); }
 @media print { .ai-drawer, .ai-fab { display: none !important; } }
+
+/* Upload hub */
+.up-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.up-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.up-card h3 { font-size: 14px; }
+.up-main { grid-row: span 2; border-color: var(--accent); background: var(--accent-soft); }
+.drop { flex: 1; min-height: 140px; border: 2px dashed var(--border-strong); border-radius: 12px; display: grid; place-content: center; text-align: center; gap: 4px; cursor: pointer; background: var(--surface); padding: 16px; }
+.drop:hover, .drop.over { border-color: var(--accent); }
+@media (max-width: 820px) { .up-grid { grid-template-columns: 1fr; } .up-main { grid-row: auto; } }

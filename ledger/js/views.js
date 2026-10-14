@@ -114,7 +114,7 @@
     const maxO = Math.max(1, ...outcomes.map(o => o[1]));
 
     return head('Dashboard', new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
-      `<button class="btn" data-act="new-task">${icon('plus')} Task</button><button class="btn primary" data-act="new-client">${icon('plus')} New client</button>`) +
+      `<button class="btn" data-act="new-task">${icon('plus')} Task</button><button class="btn" data-act="upload-report">${icon('upload')} Upload report</button><button class="btn primary" data-act="new-client">${icon('plus')} New client</button>`) +
       `<div class="grid g4">
         ${kpi('Active clients', active, `${s.clients.filter(c => c.status === 'onboarding').length} onboarding · ${s.clients.filter(c => c.status === 'lead').length} leads`)}
         ${kpi('Open disputes', open.length, `${sent.length} awaiting response`)}
@@ -174,7 +174,7 @@
     const nFind = clientFindings(c.id).filter(f => f.severity !== 'low').length;
     const body = ({ overview: clientOverview, business: clientBusiness, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs);
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
-      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button><button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="add-report" data-id="${c.id}">${icon('plus')} Add report</button>`,
+      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button><button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
       (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>Cancellation period open until midnight ${date(cs.deadline)}</b>No services may be performed and no fees collected until it ends (15 U.S.C. §§ 1679d(a)(2), 1679e).</div>` : '') +
       `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/clients/${c.id}/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'audit' && nFind ? ` <span class="badge b-high plain">${nFind}</span>` : ''}</a>`).join('')}</div>` + body;
@@ -215,7 +215,7 @@
 
   function clientReports(c) {
     const reps = Store.get.reportsFor(c.id);
-    if (!reps.length) return card('', empty('No reports yet', 'Add a report manually, paste CSV tradelines, or import from a monitoring-service export.', `<button class="btn primary" data-act="add-report" data-id="${c.id}" style="margin-top:8px">${icon('plus')} Add report</button>`));
+    if (!reps.length) return card('', empty('No reports yet', 'Upload a PDF or web page from MyFreeScoreNow, IdentityIQ or SmartCredit and AI reads every account, or import a CSV, or enter it by hand.', `<button class="btn primary" data-act="upload-report" data-id="${c.id}" style="margin-top:8px">${icon('upload')} Upload credit report</button>`));
     return `<div class="stack">${reps.map(r => card(`${esc(r.bureau)} · ${date(r.date)}`, r.accounts.length ? `<div class="table-wrap"><table><thead><tr><th>Creditor</th><th>Type</th><th>Status</th><th class="num">Balance</th><th class="num">Past due</th><th class="num">Limit / high</th><th>Opened</th><th>DOFD</th><th>24-mo history</th><th></th></tr></thead><tbody>
       ${r.accounts.map(a => `<tr><td><b>${esc(a.creditor)}</b><div class="small muted mono">${esc(a.accountNumber)}${a.originalCreditor ? ' · for ' + esc(a.originalCreditor) : ''}</div></td>
         <td class="small">${esc(Metro2.PORTFOLIO_TYPE[a.type] || a.type || '—')}</td>
@@ -553,6 +553,7 @@
       ${card('Your data', `<p class="small muted">Everything is stored in this browser only. Export regular backups — the file contains client personal information, so keep it encrypted and private.</p>
         <div class="row" style="margin-top:10px"><button class="btn" data-act="export">${icon('download')} Export backup</button><button class="btn" data-act="import">${icon('upload')} Import backup</button><button class="btn" data-act="csv-template">${icon('download')} Tradeline CSV template</button></div>
         <p class="small muted" style="margin-top:10px">Imports accept Ledger v1 backups (<span class="mono">ledger-workspace-backup.json</span>) and v2 workspaces. v1 letters become round-1 disputes so their deadlines can be tracked.</p>`)}
+      ${Store.remote ? '' : card('AI in this browser', `<p class="small">${root.AIDirect && root.AIDirect.getKey() ? '<span class="badge b-ok">On</span> AI scanning works in this file using your Anthropic API key.' : 'Add your own Anthropic API key to scan credit reports with AI right here — no server needed. The key stays in this browser and is never included in backups.'}</p><div class="row" style="margin-top:10px"><button class="btn primary" data-act="ai-key">${root.AIDirect && root.AIDirect.getKey() ? 'Change key' : 'Add API key'}</button><a class="btn ghost" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key ↗</a></div>`)}
       ${card('Demo & reset', `<div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn danger" data-act="reset">Erase workspace</button></div>`)}
     </div></div>`;
   }

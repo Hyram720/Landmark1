@@ -56,6 +56,14 @@ Deploy it like the main site: one Node service with a persistent volume mounted 
 - Guardrails: it separates provable errors from items the client must document and from accurate negatives, and it refuses mass disputes, CPNs, false identity-theft claims and promised results. It also flags CROA problems it notices.
 - Staff only. Runs on Claude Opus 5.5 with automatic fallback if a request is declined. Rate-limited to 60 questions per staff member per hour. Every question is logged in the audit trail (not the content).
 
+**Uploading credit reports (Upload credit report button on the dashboard, client list and client page):**
+- **✦ AI scan a file:** drag in one or more PDFs, saved web pages or screenshots from MyFreeScoreNow, IdentityIQ, SmartCredit or annualcreditreport.com. AI reads every account per bureau, and you review the table before importing.
+- **✦ AI scan pasted text:** select all on the report page, copy, paste.
+- **CSV import** and **manual entry**.
+- **Ask the client to upload:** server mode. They upload in the portal, and you click Scan with AI in Documents.
+- **Links to get a report:** monitoring partners and the free AnnualCreditReport.com.
+- In the **master file**, AI scanning works with your own Anthropic API key (Settings → AI in this browser). The key stays in that browser and is never included in backups. This doesn't work inside a claude.ai preview link, which blocks outside connections.
+
 **AI dispute engine:**
 - **Scan with AI:** upload a MyFreeScoreNow, IdentityIQ or SmartCredit report (PDF, HTML or screenshot) and click **✦ Scan with AI** on the Documents tab. Claude reads every tradeline per bureau into Metro 2 fields, and you review the table before importing. The Metro 2 audit runs immediately.
 - **AI plan next round:** on the Disputes tab, Claude reviews the reports, findings and dispute history and proposes the next round. That means which letters, to whom, for which items, at which strategy step, plus a list of accurate items *not* to dispute and a client update. You tick what to send, confirm the client agreed, and the drafts and letters are created.

@@ -170,3 +170,12 @@ test('AI scan and round plan are gated on an API key; HTML reports are flattened
   assert.match(t, /Creditor \| Example Bank/);
   assert.ok(!t.includes('x()'));
 });
+
+test('pasted-text AI scan is gated on an API key and validates input', async () => {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  assert.strictEqual((await owner('POST', `/api/clients/${clientId}/scan-text`, { text: 'x'.repeat(500) })).status, 501);
+  process.env.ANTHROPIC_API_KEY = 'test';
+  assert.strictEqual((await owner('POST', `/api/clients/${clientId}/scan-text`, { text: 'too short' })).status, 400);
+  if (saved) process.env.ANTHROPIC_API_KEY = saved; else delete process.env.ANTHROPIC_API_KEY;
+});
