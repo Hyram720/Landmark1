@@ -677,7 +677,7 @@
     const B = root.Business, Aq = root.Acquisition, t = T();
     const tab = params.tab || 'clients';
     const bizClients = S().clients.filter(c => c.kind !== 'personal');
-    const TABS = [['clients', 'Business clients'], ['plan', '90-day credit plan'], ['buy', 'Buy a business'], ['vendors', 'Starter vendors'], ['scores', 'Scores & bureaus'], ['checklist', 'Fundability checklist']];
+    const TABS = [['clients', 'Business clients'], ['shelf', 'Shelf companies for sale'], ['plan', '90-day credit plan'], ['buy', 'Buy a business'], ['vendors', 'Starter vendors'], ['scores', 'Scores & bureaus'], ['checklist', 'Fundability checklist']];
     const pick = act => bizClients.length ? `<select id="biz-client" style="width:auto">${bizClients.map(c => `<option value="${c.id}">${esc((c.business || {}).legalName || c.name)} — ${esc(c.name)}</option>`).join('')}</select><button class="btn primary" data-act="${act}">Open for this client</button>` : `<button class="btn primary" data-act="biz-new">+ Add a business client</button>`;
     let body = '';
     if (tab === 'clients') {
@@ -691,6 +691,7 @@
           <td class="right nowrap"><a class="btn sm" href="#/clients/${c.id}/business">Credit</a><a class="btn sm ghost" href="#/clients/${c.id}/acquisition">Buy a business</a></td></tr>`; }).join('')}</tbody></table></div>`
         : empty('No business clients yet', 'Add a business client, or open any personal client and click “Add business credit” to work on the owner’s company too.', '<button class="btn primary" data-act="biz-new" style="margin-top:8px">+ Add a business client</button>'), { flush: true });
     }
+    if (tab === 'shelf') body = shelfCard();
     if (tab === 'plan') body = card('90-day business credit plan', `<p class="small">A dated plan for a new company. Starting it for a client creates a task for every step; steps tied to the fundability checklist tick off automatically.</p><div class="row" style="gap:8px;margin-bottom:14px">${pick('biz-open-plan')}</div><ul class="steps">${B.FAST_TRACK.map(st => `<li><span class="tick">${st.day}</span><div class="grow"><b style="font-weight:550">Day ${st.day} · ${esc(st.title)}</b><div class="small muted">${esc(st.how)}${st.url ? ` <a href="${esc(st.url)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div></div></li>`).join('')}</ul>`);
     if (tab === 'buy') {
       const deals = bizClients.flatMap(c => (c.deals || []).map(d => ({ c, d, e: Aq.evaluate(d, t) })));
