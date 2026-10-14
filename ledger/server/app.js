@@ -89,7 +89,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   app.post('/api/setup', (req, res) => {
     if (D().users.length) return res.status(409).json({ error: 'Already set up' });
     const { name, email, password, setupCode } = req.body || {};
-    if (process.env.LEDGER_SETUP_CODE && setupCode !== process.env.LEDGER_SETUP_CODE) return res.status(403).json({ error: 'Enter the setup code from your server settings' });
+    if (process.env.LEDGER_SETUP_CODE && String(setupCode || '').replace(/\s+/g, '').toUpperCase() !== process.env.LEDGER_SETUP_CODE.replace(/\s+/g, '').toUpperCase()) return res.status(403).json({ error: 'That setup code is not correct. Check the LEDGER_SETUP_CODE value in Railway → Variables.' });
     const prob = passwordProblem(password);
     if (!name || !/^\S+@\S+\.\S+$/.test(email || '')) return res.status(400).json({ error: 'Name and a valid email are required' });
     if (prob) return res.status(400).json({ error: prob });
