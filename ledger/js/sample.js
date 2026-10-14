@@ -46,7 +46,8 @@
         accounts: base.map(b => acct(Object.assign({}, b, variants[bureau][b.creditor] || {})))
       });
     });
-    ws.reports.push({ id: Store.uid(), clientId: c1.id, bureau: 'Experian', source: 'Synthetic QA report', date: d(-90), scores: { Experian: 571 }, accounts: [] });
+    ws.reports.push({ id: Store.uid(), clientId: c1.id, bureau: 'Experian', source: 'Synthetic tri-merge (demo, earlier pull)', date: d(-90), scores: { Experian: 571 },
+      accounts: base.map(b => acct(Object.assign({}, b, b.creditor === 'Sample Auto Finance' ? { status: '11', balance: 2400, closed: '' } : {}))).concat([acct({ creditor: 'Demo Medical Billing', accountNumber: 'XXXX0042', type: 'O', status: '93', balance: 180, pastDue: 180, opened: d(-400), originalCreditor: 'Example Clinic', paymentHistory: 'GGGG' })]) });
 
     const exp = ws.reports[0];
     const item = exp.accounts[0];

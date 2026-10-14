@@ -10,7 +10,9 @@ import { askAssistant, assistantConfigured, setKeyProvider, checkKey } from './a
 import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
 import { hashPassword, verifyPassword, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
-import { Law, Partners, Store } from './shared.js';
+import { Law, Partners, Store, Sales } from './shared.js';
+import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
+import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
 
 const SESSION_COOKIE = 'ledger_session';
 const SESSION_TTL = 60 * 60 * 12; // 12 hours
@@ -60,7 +62,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const token = signToken({ uid: u.id, ep: u.sessionEpoch }, D().secret, SESSION_TTL);
     res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge: SESSION_TTL * 1000, path: '/' });
   }
-  const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, clientId: u.clientId || null });
+  const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, clientId: u.clientId || null, referralId: u.referralId || null });
   const need = (...roles) => (req, res, next) => {
     const u = currentUser(req);
     if (!u) return res.status(401).json({ error: 'Sign in required' });
@@ -142,19 +144,23 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     res.json({ ok: true });
   });
   app.post('/api/invites', need('owner', 'staff'), (req, res) => {
-    const { role, clientId, name, email } = req.body || {};
+    const { role, clientId, referralId, name, email } = req.body || {};
     if (role === 'staff' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can invite staff' });
-    if (!['staff', 'client'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
-    let c;
+    if (!['staff', 'client', 'partner'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    let c, rf;
     if (role === 'client') {
       c = workspace().clients.find(x => x.id === clientId);
       if (!c) return res.status(404).json({ error: 'Client not found' });
     }
+    if (role === 'partner') {
+      rf = (workspace().referrals || []).find(x => x.id === referralId);
+      if (!rf) return res.status(404).json({ error: 'Referral partner not found' });
+    }
     const token = crypto.randomBytes(24).toString('base64url');
-    D().invites.push({ hash: sha(token), role, clientId: clientId || null, name: name || (c && c.name) || '', email: (email || (c && c.email) || '').toLowerCase(), expiresAt: Date.now() + INVITE_TTL_MS, usedAt: null });
-    db.audit({ actor: req.user.email, action: 'invite.create', detail: `${role} ${email || (c && c.name) || ''}` });
+    D().invites.push({ hash: sha(token), role, clientId: clientId || null, referralId: rf ? rf.id : null, name: name || (c && c.name) || (rf && rf.name) || '', email: (email || (c && c.email) || (rf && rf.email) || '').toLowerCase(), expiresAt: Date.now() + INVITE_TTL_MS, usedAt: null });
+    db.audit({ actor: req.user.email, action: 'invite.create', detail: `${role} ${email || (c && c.name) || (rf && rf.name) || ''}` });
     db.persist();
-    const page = role === 'client' ? 'portal' : 'app';
+    const page = role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app';
     res.json({ url: `${req.protocol}://${req.get('host')}/${page}#invite=${token}`, expiresInDays: 7 });
   });
   app.post('/api/invites/accept', (req, res) => {
@@ -166,7 +172,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const addr = (inv.email || String(email || '')).toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(addr)) return res.status(400).json({ error: 'A valid email is required' });
     if (D().users.some(u => u.email === addr && !u.disabled)) return res.status(409).json({ error: 'An account already exists for this email' });
-    const u = { id: uid(), name: inv.name, email: addr, role: inv.role, clientId: inv.clientId, password: hashPassword(password), sessionEpoch: 1, createdAt: new Date().toISOString() };
+    const u = { id: uid(), name: inv.name, email: addr, role: inv.role, clientId: inv.clientId, referralId: inv.referralId || null, password: hashPassword(password), sessionEpoch: 1, createdAt: new Date().toISOString() };
     D().users.push(u);
     inv.usedAt = new Date().toISOString();
     db.audit({ actor: addr, action: 'invite.accept', detail: inv.role });
@@ -436,7 +442,28 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     activity(`${c.name} uploaded “${doc.name}” in the portal`, c.id);
     commitWorkspace(req.user.email, 'portal.upload', doc.name);
     res.json({ ok: true });
+    if (doc.type === 'report') autoScan(c, doc);
   });
+  // Reports a client uploads are read by AI in the background and wait on the client page for one-click import.
+  async function autoScan(c, doc) {
+    const ws = workspace();
+    ws.pendingImports = ws.pendingImports || [];
+    if (!assistantConfigured()) {
+      ws.tasks.push({ id: uid(), clientId: c.id, title: `Import the credit report ${c.name} uploaded (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
+      commitWorkspace('system', 'report.uploaded', doc.name);
+      return;
+    }
+    try {
+      const out = await scanReport({ buffer: readFile(doc.id), mime: doc.mime });
+      ws.pendingImports.unshift({ id: uid(), clientId: c.id, docId: doc.id, docName: doc.name, scannedAt: new Date().toISOString(), result: out });
+      activity(`AI read the report ${c.name} uploaded — ready to import`, c.id);
+      ws.tasks.push({ id: uid(), clientId: c.id, title: `Review & import the report ${c.name} uploaded (AI already read it)`, due: today(), done: false, createdAt: new Date().toISOString() });
+      commitWorkspace('system', 'ai.autoscan', doc.name);
+    } catch (e) {
+      ws.tasks.push({ id: uid(), clientId: c.id, title: `AI could not read ${doc.name} for ${c.name} — import it manually (${String(e.message).slice(0, 80)})`, due: today(), done: false, createdAt: new Date().toISOString() });
+      commitWorkspace('system', 'ai.autoscan.failed', doc.name);
+    }
+  }
   app.get('/api/files/:id', need('owner', 'staff', 'client'), (req, res) => {
     const doc = (workspace().documents || []).find(d => d.id === req.params.id);
     if (!doc || (req.user.role === 'client' && doc.clientId !== req.user.clientId)) return res.status(404).json({ error: 'Not found' });
@@ -445,11 +472,186 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     res.send(readFile(doc.id));
   });
 
+  // ---------- owner settings: print & mail (Lob) and payments (Authorize.net) ----------
+  const secrets = () => (D().secrets = D().secrets || {});
+  const mailInfo = () => { const k = secrets().lobKey || ''; return { configured: !!k, mode: k.startsWith('live_') ? 'live' : k ? 'test' : null, last4: k.slice(-4), savedAt: secrets().lobKeySavedAt || null }; };
+  app.get('/api/settings/mail', need('owner', 'staff'), (req, res) => res.json(mailInfo()));
+  app.put('/api/settings/mail', need('owner'), async (req, res) => {
+    const key = String((req.body || {}).lobKey || '').trim();
+    if (!/^(test|live)_[A-Za-z0-9]{10,}$/.test(key)) return res.status(400).json({ error: 'That doesn’t look like a Lob API key. It starts with test_ or live_.' });
+    const check = await checkLobKey(key);
+    if (check === 'invalid') return res.status(400).json({ error: 'Lob rejected this key. Copy it again from dashboard.lob.com → Settings → API Keys.' });
+    Object.assign(secrets(), { lobKey: key, lobKeySavedAt: new Date().toISOString() });
+    db.audit({ actor: req.user.email, action: 'settings.mail', detail: `saved …${key.slice(-4)} (${check})` });
+    db.persist();
+    res.json(Object.assign(mailInfo(), { verified: check === 'ok' }));
+  });
+  app.delete('/api/settings/mail', need('owner'), (req, res) => { delete secrets().lobKey; db.audit({ actor: req.user.email, action: 'settings.mail', detail: 'removed' }); db.persist(); res.json(mailInfo()); });
+
+  const anet = () => secrets().anet || null;
+  const payInfo = () => { const a = anet(); return { configured: !!a, sandbox: !!(a && a.sandbox), loginLast4: a ? a.loginId.slice(-4) : '', savedAt: a ? a.savedAt : null }; };
+  app.get('/api/settings/payments', need('owner', 'staff'), (req, res) => res.json(payInfo()));
+  app.put('/api/settings/payments', need('owner'), async (req, res) => {
+    const b = req.body || {};
+    const cfg = { loginId: String(b.loginId || '').trim(), transactionKey: String(b.transactionKey || '').trim(), sandbox: !!b.sandbox };
+    if (!cfg.loginId || !cfg.transactionKey) return res.status(400).json({ error: 'Enter the API Login ID and Transaction Key from Authorize.net → Account → API Credentials & Keys.' });
+    const check = await checkCredentials(cfg);
+    if (check === 'invalid') return res.status(400).json({ error: `Authorize.net rejected these credentials${cfg.sandbox ? ' (sandbox)' : ''}.` });
+    secrets().anet = Object.assign(cfg, { savedAt: new Date().toISOString() });
+    db.audit({ actor: req.user.email, action: 'settings.payments', detail: `saved (${check})${cfg.sandbox ? ' sandbox' : ''}` });
+    db.persist();
+    res.json(Object.assign(payInfo(), { verified: check === 'ok' }));
+  });
+  app.delete('/api/settings/payments', need('owner'), (req, res) => { delete secrets().anet; db.audit({ actor: req.user.email, action: 'settings.payments', detail: 'removed' }); db.persist(); res.json(payInfo()); });
+
+  // ---------- mailing dispute letters ----------
+  const mailDocs = new Map(); // token -> { html, expires }
+  const htmlEsc = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  function letterHtml(text, images) {
+    const pages = [`<div class="p">${htmlEsc(text)}</div>`].concat(images.map(im => `<div class="p img"><img src="${im}"></div>`));
+    return `<html><head><meta charset="UTF-8"><style>body{margin:0;font-family:Georgia,serif;font-size:11pt;line-height:1.45}.p{white-space:pre-wrap;padding:0.6in 0.75in;page-break-after:always}.img{text-align:center}.img img{max-width:7in;max-height:9in}</style></head><body>${pages.join('')}</body></html>`;
+  }
+  app.get('/mail-doc/:token', (req, res) => {
+    const d = mailDocs.get(req.params.token);
+    if (!d || d.expires < Date.now()) return res.status(404).send('Expired');
+    res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).send(d.html);
+  });
+  function recipientAddressFor(d) { const b = Law.BUREAUS[d.recipient]; return b ? { name: b.name, address: b.address } : { name: d.recipient, address: d.recipientAddress || '' }; }
+
+  app.post('/api/disputes/:id/mail', need('owner', 'staff'), async (req, res) => {
+    const key = secrets().lobKey;
+    if (!key) return res.status(501).json({ error: 'Online mailing is off. The owner can add a Lob API key in Settings → Print & mail.' });
+    const ws = workspace();
+    const d = ws.disputes.find(x => x.id === req.params.id);
+    if (!d) return res.status(404).json({ error: 'Dispute not found' });
+    if (d.sentAt) return res.status(409).json({ error: 'Already mailed' });
+    const c = ws.clients.find(x => x.id === d.clientId);
+    const letter = ws.letters.find(l => l.id === d.letterId);
+    if (!c || !letter || !letter.text) return res.status(400).json({ error: 'Generate the letter first' });
+    if (letter.status !== 'approved') return res.status(400).json({ error: 'Approve the letter (client confirmed every statement) before mailing' });
+    if (!Store.croaStatus(c).cleared) return res.status(400).json({ error: 'Blocked until onboarding and the cancellation period are complete' });
+    const rc = recipientAddressFor(d);
+    const to = parseAddress(rc.name, rc.address);
+    if (!to) return res.status(400).json({ error: `Recipient address must end with “City, ST 12345”. Edit the recipient address for ${d.recipient}.` });
+    const from = parseAddress(c.name, [c.address, `${c.city || ''}, ${c.state || ''} ${c.zip || ''}`].join('\n'));
+    if (!from) return res.status(400).json({ error: 'The client’s mailing address is incomplete (street, city, state, ZIP)' });
+    const { service, includeId } = req.body || {};
+    const extraService = ['certified', 'certified_return_receipt'].includes(service) ? service : null;
+    const images = [];
+    if (includeId) {
+      ['id', 'address'].forEach(t => {
+        const doc = (ws.documents || []).filter(x => x.clientId === c.id && x.type === t && /^image\/(png|jpeg|webp)$/.test(x.mime)).sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)))[0];
+        if (doc) images.push(`data:${doc.mime};base64,${readFile(doc.id).toString('base64')}`);
+      });
+      if (images.length < 2) return res.status(400).json({ error: 'Upload the client’s photo ID and proof of address as images (PNG/JPG) to include them, or untick “include ID”.' });
+    }
+    const html = letterHtml(letter.text, images);
+    let file = html;
+    if (html.length > 9500) {
+      const host = req.get('host') || '';
+      if (/^(localhost|127\.|0\.0\.0\.0)/.test(host)) return res.status(400).json({ error: 'This letter is too long to send inline, and the server is not reachable from the internet for Lob to fetch it.' });
+      const token = crypto.randomBytes(24).toString('base64url');
+      mailDocs.set(token, { html, expires: Date.now() + 60 * 60 * 1000 });
+      file = `https://${host}/mail-doc/${token}`;
+    }
+    try {
+      const out = await sendLetter({ key, to, from, file, extraService, description: `${c.name} → ${d.recipient} (round ${d.round})`, metadata: { dispute: d.id.slice(0, 40) } });
+      const sentAt = today();
+      const receivedAt = out.expected_delivery_date || Law.addDays(sentAt, Number(ws.settings.mailTransitDays) || 5);
+      Object.assign(d, { sentAt, receivedAt, status: 'sent', tracking: out.tracking_number || d.tracking || '', mail: { provider: 'lob', id: out.id, service: extraService || 'first_class', expectedDelivery: out.expected_delivery_date || null, url: out.url || null, test: key.startsWith('test_'), events: [] } });
+      d.dueAt = Law.responseDue(d.type, d.receivedAt);
+      letter.status = 'sent'; letter.sentAt = sentAt;
+      if (d.dueAt) ws.tasks.push({ id: uid(), clientId: d.clientId, title: `Check ${d.recipient} response (round ${d.round})`, due: d.dueAt, done: false, createdAt: new Date().toISOString() });
+      activity(`Mailed round ${d.round} to ${d.recipient} via Lob${extraService ? ' (' + extraService.replace(/_/g, ' ') + ')' : ''}${key.startsWith('test_') ? ' — TEST MODE, not actually mailed' : ''}`, d.clientId);
+      commitWorkspace(req.user.email, 'mail.send', `${d.id} ${out.id}`);
+      res.json({ ok: true, version: D().workspaceVersion, test: key.startsWith('test_'), tracking: d.tracking, expectedDelivery: d.mail.expectedDelivery });
+    } catch (e) { res.status(e.status === 401 ? 400 : 502).json({ error: 'Lob: ' + e.message }); }
+  });
+
+  app.post('/api/disputes/:id/mail/refresh', need('owner', 'staff'), async (req, res) => {
+    const key = secrets().lobKey;
+    const d = workspace().disputes.find(x => x.id === req.params.id);
+    if (!key || !d || !d.mail || !d.mail.id) return res.status(404).json({ error: 'No online mailing for this dispute' });
+    try {
+      const out = await getLetter(key, d.mail.id);
+      const events = (out.tracking_events || []).map(e => ({ name: e.name || e.type, at: String(e.time || e.date_created || '').slice(0, 10), location: e.location || '' }));
+      d.mail.events = events;
+      if (out.tracking_number && !d.tracking) d.tracking = out.tracking_number;
+      const delivered = events.find(e => /deliver/i.test(e.name) && !/out for|attempt/i.test(e.name));
+      if (delivered && delivered.at && !d.outcome) { d.receivedAt = delivered.at; d.dueAt = Law.responseDue(d.type, d.receivedAt); d.mail.deliveredAt = delivered.at; }
+      commitWorkspace(req.user.email, 'mail.refresh', d.id);
+      res.json({ ok: true, version: D().workspaceVersion, events, deliveredAt: d.mail.deliveredAt || null });
+    } catch (e) { res.status(502).json({ error: 'Lob: ' + e.message }); }
+  });
+
+  // ---------- online invoice payments ----------
+  const findInvoiceByToken = t => (workspace().invoices || []).find(i => i.payToken && i.payToken === t);
+  const payPage = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${htmlEsc(title)}</title><link rel="stylesheet" href="/css/app.css"></head><body style="background:var(--bg)"><main style="max-width:520px;margin:8vh auto;padding:0 16px"><section class="card"><div class="card-b stack">${body}</div></section></main></body></html>`;
+  async function confirmPayment(inv) {
+    const a = anet();
+    if (!a || inv.status === 'paid') return inv.status === 'paid';
+    const hit = await findPayment(a, inv);
+    if (!hit) return false;
+    Object.assign(inv, { status: 'paid', paidAt: today(), transId: hit.transId, paidVia: 'Authorize.net' });
+    activity(`Online payment received: $${Number(inv.amount).toFixed(2)} — ${inv.description}`, inv.clientId);
+    commitWorkspace('payment', 'invoice.paid', inv.id);
+    return true;
+  }
+  app.get('/pay/:token', async (req, res) => {
+    const inv = findInvoiceByToken(req.params.token);
+    const co = company();
+    if (!inv || inv.status === 'void') return res.status(404).send(payPage('Invoice not found', '<h1>Invoice not found</h1><p class="muted">This payment link is not valid. Please contact us.</p>'));
+    if (inv.status === 'paid') return res.send(payPage('Paid', `<h1>Thank you</h1><p>This invoice was paid${inv.paidAt ? ' on ' + htmlEsc(inv.paidAt) : ''}.</p>`));
+    const billing = (workspace().settings || {}).billing || {};
+    if (billing.provider === 'link' && /^https:\/\//.test(billing.payLink || '')) return res.redirect(302, billing.payLink);
+    const a = anet();
+    if (!a) return res.send(payPage('Invoice', `<h1>Invoice — $${Number(inv.amount).toFixed(2)}</h1><p>${htmlEsc(inv.description)}</p><p class="muted">Online payment isn’t set up yet. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
+    const c = workspace().clients.find(x => x.id === inv.clientId) || {};
+    const origin = `${req.protocol}://${req.get('host')}`;
+    try {
+      const token = await hostedPaymentToken(a, { invoice: inv, client: c, returnUrl: `${origin}/pay/${req.params.token}/done`, cancelUrl: `${origin}/pay/${req.params.token}`, companyName: co.name });
+      res.send(payPage('Pay invoice', `<h1>Invoice — $${Number(inv.amount).toFixed(2)}</h1><p>${htmlEsc(inv.description)}</p><p class="small muted">Service completed ${htmlEsc(inv.serviceCompletedAt || '')}. You will pay on Authorize.net’s secure page; card numbers never reach our systems.</p>
+        <form method="post" action="${a.sandbox ? PAY_PAGE.sandbox : PAY_PAGE.live}"><input type="hidden" name="token" value="${htmlEsc(token)}"><button class="btn primary" style="width:100%">Continue to secure payment</button></form>`));
+    } catch (e) { res.status(502).send(payPage('Payment unavailable', `<h1>Payment is temporarily unavailable</h1><p class="muted">${htmlEsc(e.message)}</p>`)); }
+  });
+  app.get('/pay/:token/done', async (req, res) => {
+    const inv = findInvoiceByToken(req.params.token);
+    if (!inv) return res.status(404).send(payPage('Invoice not found', '<h1>Invoice not found</h1>'));
+    let ok = inv.status === 'paid';
+    try { ok = ok || await confirmPayment(inv); } catch (e) { /* show pending */ }
+    res.send(payPage(ok ? 'Thank you' : 'Payment pending', ok ? '<h1>Thank you!</h1><p>Your payment was received.</p>' : '<h1>Thanks — we’re confirming your payment</h1><p class="muted">If you completed the payment, it will show as paid shortly. You don’t need to pay again.</p>'));
+  });
+  app.post('/api/invoices/:id/check', need('owner', 'staff'), async (req, res) => {
+    const inv = (workspace().invoices || []).find(i => i.id === req.params.id);
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    if (!anet()) return res.status(501).json({ error: 'Authorize.net is not connected' });
+    try { const paid = await confirmPayment(inv); res.json({ paid, version: D().workspaceVersion }); } catch (e) { res.status(502).json({ error: 'Authorize.net: ' + e.message }); }
+  });
+
+  // ---------- referral partner portal ----------
+  app.get('/api/partner/me', need('partner'), (req, res) => {
+    const ws = workspace();
+    const r = (ws.referrals || []).find(x => x.id === req.user.referralId);
+    if (!r) return res.status(404).json({ error: 'Your partner account is not linked. Contact us.' });
+    const com = Sales.commissions(ws, r, today());
+    const clients = com.clients.map(c => {
+      const shared = !!c.shareWithReferrer;
+      const ds = ws.disputes.filter(d => d.clientId === c.id);
+      const removed = ds.reduce((a, d) => a + d.items.filter(it => ['deleted', 'corrected'].includes(it.result || d.outcome)).length, 0);
+      return { name: `${c.firstName || String(c.name).split(' ')[0]} ${String(c.lastName || '').slice(0, 1)}.`.trim(), stage: Sales.stageOf(c), status: c.status, joinedAt: String(c.createdAt || '').slice(0, 10), shared,
+        progress: shared ? { lettersMailed: ds.filter(d => d.sentAt).length, removed, inProgress: ds.filter(d => d.sentAt && !d.outcome).length } : null };
+    });
+    res.json({ partner: { name: r.name, company: r.company || '' }, company: { name: company().name, phone: company().phone, email: company().email },
+      link: `${req.protocol}://${req.get('host')}/apply?ref=${r.id}`, clients,
+      commission: { type: r.commissionType || 'none', amount: r.commissionAmount || '', terms: r.commission || '', earned: com.earned, paid: com.paid, owed: com.owed, payouts: r.payouts || [] } });
+  });
+
   // ---------- static ----------
   const page = (f) => (req, res) => res.sendFile(path.join(ledgerDir, f));
   app.get(['/', '/app'], page('index.html'));
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
+  app.get('/partner', page('partner.html'));
   app.use('/css', express.static(path.join(ledgerDir, 'css')));
   app.use('/js', express.static(path.join(ledgerDir, 'js')));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));

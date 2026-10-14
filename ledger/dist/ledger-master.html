@@ -308,6 +308,22 @@ td.actions .btn { padding: 0 8px; margin-right: 3px; }
 .tpl-card:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tpl-card small { color: var(--muted); line-height: 1.4; }
 
+/* Sales pipeline */
+.kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.kan-col { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px; min-height: 120px; }
+.kan-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; }
+.kan-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+.kan-card a { color: inherit; text-decoration: none; }
+/* Report comparison */
+tr.cmp-deleted td { background: var(--ok-soft); }
+tr.cmp-new td { background: var(--high-soft); }
+tr.cmp-changed td { background: var(--med-soft); }
+/* Toggle */
+.switch input { width: 34px; height: 20px; appearance: none; -webkit-appearance: none; background: var(--border-strong); border-radius: 99px; position: relative; cursor: pointer; transition: background .15s; margin: 0; }
+.switch input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch input:checked { background: var(--accent); }
+.switch input:checked::after { left: 16px; }
+
 </style>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3EL%3C/text%3E%3C/svg%3E">
 </head>
@@ -318,12 +334,15 @@ td.actions .btn { padding: 0 8px; margin-right: 3px; }
       <nav class="nav">
         <a href="#/" data-nav="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Dashboard</a>
         <a href="#/clients" data-nav="clients"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2.2.7 3.5 2.9 3.5 6"/></svg>Clients<span class="count"></span></a>
+        <a href="#/pipeline" data-nav="pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18l-7 8v6l-4 2v-8z"/></svg>Sales pipeline<span class="count"></span></a>
         <a href="#/audit" data-nav="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg>Metro 2 audit</a>
         <a href="#/disputes" data-nav="disputes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="6" rx="1"/></svg>Disputes<span class="count"></span></a>
         <a href="#/sequences" data-nav="sequences"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 6h5a3 3 0 0 1 3 3v1M7 18h5a3 3 0 0 0 3-3v-1"/></svg>Sequences<span class="count"></span></a>
         <a href="#/billing" data-nav="billing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19M6 15h4"/></svg>Billing</a>
         <div class="nav-label">Program</div>
         <a href="#/compliance" data-nav="compliance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>Compliance<span class="count"></span></a>
+        <a href="#/automations" data-nav="automations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>Automations</a>
+        <a href="#/violations" data-nav="violations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7h14M5 7l-3 7a4 4 0 0 0 6 0zM19 7l-3 7a4 4 0 0 0 6 0z"/></svg>Violations<span class="count"></span></a>
         <a href="#/partners" data-nav="partners"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>Partner offers</a>
         <a href="#/referrals" data-nav="referrals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v8h14v-8M12 8v12M12 8S10.5 3 8 4.5 9 8 12 8zm0 0s1.5-5 4-3.5S15 8 12 8z"/></svg>Referral sources</a>
         <a href="#/library" data-nav="library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H20v15H5.5A1.5 1.5 0 0 0 4 19.5zM4 19.5A1.5 1.5 0 0 0 5.5 21H20"/></svg>Library</a>
@@ -449,6 +468,12 @@ td.actions .btn { padding: 0 8px; margin-right: 3px; }
       note: 'Send to the screening company named in the landlord’s adverse action notice. Attach the court record.' },
     student_loan_623: { label: 'Student loan dispute to servicer', cite: 'FCRA § 623(a)(8); 12 C.F.R. § 1022.43', recipient: 'furnisher', days: 30,
       note: 'Direct dispute to the loan servicer or guaranty agency with the servicer’s own letters as evidence.' },
+    inquiry_604: { label: 'Unauthorized inquiry dispute', cite: 'FCRA §§ 604, 611 (15 U.S.C. §§ 1681b, 1681i)', recipient: 'bureau', days: 30,
+      note: 'For hard inquiries the consumer did not authorize. If the inquiry came from identity theft, use the § 605B block instead.' },
+    pii_611: { label: 'Personal information correction', cite: 'FCRA §§ 607(b), 611 (15 U.S.C. §§ 1681e(b), 1681i)', recipient: 'bureau', days: 30,
+      note: 'Wrong names, addresses, employers, SSN or date-of-birth variations. Attach ID and proof of address.' },
+    au_removal: { label: 'Authorized user removal request', cite: 'ECOA / Reg B — authorized users are not liable (12 C.F.R. § 1002.7)', recipient: 'furnisher', days: 0,
+      note: 'Asks the card issuer to remove the client as an authorized user. Not a dispute — the information may be accurate.' },
     goodwill: { label: 'Goodwill adjustment request', cite: 'Courtesy request — not a dispute', recipient: 'furnisher', days: 0,
       note: 'Asks a creditor to reconsider accurate late payments. Never describe accurate information as inaccurate.' }
   };
@@ -538,7 +563,7 @@ Signed: ______________________   Date: __________`;
    * says the item is inaccurate and can document it; accurate items leave the ladder.
    */
   const STRATEGY = [
-    { step: 1, title: 'Letter 1 — Dispute with the bureau', types: ['cra_611', 'obsolete_605', 'block_605b', 'validation_809', 'business_correction', 'public_record_611', 'tenant_screening_611', 'student_loan_623'], when: 'Start here for every confirmed inaccuracy.' },
+    { step: 1, title: 'Letter 1 — Dispute with the bureau', types: ['cra_611', 'obsolete_605', 'block_605b', 'validation_809', 'business_correction', 'public_record_611', 'tenant_screening_611', 'student_loan_623', 'inquiry_604', 'pii_611', 'au_removal'], when: 'Start here for every confirmed inaccuracy.' },
     { step: 2, title: 'Letter 2 — Method of verification + direct dispute', types: ['mov_611a7', 'furnisher_623', 'reinsertion_611'], when: 'The bureau verified, or the 30/45 days passed with no answer.' },
     { step: 3, title: 'Letter 3 — Final notice + CFPB complaint', types: ['furnisher_final', 'cfpb_complaint'], when: 'Still verified despite your evidence.' },
     { step: 4, title: 'Step 4 — Attorney review', types: [], when: 'Documented inaccuracy still reporting after Letter 3. FCRA §§ 616–617 allow actual and statutory damages and attorney fees; many consumer attorneys take these cases at no cost to the consumer.' }
@@ -1034,7 +1059,7 @@ Signed: ______________________   Date: __________`;
   ];
 
   const TABS = [
-    ['overview', 'Overview'], ['templates', 'Letter templates'], ['fields', 'Metro 2 field guide'], ['metro2', 'Metro 2 codes'], ['errors', 'Errors & evidence'],
+    ['overview', 'Overview'], ['templates', 'Letter templates'], ['addresses', 'Creditor addresses'], ['fields', 'Metro 2 field guide'], ['metro2', 'Metro 2 codes'], ['errors', 'Errors & evidence'],
     ['collections', 'Collections'], ['judgments', 'Judgments'], ['evictions', 'Evictions'],
     ['letters', 'Letters & deadlines'], ['laws', 'Laws'], ['timelines', 'Reporting timelines'], ['scores', 'Credit scores'],
     ['business', 'Business credit'], ['contacts', 'Bureaus & contacts'], ['glossary', 'Glossary'], ['scripts', 'Scripts & FAQ'], ['sources', 'Sources']
@@ -1636,6 +1661,30 @@ ${items.map(itemBlock).join('\n\n')}
 
 Please investigate, review the enclosed documents (several are your own records), and send me the results within 30 days. If the information is inaccurate, please correct it with every consumer reporting agency you report to (15 U.S.C. § 1681s-2(a)(2), (a)(8)). While the investigation is pending, please report the account as disputed.`,
 
+    inquiry_604: (c, items) => `Re: Dispute of unauthorized inquiries — FCRA §§ 604 and 611
+
+The following inquiries in my file were made without my authorization. I did not apply for credit with these companies and did not give them permission to obtain my report.
+
+${items.map(itemBlock).join('\n\n')}
+
+A consumer report may be furnished only for a permissible purpose (15 U.S.C. § 1681b). Please reinvestigate, confirm that each company had a permissible purpose, delete any inquiry that cannot be verified, and send me the results and an updated copy of my report.`,
+
+    pii_611: (c, items) => `Re: Correction of personal information — FCRA §§ 607(b) and 611
+
+My file contains personal identifying information that is not mine or is out of date. Inaccurate identifiers can cause other people's information to be mixed into my file.
+
+${items.map(itemBlock).join('\n\n')}
+
+My correct information is shown at the top of this letter, and copies of my photo ID and proof of address are enclosed. Please remove the inaccurate information listed above and send me an updated copy of my report.`,
+
+    au_removal: (c, items) => `Re: Request to remove me as an authorized user
+
+I am listed as an authorized user on the account(s) below. I am not the account owner and am not liable for this debt.
+
+${items.map(itemBlock).join('\n\n')}
+
+Please remove me as an authorized user and ask every credit bureau to which you report this account to delete it from my credit file. Please confirm in writing when this is done.`,
+
     goodwill: (c, items) => `Re: Request for a goodwill adjustment
 
 I am writing about my account(s) listed below. I am not disputing the accuracy of this information. I am asking you to consider a courtesy adjustment of the late payment reporting in light of my payment history since then.
@@ -1673,7 +1722,7 @@ Thank you for considering this request.`
     if (type === 'block_605b') e.push('Identity theft report (IdentityTheft.gov / police report)');
     if (type === 'disclosure_609') return e;
     if (items.some(i => i.evidence)) e.push('Supporting documents referenced above');
-    if (['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611'].includes(type)) e.push('Copy of the credit report page with the disputed items marked');
+    if (['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'inquiry_604', 'pii_611'].includes(type)) e.push('Copy of the credit report page with the disputed items marked');
     return e;
   }
 
@@ -1698,7 +1747,8 @@ Thank you for considering this request.`
     ['judgments', 'Judgments', 'Civil judgments on bureau, LexisNexis or background reports.'],
     ['evictions', 'Evictions', 'Eviction records on tenant screening reports.'],
     ['student', 'Student loans', 'Federal and private student loan reporting errors.'],
-    ['collections', 'Collections', 'Collection agencies and debt buyers.']
+    ['collections', 'Collections', 'Collection agencies and debt buyers.'],
+    ['other', 'Inquiries, personal info & authorized users', 'Hard inquiries, wrong names or addresses, and authorized-user accounts.']
   ];
 
   // Recipient options: 'bureaus' (Equifax, Experian, TransUnion), 'lexis', 'other' (name + address typed in).
@@ -1827,7 +1877,25 @@ Thank you for considering this request.`
       to: ['bureaus'], type: 'cra_611',
       fields: [...collFields, F('reason', 'Why it should not report', { type: 'select', options: ['it has been paid', 'its original balance was under $500', 'it was less than one year past due when reported'], required: true }), F('detail', 'Date paid / amount / dates', { required: true })],
       item: v => ({ creditor: v.creditor, accountNumber: v.accountNumber, discrepancy: `This is a medical collection, and ${v.reason} (${v.detail}). Under the credit bureaus’ medical debt reporting policy, it should not appear on my report.`,
-        requested: 'Delete this medical collection.', evidence: v.reason === 'it has been paid' ? 'Proof of payment' : 'Bill or statement showing the amount and dates' }) }
+        requested: 'Delete this medical collection.', evidence: v.reason === 'it has been paid' ? 'Proof of payment' : 'Bill or statement showing the amount and dates' }) },
+
+    // ---------- Inquiries, personal information, authorized users ----------
+    { id: 'inquiry_unauthorized', cat: 'other', title: 'Hard inquiry I did not authorize', when: 'The client did not apply for credit with this company. If it was identity theft, use the identity-theft block instead.',
+      to: ['bureaus'], type: 'inquiry_604',
+      fields: [F('creditor', 'Company that made the inquiry', { required: true }), F('inquiryDate', 'Inquiry date', { type: 'date', required: true })],
+      item: v => ({ creditor: v.creditor, discrepancy: `Hard inquiry by ${v.creditor} dated ${fmt(v.inquiryDate)}. I did not apply for credit with ${v.creditor} or authorize this inquiry.`,
+        requested: 'Verify the permissible purpose for this inquiry, or delete it.', evidence: '' }) },
+    { id: 'pii_wrong', cat: 'other', title: 'Wrong name, address or other personal info', when: 'Old or wrong names, addresses, employers, SSN or birth-date variations on the report.',
+      to: ['bureaus'], type: 'pii_611',
+      fields: [F('wrongNames', 'Names that are not mine (one per line)', { type: 'textarea' }), F('wrongAddresses', 'Addresses where I never lived (one per line)', { type: 'textarea' }), F('wrongOther', 'Other wrong info (employers, SSN or DOB variations)', { type: 'textarea' })],
+      item: v => {
+        const parts = [['Names', v.wrongNames], ['Addresses', v.wrongAddresses], ['Other', v.wrongOther]].filter(p => String(p[1] || '').trim()).map(p => `${p[0]}: ${String(p[1]).trim().split(/\n+/).join('; ')}`);
+        return { creditor: 'Personal information', discrepancy: `The following personal information in my file is not mine or is inaccurate — ${parts.join(' | ') || '[list the wrong information]'}.`, requested: 'Delete the inaccurate personal information listed.', evidence: 'Photo ID and proof of current address' };
+      } },
+    { id: 'au_remove', cat: 'other', title: 'Remove me as an authorized user', when: 'A card the client is only an authorized user on is hurting their report. This is not a dispute.',
+      to: ['other'], otherLabel: 'Card issuer', otherRequired: true, type: 'au_removal',
+      fields: [F('creditor', 'Card issuer as reported', { required: true }), F('accountNumber', 'Account number (last 4 is enough)'), F('owner', 'Primary cardholder (optional)')],
+      item: v => ({ creditor: v.creditor, accountNumber: v.accountNumber, discrepancy: `I am listed as an authorized user on this account${v.owner ? ' (primary cardholder: ' + v.owner + ')' : ''}. I am not the account holder and I ask to be removed.`, requested: 'Remove me as an authorized user and have the account deleted from my credit file.', evidence: '' }) }
   ];
 
   const byId = id => TEMPLATES.find(t => t.id === id);
@@ -1875,7 +1943,7 @@ Thank you for considering this request.`
 
   // What follows each letter type for the same recipient.
   const NEXT = {
-    cra_611: 'mov_611a7', obsolete_605: 'mov_611a7', public_record_611: 'mov_611a7', tenant_screening_611: 'mov_611a7', block_605b: 'mov_611a7', reinsertion_611: 'mov_611a7',
+    cra_611: 'mov_611a7', obsolete_605: 'mov_611a7', public_record_611: 'mov_611a7', tenant_screening_611: 'mov_611a7', inquiry_604: 'mov_611a7', pii_611: null, au_removal: null, block_605b: 'mov_611a7', reinsertion_611: 'mov_611a7',
     disclosure_609: null, mov_611a7: 'cfpb_complaint',
     furnisher_623: 'furnisher_final', student_loan_623: 'furnisher_final', furnisher_final: 'cfpb_complaint',
     validation_809: 'furnisher_final', business_correction: null, goodwill: null
@@ -2180,7 +2248,8 @@ Thank you for considering this request.`
         accounts: base.map(b => acct(Object.assign({}, b, variants[bureau][b.creditor] || {})))
       });
     });
-    ws.reports.push({ id: Store.uid(), clientId: c1.id, bureau: 'Experian', source: 'Synthetic QA report', date: d(-90), scores: { Experian: 571 }, accounts: [] });
+    ws.reports.push({ id: Store.uid(), clientId: c1.id, bureau: 'Experian', source: 'Synthetic tri-merge (demo, earlier pull)', date: d(-90), scores: { Experian: 571 },
+      accounts: base.map(b => acct(Object.assign({}, b, b.creditor === 'Sample Auto Finance' ? { status: '11', balance: 2400, closed: '' } : {}))).concat([acct({ creditor: 'Demo Medical Billing', accountNumber: 'XXXX0042', type: 'O', status: '93', balance: 180, pastDue: 180, opened: d(-400), originalCreditor: 'Example Clinic', paymentHistory: 'GGGG' })]) });
 
     const exp = ws.reports[0];
     const item = exp.accounts[0];
@@ -2217,6 +2286,615 @@ Thank you for considering this request.`
     return ws;
   }
   root.Sample = { build };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * Creditor / collector / specialty-bureau address book. Seeded with researched dispute and
+ * correspondence addresses (each with its source), plus every address staff type into a dispute,
+ * so the book grows with use. Addresses change — verify before mailing.
+ */
+(function (root) {
+  'use strict';
+
+  // [name, aliases, category, address, phone, source, verifiedOn]
+  const SEED = [
+    ["Capital One", ["CAPITAL ONE", "CAPITAL ONE BANK USA NA", "CAP ONE"], "card issuer", "Capital One\nP.O. Box 31293\nSalt Lake City, UT 84131-1293", "", "https://www.capitalone.com/help-center/credit-cards/disputing-items-on-your-credit-report/", "2026-10-14"],
+    ["Capital One Auto Finance", ["CAPITAL ONE AUTO FINANCE", "COAF"], "auto lender", "Credit Bureau Dispute\nP.O. Box 259407\nPlano, TX 75025-9407", "", "https://www.capitalone.com/help-center/credit-cards/disputing-items-on-your-credit-report/", "2026-10-14"],
+    ["Capital One (personal loans / deposit accounts)", ["CAPITAL ONE NA"], "bank", "Capital One Consumer Services\nPO Box 30273\nSalt Lake City, UT 84130-0273", "", "https://www.capitalone.com/help-center/credit-cards/disputing-items-on-your-credit-report/", "2026-10-14"],
+    ["Capital One (ChexSystems & Early Warning disputes)", [], "bank", "Capital One Bank, Attn: Loss Mitigation Dept\nPO Box 85026\nRichmond, VA 23285", "", "https://www.capitalone.com/help-center/credit-cards/disputing-items-on-your-credit-report/", "2026-10-14"],
+    ["Chase Card Services", ["JPMCB CARD", "CHASE CARD", "JPMORGAN CHASE BANK NA", "CHASE", "JPMORGAN CHASE"], "card issuer (general correspondence)", "Chase Card Services\nP.O. Box 15298\nWilmington, DE 19850", "", "https://creditcards.chase.com/southwest/contact-us", "2026-10-14"],
+    ["Chase (deposit accounts)", ["CHASE BANK"], "bank (general correspondence)", "PO Box 659809, Internal Mail TX3-7849\nSan Antonio, TX 78265-9109", "1-800-935-9935", "https://www.chase.com/content/dam/chase-ux/documents/personal/checking/deposit-account-agreement.pdf", "2026-10-14"],
+    ["Citibank / Citi Cards", ["CITICARDS CBNA", "CITIBANK NA", "CBNA", "CITI", "CITIBANK"], "card issuer", "Citi Brands Credit Bureau Disputes\nPO Box 6241\nSioux Falls, SD 57117", "", "https://online.citi.com/JRS/forms/Credit_Bureau_Dispute_Reporting_Form.pdf", "2026-10-14"],
+    ["Citi - Costco Anywhere Visa", ["COSTCO CITI"], "card issuer", "Costco Credit Bureau Disputes\nPO Box 6190\nSioux Falls, SD 57117", "", "https://online.citi.com/JRS/forms/Credit_Bureau_Dispute_Reporting_Form.pdf", "2026-10-14"],
+    ["Discover (now Capital One)", ["DISCOVER", "DISCOVER BANK", "DISCOVER FIN SVCS LLC", "DISCOVERCARD"], "card issuer (general correspondence — accounts moving to Capital One)", "Capital One\nPO Box 71083\nCharlotte, NC 28272-1083", "1-800-347-2683", "https://www.discover.com/credit-cards/contact-us/", "2026-10-14"],
+    ["American Express", ["AMEX", "AMERICAN EXPRESS NATIONAL BANK"], "card issuer (some business cards use P.O. Box 981556)", "American Express Credit Bureau Unit\nP.O. Box 981537\nEl Paso, TX 79998-1537", "", "https://www.americanexpress.com/content/dam/amex/en-us/company/legal/cardmember-agreements/public-site-2025-q1-pdf-cmas/cps-lending/delta-skymiles-gold-04-03-2025.pdf", "2026-10-14"],
+    ["Bank of America", ["BK OF AMER", "BANK OF AMERICA NA"], "card issuer", "Bank of America, N.A., RE: Consumer Reporting Agencies\nP.O. Box 653059\nDallas, TX 75265-3059", "", "https://www.bankofamerica.com/content/documents/creditcard/bank_of_america_customized_cash_rewards_secured_english.pdf", "2026-10-14"],
+    ["Wells Fargo - Credit Cards", ["WELLS FARGO CARD SER", "WELLS FARGO", "WELLS FARGO BANK NA"], "card issuer", "Wells Fargo Bank, N.A., Attn: Credit Bureau Disputes\nPO Box 393\nMinneapolis, MN 55480-0393", "", "https://www.wellsfargo.com/help/addresses/", "2026-10-14"],
+    ["Wells Fargo - Auto / Personal Lending / Education", ["WELLS FARGO AUTO", "WELLS FARGO DEALER SVCS", "WELLS FARGO EDUCATION FINANCIAL SERVICES"], "auto lender", "Wells Fargo, Attn: Credit Bureau Operations, MAC D1127-028\nPO Box 71092\nCharlotte, NC 28272", "", "https://www.wellsfargo.com/help/addresses/", "2026-10-14"],
+    ["Wells Fargo - Home Mortgage / Home Equity", ["WELLS FARGO HOME MORTGAGE", "WELLS FARGO HM MORTGAG"], "mortgage servicer", "Wells Fargo Bank, N.A., Attn: Credit Bureau Disputes\nPO Box 10335\nDes Moines, IA 50306", "", "https://www.wellsfargo.com/help/addresses/", "2026-10-14"],
+    ["Wells Fargo - Checking/Savings (Early Warning disputes)", [], "bank", "Wells Fargo Bank, N.A., Attn: Deposit Furnishing Disputes, MAC F2304-019\nPO Box 50947\nDes Moines, IA 50340", "", "https://www.wellsfargo.com/help/addresses/", "2026-10-14"],
+    ["Synchrony Bank", ["SYNCB", "SYNCB/AMAZON", "SYNCB/LOWES", "SYNCB/CARE CREDIT", "SYNCHRONY"], "card issuer (confirm against a current statement)", "Synchrony Bank\nP.O. Box 965036\nOrlando, FL 32896-5036", "", "https://consumercenter.mysynchrony.com/cs/groups/public/documents/cc_disclosure/dsc038865.pdf", "2026-10-14"],
+    ["Credit One Bank", ["CREDIT ONE BANK NA", "CREDIT ONE"], "card issuer (general correspondence)", "Credit One Bank\nP.O. Box 98873\nLas Vegas, NV 89193-8873", "1-877-825-3242", "https://www.creditonebank.com/help", "2026-10-14"],
+    ["Barclays US", ["BARCLAYS BANK DELAWARE", "BRCLYSBANKDE", "BARCLAYCARD", "BARCLAYS"], "card issuer", "Card Services, Credit Bureau Disputes\nP.O. Box 8803\nWilmington, DE 19899-8803", "888-232-0780", "https://www.barclaycardus.com/servicing/headerLinks?handleContactUs=", "2026-10-14"],
+    ["U.S. Bank - Credit Cards / Personal Line of Credit", ["US BANK", "U S BANK", "US BANK NA", "ELAN FINANCIAL"], "card issuer", "U.S. Bank NA Consumer Recovery Department, Attn: CBR Disputes\nP.O. Box 108\nSt. Louis, MO 63166-0108", "", "https://www.usbank.com/customer-service/knowledge-base/KB0261207.html", "2026-10-14"],
+    ["U.S. Bank - Checking/Savings, Personal & Auto Loans, HELOC", [], "bank", "U.S. Bank, Attn: Consumer Bureau Dispute Handling (CBDH)\nPO Box 3447\nOshkosh, WI 54903-3447", "844-624-8230", "https://www.usbank.com/customer-service/knowledge-base/KB0261207.html", "2026-10-14"],
+    ["U.S. Bank - Home Mortgage", ["US BANK HOME MORTGAGE"], "mortgage servicer", "U.S. Bank, Attn: Consumer Bureau Management Department\nPO Box 21844\nEagan, MN 55121", "", "https://www.usbank.com/customer-service/knowledge-base/KB0261207.html", "2026-10-14"],
+    ["Comenity Capital Bank (Bread Financial)", ["COMENITY CAPITAL BANK", "COMENITYCAPITAL", "CCB", "BREAD FINANCIAL", "COMENITY"], "card issuer", "Comenity Capital Bank\nP.O. Box 183003\nColumbus, OH 43218-3003", "", "https://breadfinancial.com/en/help-center/getintouch-creditcards.html", "2026-10-14"],
+    ["TD Bank", ["TD BANK NA", "TD BANK USA", "TD AUTO FINANCE"], "bank", "TD Bank, Credit Disputes\nP.O. Box 71466\nPhiladelphia, PA 19176-1466", "", "https://www.td.com/content/dam/tdb/document/pdf/personal-banking/consumer-credit-report-dispute-form-en.pdf", "2026-10-14"],
+    ["TD Retail Card Services (store cards)", ["TD RCS"], "card issuer", "TD Bank c/o Credit Dispute Processing\nP.O. Box 100270\nColumbia, SC 29202", "", "https://www.td.com/content/dam/tdb/document/pdf/personal-banking/consumer-credit-report-dispute-form-en.pdf", "2026-10-14"],
+    ["Target Credit Card (TD Bank USA)", ["TD BANK USA/TARGETCRED", "TARGET NB", "TARGET"], "card issuer", "Target Card Services\nP.O. Box 9500\nMinneapolis, MN 55440", "", "https://www.td.com/content/dam/tdb/document/pdf/personal-banking/consumer-credit-report-dispute-form-en.pdf", "2026-10-14"],
+    ["Navy Federal Credit Union", ["NAVY FCU", "NAVY FEDERAL CR UNION", "NFCU", "NAVY FEDERAL"], "credit union", "Navy Federal Credit Union (Credit Bureau Disputes)\nPO Box 3700\nMerrifield, VA 22119-3700", "1-888-842-6328", "https://www.navyfederal.org/contact-us/additional-mailing-addresses.html", "2026-10-14"],
+    ["Merrick Bank", ["MERRICK BK"], "card issuer (general correspondence)", "Merrick Bank Customer Service\nP.O. Box 9201\nOld Bethpage, NY 11804-9001", "(800) 204-5936", "https://www.merrickbank.com/help", "2026-10-14"],
+    ["OneMain Financial", ["ONEMAIN", "OMF", "SPRINGLEAF"], "personal lender", "OneMain Financial\nPO Box 3327\nEvansville, IN 47732-3327", "", "https://www.onemainfinancial.com/credit-bureau", "2026-10-14"],
+    ["Mission Lane", ["MISSION LANE LLC", "MISSION LANE TAB BANK", "TAB BANK"], "card issuer", "Mission Lane LLC, Attn: Credit Reporting\nP.O. Box 105286\nAtlanta, GA 30348-5286", "1-855-790-8860", "https://www.missionlane.com/legal/the-mission-lane-visa-credit-card-issued-by-transportation-alliance-bank-inc-dba-tab-bank", "2026-10-14"],
+    ["Upstart", ["UPSTART NETWORK INC", "UPST", "UPSTART FINANCE"], "personal lender", "Upstart Network\nP.O. Box 1503\nSan Carlos, CA 94070", "", "https://upstarthelp.upstart.com/i-see-a-discrepancy-in-my-credit-data-what-can-i-do", "2026-10-14"],
+    ["LendingClub (now Happen Bank)", ["LENDINGCLUB", "LENDING CLUB CORP", "LENDINGCLUB BANK", "HAPPEN BANK"], "personal lender", "Happen Bank, Attn: Credit Dispute\n88 Kearny Street, Suite 600\nSan Francisco, CA 94108", "", "https://www.lendingclub.com/help/general-faq/how-do-i-correct-discrepancies-in-my-credit-report", "2026-10-14"],
+    ["Ally Financial", ["ALLY BANK", "ALLY AUTO", "ALLY"], "auto lender (general correspondence)", "Ally Financial\nP.O. Box 380901\nBloomington, MN 55438", "1-888-925-2559", "https://www.ally.com/contact-us/", "2026-10-14"],
+    ["Santander Consumer USA", ["SCUSA", "CHRYSLER CAPITAL", "SANTANDER CONSUMER", "SANTANDER"], "auto lender", "Santander Consumer USA Credit Bureau Disputes\nPO Box 961211\nFort Worth, TX 76161", "", "https://santanderconsumerusa.com/learning-center/about-your-credit", "2026-10-14"],
+    ["Toyota Financial Services", ["TOYOTA MOTOR CREDIT", "TOYOTA MOTOR CREDIT CO", "TMCC", "LEXUS FINANCIAL SERVICES"], "auto lender", "Toyota Financial Services\nP.O. Box 661009\nDallas, TX 75265", "", "https://www.toyotafinancial.com/us/en/planning_tools/faq/about_credit/how_can_i_submit_a_dispute_about_incorrect_credit_information_reported_to_the_credit_bureaus.html", "2026-10-14"],
+    ["Ford Credit", ["FORD CRED", "FORD MOTOR CREDIT", "FORD MOTOR CREDIT COMPANY LLC", "LINCOLN AUTOMOTIVE FINANCIAL"], "auto lender", "Ford Credit, Credit Dispute Department\nPO Box 35910\nCleveland, OH 44135-0910", "1-800-727-7000", "https://www.ford.com/finance/customer-support/special-situations/how-can-i-dispute-an-inaccuracy-on-my-credit-report/", "2026-10-14"],
+    ["GM Financial", ["AMERICREDIT", "GENERAL MOTORS FINANCIAL", "AMCR"], "auto lender", "GM Financial, Credit Disputes\nP.O. Box 181145\nArlington, TX 76096-1145", "1-800-284-2271", "https://www.gmfinancial.com/content/dam/gmf/myaccount/documents/Sample-Statement.pdf", "2026-10-14"],
+    ["Westlake Financial", ["WESTLAKE FINANCIAL SERVICES", "WESTLAKE FIN SVCS"], "auto lender", "Westlake Financial\nP.O. Box 76814\nLos Angeles, CA 90076", "(888) 739-9192", "https://www.westlakefinancial.com/contact-us/", "2026-10-14"],
+    ["Credit Acceptance", ["CREDIT ACCEPTANCE CORP", "CAC"], "auto lender", "Credit Acceptance\nPO Box 5070\nSouthfield, MI 48086-5070", "1-877-523-4044", "https://www.creditacceptance.com/customers/faq", "2026-10-14"],
+    ["Exeter Finance", ["EXETER FINANCE LLC", "EXETER FINANCE CORP"], "auto lender", "Exeter Finance LLC\nP.O. Box 166097\nIrving, TX 75016", "(800) 321-9637", "https://www.exeterfinance.com/faqs", "2026-10-14"],
+    ["MOHELA", ["DEPT OF ED/MOHELA", "MOHELA/DOFED", "NAVIENT"], "student loan servicer (general correspondence; now services Navient loans)", "MOHELA\nP.O. Box 9500\nWilkes-Barre, PA 18773-9500", "888-272-5543", "https://servicing.mohela.com/contact-us/", "2026-10-14"],
+    ["Nelnet", ["DEPT OF EDUCATION/NELN", "DEPT OF ED/NELNET"], "student loan servicer (general correspondence)", "Nelnet\nP.O. Box 82561\nLincoln, NE 68501-2561", "", "https://nelnet.studentaid.gov/content/contactus", "2026-10-14"],
+    ["Aidvantage", ["DEPT OF ED/AIDVANTAGE"], "student loan servicer (general correspondence)", "Aidvantage - Federal Student Aid Loan Servicing\nP.O. Box 300001\nGreenville, TX 75403-3001", "800-722-1300", "https://aidvantage.studentaid.gov/contact-us", "2026-10-14"],
+    ["Edfinancial Services", ["EDFINANCIAL", "DEPT OF ED/EDFINANCIAL"], "student loan servicer", "Edfinancial Services, Attention: Credit Disputes\nP.O. Box 30159\nKnoxville, TN 37930-0159", "", "https://edfinancial.studentaid.gov/credit-reporting", "2026-10-14"],
+    ["U.S. Department of Education - Default Resolution Group", ["US DEPT OF ED", "DEPT OF EDUCATION", "DEFAULT RESOLUTION GROUP", "US DEPT ED DRG"], "student loan servicer", "U.S. Department of Education, Default Resolution Group\nP.O. Box 5609\nGreenville, TX 75403-5609", "", "https://studentaid.gov/help-center/answers/article/how-to-contact-default-resolution-group", "2026-10-14"],
+    ["Sallie Mae", ["SALLIE MAE BANK", "SLM"], "student loan servicer", "Sallie Mae\nP.O. Box 3229\nWilmington, DE 19804-0229", "855-756-5626", "https://www.salliemae.com/contact-us/", "2026-10-14"],
+    ["Midland Credit Management", ["MIDLAND FUNDING", "MCM", "ENCORE CAPITAL", "MIDLAND"], "debt buyer", "Attn: Consumer Support Services\n320 E Big Beaver Rd, Suite 300\nTroy, MI 48083", "(800) 296-2657", "https://www.midlandcredit.com/sms/", "2026-10-14"],
+    ["Portfolio Recovery Associates", ["PORTFOLIO RECOVERY ASSOCIATES LLC", "PORTFOLIO RECOVERY", "PRA"], "debt buyer", "ATTN: Disputes, Portfolio Recovery Associates, LLC\n120 Corporate Blvd\nNorfolk, VA 23502", "1-800-772-1413", "https://www.portfoliorecovery.com/prapay/contact-us", "2026-10-14"],
+    ["LVNV Funding / Resurgent Capital Services", ["LVNV FUNDING LLC", "LVNV", "RESURGENT CAPITAL SERVICES", "RESURGENT", "CACH LLC"], "debt buyer", "Resurgent Capital Services\nP.O. Box 10497\nGreenville, SC 29603", "1-888-665-0374", "https://www.resurgent.com/", "2026-10-14"],
+    ["Jefferson Capital Systems", ["JEFFERSON CAPITAL SYSTEMS LLC", "JEFFERSON CAPITAL", "JCAP"], "debt buyer", "Jefferson Capital\n200 14th Ave E\nSartell, MN 56377", "1-833-851-5552", "https://www.jcap.com/contact-us", "2026-10-14"],
+    ["Cavalry SPV / Cavalry Portfolio Services", ["CAVALRY SPV I LLC", "CAVALRY PORTFOLIO SERVICES", "CAVALRY SPV II", "CAVALRY"], "debt buyer", "Cavalry Portfolio Services, Attn: Customer Care\n1 American Lane, Suite 220\nGreenwich, CT 06831-2200", "1-866-483-5139", "https://www.cavalryportfolioservices.com/faq", "2026-10-14"],
+    ["Enhanced Recovery Company (ERC)", ["ENHANCED RECOVERY CO L", "ENHANCED RECOVERY COMPANY LLC", "ERC"], "collection agency", "ERC\nP.O. Box 57610\nJacksonville, FL 32241", "800-383-5979", "https://ercglobalcx.com/faqs/how-to-make-a-payment/", "2026-10-14"],
+    ["IC System", ["I C SYSTEM INC", "ICS"], "collection agency", "IC System\n444 Highway 96 E, PO Box 64378\nSt. Paul, MN 55164-0378", "800-279-7244", "https://pay.icsystem.com/", "2026-10-14"],
+    ["Credit Collection Services (CCS)", ["CREDIT COLLECTION SERVICES", "CCS", "THE CCS COMPANIES"], "collection agency", "Credit Collection Services\n725 Canton Street\nNorwood, MA 02062", "(617) 965-2000", "https://www.ccsusa.com/contact_us.html", "2026-10-14"],
+    ["Transworld Systems Inc (TSI)", ["TRANSWORLD SYSTEMS INC", "TSI", "TRANSWORLD SYS INC"], "collection agency", "Transworld Systems Inc\nP.O. Box 15618\nWilmington, DE 19850-5618", "866-228-9034", "https://payments.tsico.com/", "2026-10-14"],
+    ["National Credit Systems", ["NATIONAL CREDIT SYSTEMS INC", "NCS"], "collection agency", "National Credit Systems, Inc.\nPO Box 672288\nMarietta, GA 30006", "800-367-1050", "https://www.nationalcreditsystems.com/Contactus.aspx", "2026-10-14"],
+    ["Credence Resource Management", ["CREDENCE RESOURCE MANAGEMENT LLC", "CREDENCE RM", "CREDENCE"], "collection agency", "Credence Resource Management (Correspondence)\nPO Box 2300\nSouthgate, MI 48195-4300", "855-880-4791", "https://credencerm.com/contact-us", "2026-10-14"],
+    ["Waypoint Resource Group", ["WAYPOINT RESOURCE GROUP LLC", "WAYPOINT RESOURCE GRP"], "collection agency", "Waypoint Resource Group LLC\n1065 W Levoy Dr, Ste 100\nTaylorsville, UT 84123", "(866) 447-4163", "https://waypoint.com/help/disputes/contact-form-dispute/", "2026-10-14"],
+    ["Southwest Credit Systems", ["SOUTHWEST CREDIT SYSTEMS LP", "SOUTHWEST CREDIT", "SWC GROUP"], "collection agency", "Southwest Credit Systems\n4120 International Parkway, Suite 1100\nCarrollton, TX 75007", "800-637-7439", "https://www.swcconsumer.com/contact-us", "2026-10-14"],
+    ["Radius Global Solutions", ["RADIUS GLOBAL SOLUTIONS LLC", "RADIUS GS"], "collection agency (corporate HQ only)", "Radius Global Solutions\n7505 Metro Blvd, Suite 400\nEdina, MN 55439", "", "https://www.radiusgs.com/contact/", "2026-10-14"],
+    ["Innovis", ["INNOVIS DATA SOLUTIONS", "CBC INNOVIS"], "specialty bureau", "Innovis Consumer Assistance\nP.O. Box 530088\nAtlanta, GA 30353-0088", "800-540-2505", "https://www.consumerfinance.gov/consumer-tools/credit-reports-and-scores/consumer-reporting-companies/companies-list/innovis/", "2026-10-14"],
+    ["ChexSystems", ["CHEX SYSTEMS INC", "CHEX SYSTEMS"], "specialty bureau", "Chex Systems, Inc., Attn: Consumer Relations\nP.O. Box 583399\nMinneapolis, MN 55458", "800-428-9623", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["Early Warning Services", ["EARLY WARNING SERVICES LLC", "EWS", "EARLY WARNING"], "specialty bureau", "Early Warning, Attn: Consumer Services Department\n5801 N. Pima Rd\nScottsdale, AZ 85250", "800-745-1560", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["LexisNexis Risk Solutions Consumer Center", ["LEXISNEXIS", "LEXISNEXIS RISK SOLUTIONS", "LEXISNEXIS C.L.U.E."], "specialty bureau", "LexisNexis Risk Solutions, Consumer Center\nP.O. Box 105108\nAtlanta, GA 30348-5108", "866-897-8126", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["SageStream (LexisNexis)", ["SAGESTREAM LLC", "SAGESTREAM"], "specialty bureau", "SageStream, LLC, LexisNexis Risk Solutions Consumer Center\nP.O. Box 105108\nAtlanta, GA 30348-5108", "866-897-8126", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["Clarity Services (Experian)", ["CLARITY SERVICES INC", "CLARITY"], "specialty bureau", "Clarity Services, Inc., Consumer Support Division\nP.O. Box 16\nAllen, TX 75013", "866-390-3118", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["CoreLogic Credco (Cotality)", ["CORELOGIC CREDCO", "CREDCO", "COTALITY CREDCO"], "specialty bureau", "Credco Consumer Services Department\nP.O. Box 509124\nSan Diego, CA 92150", "(800) 637-2422", "https://www.cotality.com/legal/credco-consumer-assistance", "2026-10-14"],
+    ["SafeRent Solutions", ["SAFERENT", "CORELOGIC SAFERENT"], "tenant screening", "SafeRent Solutions, Consumer Relations\nP.O. Box 3890\nCoppell, TX 75019", "888-333-2413", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["TransUnion Rental Screening Solutions (SmartMove)", ["TRANSUNION RENTAL SCREENING", "SMARTMOVE", "TURSS"], "tenant screening", "TransUnion Rental Screening Solutions, Attention: Consumer Dispute Team\nP.O. Box 800\nWoodlyn, PA 19094", "800-230-9376", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["RealPage Screening (LeasingDesk)", ["REALPAGE", "LEASINGDESK SCREENING", "LEASINGDESK"], "tenant screening", "LeasingDesk Screening, Attn: Consumer Relations\n2201 Lakeside Blvd.\nRichardson, TX 75082", "866-934-1124", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"],
+    ["National Consumer Telecom & Utilities Exchange (NCTUE)", ["NCTUE", "EXCHANGE SERVICE CENTER"], "specialty bureau", "Exchange Service Center - NCTUE\nP.O. Box 105161\nAtlanta, GA 30348", "866-343-2821", "https://www.consumerfinance.gov/consumer-tools/credit-reports-and-scores/consumer-reporting-companies/companies-list/national-consumer-telecom-utilities-exchange/", "2026-10-14"],
+    ["MicroBilt / PRBC", ["MICROBILT", "PRBC", "MICROBILT CORPORATION"], "specialty bureau", "MicroBilt, Attn: Consumer Affairs Department\nP.O. Box 440693\nKennesaw, GA 30160", "888-222-7621", "https://files.consumerfinance.gov/f/documents/cfpb_consumer-reporting-companies_list_2025.pdf", "2026-10-14"]
+  ];
+
+  const STOP = new Set(['llc', 'inc', 'na', 'n', 'a', 'co', 'corp', 'corporation', 'company', 'the', 'usa', 'us', 'of', 'and', 'services', 'service', 'financial', 'bank', 'card', 'cards', 'credit', 'lp', 'ltd']);
+  const norm = s => String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w && !STOP.has(w)).join(' ');
+
+  const seed = () => SEED.map(([name, aliases, category, address, phone, source, verifiedOn]) => ({ name, aliases, category, address, phone, source, verifiedOn, origin: 'research' }));
+
+  /** All entries: researched seed + saved book + addresses used on past disputes. */
+  function all(ws) {
+    const out = seed();
+    (ws && ws.addressBook || []).forEach(e => out.push(Object.assign({ origin: 'saved', aliases: [] }, e)));
+    const seen = new Set(out.map(e => norm(e.name)));
+    (ws && ws.disputes || []).forEach(d => {
+      if (!d.recipientAddress || !d.recipient || /consumerfinance\.gov/.test(d.recipientAddress)) return;
+      const k = norm(d.recipient);
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      out.push({ name: d.recipient, aliases: [], category: 'used before', address: d.recipientAddress, origin: 'history' });
+    });
+    return out;
+  }
+
+  /** Best match for a creditor name, or null. Exact normalized match on name or alias first, then prefix. */
+  function lookup(ws, name) {
+    const k = norm(name);
+    if (!k) return null;
+    const list = all(ws);
+    const keys = e => [e.name].concat(e.aliases || []).map(norm).filter(Boolean);
+    return list.find(e => keys(e).includes(k)) || list.find(e => keys(e).some(x => x.length > 3 && (k.startsWith(x + ' ') || x.startsWith(k + ' ')))) || null;
+  }
+
+  function search(ws, q) {
+    const k = norm(q);
+    const list = all(ws);
+    if (!k) return list;
+    return list.filter(e => [e.name].concat(e.aliases || []).some(n => norm(n).includes(k)) || String(e.category || '').toLowerCase().includes(String(q).toLowerCase()));
+  }
+
+  /** Save or update an address in the workspace book. */
+  function remember(ws, name, address, category) {
+    if (!name || !address) return;
+    ws.addressBook = ws.addressBook || [];
+    const k = norm(name);
+    const hit = ws.addressBook.find(e => norm(e.name) === k);
+    if (hit) Object.assign(hit, { address, category: category || hit.category });
+    else ws.addressBook.push({ name, address, category: category || 'saved', aliases: [] });
+  }
+
+  const api = { SEED, all, lookup, search, remember, norm };
+  root.Furnishers = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * FCRA / FDCPA violation tracker. Scans the workspace for documented events that may be
+ * violations (missed deadlines, reinsertion without notice, accounts not marked disputed,
+ * obsolete reporting) and builds an evidence packet for a consumer attorney. These are
+ * flags for attorney review, not legal conclusions.
+ */
+(function (root) {
+  'use strict';
+  const Law = root.Law, Metro2 = root.Metro2;
+  const MAIL_BACK = 5;
+  const BUREAU_TYPES = ['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'reinsertion_611', 'block_605b', 'pii_611', 'inquiry_604'];
+  const FURNISHER_TYPES = ['furnisher_623', 'student_loan_623', 'furnisher_final'];
+
+  const STATUS = [['new', 'New'], ['reviewing', 'Reviewing'], ['referred', 'Sent to attorney'], ['accepted', 'Attorney accepted'], ['declined', 'Attorney declined'], ['closed', 'Closed']];
+
+  function v(key, d, o) { return Object.assign({ key, clientId: d.clientId, disputeIds: [d.id], severity: 'medium' }, o); }
+
+  /** All potential violations for a workspace (or one client). */
+  function scan(ws, today, clientId) {
+    const out = [];
+    const disputes = ws.disputes.filter(d => !clientId || d.clientId === clientId);
+    disputes.forEach(d => {
+      const t = (Law.DISPUTE_TYPES[d.type] || {});
+      // 1. No response by the deadline.
+      if (d.sentAt && !d.outcome && d.dueAt && today > Law.addDays(d.dueAt, MAIL_BACK)) {
+        if (BUREAU_TYPES.includes(d.type)) out.push(v('noresp:' + d.id, d, { law: 'FCRA § 611(a)(1)(A) — 15 U.S.C. § 1681i(a)(1)(A)', title: `${d.recipient} did not complete the reinvestigation within 30 days`, detail: `Dispute mailed ${d.sentAt}${d.receivedAt ? ', received ' + d.receivedAt : ''}; response was due ${d.dueAt}. No result recorded. If the bureau cannot verify within the period, it must delete the item (§ 611(a)(5)(A)).`, severity: 'high' }));
+        else if (FURNISHER_TYPES.includes(d.type)) out.push(v('noresp:' + d.id, d, { law: 'FCRA § 623(a)(8)(E) — 15 U.S.C. § 1681s-2(a)(8)(E); 12 C.F.R. § 1022.43(e)', title: `${d.recipient} did not respond to the direct dispute within 30 days`, detail: `Direct dispute mailed ${d.sentAt}; response was due ${d.dueAt}. No result recorded.` }));
+      }
+      // 2. Method of verification not provided within 15 days.
+      if (d.type === 'mov_611a7' && d.sentAt && !d.outcome) {
+        const due = Law.addDays(d.receivedAt || Law.addDays(d.sentAt, 5), 15 + MAIL_BACK);
+        if (today > due) out.push(v('mov:' + d.id, d, { law: 'FCRA § 611(a)(7) — 15 U.S.C. § 1681i(a)(7)', title: `${d.recipient} did not describe its verification procedure within 15 days`, detail: `Method-of-verification request mailed ${d.sentAt}. No description received.` }));
+      }
+      // 3. Verified again despite documents (step 2+), possible failure to review information provided.
+      if (d.outcome === 'verified' && d.parentId && d.items.some(i => i.evidence)) {
+        out.push(v('reverified:' + d.id, d, { law: 'FCRA § 611(a)(4) and § 623(b)(1) — failure to review relevant information provided', title: `${d.recipient} verified again after receiving documents`, detail: 'The item was verified a second time even though supporting documents were enclosed. Ask the attorney whether the investigation was reasonable.', severity: 'low' }));
+      }
+    });
+
+    // Reports: reinsertion, not marked disputed, obsolete reporting.
+    const reports = ws.reports.filter(r => (!clientId || r.clientId === clientId) && (r.accounts || []).length);
+    disputes.forEach(d => d.items.forEach((it, i) => {
+      const bureau = it.bureau || (Law.BUREAUS[d.recipient] ? d.recipient : null);
+      if (!bureau) return;
+      const key = Metro2.matchKey({ creditor: it.creditor, accountNumber: it.accountNumber });
+      const later = reports.filter(r => r.clientId === d.clientId && r.bureau === bureau && d.sentAt && String(r.date) > String(it.resultAt || d.sentAt))
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      later.forEach(r => {
+        const acct = r.accounts.find(a => Metro2.matchKey(a) === key);
+        if (it.result === 'deleted' && acct && String(r.date) > String(it.resultAt)) {
+          out.push(v(`reinsert:${d.id}:${i}`, d, { law: 'FCRA § 611(a)(5)(B) — 15 U.S.C. § 1681i(a)(5)(B)', title: `${it.creditor} reappeared on ${bureau} after deletion`, detail: `Deleted ${it.resultAt}; present again on the ${bureau} report dated ${r.date}. The bureau must certify accuracy with the furnisher and notify the consumer in writing within 5 business days. Confirm with the client whether a reinsertion notice was received.`, severity: 'high', reportId: r.id }));
+        }
+        const disputedOpen = !it.result || it.result === 'unchanged';
+        if (acct && disputedOpen && !/^X[BC]$/i.test(String(acct.complianceCode || '')) && d.receivedAt && String(r.date) > Law.addDays(d.receivedAt, 30)) {
+          out.push(v(`xb:${d.id}:${i}:${r.id}`, d, { law: d.type === 'validation_809' ? 'FDCPA § 807(8) — 15 U.S.C. § 1692e(8)' : 'FCRA § 623(a)(3) — 15 U.S.C. § 1681s-2(a)(3)', title: `${it.creditor} not reported as disputed on ${bureau}`, detail: `Disputed (received ${d.receivedAt}); the ${bureau} report dated ${r.date} has no XB/XC compliance condition code.`, severity: 'medium', reportId: r.id }));
+        }
+      });
+    }));
+    // Obsolete items still reported (latest report per bureau).
+    const latest = {};
+    reports.forEach(r => { const k = r.clientId + r.bureau; if (!latest[k] || String(r.date) > String(latest[k].date)) latest[k] = r; });
+    Object.values(latest).forEach(r => (r.accounts || []).forEach(a => {
+      const od = a.dofd && Metro2.obsolescenceDate(a.dofd);
+      const until = od && !isNaN(od) ? od.toISOString().slice(0, 10) : null;
+      if (until && String(r.date) > until) out.push({ key: `obsolete:${r.id}:${a.id}`, clientId: r.clientId, disputeIds: [], reportId: r.id, law: 'FCRA § 605(a), (c) — 15 U.S.C. § 1681c', title: `${a.creditor} reported past the 7-year limit on ${r.bureau}`, detail: `Date of first delinquency ${a.dofd}; reportable until about ${until}; still on the report dated ${r.date}.`, severity: 'high' });
+    }));
+    const seen = new Set();
+    return out.filter(x => !seen.has(x.key) && seen.add(x.key)).map(x => Object.assign(x, { review: (ws.violations || {})[x.key] || { status: 'new' } }));
+  }
+
+  /** Plain-text evidence packet for an attorney. */
+  function packet(ws, clientId, keys, today, company) {
+    const c = ws.clients.find(x => x.id === clientId) || {};
+    const list = scan(ws, today, clientId).filter(x => !keys || keys.includes(x.key));
+    const disputeIds = [...new Set(list.flatMap(x => x.disputeIds))];
+    const ds = ws.disputes.filter(d => disputeIds.includes(d.id)).sort((a, b) => String(a.sentAt || a.createdAt).localeCompare(String(b.sentAt || b.createdAt)));
+    const lines = [];
+    lines.push(`ATTORNEY REVIEW PACKET — ${c.name || ''}`, `Prepared ${today}${company && company.name ? ' by ' + company.name : ''}`, '',
+      'This packet lists events that may be violations of the FCRA or FDCPA, with the dates and letters that document them. It is a summary for review by a licensed attorney, not a legal conclusion. The consumer has authorized sharing this information with the attorney.', '',
+      `Consumer: ${c.name || ''}`, `Address: ${[c.address, c.city, c.state, c.zip].filter(Boolean).join(', ')}`, `Phone: ${c.phone || ''}  Email: ${c.email || ''}`, '', 'POSSIBLE VIOLATIONS', '');
+    list.forEach((x, i) => lines.push(`${i + 1}. ${x.title}`, `   Law: ${x.law}`, `   Facts: ${x.detail}`, ''));
+    lines.push('DISPUTE TIMELINE', '');
+    ds.forEach(d => {
+      lines.push(`• ${(Law.DISPUTE_TYPES[d.type] || {}).label || d.type} → ${d.recipient}`, `  Mailed: ${d.sentAt || '—'}  Received: ${d.receivedAt || '—'}  Due: ${d.dueAt || '—'}  Tracking: ${d.tracking || '—'}`, `  Result: ${d.outcome || 'none recorded'}${d.respondedAt ? ' (' + d.respondedAt + ')' : ''}`);
+      d.items.forEach(it => lines.push(`  Item: ${it.creditor}${it.accountNumber ? ' ' + it.accountNumber : ''} — ${it.discrepancy}${it.evidence ? ' Evidence: ' + it.evidence : ''}`));
+      lines.push('');
+    });
+    lines.push('LETTERS SENT', '');
+    ds.forEach(d => { const l = ws.letters.find(x => x.id === d.letterId); if (l && l.text) lines.push('-----', l.text, ''); });
+    return lines.join('\n');
+  }
+
+  const api = { STATUS, scan, packet };
+  root.Violations = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * Automatic, CROA-safe billing. Invoices are created only for work already performed
+ * (a letter mailed, an item deleted, or a month in which letters were mailed), and only
+ * after the client's 3-business-day cancellation period (15 U.S.C. § 1679b(b)).
+ */
+(function (root) {
+  'use strict';
+  const Law = root.Law;
+  const Store = new Proxy({}, { get: (t, k) => root.Store[k] });
+
+  const MODELS = [
+    ['manual', 'Manual — I create invoices myself'],
+    ['per_letter', 'Per letter — bill each dispute letter after it is mailed'],
+    ['per_delete', 'Pay per delete — bill only when an item is removed or corrected'],
+    ['monthly', 'Monthly after service — one invoice per month in which letters were mailed']
+  ];
+  const DEFAULTS = { model: 'manual', perLetter: 49, perDelete: 75, monthly: 99, dueDays: 7, provider: 'none', payLink: '' };
+  const UNBILLED_TYPES = ['cfpb_complaint', 'disclosure_609', 'goodwill'];
+
+  const settings = ws => Object.assign({}, DEFAULTS, ws.settings.billing || {});
+  const modelFor = (ws, c) => (c.billingModel && c.billingModel !== 'inherit') ? c.billingModel : settings(ws).model;
+  const payToken = () => (Store.uid() + Store.uid()).replace(/-/g, '');
+
+  /** Invoices that should exist now but don't. Returns invoice objects ready to push. */
+  function due(ws, today) {
+    const s = settings(ws), out = [];
+    ws.clients.forEach(c => {
+      const model = modelFor(ws, c);
+      if (model === 'manual' || ['cancelled', 'paused'].includes(c.status)) return;
+      const cs = Store.croaStatus(c, today);
+      if (!cs.cleared) return;
+      const after = d => d && d <= today && (!cs.deadline || d > cs.deadline);
+      const has = pred => ws.invoices.some(i => i.clientId === c.id && i.status !== 'void' && pred(i));
+      const inv = (o) => Object.assign({ id: Store.uid(), clientId: c.id, status: 'issued', issuedAt: today, dueAt: Law.addDays(today, s.dueDays), paidAt: null, auto: true, payToken: payToken() }, o);
+      const mailed = ws.disputes.filter(d => d.clientId === c.id && d.sentAt && !UNBILLED_TYPES.includes(d.type) && after(d.sentAt));
+      if (model === 'per_letter') {
+        mailed.filter(d => !has(i => i.disputeId === d.id)).forEach(d => out.push(inv({
+          description: `Dispute letter prepared and mailed — ${d.recipient} (${(Law.DISPUTE_TYPES[d.type] || {}).label || d.type}, round ${d.round})`, amount: Number(s.perLetter), serviceCompletedAt: d.sentAt, disputeId: d.id })));
+      }
+      if (model === 'per_delete') {
+        ws.disputes.filter(d => d.clientId === c.id).forEach(d => d.items.forEach((it, i) => {
+          const res = it.result || (['deleted', 'corrected'].includes(d.outcome) ? d.outcome : null);
+          const at = it.resultAt || d.respondedAt;
+          if (!['deleted', 'corrected'].includes(res) || !after(at)) return;
+          const itemKey = `${d.id}:${i}`;
+          if (has(x => x.itemKey === itemKey)) return;
+          out.push(inv({ description: `Result achieved — ${it.creditor} ${res === 'deleted' ? 'removed from' : 'corrected on'} ${it.bureau || d.recipient}`, amount: Number(s.perDelete), serviceCompletedAt: at, disputeId: d.id, itemKey }));
+        }));
+      }
+      if (model === 'monthly') {
+        const last = ws.invoices.filter(i => i.clientId === c.id && i.status !== 'void' && i.period).sort((a, b) => String(b.period).localeCompare(String(a.period)))[0];
+        const since = last ? last.period : (cs.deadline || '0000-00-00');
+        if (last && Law.daysBetween(last.period, today) < 30) return;
+        const work = mailed.filter(d => d.sentAt > since);
+        if (!work.length) return;
+        const lastWork = work.map(d => d.sentAt).sort().pop();
+        out.push(inv({ description: `Monthly credit dispute service — ${work.length} letter${work.length > 1 ? 's' : ''} prepared and mailed (${work.map(d => d.recipient).join(', ')})`, amount: Number(s.monthly), serviceCompletedAt: lastWork, period: today }));
+      }
+    });
+    return out;
+  }
+
+  const api = { MODELS, DEFAULTS, settings, modelFor, due, payToken };
+  root.Billing = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * Automation rules: "when this happens, after N days, send this message or create this task".
+ * Triggers are detected from the workspace itself, so events from the portal, intake form and
+ * staff all count. Each rule fires once per event (keys are logged), and never for events that
+ * happened before the rule was turned on.
+ */
+(function (root) {
+  'use strict';
+  const Law = root.Law;
+  const Store = new Proxy({}, { get: (t, k) => root.Store[k] });
+
+  const TRIGGERS = {
+    lead_new: 'A new lead is added',
+    lead_stale: 'A lead has not become a client',
+    contract_signed: 'The client signs the agreement',
+    no_report: 'No credit report yet after signing',
+    report_refresh: 'Time for a fresh credit report (monthly re-pull)',
+    letter_mailed: 'Dispute letters are mailed',
+    item_removed: 'An item is removed or corrected',
+    response_overdue: 'A response deadline passes with no answer',
+    invoice_issued: 'An invoice is issued',
+    invoice_overdue: 'An invoice is past due',
+    progress_monthly: 'Monthly progress update',
+    sequence_due: 'Sequence letters are drafted and need approval'
+  };
+
+  const DEFAULT_RULES = [
+    { id: 'welcome-lead', trigger: 'lead_new', delayDays: 0, channel: 'email', subject: 'Thanks for reaching out to {{company}}', body: 'Hi {{first}}, thanks for contacting {{company}}. The next step is a free consultation where we review your credit reports together and explain your options — including the things you can do on your own for free. {{booking_line}}Questions? Reply here or call {{phone}}.', enabled: true },
+    { id: 'call-lead', trigger: 'lead_new', delayDays: 0, channel: 'task', subject: 'Call new lead {{name}}', body: '', enabled: true },
+    { id: 'lead-followup', trigger: 'lead_stale', delayDays: 3, channel: 'email', subject: 'Following up on your credit review', body: 'Hi {{first}}, just following up. If you would still like a free review of your credit reports, {{booking_or_reply}}. — {{company}}', enabled: true },
+    { id: 'signed-next', trigger: 'contract_signed', delayDays: 0, channel: 'email', subject: 'Welcome — here is what happens next', body: 'Welcome, {{first}}! Your 3-business-day cancellation period is running now; we start work after it ends. Please upload a recent credit report, a photo ID and proof of address in your portal: {{portal}}', enabled: true },
+    { id: 'no-report', trigger: 'no_report', delayDays: 3, channel: 'sms', subject: '', body: 'Hi {{first}}, it’s {{company}}. We still need your current credit report to get started. Upload it in your portal: {{portal}} Reply STOP to opt out.', enabled: true },
+    { id: 'monthly-repull', trigger: 'report_refresh', delayDays: 35, channel: 'email', subject: 'Time to refresh your credit report', body: 'Hi {{first}}, it has been about a month since your last credit report. Please download a fresh 3-bureau report from your monitoring service and upload it in your portal ({{portal}}) so we can see what was removed and plan the next round.', enabled: true },
+    { id: 'mailed', trigger: 'letter_mailed', delayDays: 0, channel: 'email', subject: 'Your dispute letters were mailed', body: 'Hi {{first}}, we mailed {{count}} letter(s) for you today ({{recipients}}). Recipients generally have 30 days from receipt to respond. We’ll let you know as soon as we hear back. Track progress anytime: {{portal}}', enabled: true },
+    { id: 'removed', trigger: 'item_removed', delayDays: 0, channel: 'email', subject: 'Good news on your credit file', body: 'Great news, {{first}}! {{creditor}} was {{result}} by {{bureau}}. See all results in your portal: {{portal}} If you are happy with our work, a short review would mean a lot to us.', enabled: true },
+    { id: 'overdue', trigger: 'response_overdue', delayDays: 5, channel: 'task', subject: 'No response from {{recipient}} for {{name}} — record “No response” and check the violation tracker', body: '', enabled: true },
+    { id: 'invoice', trigger: 'invoice_issued', delayDays: 0, channel: 'email', subject: 'Invoice from {{company}}: {{amount}}', body: 'Hi {{first}}, this invoice is for work already completed: {{description}}. Amount: {{amount}}, due {{due}}. {{pay_line}}Thank you!', enabled: true },
+    { id: 'invoice-late', trigger: 'invoice_overdue', delayDays: 3, channel: 'email', subject: 'Reminder: invoice of {{amount}} is past due', body: 'Hi {{first}}, a friendly reminder that your invoice for {{description}} ({{amount}}) was due {{due}}. {{pay_line}}If you have questions, reply here.', enabled: true },
+    { id: 'progress', trigger: 'progress_monthly', delayDays: 0, channel: 'email', subject: 'Your monthly credit progress update', body: 'Hi {{first}}, here is your monthly update. Items removed or corrected so far: {{removed_count}}. Disputes in progress: {{open_count}}. See the details and your score history in your portal: {{portal}}', enabled: true },
+    { id: 'sequence-approve', trigger: 'sequence_due', delayDays: 0, channel: 'task', subject: 'Review and approve sequence letters for {{name}}', body: '', enabled: true }
+  ];
+
+  const bucket = (from, today, days) => Math.floor(Law.daysBetween(from, today) / days);
+  const d10 = v => String(v || '').slice(0, 10);
+
+  /** Events per trigger: [{ key, clientId, at, vars, still? }]. */
+  function events(ws, trigger, today) {
+    const out = [];
+    const clients = ws.clients;
+    const reportsFor = cid => ws.reports.filter(r => r.clientId === cid).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    if (trigger === 'lead_new') clients.filter(c => c.status === 'lead').forEach(c => out.push({ key: c.id, clientId: c.id, at: d10(c.createdAt) }));
+    if (trigger === 'lead_stale') clients.filter(c => c.status === 'lead').forEach(c => out.push({ key: c.id, clientId: c.id, at: d10(c.createdAt), still: () => c.status === 'lead' }));
+    if (trigger === 'contract_signed') clients.filter(c => (c.onboarding || {}).contractSignedAt).forEach(c => out.push({ key: c.id, clientId: c.id, at: c.onboarding.contractSignedAt }));
+    if (trigger === 'no_report') clients.filter(c => (c.onboarding || {}).contractSignedAt && c.kind !== 'business' && !['cancelled', 'completed'].includes(c.status)).forEach(c => out.push({ key: c.id, clientId: c.id, at: c.onboarding.contractSignedAt, still: () => !reportsFor(c.id).length }));
+    if (trigger === 'report_refresh') clients.filter(c => c.status === 'active').forEach(c => { const r = reportsFor(c.id)[0]; if (r) out.push({ key: c.id + ':' + r.id, clientId: c.id, at: d10(r.date), still: () => reportsFor(c.id)[0] === r }); });
+    if (trigger === 'letter_mailed') {
+      const groups = {};
+      ws.disputes.filter(d => d.sentAt && d.type !== 'cfpb_complaint').forEach(d => { const k = d.clientId + ':' + d.sentAt; (groups[k] = groups[k] || { key: k, clientId: d.clientId, at: d.sentAt, list: [] }).list.push(d); });
+      Object.values(groups).forEach(g => out.push({ key: g.key, clientId: g.clientId, at: g.at, vars: { count: g.list.length, recipients: g.list.map(d => d.recipient).join(', ') } }));
+    }
+    if (trigger === 'item_removed') ws.disputes.forEach(d => d.items.forEach((it, i) => {
+      const res = it.result || (['deleted', 'corrected'].includes(d.outcome) ? d.outcome : null);
+      if (['deleted', 'corrected'].includes(res)) out.push({ key: `${d.id}:${i}`, clientId: d.clientId, at: d10(it.resultAt || d.respondedAt), vars: { creditor: it.creditor, bureau: it.bureau || d.recipient, result: res === 'deleted' ? 'removed' : 'corrected' } });
+    }));
+    if (trigger === 'response_overdue') ws.disputes.filter(d => d.dueAt && d.sentAt && !d.outcome).forEach(d => out.push({ key: d.id, clientId: d.clientId, at: d.dueAt, vars: { recipient: d.recipient }, still: () => !d.outcome }));
+    if (trigger === 'invoice_issued') ws.invoices.filter(i => i.status === 'issued').forEach(i => out.push({ key: i.id, clientId: i.clientId, at: i.issuedAt, vars: invVars(i) }));
+    if (trigger === 'invoice_overdue') ws.invoices.filter(i => i.status === 'issued' && i.dueAt).forEach(i => out.push({ key: i.id, clientId: i.clientId, at: i.dueAt, vars: invVars(i), still: () => i.status === 'issued' }));
+    if (trigger === 'progress_monthly') clients.filter(c => c.status === 'active' && (c.onboarding || {}).contractSignedAt).forEach(c => {
+      const n = bucket(c.onboarding.contractSignedAt, today, 30);
+      if (n < 1) return;
+      const ds = ws.disputes.filter(d => d.clientId === c.id);
+      const removed = ds.reduce((a, d) => a + d.items.filter((it) => ['deleted', 'corrected'].includes(it.result || d.outcome)).length, 0);
+      out.push({ key: c.id + ':' + n, clientId: c.id, at: Law.addDays(c.onboarding.contractSignedAt, n * 30), vars: { removed_count: removed, open_count: ds.filter(d => d.sentAt && !d.outcome).length } });
+    });
+    if (trigger === 'sequence_due') (ws.disputes || []).filter(d => d.seqId && d.parentId && !d.sentAt && (ws.letters.find(l => l.id === d.letterId) || {}).status === 'draft').forEach(d => out.push({ key: d.clientId + ':' + d10(d.createdAt), clientId: d.clientId, at: d10(d.createdAt) }));
+    return out;
+  }
+  function invVars(i) { return { amount: '$' + Number(i.amount || 0).toFixed(2), description: i.description, due: i.dueAt || '', invoiceId: i.id, payToken: i.payToken || '' }; }
+
+  function fill(tpl, vars) { return String(tpl || '').replace(/\{\{(\w+)\}\}/g, (m, k) => (vars[k] === undefined || vars[k] === null ? '' : String(vars[k]))); }
+
+  function varsFor(ws, c, ev, ctx) {
+    const co = ws.settings.company || {};
+    const booking = co.bookingUrl || '';
+    const v = Object.assign({ first: c.firstName || String(c.name || '').split(' ')[0], name: c.name, company: co.name || 'our office', phone: co.phone || '', portal: (ctx.origin || '') + '/portal',
+      booking, booking_line: booking ? `Pick a time that works for you: ${booking} ` : '', booking_or_reply: booking ? `pick a time here: ${booking}` : 'just reply to this message and we’ll set it up' }, ev.vars || {});
+    const billing = Object.assign({ provider: 'none', payLink: '' }, ws.settings.billing || {});
+    v.pay_line = billing.provider === 'authorizenet' && v.payToken && ctx.origin ? `Pay securely online: ${ctx.origin}/pay/${v.payToken} ` : billing.provider === 'link' && billing.payLink ? `Pay online: ${billing.payLink} ` : '';
+    return v;
+  }
+
+  /** Rules merged with defaults (new default rules appear automatically, switched off for old workspaces). */
+  function rules(ws) {
+    const saved = ws.automations || [];
+    const byId = Object.fromEntries(saved.map(r => [r.id, r]));
+    return DEFAULT_RULES.map(r => Object.assign({}, r, byId[r.id] || { enabled: false })).concat(saved.filter(r => !DEFAULT_RULES.some(d => d.id === r.id)));
+  }
+
+  /** Actions due now. Each: { rule, key, client, channel, subject, body }. */
+  function due(ws, today, ctx) {
+    ctx = ctx || {};
+    const log = ws.automationLog || {};
+    const out = [];
+    rules(ws).filter(r => r.enabled && r.enabledAt).forEach(r => {
+      events(ws, r.trigger, today).forEach(ev => {
+        const key = r.id + ':' + ev.key;
+        if (log[key]) return;
+        if (!ev.at || ev.at < d10(r.enabledAt)) return; // never fire for history
+        if (Law.addDays(ev.at, Number(r.delayDays) || 0) > today) return;
+        if (ev.still && !ev.still()) return;
+        const c = ws.clients.find(x => x.id === ev.clientId);
+        if (!c || c.status === 'cancelled' && r.trigger !== 'invoice_issued') return;
+        const vars = varsFor(ws, c, ev, ctx);
+        out.push({ rule: r, key, client: c, channel: r.channel, subject: fill(r.subject, vars), body: fill(r.body, vars) });
+      });
+    });
+    return out;
+  }
+
+  const api = { TRIGGERS, DEFAULT_RULES, rules, events, due, fill };
+  root.Automations = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/* Sales pipeline: lead stages and a simple lead score (how ready a lead is to enroll). */
+(function (root) {
+  'use strict';
+  const Law = root.Law;
+
+  const STAGES = [
+    ['new', 'New lead'], ['contacted', 'Contacted'], ['consult', 'Consultation booked'], ['analysis', 'Analysis sent'],
+    ['agreement', 'Agreement sent'], ['won', 'Enrolled'], ['lost', 'Not now']
+  ];
+
+  function stageOf(c) {
+    if (c.status === 'cancelled') return 'lost';
+    if (c.status !== 'lead') return 'won';
+    return STAGES.some(s => s[0] === c.leadStage) ? c.leadStage : 'new';
+  }
+
+  /** 0–100 score with reasons. */
+  function score(ws, c, today) {
+    const reasons = [];
+    let s = 0;
+    const add = (n, why) => { s += n; reasons.push((n > 0 ? '+' : '') + n + ' ' + why); };
+    if (c.phone) add(15, 'phone on file');
+    if (c.email) add(10, 'email on file');
+    if (c.smsConsent) add(5, 'agreed to texts');
+    if (ws.reports.some(r => r.clientId === c.id) || (ws.documents || []).some(d => d.clientId === c.id && d.type === 'report')) add(20, 'credit report provided');
+    const st = stageOf(c);
+    const stageBonus = { contacted: 5, consult: 15, analysis: 20, agreement: 25 }[st];
+    if (stageBonus) add(stageBonus, 'stage: ' + STAGES.find(x => x[0] === st)[1].toLowerCase());
+    if (c.referralId) add(10, 'referred by a partner');
+    if (c.kind && c.kind !== 'personal') add(5, 'business credit interest');
+    if (/mortgage|home|house|car|auto|apartment|rent|job|loan/i.test(c.notes || '')) add(10, 'has a near-term goal');
+    const age = Law.daysBetween(String(c.createdAt || today).slice(0, 10), today);
+    const lastTouch = (ws.activity || []).filter(a => a.clientId === c.id).map(a => String(a.at).slice(0, 10)).sort().pop() || String(c.createdAt || '').slice(0, 10);
+    const quiet = lastTouch ? Law.daysBetween(lastTouch, today) : age;
+    if (age <= 2) add(10, 'new in the last 2 days');
+    if (quiet > 14) add(-20, `no activity for ${quiet} days`);
+    s = Math.max(0, Math.min(100, s));
+    return { score: s, heat: s >= 60 ? 'hot' : s >= 35 ? 'warm' : 'cold', reasons, quiet };
+  }
+
+  /** Referral partner commissions. r.commissionType: 'flat' (per enrolled client) | 'percent' (of paid invoices) | 'none'. */
+  function commissions(ws, r, today) {
+    const Store = root.Store;
+    const clients = ws.clients.filter(c => c.referralId === r.id);
+    const lines = [];
+    if (r.commissionType === 'flat') clients.forEach(c => {
+      const cs = Store.croaStatus(c, today);
+      const enrolled = c.kind === 'business' ? ['active', 'completed'].includes(c.status) : cs.cleared && !cs.cancelled;
+      if (enrolled) lines.push({ clientId: c.id, what: 'Enrolled client', at: cs.deadline || String(c.createdAt).slice(0, 10), amount: Number(r.commissionAmount) || 0 });
+    });
+    if (r.commissionType === 'percent') ws.invoices.filter(i => i.status === 'paid' && clients.some(c => c.id === i.clientId)).forEach(i => lines.push({ clientId: i.clientId, what: 'Paid invoice ' + i.description, at: i.paidAt, amount: Math.round(Number(i.amount) * (Number(r.commissionAmount) || 0)) / 100 }));
+    const earned = lines.reduce((a, l) => a + l.amount, 0);
+    const paid = (r.payouts || []).reduce((a, p) => a + Number(p.amount || 0), 0);
+    return { clients, lines, earned, paid, owed: Math.max(0, Math.round((earned - paid) * 100) / 100) };
+  }
+
+  const api = { STAGES, stageOf, score, commissions };
+  root.Sales = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * Printable client documents: the monthly progress report, the free credit analysis for
+ * prospects, and the side-by-side report comparison data. Returns HTML strings.
+ */
+(function (root) {
+  'use strict';
+  const Law = root.Law, Metro2 = root.Metro2, Results = root.Results;
+  const esc = s => String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const money = n => (n === '' || n === null || n === undefined || isNaN(Number(n))) ? '—' : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
+  const COLORS = { Equifax: '#b42318', Experian: '#1d4ed8', TransUnion: '#0f766e' };
+  const NEG = ['61', '62', '63', '64', '65', '71', '78', '80', '82', '83', '84', '93', '94', '95', '96', '97', 'DA', 'DF'];
+  const isNeg = a => NEG.includes(String(a.status || '').toUpperCase()) || Number(a.pastDue) > 0;
+
+  const STYLE = `<style>body{font:11pt/1.5 -apple-system,'Segoe UI',Inter,Arial,sans-serif;color:#0b1220;margin:0;background:#fff}
+    .doc{max-width:7.2in;margin:0.5in auto;padding:0 0.2in}h1{font-size:20pt;margin:0 0 4px}h2{font-size:13pt;margin:22px 0 8px;border-bottom:2px solid #0f766e;padding-bottom:4px}
+    .muted{color:#64748b}.small{font-size:9pt}table{width:100%;border-collapse:collapse;font-size:9.5pt}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e4e7ec;vertical-align:top}th{background:#f5f6f8;font-weight:600}
+    .kpis{display:flex;gap:10px;margin:14px 0}.kpi{flex:1;border:1px solid #e4e7ec;border-radius:8px;padding:10px 12px}.kpi b{display:block;font-size:18pt}.ok{color:#067647}.bad{color:#b42318}
+    .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #e4e7ec;padding-bottom:12px}.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:8.5pt;background:#eef1f5}
+    .tag.del{background:#e7f6ee;color:#067647}.tag.cor{background:#e8f0fe;color:#1d4ed8}.tag.new{background:#fdecea;color:#b42318}.tag.chg{background:#fef3e2;color:#b54708}
+    .note{background:#f5f6f8;border-radius:8px;padding:10px 12px;font-size:9pt;margin-top:18px}@page{margin:0.5in}@media print{.doc{margin:0 auto}}</style>`;
+
+  function wrap(title, body) { return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>${STYLE}</head><body><div class="doc">${body}</div></body></html>`; }
+  function header(co, title, sub) {
+    return `<div class="head"><div><h1>${esc(title)}</h1><div class="muted">${esc(sub)}</div></div><div class="small" style="text-align:right"><b>${esc(co.name || '')}</b><br>${esc(co.phone || '')}<br>${esc(co.email || '')}</div></div>`;
+  }
+
+  /** Score history per bureau: { Equifax: [{date, score}], ... } */
+  function scoreHistory(ws, cid) {
+    const h = {};
+    ws.reports.filter(r => r.clientId === cid).forEach(r => Object.entries(r.scores || {}).forEach(([b, v]) => { if (Number(v)) (h[b] = h[b] || []).push({ date: String(r.date), score: Number(v) }); }));
+    Object.values(h).forEach(a => a.sort((x, y) => x.date.localeCompare(y.date)));
+    return h;
+  }
+
+  function chart(hist) {
+    const pts = Object.values(hist).flat();
+    if (pts.length < 2) return '';
+    const W = 640, H = 180, P = 32;
+    const dates = [...new Set(pts.map(p => p.date))].sort();
+    const min = Math.min(...pts.map(p => p.score)) - 15, max = Math.max(...pts.map(p => p.score)) + 15;
+    const x = d => dates.length === 1 ? W / 2 : P + (dates.indexOf(d) / (dates.length - 1)) * (W - 2 * P);
+    const y = s => H - P + 8 - ((s - min) / (max - min)) * (H - 2 * P);
+    const lines = Object.entries(hist).map(([b, a]) => `<polyline fill="none" stroke="${COLORS[b] || '#334155'}" stroke-width="2.5" points="${a.map(p => x(p.date) + ',' + y(p.score)).join(' ')}"/>${a.map(p => `<circle cx="${x(p.date)}" cy="${y(p.score)}" r="3.5" fill="${COLORS[b] || '#334155'}"/><text x="${x(p.date)}" y="${y(p.score) - 8}" font-size="10" text-anchor="middle" fill="#334155">${p.score}</text>`).join('')}`).join('');
+    const axis = dates.map(d => `<text x="${x(d)}" y="${H - 6}" font-size="9" text-anchor="middle" fill="#64748b">${esc(d)}</text>`).join('');
+    const legend = Object.keys(hist).map((b, i) => `<rect x="${P + i * 110}" y="2" width="10" height="10" fill="${COLORS[b] || '#334155'}"/><text x="${P + i * 110 + 14}" y="11" font-size="10" fill="#334155">${esc(b)}</text>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Credit score history">${legend}${lines}${axis}</svg>`;
+  }
+
+  function wins(ws, cid) {
+    const out = [];
+    ws.disputes.filter(d => d.clientId === cid).forEach(d => d.items.forEach(it => {
+      const res = it.result || (['deleted', 'corrected'].includes(d.outcome) ? d.outcome : null);
+      if (['deleted', 'corrected'].includes(res)) out.push({ creditor: it.creditor, bureau: it.bureau || d.recipient, result: res, at: it.resultAt || d.respondedAt });
+    }));
+    return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  }
+
+  /** Monthly progress report (HTML). */
+  function progress(ws, cid, today) {
+    const c = ws.clients.find(x => x.id === cid) || {};
+    const co = ws.settings.company || {};
+    const hist = scoreHistory(ws, cid);
+    const w = wins(ws, cid);
+    const open = ws.disputes.filter(d => d.clientId === cid && d.sentAt && !d.outcome);
+    const change = Object.entries(hist).map(([b, a]) => ({ b, from: a[0].score, to: a[a.length - 1].score }));
+    const tasks = ws.tasks.filter(t => t.clientId === cid && !t.done && /upload|send|sign|id|address|report/i.test(t.title));
+    return wrap(`Progress report — ${c.name}`, header(co, 'Credit progress report', `${c.name} · ${today}`) +
+      `<div class="kpis"><div class="kpi"><span class="muted small">Items removed or corrected</span><b class="ok">${w.length}</b></div><div class="kpi"><span class="muted small">Disputes in progress</span><b>${open.length}</b></div>${change.map(s => `<div class="kpi"><span class="muted small">${esc(s.b)} score</span><b class="${s.to >= s.from ? 'ok' : 'bad'}">${s.to}</b><span class="small muted">${s.to - s.from >= 0 ? '+' : ''}${s.to - s.from} since ${esc(hist[s.b][0].date)}</span></div>`).join('')}</div>` +
+      (chart(hist) ? `<h2>Score history</h2>${chart(hist)}` : '') +
+      `<h2>Results</h2>${w.length ? `<table><thead><tr><th>Account</th><th>Bureau</th><th>Result</th><th>Date</th></tr></thead><tbody>${w.map(x => `<tr><td>${esc(x.creditor)}</td><td>${esc(x.bureau)}</td><td><span class="tag ${x.result === 'deleted' ? 'del' : 'cor'}">${x.result === 'deleted' ? 'Removed' : 'Corrected'}</span></td><td>${esc(x.at || '')}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No results yet — the first responses usually arrive 30–45 days after letters are mailed.</p>'}` +
+      `<h2>In progress</h2>${open.length ? `<table><thead><tr><th>Sent to</th><th>Letter</th><th>Mailed</th><th>Response due</th></tr></thead><tbody>${open.map(d => `<tr><td>${esc(d.recipient)}</td><td>${esc((Law.DISPUTE_TYPES[d.type] || {}).label || d.type)}</td><td>${esc(d.sentAt)}</td><td>${esc(d.dueAt || '—')}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nothing waiting on a response right now.</p>'}` +
+      (tasks.length ? `<h2>What we need from you</h2><ul>${tasks.map(t => `<li>${esc(t.title)}</li>`).join('')}</ul>` : '') +
+      `<div class="note">Results depend on what the credit bureaus and creditors find. Accurate, timely information can stay on a report for the period the law allows. You can always dispute information with the credit bureaus yourself at no cost.</div>`);
+  }
+
+  /** Free credit analysis for a prospect (HTML) — what a review found, with no promises. */
+  function analysis(ws, cid, today) {
+    const c = ws.clients.find(x => x.id === cid) || {};
+    const co = ws.settings.company || {};
+    const latest = {};
+    ws.reports.filter(r => r.clientId === cid && (r.accounts || []).length).forEach(r => { if (!latest[r.bureau] || String(r.date) > String(latest[r.bureau].date)) latest[r.bureau] = r; });
+    const reps = Object.values(latest);
+    if (!reps.length) return null;
+    const accts = reps.flatMap(r => r.accounts.map(a => Object.assign({ bureau: r.bureau }, a)));
+    const neg = accts.filter(isNeg);
+    const revolving = accts.filter(a => String(a.type).toUpperCase() === 'R' && Number(a.limit) > 0 && !['13', '97', '64'].includes(String(a.status)));
+    const util = revolving.length ? Math.round(100 * revolving.reduce((s, a) => s + Number(a.balance || 0), 0) / revolving.reduce((s, a) => s + Number(a.limit || 0), 0)) : null;
+    const findings = reps.flatMap(r => Metro2.auditReport(r, { today }).map(f => Object.assign({ bureau: r.bureau }, f)));
+    const high = findings.filter(f => f.severity === 'high'), med = findings.filter(f => f.severity === 'medium');
+    const diffs = Metro2.compareBureaus(reps).filter(g => g.differences.length);
+    const scores = reps.map(r => [r.bureau, (r.scores || {})[r.bureau]]).filter(x => x[1]);
+    return wrap(`Credit analysis — ${c.name}`, header(co, 'Credit report analysis', `Prepared for ${c.name} · ${today}`) +
+      `<div class="kpis">${scores.map(([b, s]) => `<div class="kpi"><span class="muted small">${esc(b)}</span><b>${esc(s)}</b></div>`).join('')}<div class="kpi"><span class="muted small">Negative accounts</span><b class="${neg.length ? 'bad' : 'ok'}">${neg.length}</b></div><div class="kpi"><span class="muted small">Card utilization</span><b class="${util !== null && util > 30 ? 'bad' : 'ok'}">${util === null ? '—' : util + '%'}</b></div></div>` +
+      `<h2>Possible reporting errors</h2><p class="small muted">Items where the data a creditor reports does not add up under the Metro 2 reporting standard, or differs between bureaus. These are worth checking against your own records — only information that is actually inaccurate, incomplete or unverifiable can be disputed.</p>` +
+      (high.length + med.length ? `<table><thead><tr><th>Account</th><th>Bureau</th><th>What we noticed</th></tr></thead><tbody>${high.concat(med).slice(0, 25).map(f => `<tr><td>${esc((f.tradeline && f.tradeline.creditor) || f.creditor || '')}</td><td>${esc(f.bureau)}</td><td><b>${esc(f.title)}</b><div class="small muted">${esc(f.detail)}</div></td></tr>`).join('')}</tbody></table>` : '<p>No obvious data errors were found in the reports reviewed.</p>') +
+      (diffs.length ? `<p class="small">${diffs.length} account${diffs.length > 1 ? 's are' : ' is'} reported differently by different bureaus.</p>` : '') +
+      `<h2>Negative accounts</h2>${neg.length ? `<table><thead><tr><th>Account</th><th>Bureau</th><th>Status</th><th>Balance</th></tr></thead><tbody>${neg.map(a => `<tr><td>${esc(a.creditor)}</td><td>${esc(a.bureau)}</td><td>${esc((Metro2.ACCOUNT_STATUS || {})[a.status] || a.status)}</td><td>${money(a.balance)}</td></tr>`).join('')}</tbody></table>` : '<p>None found.</p>'}` +
+      `<h2>Recommended plan</h2><ol><li>Confirm each possible error with your own statements and records.</li><li>Dispute only items that are inaccurate, incomplete or cannot be verified, with documents.</li><li>${util !== null && util > 30 ? `Bring card balances below 30% of limits (currently ${util}%) — often the fastest score improvement.` : 'Keep card balances low and pay every account on time.'}</li><li>Add positive history (for example a credit-builder account) while disputes are in progress.</li></ol>` +
+      `<div class="note"><b>Your rights.</b> You can dispute inaccurate information with the credit bureaus yourself, for free. No one can legally remove accurate, current and verifiable information from your credit report. We do not promise specific results or score increases.</div>`);
+  }
+
+  /** Side-by-side comparison rows for two reports from the same bureau. */
+  function sideBySide(prev, next) {
+    const rows = Results.compareReports(prev, next);
+    const order = { deleted: 0, changed: 1, new: 2, unchanged: 3 };
+    return rows.sort((a, b) => order[a.kind] - order[b.kind] || String((a.before || a.after).creditor).localeCompare(String((b.before || b.after).creditor)));
+  }
+
+  const api = { progress, analysis, sideBySide, scoreHistory, chart, wins, isNeg };
+  root.Reports = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -2338,6 +3016,12 @@ Thank you for considering this request.`
       <script>window.onload=()=>{window.print()}<\/script></body></html>`);
     w.document.close();
   }
+  function printHtml(html) {
+    const w = window.open('', '_blank');
+    if (!w) { toast('Allow pop-ups to print'); return; }
+    w.document.write(html.replace('</body>', '<script>window.onload=()=>{window.print()}<\/script></body>'));
+    w.document.close();
+  }
   function printDoc(title, text) {
     const w = window.open('', '_blank');
     if (!w) { toast('Allow pop-ups to print'); return; }
@@ -2359,7 +3043,7 @@ Thank you for considering this request.`
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, field };
+  root.UI = { esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -2540,7 +3224,7 @@ Thank you for considering this request.`
     const nFind = clientFindings(c.id).filter(f => f.severity !== 'low').length;
     const body = ({ overview: clientOverview, business: clientBusiness, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs);
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
-      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button><button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
+      `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}${c.status === 'lead' ? `<button class="btn" data-act="analysis" data-id="${c.id}">${icon('print')} Credit analysis</button>` : `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button>`}<button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
       (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>Cancellation period open until midnight ${date(cs.deadline)}</b>No services may be performed and no fees collected until it ends (15 U.S.C. §§ 1679d(a)(2), 1679e).</div>` : '') +
       `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/clients/${c.id}/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'audit' && nFind ? ` <span class="badge b-high plain">${nFind}</span>` : ''}</a>`).join('')}</div>` + body;
@@ -2581,8 +3265,8 @@ Thank you for considering this request.`
 
   function clientReports(c) {
     const reps = Store.get.reportsFor(c.id);
-    if (!reps.length) return card('', empty('No reports yet', 'Upload a PDF or web page from MyFreeScoreNow, IdentityIQ or SmartCredit and AI reads every account, or import a CSV, or enter it by hand.', `<button class="btn primary" data-act="upload-report" data-id="${c.id}" style="margin-top:8px">${icon('upload')} Upload credit report</button>`));
-    return `<div class="stack">${reps.map(r => card(`${esc(r.bureau)} · ${date(r.date)}`, r.accounts.length ? `<div class="table-wrap"><table><thead><tr><th>Creditor</th><th>Type</th><th>Status</th><th class="num">Balance</th><th class="num">Past due</th><th class="num">Limit / high</th><th>Opened</th><th>DOFD</th><th>24-mo history</th><th></th></tr></thead><tbody>
+    if (!reps.length) return pendingImports(c) + card('', empty('No reports yet', 'Upload a PDF or web page from MyFreeScoreNow, IdentityIQ or SmartCredit and AI reads every account, or import a CSV, or enter it by hand.', `<button class="btn primary" data-act="upload-report" data-id="${c.id}" style="margin-top:8px">${icon('upload')} Upload credit report</button>`));
+    return `<div class="stack">${pendingImports(c)}${compareCard(c, reps)}${reps.map(r => card(`${esc(r.bureau)} · ${date(r.date)}`, r.accounts.length ? `<div class="table-wrap"><table><thead><tr><th>Creditor</th><th>Type</th><th>Status</th><th class="num">Balance</th><th class="num">Past due</th><th class="num">Limit / high</th><th>Opened</th><th>DOFD</th><th>24-mo history</th><th></th></tr></thead><tbody>
       ${r.accounts.map(a => `<tr><td><b>${esc(a.creditor)}</b><div class="small muted mono">${esc(a.accountNumber)}${a.originalCreditor ? ' · for ' + esc(a.originalCreditor) : ''}</div></td>
         <td class="small">${esc(Metro2.PORTFOLIO_TYPE[a.type] || a.type || '—')}</td>
         <td><span class="badge ${Metro2.DEROGATORY.includes(a.status) ? 'b-high' : Metro2.PAID_ZERO.includes(a.status) || a.status === '11' ? 'b-ok' : 'b-low'} plain" title="${esc(Metro2.ACCOUNT_STATUS[a.status] || '')}">${esc(a.status)}</span> <span class="small muted">${esc(Metro2.ACCOUNT_STATUS[a.status] || '')}</span></td>
@@ -2616,7 +3300,7 @@ Thank you for considering this request.`
       ${list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(d => `<tr class="click" data-href="#/disputes/${d.id}">${showClient ? `<td>${clientName(d.clientId)}</td>` : ''}<td><b>${esc(d.recipient)}</b></td><td class="small">${esc(Law.DISPUTE_TYPES[d.type].label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td><td>${dBadge(Store.disputeState(d))}</td><td class="small nowrap">${date(d.sentAt)}</td><td class="small nowrap">${date(d.dueAt)}</td></tr>`).join('')}</tbody></table></div>`;
   }
   function clientDisputes(c) {
-    return (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
+    return clientViolationsCard(c) + (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
   }
 
   function invoiceTable(list, showClient) {
@@ -2624,7 +3308,7 @@ Thank you for considering this request.`
     return `<div class="table-wrap"><table><thead><tr>${showClient ? '<th>Client</th>' : ''}<th>Description</th><th>Service completed</th><th>Issued</th><th>Status</th><th class="num">Amount</th><th></th></tr></thead><tbody>
       ${list.sort((a, b) => String(b.issuedAt || '').localeCompare(String(a.issuedAt || ''))).map(i => `<tr>${showClient ? `<td>${clientName(i.clientId)}</td>` : ''}<td>${esc(i.description)}</td><td class="small nowrap">${date(i.serviceCompletedAt)}</td><td class="small nowrap">${date(i.issuedAt)}</td>
         <td><span class="badge ${i.status === 'paid' ? 'b-ok' : i.status === 'issued' ? 'b-info' : i.status === 'void' ? 'b-high' : 'b-low'}">${esc(i.status)}</span></td><td class="num">${money(i.amount)}</td>
-        <td class="nowrap right">${i.status === 'issued' ? `<button class="btn sm" data-act="invoice-paid" data-id="${i.id}">Mark paid</button>` : ''}${i.status !== 'void' && i.status !== 'paid' ? `<button class="btn sm ghost danger" data-act="invoice-void" data-id="${i.id}">Void</button>` : ''}<button class="btn sm ghost" data-act="invoice-print" data-id="${i.id}">${icon('print')}</button></td></tr>`).join('')}</tbody></table></div>`;
+        <td class="nowrap right">${i.status === 'issued' && i.payToken && Store.remote ? `<button class="btn sm ghost" data-act="invoice-link" data-id="${i.id}" title="Copy online payment link">Pay link</button><button class="btn sm ghost" data-act="invoice-check" data-id="${i.id}" title="Check Authorize.net for this payment">Check</button>` : ''}${i.status === 'issued' ? `<button class="btn sm" data-act="invoice-paid" data-id="${i.id}">Mark paid</button>` : ''}${i.status !== 'void' && i.status !== 'paid' ? `<button class="btn sm ghost danger" data-act="invoice-void" data-id="${i.id}">Void</button>` : ''}<button class="btn sm ghost" data-act="invoice-print" data-id="${i.id}">${icon('print')}</button></td></tr>`).join('')}</tbody></table></div>`;
   }
   function clientBilling(c, cs) {
     const list = S().invoices.filter(i => i.clientId === c.id);
@@ -2716,10 +3400,101 @@ Thank you for considering this request.`
         ${card('Strategy', (() => { const step = d.strategyStep || Law.strategyStep(d.type); return `<ul class="steps">${Law.STRATEGY.map(x => `<li><span class="tick ${x.step < step || (x.step === step && d.outcome && !['verified', 'frivolous', 'no_response'].includes(d.outcome)) ? 'on' : ''}" style="${x.step === step ? 'border-color:var(--accent);border-width:2px' : ''}">${x.step}</span><div class="grow"><b style="font-weight:${x.step === step ? 650 : 500}">${esc(x.title)}</b><div class="small muted">${esc(x.when)}</div></div></li>`).join('')}</ul>`; })(), { sub: 'Where this item stands on the escalation ladder' })}
         ${d.seqId && (S().sequences || []).find(q => q.id === d.seqId) ? card('Sequence', `<p class="small">Letter ${root.Sequences.stepOf(S(), d)} of the sequence “${esc((S().sequences.find(q => q.id === d.seqId) || {}).title)}”. Record the response when it arrives; the next letter is drafted automatically.</p><a class="btn sm" href="#/sequences">Open sequences</a>`) : card('Sequence', '<p class="small">Run this dispute as a sequence so Letters 2, 3 and the attorney review step are drafted automatically when they are due.</p>' + `<button class="btn sm" data-act="seq-start" data-id="${d.id}">Run as sequence</button>`)}
         ${card('Next step', nextStep(d, letter, cs, st))}
-        ${card('Timeline', `<ul class="steps">${timeline.map(([l, v]) => { const on = v && String(v).slice(0, 10) <= t; return `<li><span class="tick ${on ? 'on' : ''}">${on ? '✓' : ''}</span><div class="grow">${l}<div class="small muted">${v ? date(v) : '—'}${l === 'Response due' && v && !d.outcome ? ` · ${Law.daysBetween(t, v) < 0 ? Math.abs(Law.daysBetween(t, v)) + ' days overdue' : Law.daysBetween(t, v) + ' days left'}` : ''}</div></div></li>`; }).join('')}</ul>${d.tracking ? `<p class="small">Tracking <span class="mono">${esc(d.tracking)}</span></p>` : ''}<p class="small muted">${esc(type.note)}</p>`)}
-        ${card('Recipient', `<div class="small"><b>${esc((Law.BUREAUS[d.recipient] || {}).name || d.recipient)}</b><br>${esc((Law.BUREAUS[d.recipient] || {}).address || d.recipientAddress || 'Address not set').replace(/\n/g, '<br>')}</div>`, { actions: `<button class="btn sm ghost" data-act="edit-recipient" data-id="${d.id}">Edit</button>` })}
+        ${card('Timeline', `<ul class="steps">${timeline.map(([l, v]) => { const on = v && String(v).slice(0, 10) <= t; return `<li><span class="tick ${on ? 'on' : ''}">${on ? '✓' : ''}</span><div class="grow">${l}<div class="small muted">${v ? date(v) : '—'}${l === 'Response due' && v && !d.outcome ? ` · ${Law.daysBetween(t, v) < 0 ? Math.abs(Law.daysBetween(t, v)) + ' days overdue' : Law.daysBetween(t, v) + ' days left'}` : ''}</div></div></li>`; }).join('')}</ul>${d.tracking ? `<p class="small">Tracking <span class="mono">${esc(d.tracking)}</span></p>` : ''}${d.mail ? `<div class="small" style="margin-bottom:8px"><b>Mailed online via Lob</b> (${esc(String(d.mail.service).replace(/_/g, ' '))})${d.mail.test ? ' <span class="badge b-med plain">test mode — not actually mailed</span>' : ''}${d.mail.expectedDelivery ? `<br>Expected delivery ${date(d.mail.expectedDelivery)}` : ''}${d.mail.deliveredAt ? `<br><b>Delivered ${date(d.mail.deliveredAt)}</b>` : ''}${(d.mail.events || []).length ? `<br>${d.mail.events.slice(-3).map(e => esc(e.name) + (e.at ? ' ' + date(e.at) : '')).join(' · ')}` : ''}<div class="row" style="margin-top:6px">${d.mail.url ? `<a class="btn sm ghost" href="${esc(d.mail.url)}" target="_blank" rel="noopener">Mailed PDF ↗</a>` : ''}<button class="btn sm" data-act="mail-refresh" data-id="${d.id}">Refresh tracking</button></div></div>` : ''}<p class="small muted">${esc(type.note)}</p>`)}
+        ${card('Recipient', `<div class="small"><b>${esc((Law.BUREAUS[d.recipient] || {}).name || d.recipient)}</b><br>${esc((Law.BUREAUS[d.recipient] || {}).address || d.recipientAddress || 'Address not set').replace(/\n/g, '<br>')}</div>${!Law.BUREAUS[d.recipient] && !d.recipientAddress && root.Furnishers.lookup(S(), d.recipient) ? (() => { const f = root.Furnishers.lookup(S(), d.recipient); return `<div class="callout" style="margin-top:10px"><b>Address on file for ${esc(f.name)}</b><span style="white-space:pre-line">${esc(f.address)}</span><button class="btn sm" data-act="use-address" data-id="${d.id}" style="margin-top:6px">Use this address</button></div>`; })() : ''}`, { actions: `<button class="btn sm ghost" data-act="edit-recipient" data-id="${d.id}">Edit</button>` })}
         ${d.notes ? card('Notes', `<p class="small">${esc(d.notes)}</p>`) : ''}
       </div></div>`;
+  }
+
+  // ---------- report comparison & pending imports ----------
+  function pendingImports(c) {
+    const list = (S().pendingImports || []).filter(p => p.clientId === c.id);
+    if (!list.length) return '';
+    return card('Ready to import', `<ul class="list">${list.map(p => `<li><div class="grow"><b>${esc(p.docName)}</b><div class="meta">Uploaded by the client · read by AI ${UI.ago ? UI.ago(p.scannedAt) : date(p.scannedAt)} · ${(p.result.bureaus || []).map(b => `${esc(b.bureau)} (${b.accounts.length})`).join(', ')}</div></div><button class="btn sm primary" data-act="pending-import" data-id="${p.id}">Review & import</button><button class="btn sm ghost" data-act="pending-dismiss" data-id="${p.id}">Dismiss</button></li>`).join('')}</ul>`, { flush: true, sub: 'Credit reports the client uploaded in the portal' });
+  }
+  function compareCard(c, reps) {
+    const byB = {};
+    reps.filter(r => r.accounts.length).forEach(r => (byB[r.bureau] = byB[r.bureau] || []).push(r));
+    const pairs = Object.entries(byB).filter(([, a]) => a.length > 1);
+    if (!pairs.length) return '';
+    const q = (location.hash.split('?')[1] || '');
+    const params = Object.fromEntries(new URLSearchParams(q));
+    const bureau = params.cmp && byB[params.cmp] && byB[params.cmp].length > 1 ? params.cmp : pairs[0][0];
+    const list = byB[bureau].slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const next = list.find(r => r.id === params.to) || list[0];
+    const prev = list.find(r => r.id === params.from && r.id !== next.id) || list.find(r => r.id !== next.id && String(r.date) <= String(next.date)) || list[1];
+    const rows = root.Reports.sideBySide(prev, next);
+    const cnt = k => rows.filter(r => r.kind === k).length;
+    const KIND = { deleted: ['Removed', 'b-ok'], changed: ['Changed', 'b-med'], new: ['New', 'b-high'], unchanged: ['Same', 'b-low'] };
+    const cell = (a, f) => a ? (f === 'balance' || f === 'pastDue' ? money(a[f]) : esc(a[f] || '—')) : '<span class="muted">—</span>';
+    const sel = (name, val) => `<select data-act="cmp-pick" data-k="${name}" style="width:auto">${list.map(r => `<option value="${r.id}" ${r.id === val ? 'selected' : ''}>${date(r.date)}</option>`).join('')}</select>`;
+    return card('Compare reports side by side', `<div class="row" style="padding:12px 16px;gap:8px;flex-wrap:wrap"><select data-act="cmp-pick" data-k="cmp" style="width:auto">${pairs.map(([b]) => `<option ${b === bureau ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select><span class="small muted">Older</span>${sel('from', prev.id)}<span class="small muted">Newer</span>${sel('to', next.id)}
+        <span class="badge b-ok plain">${cnt('deleted')} removed</span><span class="badge b-med plain">${cnt('changed')} changed</span><span class="badge b-high plain">${cnt('new')} new</span><span class="badge b-low plain">${cnt('unchanged')} same</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Account</th><th></th><th>Status</th><th class="num">Balance</th><th class="num">Past due</th><th>What changed</th></tr></thead><tbody>
+      ${rows.map(r => { const a = r.before || r.after; return `<tr class="cmp-${r.kind}"><td><b>${esc(a.creditor)}</b><div class="small muted mono">${esc(a.accountNumber || '')}</div></td><td><span class="badge ${KIND[r.kind][1]}">${KIND[r.kind][0]}</span></td>
+        <td class="small">${cell(r.before, 'status')} → ${cell(r.after, 'status')}</td><td class="num small">${cell(r.before, 'balance')} → ${cell(r.after, 'balance')}</td><td class="num small">${cell(r.before, 'pastDue')} → ${cell(r.after, 'pastDue')}</td>
+        <td class="small">${r.changes.map(ch => `${esc(ch.field)}: ${esc(ch.from || '—')} → ${esc(ch.to || '—')}`).join('<br>')}</td></tr>`; }).join('')}</tbody></table></div>`,
+      { flush: true, sub: `${esc(bureau)}: ${date(prev.date)} vs ${date(next.date)}` });
+  }
+
+  // ---------- Sales pipeline ----------
+  function pipeline() {
+    const Sa = root.Sales, t = T();
+    const leads = S().clients.filter(c => c.status === 'lead' || (c.leadStage && Sa.stageOf(c) === 'won' && Law.daysBetween(String(c.createdAt).slice(0, 10), t) <= 60) || c.status === 'cancelled' && c.leadStage);
+    const cols = Sa.STAGES.map(([k, l]) => {
+      const list = leads.filter(c => Sa.stageOf(c) === k).map(c => Object.assign({ c }, Sa.score(S(), c, t))).sort((a, b) => b.score - a.score);
+      return `<div class="kan-col"><div class="kan-h"><b>${esc(l)}</b><span class="badge b-low plain">${list.length}</span></div>${list.map(x => `<div class="kan-card"><div class="row between"><a href="#/clients/${x.c.id}"><b>${esc(x.c.name)}</b></a><span class="badge ${x.heat === 'hot' ? 'b-high' : x.heat === 'warm' ? 'b-med' : 'b-low'}" title="${esc(x.reasons.join('\n'))}">${x.score}</span></div>
+        <div class="small muted">${kindBadge(x.c.kind)} ${x.quiet > 0 ? x.quiet + 'd since last touch' : 'today'}${x.c.phone ? ' · ' + esc(x.c.phone) : ''}</div>
+        <div class="row" style="margin-top:8px;gap:6px"><select data-act="lead-stage" data-id="${x.c.id}" style="width:auto;flex:1">${Sa.STAGES.map(([sk, sl]) => `<option value="${sk}" ${sk === k ? 'selected' : ''}>${esc(sl)}</option>`).join('')}</select>${S().reports.some(r => r.clientId === x.c.id && r.accounts.length) ? `<button class="btn sm" data-act="analysis" data-id="${x.c.id}" title="Free credit analysis for this prospect">Analysis</button>` : `<button class="btn sm" data-act="upload-report" data-id="${x.c.id}">Report</button>`}</div></div>`).join('') || '<p class="small muted" style="padding:6px 2px">—</p>'}</div>`;
+    }).join('');
+    const co = S().settings.company;
+    return head('Sales pipeline', 'Leads from first contact to enrollment, scored by how ready they are', `<a class="btn" href="#/settings">${co.bookingUrl ? 'Booking link set' : 'Add booking link'}</a><button class="btn primary" data-act="new-client">+ New lead</button>`) +
+      `<div class="callout" style="margin-bottom:14px"><b>How it works</b>Move leads between stages as you talk to them. The score (0–100) rises with contact details, an uploaded credit report, a near-term goal and progress through the stages, and drops after two weeks without contact — hover it to see why. Click <strong>Analysis</strong> for a free credit analysis you can send before they enroll. Setting a lead to <strong>Enrolled</strong> moves them to onboarding.</div>
+      <div class="kanban">${cols}</div>`;
+  }
+
+  // ---------- Automations ----------
+  function automations() {
+    const Au = root.Automations;
+    const rules = Au.rules(S());
+    const log = Object.entries(S().automationLog || {}).sort((a, b) => String(b[1].at).localeCompare(String(a[1].at))).slice(0, 40);
+    const on = rules.filter(r => r.enabled && r.enabledAt).length;
+    const chan = { email: 'Email', sms: 'Text', task: 'Task' };
+    return head('Automations', 'Messages and tasks that go out on their own when something happens', `${on < rules.length ? `<button class="btn" data-act="auto-all">Turn on all recommended</button>` : ''}<button class="btn primary" data-act="auto-run">Run now</button>`) +
+      `<div class="grid g-main"><div class="stack">${card('Rules', `<div class="table-wrap"><table><thead><tr><th>On</th><th>When</th><th>Wait</th><th>Then</th><th></th></tr></thead><tbody>${rules.map(r => `<tr><td><label class="switch"><input type="checkbox" data-act="auto-toggle" data-id="${r.id}" ${r.enabled && r.enabledAt ? 'checked' : ''}></label></td><td><b>${esc(Au.TRIGGERS[r.trigger] || r.trigger)}</b></td><td class="small nowrap">${Number(r.delayDays) ? r.delayDays + ' day' + (r.delayDays > 1 ? 's' : '') : 'Right away'}</td><td class="small"><span class="badge b-low plain">${chan[r.channel]}</span> ${esc(r.subject || r.body).slice(0, 90)}</td><td class="right"><button class="btn sm ghost" data-act="auto-edit" data-id="${r.id}">Edit</button></td></tr>`).join('')}</tbody></table></div>`, { flush: true, sub: `${on} of ${rules.length} on` })}</div>
+      <div class="stack">${card('How sending works', `<p class="small">${Store.remote ? 'Emails and texts are sent from your Ledger server (Resend for email, Twilio for texts). Texts only go to clients with SMS consent on file. If sending isn’t set up, Ledger creates a task with the message instead.' : 'In this browser-only file, messages become tasks with the text ready to copy — sending needs the Ledger server.'}</p><p class="small muted">Rules only fire for events after you turn them on, and each event fires once. Template fields: {{first}}, {{name}}, {{company}}, {{phone}}, {{portal}}, {{booking}}, {{amount}}, {{due}}.</p>`)}
+      ${card('Recent', log.length ? `<ul class="list">${log.map(([k, v]) => `<li><div class="grow small"><b>${esc(v.what || k)}</b><div class="meta">${esc(v.client || '')} · ${date(v.at)}${v.via ? ' · ' + esc(v.via) : ''}</div></div></li>`).join('')}</ul>` : '<p class="small muted" style="padding:16px">Nothing has run yet.</p>', { flush: true })}</div></div>`;
+  }
+
+  // ---------- Violation tracker ----------
+  function violations(params) {
+    const V = root.Violations, t = T();
+    const list = V.scan(S(), t, params.client);
+    const statusLabel = Object.fromEntries(V.STATUS);
+    const byClient = {};
+    list.forEach(x => (byClient[x.clientId] = byClient[x.clientId] || []).push(x));
+    const open = list.filter(x => !['closed', 'declined'].includes(x.review.status));
+    return head('FCRA violation tracker', 'Missed deadlines, reinsertions and reporting failures — documented for attorney review', params.client ? `<a class="btn" href="#/violations">All clients</a>` : '') +
+      `<div class="grid g4" style="margin-bottom:16px">${kpi('Open flags', open.length)}${kpi('High severity', open.filter(x => x.severity === 'high').length)}${kpi('Sent to attorney', list.filter(x => ['referred', 'accepted'].includes(x.review.status)).length)}${kpi('Clients affected', Object.keys(byClient).length)}</div>` +
+      `<div class="callout" style="margin-bottom:16px"><b>These are flags, not legal conclusions</b>Ledger compares your recorded dates, responses and reports with the deadlines in the FCRA and FDCPA. A consumer attorney decides whether there is a claim. Under FCRA §§ 616–617 consumers can recover damages and attorney’s fees, so many attorneys review these cases at no cost to the client. Get the client’s written permission before sharing their file, and check your state’s rules before accepting any referral fee.</div>` +
+      (Object.keys(byClient).length ? Object.entries(byClient).map(([cid, xs]) => card(`<a href="#/clients/${cid}/disputes">${clientName(cid)}</a>`, `<div class="table-wrap"><table><thead><tr><th>What happened</th><th>Law</th><th>Status</th></tr></thead><tbody>${xs.map(x => `<tr><td>${sevBadge(x.severity)} <b>${esc(x.title)}</b><div class="small muted">${esc(x.detail)}</div>${x.review.attorney ? `<div class="small">Attorney: ${esc(x.review.attorney)}</div>` : ''}</td><td class="small">${esc(x.law)}</td><td><select data-act="vio-status" data-key="${esc(x.key)}" style="width:auto">${V.STATUS.map(([k, l]) => `<option value="${k}" ${k === x.review.status ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div>`,
+        { flush: true, sub: `${xs.length} flag${xs.length > 1 ? 's' : ''}`, actions: `<button class="btn sm" data-act="vio-attorney" data-client="${cid}">Attorney</button><button class="btn sm primary" data-act="vio-packet" data-client="${cid}">${icon('print')} Attorney packet</button>` })).join('') : card('', empty('No violations flagged', 'Ledger checks every dispute for missed 30-day and 15-day deadlines, items that came back after deletion, accounts not marked disputed, and items reported past 7 years. Record responses and import new reports to keep this accurate.')));
+  }
+  function clientViolationsCard(c) {
+    const n = root.Violations.scan(S(), T(), c.id).filter(x => !['closed', 'declined'].includes(x.review.status));
+    return n.length ? `<div class="callout warn" style="margin-bottom:16px"><b>${n.length} possible FCRA violation${n.length > 1 ? 's' : ''}</b>${esc(n[0].title)}${n.length > 1 ? ` and ${n.length - 1} more` : ''}. <a href="#/violations?client=${c.id}">Review in the violation tracker</a></div>` : '';
+  }
+
+  // ---------- Address book (library tab) ----------
+  function addressBook(q) {
+    return `<div class="row" style="margin-bottom:12px"><input id="addr-q" type="search" placeholder="Search creditors, collectors, servicers…" value="${esc(q || '')}" style="max-width:420px"><button class="btn" data-act="addr-add">+ Add address</button></div><div id="addr-results">${addressList(q)}</div>`;
+  }
+  function addressList(q) {
+    const F = root.Furnishers;
+    const list = F.search(S(), q || '');
+    const origin = { research: 'Researched', saved: 'Saved', history: 'Used before' };
+    return card('', list.length ? `<div class="table-wrap"><table><thead><tr><th>Company</th><th>Type</th><th>Dispute / correspondence address</th><th>Source</th></tr></thead><tbody>${list.map(e => `<tr><td><b>${esc(e.name)}</b>${(e.aliases || []).length ? `<div class="small muted">${esc(e.aliases.join(', '))}</div>` : ''}</td><td class="small">${esc(e.category || '')}</td><td class="small" style="white-space:pre-line">${esc(e.address)}${e.phone ? '\n' + esc(e.phone) : ''}</td><td class="small">${e.source ? `<a href="${esc(e.source)}" target="_blank" rel="noopener">${esc(origin[e.origin] || e.origin)} ↗</a>` : esc(origin[e.origin] || e.origin)}${e.verifiedOn ? `<div class="muted">checked ${esc(e.verifiedOn)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No matches', 'Add the address once and Ledger fills it in on every future letter.'), { flush: true }) +
+      `<p class="small muted">Addresses change. Check the company’s website or the address printed on its most recent statement or collection letter before mailing.</p>`;
   }
 
   // ---------- Dispute sequences ----------
@@ -2757,7 +3532,7 @@ Thank you for considering this request.`
   function nextStep(d, letter, cs, st) {
     if (!letter) return `<p class="small">Generate the letter, review every statement with the client, then approve it.</p><button class="btn primary" data-act="gen-letter" data-id="${d.id}">Generate letter</button>`;
     if (letter.status === 'draft') return `<p class="small">The client must confirm every statement is true before approval.</p><label class="check small" style="margin-bottom:10px"><input type="checkbox" id="confirm-true"> Client reviewed and confirmed this letter</label><button class="btn primary" data-act="approve-letter" data-id="${d.id}" ${cs.cleared ? '' : 'disabled'}>${icon('check')} Approve letter</button>`;
-    if (d.status === 'ready') return `<p class="small">Mail by certified mail with return receipt and record the tracking number.</p><button class="btn primary" data-act="mark-sent" data-id="${d.id}" ${cs.cleared ? '' : 'disabled'}>${icon('mail')} Record mailing</button><button class="btn" data-act="unapprove" data-id="${d.id}" style="margin-left:6px">Back to draft</button>`;
+    if (d.status === 'ready') return `<p class="small">${Store.remote ? 'Mail it online (Lob prints and mails it, certified if you choose, and saves the tracking number), or mail it yourself and record the mailing.' : 'Mail by certified mail with return receipt and record the tracking number.'}</p>${Store.remote ? `<button class="btn primary" data-act="mail-lob" data-id="${d.id}" ${cs.cleared ? '' : 'disabled'}>${icon('mail')} Mail online</button> ` : ''}<button class="btn ${Store.remote ? '' : 'primary'}" data-act="mark-sent" data-id="${d.id}" ${cs.cleared ? '' : 'disabled'}>${Store.remote ? 'I mailed it myself' : icon('mail') + ' Record mailing'}</button><button class="btn" data-act="unapprove" data-id="${d.id}" style="margin-left:6px">Back to draft</button>`;
     if (!d.outcome) return `<p class="small">${st === 'overdue' ? '<b style="color:var(--high)">The response period has passed.</b> Record “no response” and follow up.' : 'Waiting for the response. Record it when the results arrive.'}</p><button class="btn primary" data-act="record-response" data-id="${d.id}">Record response</button>${['cra_611', 'furnisher_623', 'obsolete_605', 'reinsertion_611'].includes(d.type) ? `<button class="btn" data-act="mark-received" data-id="${d.id}" style="margin-left:6px">Set received date</button>` : ''}`;
     const follow = { verified: 'Request the method of verification, dispute directly with the furnisher with new evidence, or add a consumer statement (§ 611(b)).', frivolous: 'The bureau must say what information it needs. Provide it and re-submit.', no_response: 'Information that cannot be verified within the period must be deleted (§ 611(a)(5)(A)). Send a follow-up and consider a CFPB complaint.', deleted: 'Watch for reinsertion — the bureau must notify the consumer within 5 business days if it is reinserted.', corrected: 'Pull updated reports to confirm the correction at every bureau.' }[d.outcome] || '';
     return `<p class="small">${dBadge(d.outcome)} ${date(d.respondedAt)}</p><p class="small">${esc(follow)}</p>${['verified', 'frivolous', 'no_response'].includes(d.outcome) ? (() => { const n = Law.nextStrategy(d.type, d.outcome, (Law.DISPUTE_TYPES[d.type] || {}).recipient); return n && n.type ? `<button class="btn primary" data-act="next-round" data-id="${d.id}">Draft Letter ${n.step}: ${esc(Law.DISPUTE_TYPES[n.type].label)}</button>` : `<div class="callout warn"><b>Step 4 — attorney review</b>${esc(n ? n.reason : '')}</div>`; })() : ''}`;
@@ -2779,6 +3554,14 @@ Thank you for considering this request.`
     return head('Billing', 'Fees are invoiced only after the service is fully performed', `<button class="btn" data-act="export-invoices">${icon('download')} CSV</button><button class="btn primary" data-act="new-invoice">${icon('plus')} Invoice</button>`) +
       `<div class="grid g4" style="margin-bottom:16px">${kpi('Collected', money(sum('paid')))}${kpi('Outstanding', money(sum('issued')))}${kpi('Invoices', inv.length)}${kpi('Voided', inv.filter(i => i.status === 'void').length)}</div>` +
       `<div class="callout" style="margin-bottom:16px"><b>CROA billing rules built in</b>An invoice must point to a completed service (for example, a dispute already mailed) dated after the cancellation period. Ledger refuses to issue invoices that would be advance fees (15 U.S.C. § 1679b(b)). If services are sold by telephone, the FTC Telemarketing Sales Rule imposes a similar advance-fee ban.</div>` +
+      (() => { const B = root.Billing, bs = B.settings(S()), dueList = B.due(S(), T()); return card('Automatic billing', `<form data-form="billing"><div class="form-grid">
+        ${UI.field('Billing model', 'model', bs.model, { type: 'select', options: B.MODELS, cls: 'span2', help: 'Each client can override this on their profile' })}
+        ${UI.field('Per letter ($)', 'perLetter', bs.perLetter, { type: 'number', attrs: 'step="0.01" min="0"' })}${UI.field('Per deletion ($)', 'perDelete', bs.perDelete, { type: 'number', attrs: 'step="0.01" min="0"' })}
+        ${UI.field('Monthly ($)', 'monthly', bs.monthly, { type: 'number', attrs: 'step="0.01" min="0"' })}${UI.field('Days to pay', 'dueDays', bs.dueDays, { type: 'number', attrs: 'min="0"' })}
+        ${UI.field('Online payments', 'provider', bs.provider, { type: 'select', options: [['none', 'Off — mark invoices paid by hand'], ['authorizenet', 'Authorize.net (connect in Settings)'], ['link', 'My own payment link']], cls: 'span2' })}
+        ${UI.field('Payment link (if using your own)', 'payLink', bs.payLink, { cls: 'span2', placeholder: 'https://…', help: 'e.g. a payment page from your processor. Clients see it on invoice emails.' })}
+        </div><div class="row" style="margin-top:12px"><button class="btn primary">Save</button>${dueList.length ? `<button type="button" class="btn" data-act="bill-now">Create ${dueList.length} due invoice${dueList.length > 1 ? 's' : ''} now</button>` : '<span class="small muted">No invoices due right now.</span>'}</div></form>
+        <p class="small muted" style="margin-top:10px">With a billing model on, Ledger creates invoices automatically each time you open the app — only for work already done and only after the cancellation period. Turn on the “Invoice issued” automation to email them.</p>`, { sub: 'Invoices are created only after the work is done' }); })() +
       card('All invoices', invoiceTable(inv.slice(), true), { flush: true });
   }
 
@@ -2850,6 +3633,7 @@ Thank you for considering this request.`
         <li><b>Billing</b> — invoices only for completed work, after the cancellation period.</li></ol>
         <h3>What “Metro 2 compliance” does not mean</h3>
         <p>Some products sell “Metro 2 letters” that claim any technical formatting flaw forces deletion of accurate debts. That is not what the law says: bureaus and furnishers must correct or delete <i>inaccurate, incomplete or unverifiable</i> information, and a dispute of accurate data can be dismissed as frivolous. Ledger uses Metro 2 knowledge to find real errors and explain them precisely.</p></div>`),
+      addresses: addressBook(params.q),
       templates: (() => { const Tp = root.Templates; return `<p class="muted small" style="margin:0 0 14px">Click a template, choose the client, answer a few questions and Ledger writes the letter with the client’s name, address, date of birth and SSN last 4. One letter is created for each recipient you tick. Every statement must be confirmed true by the client.</p>` + Tp.CATS.map(([k, l, d]) => card(l, `<p class="small muted" style="margin:0 0 10px">${esc(d)}</p><div class="tpl-grid">${Tp.TEMPLATES.filter(t => t.cat === k).map(t => `<button type="button" class="tpl-card" data-act="use-template" data-tpl="${t.id}"><b>${esc(t.title)}</b><small>${esc(t.when)}</small><span class="small muted">${esc((Law.DISPUTE_TYPES[t.type] || {}).cite || '')}</span></button>`).join('')}</div>`)).join(''); })(),
       sources: card('Research sources', `<ul class="small" style="padding-left:18px;margin:0;line-height:1.9">
         <li><a href="https://www.law.cornell.edu/uscode/text/15/1679c" target="_blank" rel="noopener">15 U.S.C. § 1679c — CROA disclosures (Cornell LII)</a></li>
@@ -2947,7 +3731,9 @@ Thank you for considering this request.`
   function referrals() {
     const list = S().referrals;
     return head('Referral sources', 'Mortgage brokers, realtors, dealers and others who send clients to you', `<button class="btn primary" data-act="new-referral">${icon('plus')} Partner</button>`) +
-      card('', list.length ? `<div class="table-wrap"><table><thead><tr><th>Partner</th><th>Company</th><th>Commission</th><th class="num">Clients referred</th><th class="num">Active</th><th></th></tr></thead><tbody>${list.map(r => { const cl = S().clients.filter(c => c.referralId === r.id); return `<tr><td><b>${esc(r.name)}</b><div class="small muted">${esc(r.email || '')}</div></td><td>${esc(r.company || '')}</td><td class="small">${esc(r.commission || '—')}</td><td class="num">${cl.length}</td><td class="num">${cl.filter(c => c.status === 'active').length}</td><td class="right"><button class="btn sm ghost" data-act="edit-referral" data-id="${r.id}">Edit</button></td></tr>`; }).join('')}</tbody></table></div>` : empty('No partners yet', 'Track who refers clients and what you owe them.'), { flush: true });
+      card('', list.length ? `<div class="table-wrap"><table><thead><tr><th>Partner</th><th>Company</th><th>Commission</th><th class="num">Referred</th><th class="num">Active</th><th class="num">Earned</th><th class="num">Owed</th><th></th></tr></thead><tbody>${list.map(r => { const cl = S().clients.filter(c => c.referralId === r.id); const k = root.Sales.commissions(S(), r, T()); return `<tr><td><b>${esc(r.name)}</b><div class="small muted">${esc(r.email || '')}</div></td><td>${esc(r.company || '')}</td><td class="small">${esc(r.commissionType === 'flat' ? money(r.commissionAmount) + ' per enrolled client' : r.commissionType === 'percent' ? r.commissionAmount + '% of paid invoices' : r.commission || '—')}</td><td class="num">${cl.length}</td><td class="num">${cl.filter(c => c.status === 'active').length}</td><td class="num">${money(k.earned)}</td><td class="num"><b>${money(k.owed)}</b></td>
+        <td class="right nowrap"><button class="btn sm ghost" data-act="ref-link" data-id="${r.id}" title="Copy this partner's sign-up link">Link</button>${Store.remote ? `<button class="btn sm ghost" data-act="ref-invite" data-id="${r.id}">Portal invite</button>` : ''}${k.owed > 0 ? `<button class="btn sm ghost" data-act="ref-payout" data-id="${r.id}">Record payout</button>` : ''}<button class="btn sm ghost" data-act="edit-referral" data-id="${r.id}">Edit</button></td></tr>`; }).join('')}</tbody></table></div>` : empty('No partners yet', 'Track who refers clients and what you owe them.'), { flush: true }) +
+      `<p class="small muted">Partners can log in to a partner portal to get their link, see their referrals’ stage and their commissions. A referred client’s progress is shown only if the client agreed (Edit client → “Share progress with referrer”). Some states restrict paying referral fees — check yours.</p>`;
   }
 
   // ---------- Settings ----------
@@ -2960,6 +3746,7 @@ Thank you for considering this request.`
         ${UI.field('Mailing address', 'address', co.address, { type: 'textarea', rows: 2, cls: 'span2', help: 'Printed on the Notice of Cancellation' })}
         ${UI.field('Phone', 'phone', co.phone)}${UI.field('Email', 'email', co.email)}
         ${UI.field('State', 'state', co.state)}${UI.field('Website', 'website', co.website)}
+        ${UI.field('Booking link', 'bookingUrl', co.bookingUrl, { cls: 'span2', placeholder: 'https://calendly.com/…', help: 'Used in lead follow-up messages so prospects can book a consultation' })}
         ${UI.field('State registration #', 'registration', co.registration)}${UI.field('Surety bond #', 'bondNumber', co.bondNumber)}
         ${UI.field('Default fee terms', 'defaultFee', s.defaultFee, { type: 'textarea', rows: 2, cls: 'span2', help: 'Used in the agreement template' })}
         ${UI.field('Mail transit days', 'mailTransitDays', s.mailTransitDays, { type: 'number', help: 'Estimated delivery used to compute deadlines until the received date is known' })}
@@ -2968,13 +3755,15 @@ Thank you for considering this request.`
       ${card('Your data', `<p class="small muted">${Store.remote ? 'Everything is saved on your Ledger server, encrypted. Export a backup now and then for your records — the file contains client personal information, so keep it private.' : 'Everything is stored in this browser only. Export regular backups — the file contains client personal information, so keep it encrypted and private.'}</p>
         <div class="row" style="margin-top:10px"><button class="btn" data-act="export">${icon('download')} Export backup</button><button class="btn" data-act="import">${icon('upload')} Import backup</button><button class="btn" data-act="csv-template">${icon('download')} Tradeline CSV template</button></div>
         <p class="small muted" style="margin-top:10px">Imports accept Ledger v1 backups (<span class="mono">ledger-workspace-backup.json</span>) and v2 workspaces. v1 letters become round-1 disputes so their deadlines can be tracked.</p>`)}
+      ${Store.remote ? card('Print & mail', '<div id="mail-settings"><p class="small muted">Loading…</p></div>', { sub: 'Mail letters (first-class or certified) from Ledger through Lob' }) : ''}
+      ${Store.remote ? card('Online payments', '<div id="pay-settings"><p class="small muted">Loading…</p></div>', { sub: 'Clients pay invoices on Authorize.net’s secure page' }) : ''}
       ${Store.remote ? card('AI settings', '<div id="ai-settings"><p class="small muted">Loading…</p></div>', { sub: 'Anthropic API key for Ledger AI, report scanning and round planning' }) : ''}
       ${Store.remote ? '' : card('AI in this browser', `<p class="small">${root.AIDirect && root.AIDirect.getKey() ? '<span class="badge b-ok">On</span> AI scanning works in this file using your Anthropic API key.' : 'Add your own Anthropic API key to scan credit reports with AI right here — no server needed. The key stays in this browser and is never included in backups.'}</p><div class="row" style="margin-top:10px"><button class="btn primary" data-act="ai-key">${root.AIDirect && root.AIDirect.getKey() ? 'Change key' : 'Add API key'}</button><a class="btn ghost" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key ↗</a></div>`)}
       ${card('Demo & reset', `<div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn danger" data-act="reset">Erase workspace</button></div>`)}
     </div></div>`;
   }
 
-  root.Views = { sequences, seqCard, libraryResults, dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
+  root.Views = { pipeline, automations, violations, addressBook, addressList, sequences, seqCard, libraryResults, dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -3013,11 +3802,13 @@ Thank you for considering this request.`
     }
     document.getElementById('view').innerHTML = html;
     if (nav === 'team') loadTeam();
-    if (nav === 'settings') loadAiSettings();
+    if (nav === 'settings') { loadAiSettings(); loadMailSettings(); loadPaySettings(); }
     document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('active', el.dataset.nav === nav));
     const open = Views.openDisputes().length;
     const al = Views.alerts().filter(x => x.sev === 'high').length;
     setCount('disputes', open);
+    setCount('pipeline', S().clients.filter(c => c.status === 'lead').length);
+    try { setCount('violations', root.Violations.scan(S(), T()).filter(x => !['closed', 'declined'].includes(x.review.status)).length, true); } catch (e) { console.error(e); }
     setCount('sequences', (S().sequences || []).filter(q => root.Sequences.status(S(), q, T()).state === 'due').length, true);
     setCount('compliance', al, true);
     setCount('clients', S().clients.length);
@@ -3161,7 +3952,9 @@ Thank you for considering this request.`
   const nextRound = (cid, recipient) => 1 + Math.max(0, ...S().disputes.filter(d => d.clientId === cid && d.recipient === recipient).map(d => d.round));
   function recipientFor(d) {
     const b = Law.BUREAUS[d.recipient];
-    return b ? { name: b.name, address: b.address } : { name: d.recipient, address: d.recipientAddress || '' };
+    if (b) return { name: b.name, address: b.address };
+    const book = !d.recipientAddress && root.Furnishers && root.Furnishers.lookup(S(), d.recipient);
+    return { name: d.recipient, address: d.recipientAddress || (book ? book.address : '') };
   }
   function parseCSV(text) {
     const rows = [];
@@ -3219,6 +4012,9 @@ Thank you for considering this request.`
           ${field('NAICS code', 'b_naics', (c.business || {}).naics)}${field('D-U-N-S number', 'b_duns', (c.business || {}).duns)}
           ${field('Business phone', 'b_phone', (c.business || {}).phone)}${field('Website', 'b_website', (c.business || {}).website)}</div></div>
         ${field('Referred by', 'referralId', c.referralId, { type: 'select', options: [['', '—']].concat(S().referrals.map(r => [r.id, r.name])) })}
+        ${field('Billing', 'billingModel', c.billingModel || 'inherit', { type: 'select', options: [['inherit', 'Use the company default']].concat(root.Billing.MODELS) })}
+        ${field('Credit monitoring service', 'monitoring', c.monitoring || '', { type: 'select', options: ['', 'MyFreeScoreNow', 'IdentityIQ', 'SmartCredit', 'MyScoreIQ', 'Other'] , help: 'Where the client gets their monthly 3-bureau report' })}
+        <label class="check span2"><input type="checkbox" name="shareWithReferrer" ${c.shareWithReferrer ? 'checked' : ''}> Client agreed to share their progress with the person who referred them</label>
         ${field('Notes', 'notes', c.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Delete client</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
       onOpen: f => { f.elements.kind.onchange = () => { f.querySelector('[data-biz]').hidden = f.elements.kind.value === 'personal'; }; const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { if (confirm(`Delete ${c.name} and all their reports, disputes and invoices?`)) { const id = c.id; ['reports', 'disputes', 'letters', 'tasks', 'invoices'].forEach(k => { S()[k] = S()[k].filter(x => x.clientId !== id); }); S().clients = S().clients.filter(x => x.id !== id); UI.close(); Store.log('Deleted client ' + c.name); Store.save(); go('#/clients'); } }; },
@@ -3345,8 +4141,10 @@ Thank you for considering this request.`
         ${field('Recipient', 'recipient', preset.recipient || 'Experian', { help: 'Equifax, Experian, TransUnion — or the furnisher / collector name' })}
         ${field('Recipient address', 'recipientAddress', preset.recipientAddress || '', { type: 'textarea', rows: 2, help: 'Not needed for the three bureaus' })}</div>`,
       foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Create</button>',
+      onOpen: f => addressAssist(f, 'recipient', 'recipientAddress'),
       onSubmit: d => {
         if (!d.clientId) { toast('Add a client first'); return false; }
+        if (d.recipientAddress && !Law.BUREAUS[d.recipient]) root.Furnishers.remember(S(), d.recipient, d.recipientAddress);
         const disp = { id: Store.uid(), clientId: d.clientId, type: d.type, round: nextRound(d.clientId, d.recipient), recipient: d.recipient, recipientAddress: d.recipientAddress, status: 'draft', items: preset.items || [], letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: preset.notes || '' };
         S().disputes.push(disp);
         Store.log(`Created ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} draft to ${d.recipient}`, d.clientId);
@@ -3388,6 +4186,125 @@ Thank you for considering this request.`
     commit(`Generated ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
+  // ---------- automation engine: billing + rules ----------
+  let engineBusy = false;
+  async function runEngine(manual) {
+    if (engineBusy) return 0;
+    engineBusy = true;
+    try {
+      const today = T();
+      let n = 0;
+      // 1. Automatic invoices (work already performed only).
+      const bills = root.Billing.due(S(), today);
+      bills.forEach(i => { S().invoices.push(i); Store.log(`Invoice issued automatically: ${UI.money(i.amount)} — ${i.description}`, i.clientId); });
+      n += bills.length;
+      // 2. Automation rules.
+      const origin = location.protocol.startsWith('http') ? location.origin : '';
+      const acts = root.Automations.due(S(), today, { origin });
+      S().automationLog = S().automationLog || {};
+      const send = [];
+      acts.forEach(a => {
+        const entry = { at: Store.now(), client: a.client.name, what: `${a.rule.channel === 'task' ? 'Task' : a.rule.channel === 'sms' ? 'Text' : 'Email'}: ${a.subject || a.body.slice(0, 60)}` };
+        S().automationLog[a.key] = entry;
+        if (a.channel === 'task') { S().tasks.push({ id: Store.uid(), clientId: a.client.id, title: a.subject, due: today, done: false, createdAt: Store.now(), auto: true }); entry.via = 'task'; }
+        else if (Store.remote) send.push({ a, entry });
+        else queueMessage(a, entry, 'Sending needs the Ledger server');
+        n++;
+      });
+      if (n) Store.save();
+      if (send.length) {
+        await Remote.flushNow();
+        const fails = [];
+        for (const { a, entry } of send) {
+          try { await api('POST', '/api/messages', { clientId: a.client.id, channel: a.channel, subject: a.subject, body: a.body }); entry.via = 'sent'; }
+          catch (e) { fails.push({ a, entry, why: e.message }); }
+        }
+        await Remote.reload();
+        fails.forEach(({ a, entry, why }) => { S().automationLog[a.key] = Object.assign(entry, { via: 'queued — ' + why }); queueMessage(a, entry, why); });
+        Object.entries(S().automationLog).forEach(([k, v]) => { const hit = send.find(x => x.a.key === k); if (hit && !v.via) v.via = hit.entry.via; });
+        if (send.length) Store.save();
+      }
+      if (n && !manual) setTimeout(() => toast(`Automations: ${n} action${n > 1 ? 's' : ''} ran`), 600);
+      return n;
+    } finally { engineBusy = false; }
+  }
+  function queueMessage(a, entry, why) {
+    S().messages = S().messages || [];
+    S().messages.unshift({ id: Store.uid(), clientId: a.client.id, channel: a.channel, to: a.channel === 'sms' ? a.client.phone : a.client.email, subject: a.subject, body: a.body, at: Store.now(), by: 'Automation', status: 'queued' });
+    S().tasks.push({ id: Store.uid(), clientId: a.client.id, title: `Send the queued ${a.channel === 'sms' ? 'text' : 'email'} to ${a.client.name}: “${(a.subject || a.body).slice(0, 60)}” (Messages tab — ${why})`, due: T(), done: false, createdAt: Store.now(), auto: true });
+    entry.via = entry.via || 'queued';
+  }
+
+  function autoEdit(id) {
+    const Au = root.Automations;
+    const r = Au.rules(S()).find(x => x.id === id);
+    modal({
+      title: 'Automation — ' + (Au.TRIGGERS[r.trigger] || r.trigger), wide: true,
+      body: `<div class="form-grid">${field('Wait (days after the event)', 'delayDays', r.delayDays || 0, { type: 'number', attrs: 'min="0"' })}${field('Action', 'channel', r.channel, { type: 'select', options: [['email', 'Send email'], ['sms', 'Send text (clients with SMS consent only)'], ['task', 'Create a task']] })}
+        ${field(r.channel === 'task' ? 'Task title' : 'Subject', 'subject', r.subject, { cls: 'span2' })}${field('Message', 'body', r.body, { type: 'textarea', rows: 5, cls: 'span2', help: 'Fields: {{first}} {{name}} {{company}} {{phone}} {{portal}} {{booking}} {{amount}} {{due}} {{creditor}} {{bureau}}' })}</div>
+        <p class="small muted">Texts must include opt-out language (for example “Reply STOP to opt out”) and go only to clients who agreed to receive them (TCPA).</p>`,
+      onSubmit: d => {
+        const list = S().automations = S().automations || [];
+        let saved = list.find(x => x.id === id);
+        if (!saved) { saved = Object.assign({}, r); list.push(saved); }
+        Object.assign(saved, { delayDays: Number(d.delayDays) || 0, channel: d.channel, subject: d.subject, body: d.body });
+        commit('Updated automation “' + (Au.TRIGGERS[r.trigger] || r.trigger) + '”');
+      }
+    });
+  }
+  function setRule(id, on) {
+    const Au = root.Automations;
+    const list = S().automations = S().automations || [];
+    let saved = list.find(x => x.id === id);
+    if (!saved) { saved = Object.assign({}, Au.rules(S()).find(x => x.id === id)); list.push(saved); }
+    saved.enabled = on;
+    if (on && !saved.enabledAt) saved.enabledAt = Store.now();
+  }
+
+  async function loadMailSettings() {
+    const el = document.getElementById('mail-settings');
+    if (!el || !Store.remote) return;
+    let info;
+    try { info = await api('GET', '/api/settings/mail'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    const owner = Remote.user.role === 'owner';
+    el.innerHTML = `<div class="stack"><div>${info.configured ? `<span class="badge ${info.mode === 'live' ? 'b-ok' : 'b-med'}">${info.mode === 'live' ? 'Live — letters are really mailed' : 'Test mode — nothing is mailed'}</span> <span class="small">Key ending <span class="mono">…${esc(info.last4)}</span></span>` : '<span class="badge b-low">Off</span> <span class="small">Letters are printed and mailed by you.</span>'}</div>
+      ${owner ? `<form id="mail-form" class="stack"><label class="field"><span>Lob API key</span><input name="lobKey" type="password" autocomplete="off" placeholder="test_… or live_…"><small>Create a free account at lob.com, then Settings → API Keys. Start with the test key to try it; switch to the live key to mail for real (Lob charges per letter, more for certified).</small></label>
+      <div class="row"><button class="btn primary">Save & test key</button>${info.configured ? '<button type="button" class="btn danger" id="mail-remove">Remove</button>' : ''}<a class="btn ghost" href="https://dashboard.lob.com/" target="_blank" rel="noopener">Open Lob ↗</a></div><div id="mail-msg" class="small"></div></form>` : '<p class="small muted">Only the owner can change this.</p>'}
+      <p class="small muted">Letters are mailed from the client’s own address (they are in the client’s voice). Photo ID and proof of address can be added as extra pages if they were uploaded as images.</p></div>`;
+    const form = document.getElementById('mail-form');
+    if (form) form.onsubmit = async e => { e.preventDefault(); const msg = document.getElementById('mail-msg'); msg.textContent = 'Testing the key with Lob…'; try { const r = await api('PUT', '/api/settings/mail', { lobKey: form.elements.lobKey.value.trim() }); toast(r.verified ? 'Lob connected' : 'Saved — Lob could not be reached to verify'); loadMailSettings(); } catch (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message; } };
+    const rm = document.getElementById('mail-remove');
+    if (rm) rm.onclick = async () => { if (confirm('Disconnect Lob?')) { await api('DELETE', '/api/settings/mail'); loadMailSettings(); } };
+  }
+  async function loadPaySettings() {
+    const el = document.getElementById('pay-settings');
+    if (!el || !Store.remote) return;
+    let info;
+    try { info = await api('GET', '/api/settings/payments'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    const owner = Remote.user.role === 'owner';
+    el.innerHTML = `<div class="stack"><div>${info.configured ? `<span class="badge ${info.sandbox ? 'b-med' : 'b-ok'}">${info.sandbox ? 'Sandbox — test payments only' : 'Live'}</span> <span class="small">Authorize.net login ending <span class="mono">…${esc(info.loginLast4)}</span></span>` : '<span class="badge b-low">Off</span>'}</div>
+      ${owner ? `<form id="pay-form" class="stack"><div class="form-grid">${field('API Login ID', 'loginId', '', { attrs: 'autocomplete="off"' })}${field('Transaction Key', 'transactionKey', '', { type: 'password', attrs: 'autocomplete="off"' })}</div><label class="check small"><input type="checkbox" name="sandbox"> Sandbox account (testing)</label>
+      <div class="row"><button class="btn primary">Save & test</button>${info.configured ? '<button type="button" class="btn danger" id="pay-remove">Remove</button>' : ''}</div><div id="pay-msg" class="small"></div></form>` : '<p class="small muted">Only the owner can change this.</p>'}
+      <p class="small muted">Credit repair is a “high-risk” business for card processing — Stripe and Square generally don’t allow it. Authorize.net works with merchant accounts from processors that accept credit repair. Then set Billing → Online payments to Authorize.net. Each invoice gets a secure pay link; payments are matched automatically.</p></div>`;
+    const form = document.getElementById('pay-form');
+    if (form) form.onsubmit = async e => { e.preventDefault(); const d = UI.formData(form); const msg = document.getElementById('pay-msg'); msg.textContent = 'Testing with Authorize.net…'; try { const r = await api('PUT', '/api/settings/payments', d); toast(r.verified ? 'Authorize.net connected' : 'Saved — could not verify yet'); loadPaySettings(); } catch (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message; } };
+    const rm = document.getElementById('pay-remove');
+    if (rm) rm.onclick = async () => { if (confirm('Disconnect Authorize.net?')) { await api('DELETE', '/api/settings/payments'); loadPaySettings(); } };
+  }
+
+  /** Suggest creditor names from the address book and fill the address when one matches. */
+  function addressAssist(f, nameField, addrField, fallbackName) {
+    const n = f.elements[nameField], a = f.elements[addrField];
+    if (!n || !a) return;
+    const listId = 'addr-list-' + nameField;
+    if (!document.getElementById(listId)) { const dl = document.createElement('datalist'); dl.id = listId; dl.innerHTML = root.Furnishers.all(S()).map(e => `<option value="${esc(e.name)}">`).join(''); f.appendChild(dl); }
+    n.setAttribute('list', listId);
+    const fill = () => { const hit = root.Furnishers.lookup(S(), n.value); if (hit && (!a.value.trim() || a.dataset.auto === '1')) { a.value = hit.address; a.dataset.auto = '1'; } };
+    n.addEventListener('change', fill);
+    n.addEventListener('blur', fill);
+    a.addEventListener('input', () => { a.dataset.auto = ''; });
+    if (fallbackName) f.addEventListener('change', e => { if (e.target.name === 'v_creditor' && !n.value.trim()) { const hit = root.Furnishers.lookup(S(), fallbackName()); if (hit) { n.value = hit.name; if (!a.value.trim()) { a.value = hit.address; a.dataset.auto = '1'; } } } });
+  }
   // ---------- letter templates ----------
   function templatePicker(cid, seq) {
     const Tp = root.Templates;
@@ -3439,6 +4356,7 @@ Thank you for considering this request.`
         };
         f.elements.clientId.onchange = fillPick;
         fillPick();
+        addressAssist(f, 'otherName', 'otherAddress', () => f.elements.v_creditor && f.elements.v_creditor.value);
       },
       onSubmit: d => {
         const values = {};
@@ -3449,6 +4367,7 @@ Thank you for considering this request.`
         if (!to.length) { toast('Choose at least one recipient'); return false; }
         if (to.includes('other') && (!d.otherName || !d.otherAddress)) { toast(`Enter the ${t.otherLabel.toLowerCase()} name and address`); return false; }
         if (!d.confirmed) { toast('Confirm the client verified every statement'); return false; }
+        if (d.otherName && d.otherAddress) root.Furnishers.remember(S(), d.otherName.trim(), d.otherAddress.trim());
         let sq = null;
         if (d.asSeq) {
           const furn = ['student', 'collections'].includes(t.cat) && d.otherName && d.otherAddress ? { name: d.otherName.trim(), address: d.otherAddress.trim() } : null;
@@ -3579,28 +4498,47 @@ Thank you for considering this request.`
     if (kind === 'cancel') { const n = Law.cancellationNotice(co, cs.deadline ? UI.date(cs.deadline) : null); return UI.printDoc('Notice of Cancellation', n + '\n\n\n— — — — — — — — — — duplicate copy — — — — — — — — — —\n\n' + n); }
   }
 
-  function progressReport(cid) {
-    const c = Store.get.client(cid);
-    const ds = Store.get.disputesFor(cid);
-    const lines = [`CREDIT FILE PROGRESS REPORT`, ``, `Client: ${c.name}`, `Prepared: ${UI.date(T())} by ${S().settings.company.name || ''}`, ``, `SCORES`];
-    ['Equifax', 'Experian', 'TransUnion'].forEach(b => {
-      const rs = Store.get.reportsFor(cid).filter(r => r.scores && r.scores[b]).map(r => ({ d: r.date, v: r.scores[b] })).reverse();
-      lines.push(`  ${b.padEnd(11)} ${rs.length ? rs.map(x => `${x.v} (${x.d})`).join(' → ') : '—'}`);
-    });
-    lines.push('', 'DISPUTES');
-    ds.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).forEach(d => {
-      lines.push(`  Round ${d.round} · ${d.recipient} · ${Law.DISPUTE_TYPES[d.type].label} · ${UI.DSTATE[Store.disputeState(d)] ? UI.DSTATE[Store.disputeState(d)][0] : Store.disputeState(d)}${d.sentAt ? ' · mailed ' + d.sentAt : ''}${d.dueAt && !d.outcome ? ' · due ' + d.dueAt : ''}`);
-      d.items.forEach(it => lines.push(`     – ${it.creditor}: ${it.discrepancy}`));
-    });
-    const open = Views.clientFindings(cid).filter(f => f.severity === 'high');
-    lines.push('', `OPEN HIGH-PRIORITY FINDINGS: ${open.length}`);
-    open.forEach(f => lines.push(`  – ${f.creditor} (${f.bureau}): ${f.title}`));
-    lines.push('', 'Results are not guaranteed. Accurate, current and verifiable information cannot be removed from a credit report.');
-    UI.printDoc('Progress report — ' + c.name, lines.join('\n'));
-  }
+  function progressReport(cid) { UI.printHtml(root.Reports.progress(S(), cid, T())); Store.log('Printed progress report', cid); }
+
 
   // ---------- actions ----------
   const A = {
+    analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id); },
+    'bill-now': () => { runEngine(true).then(n => { toast(n ? `${n} item(s) created` : 'Nothing due'); render(); }); },
+    'invoice-link': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const url = `${location.origin}/pay/${i.payToken}`; (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Payment link copied'), () => prompt('Payment link', url)); },
+    'invoice-check': el => { Remote.flushNow().then(() => api('POST', `/api/invoices/${el.dataset.id}/check`)).then(r => Remote.reload().then(() => toast(r.paid ? 'Payment found — marked paid' : 'No payment found yet')), e => toast(e.message)); },
+    'pending-import': el => { const p = (S().pendingImports || []).find(x => x.id === el.dataset.id); if (!p) return; root.AIFlow.reviewScan(p.clientId, p.result, p.docName, p.docId); },
+    'pending-dismiss': el => { S().pendingImports = (S().pendingImports || []).filter(x => x.id !== el.dataset.id); commit(); },
+    'auto-toggle': el => { setRule(el.dataset.id, el.checked); commit(`${el.checked ? 'Turned on' : 'Turned off'} an automation`); },
+    'auto-all': () => { root.Automations.rules(S()).forEach(r => setRule(r.id, true)); commit('Turned on all recommended automations'); toast('Automations on — they apply to events from now on'); },
+    'auto-run': () => { runEngine(true).then(n => { toast(n ? `${n} action(s) ran` : 'Nothing due right now'); render(); }); },
+    'auto-edit': el => autoEdit(el.dataset.id),
+    'vio-packet': el => { const c = Store.get.client(el.dataset.client); if (!confirm(`Print the attorney packet for ${c.name}? Share it only with the client’s written permission.`)) return; UI.printDoc('Attorney packet — ' + c.name, root.Violations.packet(S(), c.id, null, T(), S().settings.company)); Store.log('Prepared attorney review packet', c.id); Store.save(); },
+    'vio-attorney': el => {
+      const keys = root.Violations.scan(S(), T(), el.dataset.client).map(x => x.key);
+      const cur = (S().violations || {})[keys[0]] || {};
+      modal({ title: 'Attorney referral', body: `<div class="form-grid">${field('Attorney / firm', 'attorney', cur.attorney || '', { cls: 'span2' })}${field('Date sent', 'sentAt', cur.sentAt || T(), { type: 'date' })}${field('Notes', 'notes', cur.notes || '', { type: 'textarea', rows: 3, cls: 'span2' })}</div><label class="check small" style="margin-top:10px"><input type="checkbox" name="consent"> The client gave written permission to share their file with this attorney</label>`,
+        onSubmit: d => { if (!d.consent) { toast('Get the client’s permission first'); return false; } S().violations = S().violations || {}; keys.forEach(k => { S().violations[k] = Object.assign(S().violations[k] || { status: 'new' }, { attorney: d.attorney, sentAt: d.sentAt, notes: d.notes, status: 'referred' }); }); commit(`Referred to attorney ${d.attorney}`, el.dataset.client); } });
+    },
+    'addr-add': () => modal({ title: 'Add a creditor address', body: `<div class="form-grid">${field('Company name (as it appears on reports)', 'name', '', { required: true, cls: 'span2' })}${field('Dispute / correspondence address', 'address', '', { type: 'textarea', rows: 3, cls: 'span2', help: 'Last line: City, ST 12345' })}${field('Type', 'category', '', { type: 'select', options: ['collection agency', 'debt buyer', 'card issuer', 'bank', 'auto lender', 'student loan servicer', 'mortgage servicer', 'specialty bureau', 'other'] })}</div>`,
+      onSubmit: d => { if (!d.name || !d.address) return false; root.Furnishers.remember(S(), d.name, d.address, d.category); commit('Saved address for ' + d.name); } }),
+    'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId); } },
+    'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Sign-up link copied'), () => prompt('Sign-up link', url)); },
+    'ref-invite': el => { const r = S().referrals.find(x => x.id === el.dataset.id); Remote.flushNow().then(() => api('POST', '/api/invites', { role: 'partner', referralId: r.id, name: r.name, email: r.email })).then(x => modal({ title: 'Partner portal invitation', body: `<p class="small">Send this one-time link to ${esc(r.name)}. It expires in ${x.expiresInDays} days.</p><input readonly value="${esc(x.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); },
+    'ref-payout': el => { const r = S().referrals.find(x => x.id === el.dataset.id); const k = root.Sales.commissions(S(), r, T()); modal({ title: 'Record payout — ' + r.name, body: `<div class="form-grid">${field('Amount ($)', 'amount', k.owed, { type: 'number', attrs: 'step="0.01" min="0"' })}${field('Date paid', 'date', T(), { type: 'date' })}${field('Note', 'note', '', { cls: 'span2' })}</div>`, onSubmit: d => { if (!(Number(d.amount) > 0)) return false; r.payouts = r.payouts || []; r.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note }); commit(`Recorded ${UI.money(d.amount)} payout to ${r.name}`); } }); },
+    'mail-lob': el => {
+      const d = Store.get.dispute(el.dataset.id);
+      const c = Store.get.client(d.clientId);
+      modal({ title: 'Mail this letter online', body: `<p class="small" style="margin-top:0">Lob prints the approved letter and mails it from ${esc(c.name)}’s address to <b>${esc(d.recipient)}</b>. The tracking number and expected delivery date are saved automatically, and the response deadline is calculated from delivery.</p>
+        <div class="form-grid">${field('Mail service', 'service', 'certified_return_receipt', { type: 'select', options: [['certified_return_receipt', 'Certified mail, return receipt (recommended)'], ['certified', 'Certified mail'], ['none', 'First-class mail']], cls: 'span2' })}</div>
+        <label class="check small" style="margin-top:10px"><input type="checkbox" name="includeId" ${['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'block_605b', 'pii_611', 'inquiry_604', 'disclosure_609', 'mov_611a7'].includes(d.type) ? 'checked' : ''}> Include the client’s photo ID and proof of address (uploaded images) as extra pages</label>`,
+        foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Mail now</button>',
+        onSubmit: x => {
+          Remote.flushNow().then(() => api('POST', `/api/disputes/${d.id}/mail`, { service: x.service, includeId: !!x.includeId }))
+            .then(r => Remote.reload().then(() => toast(r.test ? 'Sent to Lob in TEST mode — nothing was mailed' : `Mailed${r.tracking ? ' · tracking ' + r.tracking : ''}`)), e => toast(e.message));
+        } });
+    },
+    'mail-refresh': el => { Remote.flushNow().then(() => api('POST', `/api/disputes/${el.dataset.id}/mail/refresh`)).then(r => Remote.reload().then(() => toast(r.deliveredAt ? 'Delivered ' + r.deliveredAt + ' — deadline updated' : `${r.events.length} tracking update(s)`)), e => toast(e.message)); },
     templates: el => templatePicker(el.dataset.client, !!el.dataset.seq),
     'seq-run': el => { const n = runSequences(el.dataset.id); toast(n ? `${n} letter(s) drafted — review, approve and add to Send round` : 'Nothing is due yet'); render(); },
     'seq-stop': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q && confirm('Stop this sequence? Letters already drafted stay; no new letters will be drafted.')) { q.status = 'stopped'; commit(`Stopped sequence “${q.title}”`, q.clientId); } },
@@ -3951,6 +4889,24 @@ Thank you for considering this request.`
     document.addEventListener('change', e => {
       if (e.target.matches('[data-act="filter-client"]')) go('#/disputes' + (e.target.value ? '?client=' + e.target.value : ''));
       if (e.target.matches('.pick')) updateBulk();
+      if (e.target.matches('[data-act="lead-stage"]')) {
+        const c = Store.get.client(e.target.dataset.id);
+        c.leadStage = e.target.value;
+        if (c.leadStage === 'won' && c.status === 'lead') c.status = 'onboarding';
+        commit(`${c.name} moved to ${e.target.selectedOptions[0].text}`, c.id);
+      }
+      if (e.target.matches('[data-act="cmp-pick"]')) {
+        const [path, qs] = location.hash.split('?');
+        const p = new URLSearchParams(qs || '');
+        p.set(e.target.dataset.k, e.target.value);
+        if (e.target.dataset.k === 'cmp') { p.delete('from'); p.delete('to'); }
+        location.hash = path + '?' + p.toString();
+      }
+      if (e.target.matches('[data-act="vio-status"]')) {
+        S().violations = S().violations || {};
+        S().violations[e.target.dataset.key] = Object.assign(S().violations[e.target.dataset.key] || {}, { status: e.target.value, updatedAt: T() });
+        commit('Updated violation status');
+      }
       if (e.target.matches('[data-act="ref-stage"]')) {
         const r = S().partnerReferrals.find(x => x.id === e.target.dataset.id);
         r.status = e.target.value;
@@ -3961,6 +4917,7 @@ Thank you for considering this request.`
     });
     let timer;
     document.addEventListener('input', e => {
+      if (e.target.id === 'addr-q') { document.getElementById('addr-results').innerHTML = Views.addressList(e.target.value); return; }
       if (e.target.id === 'lib-q') { document.getElementById('lib-results').innerHTML = Views.libraryResults(e.target.value); return; }
       if (e.target.matches('[data-act="letter-edit"]')) {
         const l = Store.get.letter(e.target.dataset.id);
@@ -3997,6 +4954,12 @@ Thank you for considering this request.`
         if (d.affiliateUrl && !/^https:\/\//.test(d.affiliateUrl)) { toast('Links must start with https://'); return; }
         o.affiliateUrl = d.affiliateUrl;
         commit(`Saved affiliate link for ${o.name}`);
+        toast('Saved');
+      }
+      if (f.dataset.form === 'billing') {
+        if (d.payLink && !/^https:\/\//.test(d.payLink)) { toast('Payment link must start with https://'); return; }
+        S().settings.billing = Object.assign({}, root.Billing.DEFAULTS, S().settings.billing || {}, d, { perLetter: Number(d.perLetter) || 0, perDelete: Number(d.perDelete) || 0, monthly: Number(d.monthly) || 0, dueDays: Number(d.dueDays) || 0 });
+        commit('Updated billing settings');
         toast('Saved');
       }
       if (f.dataset.form === 'company') {
@@ -4043,6 +5006,7 @@ Thank you for considering this request.`
     if (session && session.mode === 'server') {
       if (!session.user || !['owner', 'staff'].includes(session.user.role)) {
         if (session.user && session.user.role === 'client') { location.href = '/portal'; return; }
+        if (session.user && session.user.role === 'partner') { location.href = '/partner'; return; }
         authScreen(session); return;
       }
       await Remote.start(session.user);
@@ -4056,8 +5020,10 @@ Thank you for considering this request.`
     wire();
     try { const n = runSequences(); if (n) setTimeout(() => toast(`Sequences: ${n} letter(s) drafted and waiting for approval`), 400); } catch (e) { console.error(e); }
     render();
+    runEngine().then(n => { if (n) render(); }).catch(e => console.error(e));
+    setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
-  root.App = { runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
+  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
   document.addEventListener('DOMContentLoaded', boot);
 })(window);
 
@@ -4398,6 +5364,7 @@ function htmlToText(html) {
           return r;
         });
         const wins = afterImport(added);
+        if (docId && S().pendingImports) S().pendingImports = S().pendingImports.filter(p => p.docId !== docId);
         App().commit(`AI imported ${added.length} bureau report(s) from ${label}`, cid);
         App().go(`#/clients/${cid}/audit`);
         if (wins.length) setTimeout(() => showWins(cid, wins), 50);

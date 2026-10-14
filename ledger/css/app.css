@@ -295,3 +295,19 @@ td.actions .btn { padding: 0 8px; margin-right: 3px; }
 .tpl-card { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: inherit; font: inherit; cursor: pointer; }
 .tpl-card:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tpl-card small { color: var(--muted); line-height: 1.4; }
+
+/* Sales pipeline */
+.kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.kan-col { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px; min-height: 120px; }
+.kan-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; }
+.kan-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+.kan-card a { color: inherit; text-decoration: none; }
+/* Report comparison */
+tr.cmp-deleted td { background: var(--ok-soft); }
+tr.cmp-new td { background: var(--high-soft); }
+tr.cmp-changed td { background: var(--med-soft); }
+/* Toggle */
+.switch input { width: 34px; height: 20px; appearance: none; -webkit-appearance: none; background: var(--border-strong); border-radius: 99px; position: relative; cursor: pointer; transition: background .15s; margin: 0; }
+.switch input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch input:checked { background: var(--accent); }
+.switch input:checked::after { left: 16px; }

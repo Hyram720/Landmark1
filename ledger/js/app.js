@@ -32,11 +32,13 @@
     }
     document.getElementById('view').innerHTML = html;
     if (nav === 'team') loadTeam();
-    if (nav === 'settings') loadAiSettings();
+    if (nav === 'settings') { loadAiSettings(); loadMailSettings(); loadPaySettings(); }
     document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('active', el.dataset.nav === nav));
     const open = Views.openDisputes().length;
     const al = Views.alerts().filter(x => x.sev === 'high').length;
     setCount('disputes', open);
+    setCount('pipeline', S().clients.filter(c => c.status === 'lead').length);
+    try { setCount('violations', root.Violations.scan(S(), T()).filter(x => !['closed', 'declined'].includes(x.review.status)).length, true); } catch (e) { console.error(e); }
     setCount('sequences', (S().sequences || []).filter(q => root.Sequences.status(S(), q, T()).state === 'due').length, true);
     setCount('compliance', al, true);
     setCount('clients', S().clients.length);
@@ -180,7 +182,9 @@
   const nextRound = (cid, recipient) => 1 + Math.max(0, ...S().disputes.filter(d => d.clientId === cid && d.recipient === recipient).map(d => d.round));
   function recipientFor(d) {
     const b = Law.BUREAUS[d.recipient];
-    return b ? { name: b.name, address: b.address } : { name: d.recipient, address: d.recipientAddress || '' };
+    if (b) return { name: b.name, address: b.address };
+    const book = !d.recipientAddress && root.Furnishers && root.Furnishers.lookup(S(), d.recipient);
+    return { name: d.recipient, address: d.recipientAddress || (book ? book.address : '') };
   }
   function parseCSV(text) {
     const rows = [];
@@ -238,6 +242,9 @@
           ${field('NAICS code', 'b_naics', (c.business || {}).naics)}${field('D-U-N-S number', 'b_duns', (c.business || {}).duns)}
           ${field('Business phone', 'b_phone', (c.business || {}).phone)}${field('Website', 'b_website', (c.business || {}).website)}</div></div>
         ${field('Referred by', 'referralId', c.referralId, { type: 'select', options: [['', '—']].concat(S().referrals.map(r => [r.id, r.name])) })}
+        ${field('Billing', 'billingModel', c.billingModel || 'inherit', { type: 'select', options: [['inherit', 'Use the company default']].concat(root.Billing.MODELS) })}
+        ${field('Credit monitoring service', 'monitoring', c.monitoring || '', { type: 'select', options: ['', 'MyFreeScoreNow', 'IdentityIQ', 'SmartCredit', 'MyScoreIQ', 'Other'] , help: 'Where the client gets their monthly 3-bureau report' })}
+        <label class="check span2"><input type="checkbox" name="shareWithReferrer" ${c.shareWithReferrer ? 'checked' : ''}> Client agreed to share their progress with the person who referred them</label>
         ${field('Notes', 'notes', c.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Delete client</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
       onOpen: f => { f.elements.kind.onchange = () => { f.querySelector('[data-biz]').hidden = f.elements.kind.value === 'personal'; }; const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { if (confirm(`Delete ${c.name} and all their reports, disputes and invoices?`)) { const id = c.id; ['reports', 'disputes', 'letters', 'tasks', 'invoices'].forEach(k => { S()[k] = S()[k].filter(x => x.clientId !== id); }); S().clients = S().clients.filter(x => x.id !== id); UI.close(); Store.log('Deleted client ' + c.name); Store.save(); go('#/clients'); } }; },
@@ -364,8 +371,10 @@
         ${field('Recipient', 'recipient', preset.recipient || 'Experian', { help: 'Equifax, Experian, TransUnion — or the furnisher / collector name' })}
         ${field('Recipient address', 'recipientAddress', preset.recipientAddress || '', { type: 'textarea', rows: 2, help: 'Not needed for the three bureaus' })}</div>`,
       foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Create</button>',
+      onOpen: f => addressAssist(f, 'recipient', 'recipientAddress'),
       onSubmit: d => {
         if (!d.clientId) { toast('Add a client first'); return false; }
+        if (d.recipientAddress && !Law.BUREAUS[d.recipient]) root.Furnishers.remember(S(), d.recipient, d.recipientAddress);
         const disp = { id: Store.uid(), clientId: d.clientId, type: d.type, round: nextRound(d.clientId, d.recipient), recipient: d.recipient, recipientAddress: d.recipientAddress, status: 'draft', items: preset.items || [], letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: preset.notes || '' };
         S().disputes.push(disp);
         Store.log(`Created ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} draft to ${d.recipient}`, d.clientId);
@@ -407,6 +416,125 @@
     commit(`Generated ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
+  // ---------- automation engine: billing + rules ----------
+  let engineBusy = false;
+  async function runEngine(manual) {
+    if (engineBusy) return 0;
+    engineBusy = true;
+    try {
+      const today = T();
+      let n = 0;
+      // 1. Automatic invoices (work already performed only).
+      const bills = root.Billing.due(S(), today);
+      bills.forEach(i => { S().invoices.push(i); Store.log(`Invoice issued automatically: ${UI.money(i.amount)} — ${i.description}`, i.clientId); });
+      n += bills.length;
+      // 2. Automation rules.
+      const origin = location.protocol.startsWith('http') ? location.origin : '';
+      const acts = root.Automations.due(S(), today, { origin });
+      S().automationLog = S().automationLog || {};
+      const send = [];
+      acts.forEach(a => {
+        const entry = { at: Store.now(), client: a.client.name, what: `${a.rule.channel === 'task' ? 'Task' : a.rule.channel === 'sms' ? 'Text' : 'Email'}: ${a.subject || a.body.slice(0, 60)}` };
+        S().automationLog[a.key] = entry;
+        if (a.channel === 'task') { S().tasks.push({ id: Store.uid(), clientId: a.client.id, title: a.subject, due: today, done: false, createdAt: Store.now(), auto: true }); entry.via = 'task'; }
+        else if (Store.remote) send.push({ a, entry });
+        else queueMessage(a, entry, 'Sending needs the Ledger server');
+        n++;
+      });
+      if (n) Store.save();
+      if (send.length) {
+        await Remote.flushNow();
+        const fails = [];
+        for (const { a, entry } of send) {
+          try { await api('POST', '/api/messages', { clientId: a.client.id, channel: a.channel, subject: a.subject, body: a.body }); entry.via = 'sent'; }
+          catch (e) { fails.push({ a, entry, why: e.message }); }
+        }
+        await Remote.reload();
+        fails.forEach(({ a, entry, why }) => { S().automationLog[a.key] = Object.assign(entry, { via: 'queued — ' + why }); queueMessage(a, entry, why); });
+        Object.entries(S().automationLog).forEach(([k, v]) => { const hit = send.find(x => x.a.key === k); if (hit && !v.via) v.via = hit.entry.via; });
+        if (send.length) Store.save();
+      }
+      if (n && !manual) setTimeout(() => toast(`Automations: ${n} action${n > 1 ? 's' : ''} ran`), 600);
+      return n;
+    } finally { engineBusy = false; }
+  }
+  function queueMessage(a, entry, why) {
+    S().messages = S().messages || [];
+    S().messages.unshift({ id: Store.uid(), clientId: a.client.id, channel: a.channel, to: a.channel === 'sms' ? a.client.phone : a.client.email, subject: a.subject, body: a.body, at: Store.now(), by: 'Automation', status: 'queued' });
+    S().tasks.push({ id: Store.uid(), clientId: a.client.id, title: `Send the queued ${a.channel === 'sms' ? 'text' : 'email'} to ${a.client.name}: “${(a.subject || a.body).slice(0, 60)}” (Messages tab — ${why})`, due: T(), done: false, createdAt: Store.now(), auto: true });
+    entry.via = entry.via || 'queued';
+  }
+
+  function autoEdit(id) {
+    const Au = root.Automations;
+    const r = Au.rules(S()).find(x => x.id === id);
+    modal({
+      title: 'Automation — ' + (Au.TRIGGERS[r.trigger] || r.trigger), wide: true,
+      body: `<div class="form-grid">${field('Wait (days after the event)', 'delayDays', r.delayDays || 0, { type: 'number', attrs: 'min="0"' })}${field('Action', 'channel', r.channel, { type: 'select', options: [['email', 'Send email'], ['sms', 'Send text (clients with SMS consent only)'], ['task', 'Create a task']] })}
+        ${field(r.channel === 'task' ? 'Task title' : 'Subject', 'subject', r.subject, { cls: 'span2' })}${field('Message', 'body', r.body, { type: 'textarea', rows: 5, cls: 'span2', help: 'Fields: {{first}} {{name}} {{company}} {{phone}} {{portal}} {{booking}} {{amount}} {{due}} {{creditor}} {{bureau}}' })}</div>
+        <p class="small muted">Texts must include opt-out language (for example “Reply STOP to opt out”) and go only to clients who agreed to receive them (TCPA).</p>`,
+      onSubmit: d => {
+        const list = S().automations = S().automations || [];
+        let saved = list.find(x => x.id === id);
+        if (!saved) { saved = Object.assign({}, r); list.push(saved); }
+        Object.assign(saved, { delayDays: Number(d.delayDays) || 0, channel: d.channel, subject: d.subject, body: d.body });
+        commit('Updated automation “' + (Au.TRIGGERS[r.trigger] || r.trigger) + '”');
+      }
+    });
+  }
+  function setRule(id, on) {
+    const Au = root.Automations;
+    const list = S().automations = S().automations || [];
+    let saved = list.find(x => x.id === id);
+    if (!saved) { saved = Object.assign({}, Au.rules(S()).find(x => x.id === id)); list.push(saved); }
+    saved.enabled = on;
+    if (on && !saved.enabledAt) saved.enabledAt = Store.now();
+  }
+
+  async function loadMailSettings() {
+    const el = document.getElementById('mail-settings');
+    if (!el || !Store.remote) return;
+    let info;
+    try { info = await api('GET', '/api/settings/mail'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    const owner = Remote.user.role === 'owner';
+    el.innerHTML = `<div class="stack"><div>${info.configured ? `<span class="badge ${info.mode === 'live' ? 'b-ok' : 'b-med'}">${info.mode === 'live' ? 'Live — letters are really mailed' : 'Test mode — nothing is mailed'}</span> <span class="small">Key ending <span class="mono">…${esc(info.last4)}</span></span>` : '<span class="badge b-low">Off</span> <span class="small">Letters are printed and mailed by you.</span>'}</div>
+      ${owner ? `<form id="mail-form" class="stack"><label class="field"><span>Lob API key</span><input name="lobKey" type="password" autocomplete="off" placeholder="test_… or live_…"><small>Create a free account at lob.com, then Settings → API Keys. Start with the test key to try it; switch to the live key to mail for real (Lob charges per letter, more for certified).</small></label>
+      <div class="row"><button class="btn primary">Save & test key</button>${info.configured ? '<button type="button" class="btn danger" id="mail-remove">Remove</button>' : ''}<a class="btn ghost" href="https://dashboard.lob.com/" target="_blank" rel="noopener">Open Lob ↗</a></div><div id="mail-msg" class="small"></div></form>` : '<p class="small muted">Only the owner can change this.</p>'}
+      <p class="small muted">Letters are mailed from the client’s own address (they are in the client’s voice). Photo ID and proof of address can be added as extra pages if they were uploaded as images.</p></div>`;
+    const form = document.getElementById('mail-form');
+    if (form) form.onsubmit = async e => { e.preventDefault(); const msg = document.getElementById('mail-msg'); msg.textContent = 'Testing the key with Lob…'; try { const r = await api('PUT', '/api/settings/mail', { lobKey: form.elements.lobKey.value.trim() }); toast(r.verified ? 'Lob connected' : 'Saved — Lob could not be reached to verify'); loadMailSettings(); } catch (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message; } };
+    const rm = document.getElementById('mail-remove');
+    if (rm) rm.onclick = async () => { if (confirm('Disconnect Lob?')) { await api('DELETE', '/api/settings/mail'); loadMailSettings(); } };
+  }
+  async function loadPaySettings() {
+    const el = document.getElementById('pay-settings');
+    if (!el || !Store.remote) return;
+    let info;
+    try { info = await api('GET', '/api/settings/payments'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    const owner = Remote.user.role === 'owner';
+    el.innerHTML = `<div class="stack"><div>${info.configured ? `<span class="badge ${info.sandbox ? 'b-med' : 'b-ok'}">${info.sandbox ? 'Sandbox — test payments only' : 'Live'}</span> <span class="small">Authorize.net login ending <span class="mono">…${esc(info.loginLast4)}</span></span>` : '<span class="badge b-low">Off</span>'}</div>
+      ${owner ? `<form id="pay-form" class="stack"><div class="form-grid">${field('API Login ID', 'loginId', '', { attrs: 'autocomplete="off"' })}${field('Transaction Key', 'transactionKey', '', { type: 'password', attrs: 'autocomplete="off"' })}</div><label class="check small"><input type="checkbox" name="sandbox"> Sandbox account (testing)</label>
+      <div class="row"><button class="btn primary">Save & test</button>${info.configured ? '<button type="button" class="btn danger" id="pay-remove">Remove</button>' : ''}</div><div id="pay-msg" class="small"></div></form>` : '<p class="small muted">Only the owner can change this.</p>'}
+      <p class="small muted">Credit repair is a “high-risk” business for card processing — Stripe and Square generally don’t allow it. Authorize.net works with merchant accounts from processors that accept credit repair. Then set Billing → Online payments to Authorize.net. Each invoice gets a secure pay link; payments are matched automatically.</p></div>`;
+    const form = document.getElementById('pay-form');
+    if (form) form.onsubmit = async e => { e.preventDefault(); const d = UI.formData(form); const msg = document.getElementById('pay-msg'); msg.textContent = 'Testing with Authorize.net…'; try { const r = await api('PUT', '/api/settings/payments', d); toast(r.verified ? 'Authorize.net connected' : 'Saved — could not verify yet'); loadPaySettings(); } catch (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message; } };
+    const rm = document.getElementById('pay-remove');
+    if (rm) rm.onclick = async () => { if (confirm('Disconnect Authorize.net?')) { await api('DELETE', '/api/settings/payments'); loadPaySettings(); } };
+  }
+
+  /** Suggest creditor names from the address book and fill the address when one matches. */
+  function addressAssist(f, nameField, addrField, fallbackName) {
+    const n = f.elements[nameField], a = f.elements[addrField];
+    if (!n || !a) return;
+    const listId = 'addr-list-' + nameField;
+    if (!document.getElementById(listId)) { const dl = document.createElement('datalist'); dl.id = listId; dl.innerHTML = root.Furnishers.all(S()).map(e => `<option value="${esc(e.name)}">`).join(''); f.appendChild(dl); }
+    n.setAttribute('list', listId);
+    const fill = () => { const hit = root.Furnishers.lookup(S(), n.value); if (hit && (!a.value.trim() || a.dataset.auto === '1')) { a.value = hit.address; a.dataset.auto = '1'; } };
+    n.addEventListener('change', fill);
+    n.addEventListener('blur', fill);
+    a.addEventListener('input', () => { a.dataset.auto = ''; });
+    if (fallbackName) f.addEventListener('change', e => { if (e.target.name === 'v_creditor' && !n.value.trim()) { const hit = root.Furnishers.lookup(S(), fallbackName()); if (hit) { n.value = hit.name; if (!a.value.trim()) { a.value = hit.address; a.dataset.auto = '1'; } } } });
+  }
   // ---------- letter templates ----------
   function templatePicker(cid, seq) {
     const Tp = root.Templates;
@@ -458,6 +586,7 @@
         };
         f.elements.clientId.onchange = fillPick;
         fillPick();
+        addressAssist(f, 'otherName', 'otherAddress', () => f.elements.v_creditor && f.elements.v_creditor.value);
       },
       onSubmit: d => {
         const values = {};
@@ -468,6 +597,7 @@
         if (!to.length) { toast('Choose at least one recipient'); return false; }
         if (to.includes('other') && (!d.otherName || !d.otherAddress)) { toast(`Enter the ${t.otherLabel.toLowerCase()} name and address`); return false; }
         if (!d.confirmed) { toast('Confirm the client verified every statement'); return false; }
+        if (d.otherName && d.otherAddress) root.Furnishers.remember(S(), d.otherName.trim(), d.otherAddress.trim());
         let sq = null;
         if (d.asSeq) {
           const furn = ['student', 'collections'].includes(t.cat) && d.otherName && d.otherAddress ? { name: d.otherName.trim(), address: d.otherAddress.trim() } : null;
@@ -598,28 +728,47 @@
     if (kind === 'cancel') { const n = Law.cancellationNotice(co, cs.deadline ? UI.date(cs.deadline) : null); return UI.printDoc('Notice of Cancellation', n + '\n\n\n— — — — — — — — — — duplicate copy — — — — — — — — — —\n\n' + n); }
   }
 
-  function progressReport(cid) {
-    const c = Store.get.client(cid);
-    const ds = Store.get.disputesFor(cid);
-    const lines = [`CREDIT FILE PROGRESS REPORT`, ``, `Client: ${c.name}`, `Prepared: ${UI.date(T())} by ${S().settings.company.name || ''}`, ``, `SCORES`];
-    ['Equifax', 'Experian', 'TransUnion'].forEach(b => {
-      const rs = Store.get.reportsFor(cid).filter(r => r.scores && r.scores[b]).map(r => ({ d: r.date, v: r.scores[b] })).reverse();
-      lines.push(`  ${b.padEnd(11)} ${rs.length ? rs.map(x => `${x.v} (${x.d})`).join(' → ') : '—'}`);
-    });
-    lines.push('', 'DISPUTES');
-    ds.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).forEach(d => {
-      lines.push(`  Round ${d.round} · ${d.recipient} · ${Law.DISPUTE_TYPES[d.type].label} · ${UI.DSTATE[Store.disputeState(d)] ? UI.DSTATE[Store.disputeState(d)][0] : Store.disputeState(d)}${d.sentAt ? ' · mailed ' + d.sentAt : ''}${d.dueAt && !d.outcome ? ' · due ' + d.dueAt : ''}`);
-      d.items.forEach(it => lines.push(`     – ${it.creditor}: ${it.discrepancy}`));
-    });
-    const open = Views.clientFindings(cid).filter(f => f.severity === 'high');
-    lines.push('', `OPEN HIGH-PRIORITY FINDINGS: ${open.length}`);
-    open.forEach(f => lines.push(`  – ${f.creditor} (${f.bureau}): ${f.title}`));
-    lines.push('', 'Results are not guaranteed. Accurate, current and verifiable information cannot be removed from a credit report.');
-    UI.printDoc('Progress report — ' + c.name, lines.join('\n'));
-  }
+  function progressReport(cid) { UI.printHtml(root.Reports.progress(S(), cid, T())); Store.log('Printed progress report', cid); }
+
 
   // ---------- actions ----------
   const A = {
+    analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id); },
+    'bill-now': () => { runEngine(true).then(n => { toast(n ? `${n} item(s) created` : 'Nothing due'); render(); }); },
+    'invoice-link': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const url = `${location.origin}/pay/${i.payToken}`; (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Payment link copied'), () => prompt('Payment link', url)); },
+    'invoice-check': el => { Remote.flushNow().then(() => api('POST', `/api/invoices/${el.dataset.id}/check`)).then(r => Remote.reload().then(() => toast(r.paid ? 'Payment found — marked paid' : 'No payment found yet')), e => toast(e.message)); },
+    'pending-import': el => { const p = (S().pendingImports || []).find(x => x.id === el.dataset.id); if (!p) return; root.AIFlow.reviewScan(p.clientId, p.result, p.docName, p.docId); },
+    'pending-dismiss': el => { S().pendingImports = (S().pendingImports || []).filter(x => x.id !== el.dataset.id); commit(); },
+    'auto-toggle': el => { setRule(el.dataset.id, el.checked); commit(`${el.checked ? 'Turned on' : 'Turned off'} an automation`); },
+    'auto-all': () => { root.Automations.rules(S()).forEach(r => setRule(r.id, true)); commit('Turned on all recommended automations'); toast('Automations on — they apply to events from now on'); },
+    'auto-run': () => { runEngine(true).then(n => { toast(n ? `${n} action(s) ran` : 'Nothing due right now'); render(); }); },
+    'auto-edit': el => autoEdit(el.dataset.id),
+    'vio-packet': el => { const c = Store.get.client(el.dataset.client); if (!confirm(`Print the attorney packet for ${c.name}? Share it only with the client’s written permission.`)) return; UI.printDoc('Attorney packet — ' + c.name, root.Violations.packet(S(), c.id, null, T(), S().settings.company)); Store.log('Prepared attorney review packet', c.id); Store.save(); },
+    'vio-attorney': el => {
+      const keys = root.Violations.scan(S(), T(), el.dataset.client).map(x => x.key);
+      const cur = (S().violations || {})[keys[0]] || {};
+      modal({ title: 'Attorney referral', body: `<div class="form-grid">${field('Attorney / firm', 'attorney', cur.attorney || '', { cls: 'span2' })}${field('Date sent', 'sentAt', cur.sentAt || T(), { type: 'date' })}${field('Notes', 'notes', cur.notes || '', { type: 'textarea', rows: 3, cls: 'span2' })}</div><label class="check small" style="margin-top:10px"><input type="checkbox" name="consent"> The client gave written permission to share their file with this attorney</label>`,
+        onSubmit: d => { if (!d.consent) { toast('Get the client’s permission first'); return false; } S().violations = S().violations || {}; keys.forEach(k => { S().violations[k] = Object.assign(S().violations[k] || { status: 'new' }, { attorney: d.attorney, sentAt: d.sentAt, notes: d.notes, status: 'referred' }); }); commit(`Referred to attorney ${d.attorney}`, el.dataset.client); } });
+    },
+    'addr-add': () => modal({ title: 'Add a creditor address', body: `<div class="form-grid">${field('Company name (as it appears on reports)', 'name', '', { required: true, cls: 'span2' })}${field('Dispute / correspondence address', 'address', '', { type: 'textarea', rows: 3, cls: 'span2', help: 'Last line: City, ST 12345' })}${field('Type', 'category', '', { type: 'select', options: ['collection agency', 'debt buyer', 'card issuer', 'bank', 'auto lender', 'student loan servicer', 'mortgage servicer', 'specialty bureau', 'other'] })}</div>`,
+      onSubmit: d => { if (!d.name || !d.address) return false; root.Furnishers.remember(S(), d.name, d.address, d.category); commit('Saved address for ' + d.name); } }),
+    'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId); } },
+    'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Sign-up link copied'), () => prompt('Sign-up link', url)); },
+    'ref-invite': el => { const r = S().referrals.find(x => x.id === el.dataset.id); Remote.flushNow().then(() => api('POST', '/api/invites', { role: 'partner', referralId: r.id, name: r.name, email: r.email })).then(x => modal({ title: 'Partner portal invitation', body: `<p class="small">Send this one-time link to ${esc(r.name)}. It expires in ${x.expiresInDays} days.</p><input readonly value="${esc(x.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); },
+    'ref-payout': el => { const r = S().referrals.find(x => x.id === el.dataset.id); const k = root.Sales.commissions(S(), r, T()); modal({ title: 'Record payout — ' + r.name, body: `<div class="form-grid">${field('Amount ($)', 'amount', k.owed, { type: 'number', attrs: 'step="0.01" min="0"' })}${field('Date paid', 'date', T(), { type: 'date' })}${field('Note', 'note', '', { cls: 'span2' })}</div>`, onSubmit: d => { if (!(Number(d.amount) > 0)) return false; r.payouts = r.payouts || []; r.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note }); commit(`Recorded ${UI.money(d.amount)} payout to ${r.name}`); } }); },
+    'mail-lob': el => {
+      const d = Store.get.dispute(el.dataset.id);
+      const c = Store.get.client(d.clientId);
+      modal({ title: 'Mail this letter online', body: `<p class="small" style="margin-top:0">Lob prints the approved letter and mails it from ${esc(c.name)}’s address to <b>${esc(d.recipient)}</b>. The tracking number and expected delivery date are saved automatically, and the response deadline is calculated from delivery.</p>
+        <div class="form-grid">${field('Mail service', 'service', 'certified_return_receipt', { type: 'select', options: [['certified_return_receipt', 'Certified mail, return receipt (recommended)'], ['certified', 'Certified mail'], ['none', 'First-class mail']], cls: 'span2' })}</div>
+        <label class="check small" style="margin-top:10px"><input type="checkbox" name="includeId" ${['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'block_605b', 'pii_611', 'inquiry_604', 'disclosure_609', 'mov_611a7'].includes(d.type) ? 'checked' : ''}> Include the client’s photo ID and proof of address (uploaded images) as extra pages</label>`,
+        foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Mail now</button>',
+        onSubmit: x => {
+          Remote.flushNow().then(() => api('POST', `/api/disputes/${d.id}/mail`, { service: x.service, includeId: !!x.includeId }))
+            .then(r => Remote.reload().then(() => toast(r.test ? 'Sent to Lob in TEST mode — nothing was mailed' : `Mailed${r.tracking ? ' · tracking ' + r.tracking : ''}`)), e => toast(e.message));
+        } });
+    },
+    'mail-refresh': el => { Remote.flushNow().then(() => api('POST', `/api/disputes/${el.dataset.id}/mail/refresh`)).then(r => Remote.reload().then(() => toast(r.deliveredAt ? 'Delivered ' + r.deliveredAt + ' — deadline updated' : `${r.events.length} tracking update(s)`)), e => toast(e.message)); },
     templates: el => templatePicker(el.dataset.client, !!el.dataset.seq),
     'seq-run': el => { const n = runSequences(el.dataset.id); toast(n ? `${n} letter(s) drafted — review, approve and add to Send round` : 'Nothing is due yet'); render(); },
     'seq-stop': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q && confirm('Stop this sequence? Letters already drafted stay; no new letters will be drafted.')) { q.status = 'stopped'; commit(`Stopped sequence “${q.title}”`, q.clientId); } },
@@ -970,6 +1119,24 @@
     document.addEventListener('change', e => {
       if (e.target.matches('[data-act="filter-client"]')) go('#/disputes' + (e.target.value ? '?client=' + e.target.value : ''));
       if (e.target.matches('.pick')) updateBulk();
+      if (e.target.matches('[data-act="lead-stage"]')) {
+        const c = Store.get.client(e.target.dataset.id);
+        c.leadStage = e.target.value;
+        if (c.leadStage === 'won' && c.status === 'lead') c.status = 'onboarding';
+        commit(`${c.name} moved to ${e.target.selectedOptions[0].text}`, c.id);
+      }
+      if (e.target.matches('[data-act="cmp-pick"]')) {
+        const [path, qs] = location.hash.split('?');
+        const p = new URLSearchParams(qs || '');
+        p.set(e.target.dataset.k, e.target.value);
+        if (e.target.dataset.k === 'cmp') { p.delete('from'); p.delete('to'); }
+        location.hash = path + '?' + p.toString();
+      }
+      if (e.target.matches('[data-act="vio-status"]')) {
+        S().violations = S().violations || {};
+        S().violations[e.target.dataset.key] = Object.assign(S().violations[e.target.dataset.key] || {}, { status: e.target.value, updatedAt: T() });
+        commit('Updated violation status');
+      }
       if (e.target.matches('[data-act="ref-stage"]')) {
         const r = S().partnerReferrals.find(x => x.id === e.target.dataset.id);
         r.status = e.target.value;
@@ -980,6 +1147,7 @@
     });
     let timer;
     document.addEventListener('input', e => {
+      if (e.target.id === 'addr-q') { document.getElementById('addr-results').innerHTML = Views.addressList(e.target.value); return; }
       if (e.target.id === 'lib-q') { document.getElementById('lib-results').innerHTML = Views.libraryResults(e.target.value); return; }
       if (e.target.matches('[data-act="letter-edit"]')) {
         const l = Store.get.letter(e.target.dataset.id);
@@ -1016,6 +1184,12 @@
         if (d.affiliateUrl && !/^https:\/\//.test(d.affiliateUrl)) { toast('Links must start with https://'); return; }
         o.affiliateUrl = d.affiliateUrl;
         commit(`Saved affiliate link for ${o.name}`);
+        toast('Saved');
+      }
+      if (f.dataset.form === 'billing') {
+        if (d.payLink && !/^https:\/\//.test(d.payLink)) { toast('Payment link must start with https://'); return; }
+        S().settings.billing = Object.assign({}, root.Billing.DEFAULTS, S().settings.billing || {}, d, { perLetter: Number(d.perLetter) || 0, perDelete: Number(d.perDelete) || 0, monthly: Number(d.monthly) || 0, dueDays: Number(d.dueDays) || 0 });
+        commit('Updated billing settings');
         toast('Saved');
       }
       if (f.dataset.form === 'company') {
@@ -1062,6 +1236,7 @@
     if (session && session.mode === 'server') {
       if (!session.user || !['owner', 'staff'].includes(session.user.role)) {
         if (session.user && session.user.role === 'client') { location.href = '/portal'; return; }
+        if (session.user && session.user.role === 'partner') { location.href = '/partner'; return; }
         authScreen(session); return;
       }
       await Remote.start(session.user);
@@ -1075,7 +1250,9 @@
     wire();
     try { const n = runSequences(); if (n) setTimeout(() => toast(`Sequences: ${n} letter(s) drafted and waiting for approval`), 400); } catch (e) { console.error(e); }
     render();
+    runEngine().then(n => { if (n) render(); }).catch(e => console.error(e));
+    setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
-  root.App = { runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
+  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
   document.addEventListener('DOMContentLoaded', boot);
 })(window);

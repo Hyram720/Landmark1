@@ -115,6 +115,12 @@
       <script>window.onload=()=>{window.print()}<\/script></body></html>`);
     w.document.close();
   }
+  function printHtml(html) {
+    const w = window.open('', '_blank');
+    if (!w) { toast('Allow pop-ups to print'); return; }
+    w.document.write(html.replace('</body>', '<script>window.onload=()=>{window.print()}<\/script></body>'));
+    w.document.close();
+  }
   function printDoc(title, text) {
     const w = window.open('', '_blank');
     if (!w) { toast('Allow pop-ups to print'); return; }
@@ -136,5 +142,5 @@
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, field };
+  root.UI = { esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
 })(typeof window !== 'undefined' ? window : globalThis);

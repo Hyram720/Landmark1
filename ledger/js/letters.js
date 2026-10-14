@@ -144,6 +144,30 @@ ${items.map(itemBlock).join('\n\n')}
 
 Please investigate, review the enclosed documents (several are your own records), and send me the results within 30 days. If the information is inaccurate, please correct it with every consumer reporting agency you report to (15 U.S.C. § 1681s-2(a)(2), (a)(8)). While the investigation is pending, please report the account as disputed.`,
 
+    inquiry_604: (c, items) => `Re: Dispute of unauthorized inquiries — FCRA §§ 604 and 611
+
+The following inquiries in my file were made without my authorization. I did not apply for credit with these companies and did not give them permission to obtain my report.
+
+${items.map(itemBlock).join('\n\n')}
+
+A consumer report may be furnished only for a permissible purpose (15 U.S.C. § 1681b). Please reinvestigate, confirm that each company had a permissible purpose, delete any inquiry that cannot be verified, and send me the results and an updated copy of my report.`,
+
+    pii_611: (c, items) => `Re: Correction of personal information — FCRA §§ 607(b) and 611
+
+My file contains personal identifying information that is not mine or is out of date. Inaccurate identifiers can cause other people's information to be mixed into my file.
+
+${items.map(itemBlock).join('\n\n')}
+
+My correct information is shown at the top of this letter, and copies of my photo ID and proof of address are enclosed. Please remove the inaccurate information listed above and send me an updated copy of my report.`,
+
+    au_removal: (c, items) => `Re: Request to remove me as an authorized user
+
+I am listed as an authorized user on the account(s) below. I am not the account owner and am not liable for this debt.
+
+${items.map(itemBlock).join('\n\n')}
+
+Please remove me as an authorized user and ask every credit bureau to which you report this account to delete it from my credit file. Please confirm in writing when this is done.`,
+
     goodwill: (c, items) => `Re: Request for a goodwill adjustment
 
 I am writing about my account(s) listed below. I am not disputing the accuracy of this information. I am asking you to consider a courtesy adjustment of the late payment reporting in light of my payment history since then.
@@ -181,7 +205,7 @@ Thank you for considering this request.`
     if (type === 'block_605b') e.push('Identity theft report (IdentityTheft.gov / police report)');
     if (type === 'disclosure_609') return e;
     if (items.some(i => i.evidence)) e.push('Supporting documents referenced above');
-    if (['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611'].includes(type)) e.push('Copy of the credit report page with the disputed items marked');
+    if (['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'inquiry_604', 'pii_611'].includes(type)) e.push('Copy of the credit report page with the disputed items marked');
     return e;
   }
 

@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'sequences.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'sequences.js', 'furnishers.js', 'violations.js', 'billing.js', 'automations.js', 'sales.js', 'reports.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates, Sequences } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates, Sequences, Furnishers, Violations, Billing, Automations, Sales, Reports } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -253,4 +253,104 @@ test('dispute sequences escalate verified items and stop on deletion', () => {
   assert.strictEqual(Sequences.status(ws4, seq, '2026-03-01').state, 'won');
   const rows = Sequences.outline(seq, [{ type: 'cra_611', recipient: 'Experian' }]);
   assert.ok(rows.some(r => r.type === 'mov_611a7') && rows.some(r => r.type === 'furnisher_final') && rows.some(r => r.type === 'cfpb_complaint'));
+});
+
+test('billing creates invoices only for performed work after the cancellation period', () => {
+  const ws = Sample.build();
+  const c = ws.clients[0];
+  ws.settings.billing = { model: 'per_letter', perLetter: 40 };
+  ws.invoices = [];
+  const due = Billing.due(ws, Store.today());
+  assert.ok(due.length >= 1 && due.every(i => i.clientId === c.id && i.amount === 40 && i.disputeId && i.payToken));
+  ws.invoices.push(...due);
+  assert.strictEqual(Billing.due(ws, Store.today()).length, 0, 'no double billing');
+  // Inside the cancellation window nothing is billed.
+  const c2 = ws.clients[1];
+  ws.disputes.push({ id: 'x1', clientId: c2.id, type: 'cra_611', recipient: 'Experian', round: 1, items: [], sentAt: Store.today() });
+  assert.ok(!Billing.due(ws, Store.today()).some(i => i.clientId === c2.id));
+  // Pay per delete.
+  ws.settings.billing = { model: 'per_delete', perDelete: 75 };
+  ws.invoices = [];
+  const del = Billing.due(ws, Store.today());
+  assert.ok(del.length >= 1 && del.every(i => i.amount === 75 && i.itemKey));
+});
+
+test('automations fire once, only after being turned on, and fill templates', () => {
+  const ws = Sample.build();
+  const today = Store.today();
+  assert.strictEqual(Automations.due(ws, today, {}).length, 0, 'off by default');
+  ws.automations = Automations.DEFAULT_RULES.map(r => Object.assign({}, r, { enabled: true, enabledAt: Law.addDays(today, -1) + 'T00:00:00Z' }));
+  ws.clients.push({ id: 'lead1', name: 'Pat Lead', firstName: 'Pat', status: 'lead', createdAt: today + 'T10:00:00Z', onboarding: {} });
+  ws.settings.company.bookingUrl = 'https://book.example.test';
+  const acts = Automations.due(ws, today, { origin: 'https://app.example.test' });
+  const welcome = acts.find(a => a.rule.id === 'welcome-lead' && a.client.id === 'lead1');
+  assert.ok(welcome && welcome.body.includes('Pat') && welcome.body.includes('https://book.example.test'));
+  assert.ok(!acts.some(a => a.client.name === 'Casey Testcase' && a.rule.trigger === 'lead_new'), 'history before enabling is ignored');
+  ws.automationLog = Object.fromEntries(acts.map(a => [a.key, { at: today }]));
+  assert.strictEqual(Automations.due(ws, today, {}).length, 0, 'each event fires once');
+});
+
+test('violation tracker flags missed deadlines and reinsertion', () => {
+  const ws = Sample.build();
+  const today = Store.today();
+  const d = ws.disputes[0]; // Experian dispute mailed 33 days ago, due 2 days ago
+  assert.ok(!Violations.scan(ws, today).some(v => v.key === 'noresp:' + d.id), 'grace period for mail');
+  const later = Law.addDays(today, 10);
+  assert.ok(Violations.scan(ws, later).some(v => v.key === 'noresp:' + d.id && /611/.test(v.law)));
+  // Reinsertion: item deleted, then a newer report shows it again.
+  d.outcome = 'deleted'; d.items[0].result = 'deleted'; d.items[0].resultAt = Law.addDays(today, -5);
+  const exp = ws.reports[0];
+  ws.reports.push(Object.assign({}, exp, { id: 'newrep', date: today, accounts: exp.accounts.slice() }));
+  const v = Violations.scan(ws, today).find(x => x.key.startsWith('reinsert:'));
+  assert.ok(v && /611\(a\)\(5\)\(B\)/.test(v.law));
+  const pkt = Violations.packet(ws, d.clientId, null, today, ws.settings.company);
+  assert.ok(pkt.includes('ATTORNEY REVIEW PACKET') && pkt.includes('reappeared'));
+});
+
+test('sales pipeline scores leads and computes partner commissions', () => {
+  const ws = Sample.build();
+  const lead = ws.clients.find(c => c.status === 'lead');
+  const s = Sales.score(ws, lead, Store.today());
+  assert.ok(s.score >= 0 && s.score <= 100 && ['hot', 'warm', 'cold'].includes(s.heat));
+  assert.strictEqual(Sales.stageOf(lead), 'new');
+  lead.leadStage = 'consult';
+  assert.ok(Sales.score(ws, lead, Store.today()).score > s.score);
+  const r = ws.referrals[0];
+  r.commissionType = 'flat'; r.commissionAmount = 25; r.payouts = [{ amount: 10 }];
+  const k = Sales.commissions(ws, r, Store.today());
+  assert.strictEqual(k.earned, 25); assert.strictEqual(k.owed, 15);
+});
+
+test('reports: progress, analysis and side-by-side comparison', () => {
+  const ws = Sample.build();
+  const c = ws.clients[0];
+  const html = Reports.progress(ws, c.id, Store.today());
+  assert.ok(html.includes('Credit progress report') && html.includes(c.name) && html.includes('<svg'));
+  const an = Reports.analysis(ws, c.id, Store.today());
+  assert.ok(an.includes('Credit report analysis') && /do not promise/i.test(an));
+  const exp = ws.reports[0];
+  const next = Object.assign({}, exp, { id: 'n', accounts: exp.accounts.slice(1).concat([Object.assign({}, exp.accounts[1], { id: 'z', creditor: 'Brand New Card', accountNumber: 'XXXX9999' })]) });
+  next.accounts[0] = Object.assign({}, next.accounts[0], { balance: 0 });
+  const rows = Reports.sideBySide(exp, next);
+  assert.strictEqual(rows[0].kind, 'deleted');
+  assert.ok(rows.some(r => r.kind === 'changed') && rows.some(r => r.kind === 'new'));
+});
+
+test('address book finds researched furnishers by aliases and learns new ones', () => {
+  assert.ok(Furnishers.SEED.length >= 60);
+  assert.ok(Furnishers.SEED.every(e => /,\s*[A-Z]{2}\s+\d{5}/.test(e[3]) && /^https:\/\//.test(e[5])), 'every seed address ends with City, ST ZIP and has a source');
+  const ws = { disputes: [], addressBook: [] };
+  assert.ok(/Norfolk, VA/.test(Furnishers.lookup(ws, 'PORTFOLIO RECOVERY ASSOCIATES LLC').address));
+  assert.ok(/Greenville, SC/.test(Furnishers.lookup(ws, 'LVNV Funding LLC').address));
+  assert.strictEqual(Furnishers.lookup(ws, 'Totally Unknown Collector'), null);
+  Furnishers.remember(ws, 'Totally Unknown Collector', 'PO Box 1\nTown, TX 75001');
+  assert.ok(Furnishers.lookup(ws, 'totally unknown collector').address.includes('Town, TX'));
+});
+
+test('new letter types: inquiry, personal info, authorized user', () => {
+  const client = { name: 'Jordan Example', address: '1 Main St', city: 'Austin', state: 'TX', zip: '78701' };
+  ['inquiry_604', 'pii_611', 'au_removal'].forEach(t => {
+    const out = Letters.build(t, { client, recipient: { name: 'X', address: 'Y' }, items: [{ creditor: 'Example Bank', discrepancy: 'I did not authorize this inquiry dated March 2026.' }], today: 'today' });
+    assert.ok(out.ok && Law.DISPUTE_TYPES[t], t);
+  });
 });

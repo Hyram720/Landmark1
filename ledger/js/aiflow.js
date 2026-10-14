@@ -68,6 +68,7 @@
           return r;
         });
         const wins = afterImport(added);
+        if (docId && S().pendingImports) S().pendingImports = S().pendingImports.filter(p => p.docId !== docId);
         App().commit(`AI imported ${added.length} bureau report(s) from ${label}`, cid);
         App().go(`#/clients/${cid}/audit`);
         if (wins.length) setTimeout(() => showWins(cid, wins), 50);

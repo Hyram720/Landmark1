@@ -15,7 +15,7 @@
 
   // What follows each letter type for the same recipient.
   const NEXT = {
-    cra_611: 'mov_611a7', obsolete_605: 'mov_611a7', public_record_611: 'mov_611a7', tenant_screening_611: 'mov_611a7', block_605b: 'mov_611a7', reinsertion_611: 'mov_611a7',
+    cra_611: 'mov_611a7', obsolete_605: 'mov_611a7', public_record_611: 'mov_611a7', tenant_screening_611: 'mov_611a7', inquiry_604: 'mov_611a7', pii_611: null, au_removal: null, block_605b: 'mov_611a7', reinsertion_611: 'mov_611a7',
     disclosure_609: null, mov_611a7: 'cfpb_complaint',
     furnisher_623: 'furnisher_final', student_loan_623: 'furnisher_final', furnisher_final: 'cfpb_complaint',
     validation_809: 'furnisher_final', business_correction: null, goodwill: null

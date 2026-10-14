@@ -87,7 +87,7 @@
     const invite = (location.hash.match(/invite=([\w-]+)/) || [])[1];
     if (invite && !s.user) return authForm('invite', invite);
     if (!s.user) return authForm('login');
-    if (s.user.role !== 'client') { location.href = '/'; return; }
+    if (s.user.role !== 'client') { location.href = s.user.role === 'partner' ? '/partner' : '/'; return; }
     document.getElementById('portal-user').innerHTML = `<span class="small" style="color:var(--side-ink)">${esc(s.user.email)}</span><button class="btn sm" id="logout">Sign out</button>`;
     document.getElementById('logout').onclick = async () => { await api('POST', '/api/logout'); location.reload(); };
     load();

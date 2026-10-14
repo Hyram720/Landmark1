@@ -309,7 +309,7 @@
   ];
 
   const TABS = [
-    ['overview', 'Overview'], ['templates', 'Letter templates'], ['fields', 'Metro 2 field guide'], ['metro2', 'Metro 2 codes'], ['errors', 'Errors & evidence'],
+    ['overview', 'Overview'], ['templates', 'Letter templates'], ['addresses', 'Creditor addresses'], ['fields', 'Metro 2 field guide'], ['metro2', 'Metro 2 codes'], ['errors', 'Errors & evidence'],
     ['collections', 'Collections'], ['judgments', 'Judgments'], ['evictions', 'Evictions'],
     ['letters', 'Letters & deadlines'], ['laws', 'Laws'], ['timelines', 'Reporting timelines'], ['scores', 'Credit scores'],
     ['business', 'Business credit'], ['contacts', 'Bureaus & contacts'], ['glossary', 'Glossary'], ['scripts', 'Scripts & FAQ'], ['sources', 'Sources']

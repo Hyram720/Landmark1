@@ -12,7 +12,8 @@
     ['judgments', 'Judgments', 'Civil judgments on bureau, LexisNexis or background reports.'],
     ['evictions', 'Evictions', 'Eviction records on tenant screening reports.'],
     ['student', 'Student loans', 'Federal and private student loan reporting errors.'],
-    ['collections', 'Collections', 'Collection agencies and debt buyers.']
+    ['collections', 'Collections', 'Collection agencies and debt buyers.'],
+    ['other', 'Inquiries, personal info & authorized users', 'Hard inquiries, wrong names or addresses, and authorized-user accounts.']
   ];
 
   // Recipient options: 'bureaus' (Equifax, Experian, TransUnion), 'lexis', 'other' (name + address typed in).
@@ -141,7 +142,25 @@
       to: ['bureaus'], type: 'cra_611',
       fields: [...collFields, F('reason', 'Why it should not report', { type: 'select', options: ['it has been paid', 'its original balance was under $500', 'it was less than one year past due when reported'], required: true }), F('detail', 'Date paid / amount / dates', { required: true })],
       item: v => ({ creditor: v.creditor, accountNumber: v.accountNumber, discrepancy: `This is a medical collection, and ${v.reason} (${v.detail}). Under the credit bureaus’ medical debt reporting policy, it should not appear on my report.`,
-        requested: 'Delete this medical collection.', evidence: v.reason === 'it has been paid' ? 'Proof of payment' : 'Bill or statement showing the amount and dates' }) }
+        requested: 'Delete this medical collection.', evidence: v.reason === 'it has been paid' ? 'Proof of payment' : 'Bill or statement showing the amount and dates' }) },
+
+    // ---------- Inquiries, personal information, authorized users ----------
+    { id: 'inquiry_unauthorized', cat: 'other', title: 'Hard inquiry I did not authorize', when: 'The client did not apply for credit with this company. If it was identity theft, use the identity-theft block instead.',
+      to: ['bureaus'], type: 'inquiry_604',
+      fields: [F('creditor', 'Company that made the inquiry', { required: true }), F('inquiryDate', 'Inquiry date', { type: 'date', required: true })],
+      item: v => ({ creditor: v.creditor, discrepancy: `Hard inquiry by ${v.creditor} dated ${fmt(v.inquiryDate)}. I did not apply for credit with ${v.creditor} or authorize this inquiry.`,
+        requested: 'Verify the permissible purpose for this inquiry, or delete it.', evidence: '' }) },
+    { id: 'pii_wrong', cat: 'other', title: 'Wrong name, address or other personal info', when: 'Old or wrong names, addresses, employers, SSN or birth-date variations on the report.',
+      to: ['bureaus'], type: 'pii_611',
+      fields: [F('wrongNames', 'Names that are not mine (one per line)', { type: 'textarea' }), F('wrongAddresses', 'Addresses where I never lived (one per line)', { type: 'textarea' }), F('wrongOther', 'Other wrong info (employers, SSN or DOB variations)', { type: 'textarea' })],
+      item: v => {
+        const parts = [['Names', v.wrongNames], ['Addresses', v.wrongAddresses], ['Other', v.wrongOther]].filter(p => String(p[1] || '').trim()).map(p => `${p[0]}: ${String(p[1]).trim().split(/\n+/).join('; ')}`);
+        return { creditor: 'Personal information', discrepancy: `The following personal information in my file is not mine or is inaccurate — ${parts.join(' | ') || '[list the wrong information]'}.`, requested: 'Delete the inaccurate personal information listed.', evidence: 'Photo ID and proof of current address' };
+      } },
+    { id: 'au_remove', cat: 'other', title: 'Remove me as an authorized user', when: 'A card the client is only an authorized user on is hurting their report. This is not a dispute.',
+      to: ['other'], otherLabel: 'Card issuer', otherRequired: true, type: 'au_removal',
+      fields: [F('creditor', 'Card issuer as reported', { required: true }), F('accountNumber', 'Account number (last 4 is enough)'), F('owner', 'Primary cardholder (optional)')],
+      item: v => ({ creditor: v.creditor, accountNumber: v.accountNumber, discrepancy: `I am listed as an authorized user on this account${v.owner ? ' (primary cardholder: ' + v.owner + ')' : ''}. I am not the account holder and I ask to be removed.`, requested: 'Remove me as an authorized user and have the account deleted from my credit file.', evidence: '' }) }
   ];
 
   const byId = id => TEMPLATES.find(t => t.id === id);
