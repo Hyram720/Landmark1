@@ -28,8 +28,10 @@
       else html = Views.dashboard(params);
     } catch (e) {
       console.error(e);
-      html = `<div class="callout bad"><b>Something went wrong rendering this page</b>${esc(e.message)}</div>`;
+      html = `<div class="callout bad"><b>Something went wrong showing this page</b>${esc(e.message)}<div class="row" style="margin-top:10px"><button class="btn" onclick="location.reload()">Reload</button><a class="btn ghost" href="#/">Go to dashboard</a></div></div>`;
     }
+    const emptyWs = !S().clients.length && a && !['settings', 'team', 'library'].includes(a);
+    if (emptyWs) html = `<div class="empty-banner"><div><b>Your workspace has no clients yet</b><div class="small">Pages fill in as you add clients. Load the demo to see every feature with sample data, or add your first client.</div></div><div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn primary" data-act="new-client">+ Add client</button></div></div>` + html;
     document.getElementById('view').innerHTML = html;
     if (nav === 'team') loadTeam();
     if (nav === 'settings') { loadAiSettings(); loadMailSettings(); loadPaySettings(); }
@@ -1339,6 +1341,13 @@
     window.addEventListener('hashchange', render);
   }
 
+  // Never leave a blank screen: if startup fails, say so and offer a reload.
+  function showFatal(msg) {
+    const v = document.getElementById('view');
+    if (v && !v.textContent.trim()) v.innerHTML = `<div class="callout bad"><b>Ledger couldn’t start</b>${esc(String(msg || 'Unknown error'))}<div class="row" style="margin-top:10px"><button class="btn" onclick="location.reload()">Reload</button></div></div>`;
+  }
+  window.addEventListener('error', e => showFatal(e.message));
+  window.addEventListener('unhandledrejection', e => showFatal((e.reason && e.reason.message) || e.reason));
   async function boot() {
     try { const th = localStorage.getItem('ledger-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) { /* ignore */ }
     let session = null;
