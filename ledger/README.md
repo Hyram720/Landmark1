@@ -75,6 +75,10 @@ Deploy it like the main site: one Node service with a persistent volume mounted 
   4. Attorney review (FCRA §§ 616–617).
   Each dispute shows where it stands, and **Draft Letter N** creates the next one.
 
+**Letter templates and dispute sequences:**
+- **Letter templates** (Library → Letter templates, or the button on any client's Disputes tab): 21 click-to-generate letters for judgments, evictions, student loans and collections. Answer a few questions; the letter is filled with the client's details and one letter is created per recipient.
+- **Dispute sequences** (sidebar → Sequences): tick *Run as a sequence* on a template, or click *Run as sequence* on any dispute. Ledger drafts Letter 2 (method of verification + direct dispute to the furnisher), Letter 3 (final notice + CFPB complaint narrative) and an attorney-review task automatically when each step is due — when a response is recorded as verified, or the legal deadline plus mail time passes. Deleted or corrected items end their branch. *Preview all letters* shows every letter in the sequence in full. Each drafted letter still needs the client's confirmation and approval before it goes out in Send round.
+
 **Business credit:**
 - Personal, business-only, or personal-plus-business clients.
 - Business profile: entity, EIN last 4, NAICS, D-U-N-S, and more.

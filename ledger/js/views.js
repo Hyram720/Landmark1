@@ -250,7 +250,7 @@
       ${list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(d => `<tr class="click" data-href="#/disputes/${d.id}">${showClient ? `<td>${clientName(d.clientId)}</td>` : ''}<td><b>${esc(d.recipient)}</b></td><td class="small">${esc(Law.DISPUTE_TYPES[d.type].label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td><td>${dBadge(Store.disputeState(d))}</td><td class="small nowrap">${date(d.sentAt)}</td><td class="small nowrap">${date(d.dueAt)}</td></tr>`).join('')}</tbody></table></div>`;
   }
   function clientDisputes(c) {
-    return card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
+    return (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
   }
 
   function invoiceTable(list, showClient) {
@@ -348,11 +348,44 @@
             `${editable ? `<button class="btn sm" data-act="gen-letter" data-id="${d.id}">${letter ? 'Regenerate' : 'Generate letter'}</button>` : ''}${letter ? `<button class="btn sm" data-act="print-letter" data-id="${letter.id}">${icon('print')} Print</button>` : ''}` })}
       </div><div class="stack">
         ${card('Strategy', (() => { const step = d.strategyStep || Law.strategyStep(d.type); return `<ul class="steps">${Law.STRATEGY.map(x => `<li><span class="tick ${x.step < step || (x.step === step && d.outcome && !['verified', 'frivolous', 'no_response'].includes(d.outcome)) ? 'on' : ''}" style="${x.step === step ? 'border-color:var(--accent);border-width:2px' : ''}">${x.step}</span><div class="grow"><b style="font-weight:${x.step === step ? 650 : 500}">${esc(x.title)}</b><div class="small muted">${esc(x.when)}</div></div></li>`).join('')}</ul>`; })(), { sub: 'Where this item stands on the escalation ladder' })}
+        ${d.seqId && (S().sequences || []).find(q => q.id === d.seqId) ? card('Sequence', `<p class="small">Letter ${root.Sequences.stepOf(S(), d)} of the sequence “${esc((S().sequences.find(q => q.id === d.seqId) || {}).title)}”. Record the response when it arrives; the next letter is drafted automatically.</p><a class="btn sm" href="#/sequences">Open sequences</a>`) : card('Sequence', '<p class="small">Run this dispute as a sequence so Letters 2, 3 and the attorney review step are drafted automatically when they are due.</p>' + `<button class="btn sm" data-act="seq-start" data-id="${d.id}">Run as sequence</button>`)}
         ${card('Next step', nextStep(d, letter, cs, st))}
         ${card('Timeline', `<ul class="steps">${timeline.map(([l, v]) => { const on = v && String(v).slice(0, 10) <= t; return `<li><span class="tick ${on ? 'on' : ''}">${on ? '✓' : ''}</span><div class="grow">${l}<div class="small muted">${v ? date(v) : '—'}${l === 'Response due' && v && !d.outcome ? ` · ${Law.daysBetween(t, v) < 0 ? Math.abs(Law.daysBetween(t, v)) + ' days overdue' : Law.daysBetween(t, v) + ' days left'}` : ''}</div></div></li>`; }).join('')}</ul>${d.tracking ? `<p class="small">Tracking <span class="mono">${esc(d.tracking)}</span></p>` : ''}<p class="small muted">${esc(type.note)}</p>`)}
         ${card('Recipient', `<div class="small"><b>${esc((Law.BUREAUS[d.recipient] || {}).name || d.recipient)}</b><br>${esc((Law.BUREAUS[d.recipient] || {}).address || d.recipientAddress || 'Address not set').replace(/\n/g, '<br>')}</div>`, { actions: `<button class="btn sm ghost" data-act="edit-recipient" data-id="${d.id}">Edit</button>` })}
         ${d.notes ? card('Notes', `<p class="small">${esc(d.notes)}</p>`) : ''}
       </div></div>`;
+  }
+
+  // ---------- Dispute sequences ----------
+  const SEQ_BADGE = { due: 'b-accent', active: 'b-info', won: 'b-ok', attorney: 'b-med', stopped: 'b-low' };
+  function seqCard(q, showClient) {
+    const Sq = root.Sequences, t = T();
+    const c = Store.get.client(q.clientId);
+    const st = Sq.status(S(), q, t);
+    const list = S().disputes.filter(d => d.seqId === q.id).sort((a, b) => Sq.stepOf(S(), a) - Sq.stepOf(S(), b) || String(a.createdAt).localeCompare(String(b.createdAt)));
+    const rows = list.map(d => {
+      const n = Sq.stepOf(S(), d);
+      const ds = Store.disputeState(d);
+      const until = !d.outcome && !list.some(x => x.parentId === d.id) && Sq.waitUntil(d);
+      return `<tr><td><b>Letter ${n}</b></td><td><a href="#/disputes/${d.id}">${esc(Law.DISPUTE_TYPES[d.type].label)}</a></td><td>${esc(d.recipient)}</td><td>${dBadge(ds)}</td><td class="small muted">${d.sentAt ? 'mailed ' + date(d.sentAt) : 'not mailed'}${until ? ' · next letter ' + date(until) : ''}</td></tr>`;
+    }).join('');
+    const actions = q.status === 'stopped'
+      ? `<button class="btn sm" data-act="seq-resume" data-id="${q.id}">Resume</button>`
+      : `${st.state === 'due' ? `<button class="btn sm primary" data-act="seq-run" data-id="${q.id}">Draft next letters</button>` : ''}<button class="btn sm" data-act="seq-preview" data-id="${q.id}">Preview all letters</button><button class="btn sm ghost" data-act="seq-stop" data-id="${q.id}">Stop</button>`;
+    return card(`${showClient && c ? `<a href="#/clients/${c.id}/disputes">${esc(c.name)}</a> · ` : ''}${esc(q.title)}`,
+      `<div class="table-wrap"><table><thead><tr><th>Step</th><th>Letter</th><th>To</th><th>Status</th><th>Dates</th></tr></thead><tbody>${rows}</tbody></table></div>`,
+      { flush: true, sub: `<span class="badge plain ${SEQ_BADGE[st.state] || ''}">${esc(st.label)}</span>${st.next ? ' · next check ' + date(st.next) : ''} · started ${date(q.startedAt)}`, actions });
+  }
+
+  function sequences() {
+    const Sq = root.Sequences, t = T();
+    const all = (S().sequences || []).slice().sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+    const due = all.filter(q => Sq.status(S(), q, t).state === 'due').length;
+    const how = card('How sequences work', `<ul class="steps">${Sq.PLAN.map(p => `<li><span class="tick on">${p.n}</span><div class="grow"><b>${esc(p.title)}</b><div class="small muted">${esc(p.text)}</div></div></li>`).join('')}</ul>
+      <p class="small muted">Ledger checks every sequence when you open the app and drafts the next letters when they are due. Each letter still needs the client’s confirmation and your approval, then goes out in <b>Send round</b>. Record each response (Deleted, Verified, No response…) on the dispute so the sequence knows what to do next. Removed items stop automatically.</p>`);
+    return head('Dispute sequences', 'Letter 1 → 2 → 3 → attorney review, drafted automatically on schedule',
+      `${due ? `<button class="btn primary" data-act="seq-run">Draft all due letters (${due})</button>` : ''}<button class="btn${due ? '' : ' primary'}" data-act="templates" data-seq="1">+ New sequence</button>`) +
+      `<div class="grid g-main"><div class="stack">${all.length ? all.map(q => seqCard(q, true)).join('') : card('', empty('No sequences yet', 'Click <b>New sequence</b>, pick a letter template, and tick <b>Run as a sequence</b>. Or open any dispute and click <b>Run as sequence</b>.'))}</div><div class="stack">${how}</div></div>`;
   }
 
   function nextStep(d, letter, cs, st) {
@@ -575,5 +608,5 @@
     </div></div>`;
   }
 
-  root.Views = { libraryResults, dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
+  root.Views = { sequences, seqCard, libraryResults, dashboard, clients, client, disputes, dispute, audit, billing, compliance, library, referrals, partners, team, settings, kindBadge, clientFindings, alerts, openDisputes, repeatRisk };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'sequences.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates, Sequences } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -227,4 +227,30 @@ test('letter templates fill every situation and build a valid letter', () => {
   assert.strictEqual(Templates.fill('judgment_satisfied', { plaintiff: 'A' }).ok, false);
   const cats = new Set(Templates.TEMPLATES.map(t => t.cat));
   ['judgments', 'evictions', 'student', 'collections'].forEach(c => assert.ok(cats.has(c)));
+});
+
+test('dispute sequences escalate verified items and stop on deletion', () => {
+  const ws = { disputes: [] };
+  const seq = { id: 'q1', furnisher: { name: 'Example Servicing', address: 'P.O. Box 1' }, status: 'active' };
+  const item = { creditor: 'Example Servicing', discrepancy: 'Reported late during deferment in March 2024.' };
+  const mk = (id, type, recipient, extra) => Object.assign({ id, seqId: 'q1', type, recipient, items: [item], createdAt: id }, extra || {});
+  ws.disputes.push(mk('a', 'cra_611', 'Experian'), mk('b', 'cra_611', 'Equifax'));
+  assert.strictEqual(Sequences.status(ws, seq, '2026-01-01').state, 'active'); // not mailed yet
+  Object.assign(ws.disputes[0], { sentAt: '2026-01-01', dueAt: '2026-02-05', outcome: 'verified' });
+  Object.assign(ws.disputes[1], { sentAt: '2026-01-01', dueAt: '2026-02-05', outcome: 'deleted' });
+  assert.strictEqual(Sequences.status(ws, seq, '2026-01-20').state, 'due');
+  const p = Sequences.plan(ws, seq, '2026-01-20');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(p.map(x => [x.type, x.recipient, x.step]))), [['mov_611a7', 'Experian', 2], ['furnisher_623', 'Example Servicing', 2]]);
+  // No response: due only after the deadline plus mail time.
+  const ws2 = { disputes: [mk('c', 'cra_611', 'TransUnion', { sentAt: '2026-01-01', dueAt: '2026-02-05' })] };
+  assert.strictEqual(Sequences.status(ws2, seq, '2026-02-06').state, 'active');
+  assert.strictEqual(Sequences.status(ws2, seq, '2026-02-10').state, 'due');
+  // Chain ends at the CFPB complaint -> attorney review.
+  const ws3 = { disputes: [mk('d', 'mov_611a7', 'Experian', { sentAt: '2026-01-01', outcome: 'verified' }), mk('e', 'cfpb_complaint', 'Experian', { parentId: 'd', sentAt: '2026-02-01', outcome: 'verified' })] };
+  assert.strictEqual(Sequences.status(ws3, { id: 'q1' }, '2026-03-01').state, 'attorney');
+  // All deleted -> won.
+  const ws4 = { disputes: [mk('f', 'cra_611', 'Experian', { sentAt: '2026-01-01', outcome: 'deleted' })] };
+  assert.strictEqual(Sequences.status(ws4, seq, '2026-03-01').state, 'won');
+  const rows = Sequences.outline(seq, [{ type: 'cra_611', recipient: 'Experian' }]);
+  assert.ok(rows.some(r => r.type === 'mov_611a7') && rows.some(r => r.type === 'furnisher_final') && rows.some(r => r.type === 'cfpb_complaint'));
 });

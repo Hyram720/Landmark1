@@ -18,7 +18,7 @@
         mailTransitDays: 5
       },
       clients: [], reports: [], disputes: [], letters: [], tasks: [], invoices: [], referrals: [], activity: [],
-      offers: root.Partners ? root.Partners.seedOffers() : [], partnerReferrals: [], signatures: [], messages: [], documents: []
+      offers: root.Partners ? root.Partners.seedOffers() : [], partnerReferrals: [], signatures: [], messages: [], documents: [], sequences: []
     };
   }
 
@@ -35,7 +35,7 @@
       // Add catalog offers introduced after this workspace was created.
       const have = new Set((ws.offers || []).map(o => o.key));
       ws.offers = (ws.offers || []).concat(seed.filter(o => !have.has(o.key)));
-      ['partnerReferrals', 'signatures', 'messages', 'documents'].forEach(k => { if (!Array.isArray(ws[k])) ws[k] = []; });
+      ['partnerReferrals', 'signatures', 'messages', 'documents', 'sequences'].forEach(k => { if (!Array.isArray(ws[k])) ws[k] = []; });
       return ws;
     }
     if (data.version !== 1) throw new Error('Unsupported backup version: ' + data.version);

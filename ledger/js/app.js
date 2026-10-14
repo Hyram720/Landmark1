@@ -37,6 +37,7 @@
     const open = Views.openDisputes().length;
     const al = Views.alerts().filter(x => x.sev === 'high').length;
     setCount('disputes', open);
+    setCount('sequences', (S().sequences || []).filter(q => root.Sequences.status(S(), q, T()).state === 'due').length, true);
     setCount('compliance', al, true);
     setCount('clients', S().clients.length);
     document.querySelector('.side').classList.remove('open');
@@ -407,17 +408,17 @@
   }
 
   // ---------- letter templates ----------
-  function templatePicker(cid) {
+  function templatePicker(cid, seq) {
     const Tp = root.Templates;
     modal({
-      title: 'Letter templates', wide: true,
+      title: seq ? 'New sequence — choose the first letter' : 'Letter templates', wide: true,
       body: Tp.CATS.map(([k, l, d]) => `<h3 style="margin:14px 0 4px">${esc(l)}</h3><p class="small muted" style="margin:0 0 8px">${esc(d)}</p><div class="tpl-grid">${Tp.TEMPLATES.filter(t => t.cat === k).map(t => `<button type="button" class="tpl-card" data-tpl="${t.id}"><b>${esc(t.title)}</b><small>${esc(t.when)}</small></button>`).join('')}</div>`).join(''),
       foot: '<button type="button" class="btn" data-close>Close</button>',
-      onOpen: f => f.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => templateModal(b.dataset.tpl, cid))
+      onOpen: f => f.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => templateModal(b.dataset.tpl, cid, seq))
     });
   }
 
-  function templateModal(id, cid) {
+  function templateModal(id, cid, seq) {
     const Tp = root.Templates, t = Tp.byId(id);
     if (!t) return;
     if (!S().clients.length) { toast('Add a client first'); return; }
@@ -437,8 +438,9 @@
         ${fieldHtml}
         <div class="field span2"><span>Send to</span><div class="row" style="flex-wrap:wrap;gap:14px">${kinds}</div></div>
         ${t.to.includes('other') ? field(t.otherLabel + ' — name', 'otherName', '') + field('Mailing address', 'otherAddress', '', { type: 'textarea', rows: 2 }) : ''}
+        <label class="check span2"><input type="checkbox" name="asSeq" value="1" ${seq ? 'checked' : ''}> <span><b>Run as a sequence</b> — Ledger drafts Letter 2 (method of verification${['student', 'collections'].includes(t.cat) ? ' + direct dispute to the ' + esc(t.otherLabel.toLowerCase()) : ''}), Letter 3 (final notice + CFPB complaint) and an attorney-review task automatically when each one is due.${['student', 'collections'].includes(t.cat) && t.to.includes('other') ? ' Fill in the name and address above even if you don’t tick it now, so later letters can go to them.' : ''}</span></label>
         <label class="check span2"><input type="checkbox" name="confirmed" value="1"> The client reviewed these facts and confirmed every statement is true</label></div>`,
-      foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Generate letters</button>',
+      foot: `<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${seq ? 'Start sequence' : 'Generate letters'}</button>`,
       onOpen: f => {
         const fillPick = () => {
           if (!f.elements.pick) return;
@@ -466,21 +468,86 @@
         if (!to.length) { toast('Choose at least one recipient'); return false; }
         if (to.includes('other') && (!d.otherName || !d.otherAddress)) { toast(`Enter the ${t.otherLabel.toLowerCase()} name and address`); return false; }
         if (!d.confirmed) { toast('Confirm the client verified every statement'); return false; }
+        let sq = null;
+        if (d.asSeq) {
+          const furn = ['student', 'collections'].includes(t.cat) && d.otherName && d.otherAddress ? { name: d.otherName.trim(), address: d.otherAddress.trim() } : null;
+          sq = { id: Store.uid(), clientId: d.clientId, title: t.title, templateId: t.id, furnisher: furn, status: 'active', startedAt: Store.now() };
+          S().sequences.push(sq);
+        }
         const made = to.map(k => {
           const kind = Law.BUREAUS[k] ? 'bureaus' : k;
           const recipient = kind === 'bureaus' ? k : kind === 'lexis' ? Tp.LEXIS.name : d.otherName.trim();
           const recipientAddress = kind === 'lexis' ? Tp.LEXIS.address : kind === 'other' ? d.otherAddress.trim() : '';
           const type = Tp.typeFor(t, kind);
-          const disp = { id: Store.uid(), clientId: d.clientId, type, round: nextRound(d.clientId, recipient), recipient, recipientAddress, status: 'draft', items: [Object.assign({}, res.item)], letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: 'From template: ' + t.title, template: t.id };
+          const disp = { id: Store.uid(), clientId: d.clientId, type, round: nextRound(d.clientId, recipient), recipient, recipientAddress, status: 'draft', items: [Object.assign({}, res.item)], letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: 'From template: ' + t.title, template: t.id, seqId: sq ? sq.id : undefined, strategyStep: 1 };
           S().disputes.push(disp);
           generateLetter(disp);
           return disp;
         });
-        Store.log(`Generated ${made.length} “${t.title}” letter${made.length > 1 ? 's' : ''} from a template`, d.clientId);
+        Store.log(`Generated ${made.length} “${t.title}” letter${made.length > 1 ? 's' : ''} from a template${sq ? ' and started a dispute sequence' : ''}`, d.clientId);
         Store.save();
         toast(`${made.length} letter${made.length > 1 ? 's' : ''} generated — review, approve and print`);
-        go(made.length === 1 ? `#/disputes/${made[0].id}` : `#/clients/${d.clientId}/disputes`);
+        go(sq ? '#/sequences' : made.length === 1 ? `#/disputes/${made[0].id}` : `#/clients/${d.clientId}/disputes`);
       }
+    });
+  }
+
+  /** Draft every due letter in active sequences (all, or one). Returns the number of letters drafted. */
+  function runSequences(onlyId) {
+    const Sq = root.Sequences, t = T();
+    let n = 0;
+    (S().sequences || []).filter(q => q.status !== 'stopped' && (!onlyId || q.id === onlyId)).forEach(q => {
+      Sq.plan(S(), q, t).forEach(p => {
+        const disp = { id: Store.uid(), clientId: q.clientId, type: p.type, round: nextRound(q.clientId, p.recipient), recipient: p.recipient, recipientAddress: p.recipientAddress, status: 'draft', items: p.items, letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: `Sequence “${q.title}” — Letter ${p.step}, after ${p.parent.recipient} ${p.parent.outcome ? 'answered: ' + p.parent.outcome.replace('_', ' ') : 'did not answer by the deadline'}.`, seqId: q.id, parentId: p.parent.id, strategyStep: Math.min(p.step, 3) };
+        S().disputes.push(disp);
+        buildLetter(disp);
+        n++;
+      });
+      const st = Sq.status(S(), q, t);
+      if (st.state === 'attorney' && !q.attorneyTaskAt) {
+        const c = Store.get.client(q.clientId);
+        S().tasks.push({ id: Store.uid(), clientId: q.clientId, title: `Attorney review: “${q.title}” still reported after Letter 3 — offer ${c ? c.name : 'the client'} a consumer attorney referral (FCRA §§ 616–617)`, due: t, done: false, createdAt: Store.now() });
+        q.attorneyTaskAt = Store.now();
+        Store.log(`Sequence “${q.title}” reached attorney review`, q.clientId);
+        n++;
+      }
+      if (st.state === 'won' && !q.completedAt) { q.completedAt = Store.now(); Store.log(`Sequence “${q.title}” completed — items removed or corrected`, q.clientId); }
+    });
+    if (n) { Store.log(`Sequences: drafted ${n} due letter(s) / step(s)`); Store.save(); }
+    return n;
+  }
+
+  /** Build a dispute's letter without re-rendering (used for batches). */
+  function buildLetter(d) {
+    const c = Store.get.client(d.clientId);
+    const prior = S().disputes.find(p => p.id === d.parentId) || S().disputes.filter(p => p.clientId === d.clientId && p.recipient === d.recipient && p.round < d.round && p.sentAt).sort((a, b) => b.round - a.round)[0];
+    const res = Letters.build(d.type, { client: c, recipient: recipientFor(d), recipientName: d.recipient, items: d.items, today: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), report: d.items[0] && Store.get.report(d.items[0].reportId), priorSentAt: prior && prior.sentAt, business: c && c.business });
+    if (!res.ok) return false;
+    let l = d.letterId && Store.get.letter(d.letterId);
+    if (!l) { l = { id: Store.uid(), clientId: d.clientId, disputeId: d.id, type: d.type, status: 'draft', createdAt: Store.now(), approvedAt: null }; S().letters.push(l); d.letterId = l.id; }
+    l.text = res.text;
+    return true;
+  }
+
+  function seqPreview(q) {
+    const Sq = root.Sequences;
+    const first = S().disputes.filter(d => d.seqId === q.id && !d.parentId);
+    const c = Store.get.client(q.clientId);
+    if (!first.length || !c) return;
+    const rows = Sq.outline(q, first);
+    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const letters = rows.map(r => {
+      const src = first.find(f => f.recipient === r.recipient) || first[0];
+      const recipient = r.type === 'cfpb_complaint' ? { name: 'Consumer Financial Protection Bureau', address: 'consumerfinance.gov/complaint' } : recipientFor({ recipient: r.recipient, recipientAddress: r.recipient === (q.furnisher || {}).name ? q.furnisher.address : src.recipientAddress });
+      const res = Letters.build(r.type, { client: c, recipient, recipientName: r.recipient.replace(/^CFPB \(about (.*)\)$/, '$1'), items: src.items, today, priorSentAt: r.step > 1 ? '[date Letter ' + (r.step - 1) + ' was mailed]' : null, business: c.business });
+      return { r, text: res.ok ? res.text : res.errors.join('; ') };
+    });
+    modal({
+      title: `All letters in this sequence — ${q.title}`, wide: true,
+      body: `<p class="small muted" style="margin-top:0">These are the complete letters Ledger will draft at each step if the item is still reported. Dates and the previous mailing date fill in automatically when each one is drafted.</p>` +
+        letters.map(({ r, text }) => `<h3 style="margin:16px 0 6px">Letter ${r.step} · ${esc(Law.DISPUTE_TYPES[r.type].label)} → ${esc(r.recipient)}</h3><textarea class="letter" readonly style="min-height:260px">${esc(text)}</textarea>`).join(''),
+      foot: `<button type="button" class="btn" data-print>${icon('print')} Print all</button><button type="button" class="btn primary" data-close>Close</button>`,
+      onOpen: f => { f.querySelector('[data-print]').onclick = () => UI.printDocs('Sequence letters — ' + q.title, letters.map(x => x.text)); }
     });
   }
 
@@ -553,7 +620,27 @@
 
   // ---------- actions ----------
   const A = {
-    templates: el => templatePicker(el.dataset.client),
+    templates: el => templatePicker(el.dataset.client, !!el.dataset.seq),
+    'seq-run': el => { const n = runSequences(el.dataset.id); toast(n ? `${n} letter(s) drafted — review, approve and add to Send round` : 'Nothing is due yet'); render(); },
+    'seq-stop': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q && confirm('Stop this sequence? Letters already drafted stay; no new letters will be drafted.')) { q.status = 'stopped'; commit(`Stopped sequence “${q.title}”`, q.clientId); } },
+    'seq-resume': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q) { q.status = 'active'; commit(`Resumed sequence “${q.title}”`, q.clientId); } },
+    'seq-preview': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q) seqPreview(q); },
+    'seq-start': el => {
+      const d = Store.get.dispute(el.dataset.id);
+      if (!d) return;
+      const toFurnisher = (Law.DISPUTE_TYPES[d.type] || {}).recipient !== 'bureau';
+      modal({
+        title: 'Run as a sequence',
+        body: `<p class="small" style="margin-top:0">This dispute becomes Letter 1. Ledger drafts Letter 2, Letter 3 and the attorney-review task automatically when each is due.</p><div class="form-grid">${toFurnisher ? '' : field('Furnisher / creditor for the Letter 2 direct dispute (optional)', 'fname', (d.items[0] || {}).creditor || '', { cls: 'span2' }) + field('Furnisher mailing address', 'faddress', '', { type: 'textarea', rows: 2, cls: 'span2', help: 'Leave blank to skip the direct dispute' })}</div>`,
+        foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Start sequence</button>',
+        onSubmit: x => {
+          const q = { id: Store.uid(), clientId: d.clientId, title: `${Law.DISPUTE_TYPES[d.type].label} — ${(d.items[0] || {}).creditor || d.recipient}`, furnisher: x.fname && x.faddress ? { name: x.fname, address: x.faddress } : null, status: 'active', startedAt: Store.now() };
+          S().sequences.push(q);
+          d.seqId = q.id;
+          commit(`Started a dispute sequence from round ${d.round} to ${d.recipient}`, d.clientId);
+        }
+      });
+    },
     'use-template': el => templateModal(el.dataset.tpl, el.dataset.client),
     'new-client': () => clientModal(),
     'edit-client': el => clientModal(Store.get.client(el.dataset.id)),
@@ -986,8 +1073,9 @@
       document.getElementById('who').innerHTML = '<span class="badge plain b-med" title="Data is stored in this browser only">Preview · local data</span>';
     }
     wire();
+    try { const n = runSequences(); if (n) setTimeout(() => toast(`Sequences: ${n} letter(s) drafted and waiting for approval`), 400); } catch (e) { console.error(e); }
     render();
   }
-  root.App = { boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
+  root.App = { runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
   document.addEventListener('DOMContentLoaded', boot);
 })(window);
