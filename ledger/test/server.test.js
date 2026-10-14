@@ -145,3 +145,16 @@ test('documents upload encrypted and are isolated per client', async () => {
   const other = client();
   assert.strictEqual((await other('GET', `/api/files/${doc.id}`)).status, 401);
 });
+
+test('Ledger AI needs an API key and sees the client file', async () => {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  const r = await owner('POST', '/api/assistant', { clientId, history: [{ role: 'user', content: 'What next?' }] });
+  assert.strictEqual(r.status, 501);
+  assert.strictEqual((await portal('POST', '/api/assistant', { history: [{ role: 'user', content: 'hi' }] })).status, 403, 'clients cannot use the staff assistant');
+  if (saved) process.env.ANTHROPIC_API_KEY = saved;
+  const { clientContext } = await import('../server/assistant.js');
+  const ctx = clientContext(db.data.workspace, clientId);
+  assert.match(ctx, /CLIENT FILE — Jordan Sample/);
+  assert.match(ctx, /CROA:/);
+});

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import express from 'express';
 import multer from 'multer';
 import { commsConfig, sendEmail, sendSms } from './comms.js';
+import { askAssistant, assistantConfigured } from './assistant.js';
 import { openDb } from './db.js';
 import { hashPassword, verifyPassword, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
 import { Law, Partners, Store } from './shared.js';
@@ -81,12 +82,13 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   // ---------- session ----------
   app.get('/api/session', (req, res) => {
     const u = currentUser(req);
-    res.json({ mode: 'server', setupRequired: D().users.length === 0, user: u ? publicUser(u) : null, encrypted: db.encrypted });
+    res.json({ mode: 'server', setupRequired: D().users.length === 0, setupCodeRequired: !!process.env.LEDGER_SETUP_CODE, user: u ? publicUser(u) : null, encrypted: db.encrypted });
   });
 
   app.post('/api/setup', (req, res) => {
     if (D().users.length) return res.status(409).json({ error: 'Already set up' });
-    const { name, email, password } = req.body || {};
+    const { name, email, password, setupCode } = req.body || {};
+    if (process.env.LEDGER_SETUP_CODE && setupCode !== process.env.LEDGER_SETUP_CODE) return res.status(403).json({ error: 'Enter the setup code from your server settings' });
     const prob = passwordProblem(password);
     if (!name || !/^\S+@\S+\.\S+$/.test(email || '')) return res.status(400).json({ error: 'Name and a valid email are required' });
     if (prob) return res.status(400).json({ error: prob });
@@ -285,7 +287,23 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   });
 
   // ---------- communications ----------
-  app.get('/api/config', need('owner', 'staff'), (req, res) => res.json(commsConfig()));
+  app.get('/api/config', need('owner', 'staff'), (req, res) => res.json(Object.assign(commsConfig(), { assistant: assistantConfigured() })));
+  const aiLimit = rateLimiter(60, 60 * 60 * 1000);
+  app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
+    if (!assistantConfigured()) return res.status(501).json({ error: 'Ledger AI needs ANTHROPIC_API_KEY set on the server' });
+    if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
+    const { clientId, history } = req.body || {};
+    if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });
+    try {
+      const out = await askAssistant({ ws: workspace(), clientId, history });
+      db.audit({ actor: req.user.email, action: 'assistant.ask', detail: clientId || 'general' });
+      db.persist();
+      res.json(out);
+    } catch (e) {
+      const status = e.status === 429 ? 429 : e.status >= 400 && e.status < 500 ? 400 : 502;
+      res.status(status).json({ error: status === 429 ? 'The AI service is busy. Try again in a minute.' : `Assistant error: ${e.message}` });
+    }
+  });
   app.post('/api/messages', need('owner', 'staff'), async (req, res) => {
     const { clientId, channel, subject, body } = req.body || {};
     const c = workspace().clients.find(x => x.id === clientId);

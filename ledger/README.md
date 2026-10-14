@@ -30,6 +30,8 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_DATA_DIR` | Where the database and uploaded files live (default `data/ledger`, which git ignores) |
 | `LEDGER_ENCRYPTION_KEY` | Encrypts the database and every uploaded file with AES-256-GCM. **Set this in production and keep it safe** — the data can't be read without it |
 | `LEDGER_RESEND_KEY` (or `RESEND_API_KEY`) + `LEDGER_EMAIL_FROM` | Sends client emails from the app through Resend. Without these, Email opens your mail app and logs the message |
+| `ANTHROPIC_API_KEY` | Turns on **Ledger AI**, the built-in credit repair expert (Claude). Without it, the AI panel explains how to enable it |
+| `LEDGER_SETUP_CODE` | Required to create the owner account on first visit, so nobody else can claim a freshly deployed server |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Sends texts through Twilio. Texts go only to clients with SMS consent on file (TCPA). Business texting also needs A2P 10DLC registration |
 
 Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
@@ -44,6 +46,13 @@ Deploy it like the main site: one Node service with a persistent volume mounted 
 - **Communication:** templates (welcome, report needed, ID and proof of address, round mailed, results, business next steps) and a per-client message log.
 - **Send round:** print every approved letter in one batch, then mark them all mailed with deadlines and follow-up tasks.
 - **Team & security:** owner and staff logins, invitations, an audit log, and client portal invitations.
+
+**Ledger AI (built-in expert assistant):**
+- Open it from **✦ Ledger AI** (bottom right) or **Ask AI** on any client.
+- It reads the open client's reports, Metro 2 findings, cross-bureau differences, disputes, CROA status and business-credit setup.
+- One-click prompts: explain the audit, plan the next round, draft a client update, build a 90-day rebuild plan, write a business credit plan. Also general questions: Metro 2 codes, marketing compliance review, consultation scripts.
+- Guardrails: it separates provable errors from items the client must document and from accurate negatives, and it refuses mass disputes, CPNs, false identity-theft claims and promised results. It also flags CROA problems it notices.
+- Staff only. Runs on Claude Opus 5.5 with automatic fallback if a request is declined. Rate-limited to 60 questions per staff member per hour. Every question is logged in the audit trail (not the content).
 
 **Business credit:**
 - Personal, business-only, or personal-plus-business clients.
@@ -97,7 +106,8 @@ In preview mode, data stays in the browser. The JSON-file database fits a small 
 | `js/sample.js` | Synthetic demo workspace |
 | `js/partners.js`, `js/business.js` | Partner program catalog; business-credit scores, checklist and vendors |
 | `js/portal.js`, `portal.html`, `apply.html` | Client portal and public onboarding form |
-| `server/` | Express API: auth, workspace sync, portal, e-sign, intake, uploads, messaging, tracked links |
+| `server/` | Express API: auth, workspace sync, portal, e-sign, intake, uploads, messaging, tracked links, Ledger AI (`server/assistant.js`) |
+| `js/assistant.js` | Ledger AI chat drawer |
 
 Tests: `npm run test:ledger`
 

@@ -104,6 +104,7 @@
         <div class="brand" style="padding:0;color:var(--ink)"><div class="brand-mark">L</div><div><b>Ledger</b><small style="color:var(--muted)">Credit workspace</small></div></div>
         <h1>${title}</h1>
         ${mode === 'setup' ? field('Your name', 'name', '', { required: true }) : ''}
+        ${mode === 'setup' && session.setupCodeRequired ? field('Setup code', 'setupCode', '', { required: true, help: 'The LEDGER_SETUP_CODE value from your server settings' }) : ''}
         ${mode !== 'invite' ? field('Email', 'email', '', { type: 'email', required: true }) : ''}
         ${field('Password', 'password', '', { type: 'password', required: true, help: mode === 'login' ? '' : 'At least 10 characters' })}
         <div id="auth-err" class="small" style="color:var(--high)"></div>
@@ -583,6 +584,7 @@
   }
 
   Object.assign(A, {
+    'ai': el => root.Assistant.toggle(undefined, el.dataset.id),
     'logout': async () => { await api('POST', '/api/logout'); location.reload(); },
     'invite-staff': () => modal({
       title: 'Invite staff member',
