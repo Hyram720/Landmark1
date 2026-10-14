@@ -864,6 +864,7 @@
       document.getElementById('who').innerHTML = `<span id="sync" class="badge plain b-ok">Saved</span><a class="btn ghost sm" href="#/team">${esc(session.user.name)}</a>`;
     } else {
       Store.load();
+      if (window.LEDGER_AUTO_DEMO && !Store.state.clients.length) Store.replace(Sample.build());
       document.getElementById('who').innerHTML = '<span class="badge plain b-med" title="Data is stored in this browser only">Preview · local data</span>';
     }
     wire();
