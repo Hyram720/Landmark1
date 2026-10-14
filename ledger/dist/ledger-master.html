@@ -721,13 +721,49 @@ Signed: ______________________   Date: __________`;
     { key: 'tradelines', label: '3–5 vendor or credit accounts reporting on-time payments', why: 'Payment history builds the file.' }
   ];
 
+  // Bureau reporting changes and sources disagree — always confirm with the vendor's credit department.
   const STARTER_VENDORS = [
-    { vendor: 'Uline', category: 'Shipping & packaging', terms: 'Net 30', reportsTo: 'Commonly reported to D&B — verify' },
-    { vendor: 'Quill', category: 'Office supplies', terms: 'Net 30', reportsTo: 'Commonly reported to D&B — verify' },
-    { vendor: 'Grainger', category: 'Industrial supplies', terms: 'Net 30', reportsTo: 'Verify reporting' },
-    { vendor: 'CreditStrong Business', category: 'Credit-builder account', terms: 'Monthly', reportsTo: 'Equifax Business, PayNet, SBFE per company — verify' },
+    { vendor: 'Uline', category: 'Shipping & packaging', terms: 'Net 30', reportsTo: 'D&B per most sources; some say Experian too — confirm' },
+    { vendor: 'Quill', category: 'Office supplies', terms: 'Net 30', reportsTo: 'D&B and/or Experian per sources — confirm' },
+    { vendor: 'Grainger', category: 'Industrial supplies', terms: 'Net 30', reportsTo: 'D&B per sources — confirm' },
+    { vendor: 'Crown Office Supplies', category: 'Office supplies (credit-builder program)', terms: 'Net 30 · annual fee', reportsTo: 'SBFE and Creditsafe, shared with D&B/Experian/Equifax per Ramp — confirm' },
+    { vendor: 'Summa Office Supplies', category: 'Office supplies', terms: 'Net 30', reportsTo: 'Equifax and Experian Business per Tipalti — confirm' },
+    { vendor: 'CreditStrong Business', category: 'Credit-builder account', terms: 'Monthly', reportsTo: 'Business bureaus per company — confirm current list' },
     { vendor: 'Nav Prime', category: 'Monitoring + tradeline', terms: 'Monthly', reportsTo: 'Verify current reporting' }
   ];
+
+  /**
+   * 90-day fast-track plan for a new business. Each step has a day offset; steps tied to a
+   * foundation checklist item count as done when that item is checked.
+   */
+  const FAST_TRACK = [
+    { day: 0, key: 'foundation', checklist: ['entity', 'ein', 'nameMatch', 'address', 'bank'], title: 'Foundation: entity in good standing, EIN, one legal name and address everywhere, business bank account', how: 'Use the exact same legal name, address and phone on the state filing, IRS, bank, licenses and every application.' },
+    { day: 1, key: 'phone-web', checklist: ['phone', 'web', 'naics'], title: 'Business phone listed in 411, website and domain email, accurate NAICS code', how: 'Lenders verify the phone listing and website. Pick the NAICS code that truly describes the business — some codes are treated as higher risk.' },
+    { day: 1, key: 'duns', checklist: ['duns'], title: 'Request a free D-U-N-S Number from Dun & Bradstreet', how: 'Free at dnb.com (Get a D-U-N-S). D&B says it can take up to 30 business days — there is no need to pay for expedited service to build credit.', url: 'https://www.dnb.com/en-us/smb/duns/get-a-duns.html' },
+    { day: 3, key: 'monitor', checklist: ['monitoring'], title: 'Set up business credit monitoring (e.g. Nav)', how: 'Watch the D&B, Experian and Equifax business files appear and catch errors early.' },
+    { day: 7, key: 'vendors1', title: 'Open 2–3 starter net-30 vendor accounts', how: 'Choose vendors you will actually use (see the starter list). Make a small real purchase with each and pay before the due date — PAYDEX rewards paying early.' },
+    { day: 10, key: 'builder', title: 'Add a business credit-builder account', how: 'An installment-style builder account adds another reporting tradeline while vendor accounts season.' },
+    { day: 30, key: 'verify', title: 'Confirm the first accounts are reporting', how: 'Check your monitoring. If an account is not reporting after a full billing cycle, call the vendor’s credit department with your EIN and D-U-N-S.' },
+    { day: 35, key: 'vendors2', checklist: ['tradelines'], title: 'Add 2 more reporting accounts (aim for 3–5 total)', how: 'Spread across bureaus — some vendors report only to D&B, others to Experian or Equifax.' },
+    { day: 45, key: 'books', checklist: ['books', 'licenses'], title: 'Bookkeeping, financial statements, licenses and permits in order', how: 'Larger credit lines ask for statements and licenses.' },
+    { day: 60, key: 'store', title: 'Apply for a store or fleet account in the business name', how: 'With several reporting tradelines, retail and fleet accounts become easier. Many still ask for a personal guarantee early on.' },
+    { day: 75, key: 'scores', title: 'Record business scores (PAYDEX, Intelliscore, Equifax) in Ledger', how: 'Use the score log on this page to track progress.' },
+    { day: 90, key: 'next', checklist: ['guarantor'], title: 'Review: business credit card, SBA microloan or line of credit', how: 'Apply only for what the business needs. Owner credit still matters for most early approvals — keep personal utilization low.' }
+  ];
+
+  function planStatus(c, today) {
+    const plan = c.creditPlan;
+    if (!plan || !plan.startedAt) return null;
+    const done = c.businessChecklist || {};
+    const steps = FAST_TRACK.map(s => {
+      const due = addDays(plan.startedAt, s.day);
+      const complete = (plan.done || {})[s.key] || (s.checklist && s.checklist.every(k => done[k]));
+      return Object.assign({}, s, { due, complete: !!complete, overdue: !complete && due < today });
+    });
+    return { startedAt: plan.startedAt, steps, done: steps.filter(s => s.complete).length, total: steps.length };
+  }
+  function addDays(d, n) { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+
 
   const BUREAU_CONTACTS = {
     'Dun & Bradstreet': 'Update or dispute through D&B’s customer service / D-U-N-S Manager.',
@@ -741,7 +777,7 @@ Signed: ______________________   Date: __________`;
     return { done: n, total: FOUNDATION.length, pct: Math.round(n / FOUNDATION.length * 100) };
   }
 
-  const api = { SCORE_MODELS, FOUNDATION, STARTER_VENDORS, BUREAU_CONTACTS, fundability };
+  const api = { SCORE_MODELS, FOUNDATION, STARTER_VENDORS, BUREAU_CONTACTS, FAST_TRACK, fundability, planStatus };
   root.Business = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -3042,6 +3078,106 @@ Thank you for considering this request.`
 
 </script>
   <script>
+/*
+ * Buying an operating business: deal tracker, due-diligence checklist with links to official
+ * live searches, simple valuation checks and red flags, and a printable report.
+ * Helps a client evaluate a real business with real history — not to borrow another company's
+ * credit. Any change of ownership must be disclosed accurately to lenders.
+ */
+(function (root) {
+  'use strict';
+
+  const STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
+  const enc = encodeURIComponent;
+  const slug = s => String(s || '').toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
+
+  const LINKS = {
+    opencorporates: d => `https://opencorporates.com/companies?q=${enc(d.name || '')}${d.state ? '&jurisdiction_code=us_' + d.state.toLowerCase() : ''}`,
+    dnb: () => 'https://www.dnb.com/en-us/smb/duns/duns-lookup.html',
+    pacer: () => 'https://pcl.uscourts.gov/',
+    irs8821: () => 'https://www.irs.gov/forms-pubs/about-form-8821',
+    sba: () => 'https://www.sba.gov/business-guide/plan-your-business/buy-existing-business-or-franchise',
+    listings: st => st && STATES[st] ? `https://www.bizbuysell.com/${slug(STATES[st])}-businesses-for-sale/` : 'https://www.bizbuysell.com/businesses-for-sale/'
+  };
+
+  // Due-diligence checks. `link` returns a live search URL where one exists.
+  const CHECKS = [
+    // Identity & standing
+    { key: 'filing', group: 'Identity & standing', label: 'Entity is active and in good standing with the Secretary of State', why: 'Inactive, dissolved or forfeited entities cannot be sold as going concerns without reinstatement — and reinstating one you do not own is not allowed.', link: d => LINKS.opencorporates(d), linkText: 'Search state records' },
+    { key: 'owners', group: 'Identity & standing', label: 'Seller is the documented owner (officers, members, stock or membership ledger)', why: 'Only the real owner can sell. Get the operating agreement or bylaws and ownership records.' },
+    { key: 'age', group: 'Identity & standing', label: 'Formation date and operating history verified (not just a shelf entity)', why: 'Confirm the business actually operated — tax returns, bank statements, customers — not only that a filing exists.' },
+    { key: 'goodstanding', group: 'Identity & standing', label: 'Certificate of good standing ordered from the state', why: 'Official proof of status as of a current date; lenders and escrow often require it.' },
+    // Liens, judgments, debts
+    { key: 'ucc', group: 'Liens, judgments & debts', label: 'UCC lien search (Secretary of State)', why: 'UCC-1 filings show lenders with a security interest in the business’s assets. Liens must be paid off or released at closing.', link: d => LINKS.opencorporates(d), linkText: 'Find the state filing office' },
+    { key: 'taxliens', group: 'Liens, judgments & debts', label: 'Federal and state tax lien search (county recorder and Secretary of State)', why: 'Tax liens can follow the assets and, in some purchases, the buyer.' },
+    { key: 'judgments', group: 'Liens, judgments & debts', label: 'Judgment and lawsuit search (state and county courts)', why: 'Pending suits and unpaid judgments affect value and may transfer in a stock purchase.' },
+    { key: 'bankruptcy', group: 'Liens, judgments & debts', label: 'Federal bankruptcy and federal case search (PACER)', why: 'Shows bankruptcies and federal lawsuits involving the business or owners.', link: () => LINKS.pacer(), linkText: 'PACER case locator' },
+    { key: 'bizcredit', group: 'Liens, judgments & debts', label: 'Business credit reports (D&B, Experian, Equifax) with the seller’s permission', why: 'Shows payment history, collections, liens and judgments reported on the business.', link: () => LINKS.dnb(), linkText: 'D-U-N-S lookup' },
+    { key: 'debts', group: 'Liens, judgments & debts', label: 'Debt schedule, leases and personal guarantees disclosed', why: 'Know every loan, equipment lease, merchant cash advance and guarantee before you sign.' },
+    // Taxes
+    { key: 'irs', group: 'Taxes', label: 'IRS account transcripts (seller signs Form 8821 or 4506-C)', why: 'Confirms filed returns and any balance owed to the IRS.', link: () => LINKS.irs8821(), linkText: 'Form 8821' },
+    { key: 'statetax', group: 'Taxes', label: 'State sales and payroll tax clearance letter', why: 'Many states hold a buyer liable for the seller’s unpaid sales tax unless a clearance certificate is obtained before closing.' },
+    { key: 'bulksale', group: 'Taxes', label: 'Bulk-sale / successor-liability notice filed where the state requires it', why: 'Some states require notifying the tax department before buying a business’s assets.' },
+    // Financials
+    { key: 'returns', group: 'Financials', label: '3 years of business tax returns match the profit-and-loss statements', why: 'Numbers in a listing are the seller’s claims; tax returns are the check.' },
+    { key: 'bank', group: 'Financials', label: '12–24 months of bank statements support the stated revenue', why: 'Deposits should line up with reported sales.' },
+    { key: 'receivables', group: 'Financials', label: 'Accounts receivable/payable aging and inventory count reviewed', why: 'Old receivables and unpaid vendors change what you are really buying.' },
+    // Operations
+    { key: 'licenses', group: 'Operations', label: 'Licenses and permits can be transferred or re-issued to the buyer', why: 'Some licenses are personal to the owner and must be re-applied for.' },
+    { key: 'lease', group: 'Operations', label: 'Lease can be assigned (landlord consent in writing)', why: 'A business without its location may be worth far less.' },
+    { key: 'contracts', group: 'Operations', label: 'Key customer, supplier and franchise contracts are assignable', why: 'Change-of-control clauses can end contracts at sale.' },
+    { key: 'employees', group: 'Operations', label: 'Employees, contractors and payroll records reviewed', why: 'Misclassified workers and unpaid wages can carry over.' },
+    { key: 'reputation', group: 'Operations', label: 'Online reviews, BBB and complaint history checked', why: 'Reputation is part of the value you are paying for.' },
+    // Structure & closing
+    { key: 'structure', group: 'Structure & closing', label: 'Asset vs. stock purchase decided with a CPA and attorney', why: 'Asset purchases usually leave old liabilities with the seller but start a new credit file; stock purchases keep the entity, its history and its liabilities.' },
+    { key: 'escrow', group: 'Structure & closing', label: 'Escrow, holdback and seller representations & indemnities in the purchase agreement', why: 'Protects you if undisclosed debts or problems appear after closing.' },
+    { key: 'disclose', group: 'Structure & closing', label: 'Plan to disclose the ownership change and date accurately to lenders and bureaus', why: 'Business credit history belongs to the entity. Lenders ask about ownership changes; misstating time in business or ownership on an application can be fraud.' }
+  ];
+
+  const STATUS = [['pending', 'To do'], ['clear', 'Clear'], ['issue', 'Issue found'], ['na', 'Not applicable']];
+
+  const yearsBetween = (from, to) => { if (!from) return null; const a = new Date(from + 'T00:00:00'), b = new Date(to + 'T00:00:00'); return isNaN(a) ? null : Math.round(((b - a) / (365.25 * 864e5)) * 10) / 10; };
+
+  /** Progress, red flags and simple valuation checks for a deal. */
+  function evaluate(d, today) {
+    const checks = d.checks || {};
+    const done = CHECKS.filter(c => ['clear', 'na'].includes((checks[c.key] || {}).status)).length;
+    const issues = CHECKS.filter(c => (checks[c.key] || {}).status === 'issue');
+    const flags = issues.map(c => ({ sev: 'high', text: `${c.label}: ${(checks[c.key] || {}).note || 'issue found'}` }));
+    const years = yearsBetween(d.formedOn, today);
+    const price = Number(d.askingPrice) || 0, sde = Number(d.sde) || 0, rev = Number(d.revenue) || 0;
+    const multiple = price && sde ? Math.round((price / sde) * 10) / 10 : null;
+    const revMultiple = price && rev ? Math.round((price / rev) * 100) / 100 : null;
+    if (years !== null && years < 2) flags.push({ sev: 'medium', text: `Only ${years} years since formation — limited history to verify.` });
+    if (multiple !== null && multiple > 4) flags.push({ sev: 'medium', text: `Asking price is ${multiple}× seller’s discretionary earnings — high for most small businesses (often 2–3.5×). Ask how it was valued.` });
+    if (price && !sde && !rev) flags.push({ sev: 'medium', text: 'No revenue or earnings figures yet — get financials before negotiating.' });
+    if (!d.formedOn) flags.push({ sev: 'low', text: 'Formation date not recorded yet.' });
+    return { done, total: CHECKS.length, pct: Math.round((done / CHECKS.length) * 100), issues: issues.length, flags, years, multiple, revMultiple };
+  }
+
+  /** Plain-text due-diligence report. */
+  function report(d, client, today, company) {
+    const e = evaluate(d, today);
+    const checks = d.checks || {};
+    const groups = [...new Set(CHECKS.map(c => c.group))];
+    const lab = Object.fromEntries(STATUS);
+    const L = [`DUE-DILIGENCE REPORT — ${d.name}`, `Prepared ${today}${company && company.name ? ' by ' + company.name : ''} for ${client.name}`, '',
+      `State: ${d.state || '—'}  Entity #: ${d.entityNumber || '—'}  Formed: ${d.formedOn || '—'}${e.years !== null ? ` (${e.years} years)` : ''}`,
+      `Asking price: ${d.askingPrice ? '$' + Number(d.askingPrice).toLocaleString() : '—'}  Revenue: ${d.revenue ? '$' + Number(d.revenue).toLocaleString() : '—'}  SDE: ${d.sde ? '$' + Number(d.sde).toLocaleString() : '—'}${e.multiple !== null ? `  (${e.multiple}× SDE)` : ''}`,
+      `Structure: ${d.structure || 'undecided'}  Listing: ${d.listingUrl || '—'}`, '', `Progress: ${e.done} of ${e.total} checks complete · ${e.issues} issue(s)`, ''];
+    if (e.flags.length) { L.push('RED FLAGS'); e.flags.forEach(f => L.push(`  • ${f.text}`)); L.push(''); }
+    groups.forEach(g => { L.push(g.toUpperCase()); CHECKS.filter(c => c.group === g).forEach(c => { const s = checks[c.key] || {}; L.push(`  [${lab[s.status || 'pending']}] ${c.label}${s.note ? ' — ' + s.note : ''}`); }); L.push(''); });
+    L.push('This checklist organizes the buyer’s review. It is not legal, tax or accounting advice — have an attorney and CPA review the purchase agreement and structure before closing.');
+    return L.join('\n');
+  }
+
+  const api = { STATES, LINKS, CHECKS, STATUS, evaluate, report, yearsBetween };
+  root.Acquisition = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
 /* Small DOM helpers shared by the views. */
 (function (root) {
   'use strict';
@@ -3361,11 +3497,11 @@ Thank you for considering this request.`
     const c = Store.get.client(params.id);
     if (!c) return empty('Client not found', '<a href="#/clients">Back to clients</a>');
     const tab = params.tab || 'overview';
-    const tabs = [['overview', 'Overview']].concat(c.kind !== 'personal' ? [['business', 'Business credit']] : [], c.kind !== 'business' ? [['reports', 'Credit reports'], ['audit', 'Metro 2 audit']] : [],
+    const tabs = [['overview', 'Overview']].concat(c.kind !== 'personal' ? [['business', 'Business credit'], ['acquisition', 'Buy a business']] : [], c.kind !== 'business' ? [['reports', 'Credit reports'], ['audit', 'Metro 2 audit']] : [],
       [['disputes', 'Disputes'], ['documents', 'Documents'], ['messages', 'Messages'], ['partners', 'Recommendations'], ['billing', 'Billing'], ['compliance', 'Agreements'], ['activity', 'Activity']]);
     const cs = Store.croaStatus(c);
     const nFind = clientFindings(c.id).filter(f => f.severity !== 'low').length;
-    const body = ({ overview: clientOverview, business: clientBusiness, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs);
+    const body = ({ overview: clientOverview, business: clientBusiness, acquisition: clientAcquisition, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs, params);
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
       `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}${c.status === 'lead' ? `<button class="btn" data-act="analysis" data-id="${c.id}">${icon('print')} Credit analysis</button>` : `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button>`}<button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
@@ -3815,6 +3951,7 @@ Thank you for considering this request.`
       ${B.SCORE_MODELS.filter(m => ['paydex', 'intelliscore', 'eqx-payment'].includes(m.key)).map(m => { const s = latest[m.key]; return kpi(m.bureau + ' · ' + m.name, s ? s.score : '—', s ? `as of ${date(s.date)} · ${m.lowerIsBetter ? (s.score <= m.good ? 'strong' : 'needs work') : (s.score >= m.good ? 'strong' : 'needs work')}` : `Range ${m.min}–${m.max}`); }).join('')}
     </div>
     <div class="grid g-main"><div class="stack">
+      ${planCard(c)}
       ${card('Fundability checklist', `<form data-form="biz-checklist" data-id="${c.id}"><ul class="steps">${B.FOUNDATION.map(f => `<li><input type="checkbox" name="${f.key}" ${done[f.key] ? 'checked' : ''} style="margin-top:3px"><div class="grow"><b style="font-weight:550">${esc(f.label)}</b><div class="small muted">${esc(f.why)}${done[f.key] ? ' · done ' + date(done[f.key]) : ''}</div></div></li>`).join('')}</ul><div class="row" style="margin-top:8px"><button class="btn primary">Save checklist</button><div class="bar" style="flex:1;max-width:260px"><i style="width:${fz.pct}%"></i></div></div></form>`, { sub: 'What lenders and business bureaus check before extending credit' })}
       ${card('Vendor & credit tradelines', vendors.length ? `<div class="table-wrap"><table><thead><tr><th>Account</th><th>Terms</th><th>Reports to</th><th class="num">Limit</th><th>Opened</th><th>Status</th><th></th></tr></thead><tbody>${vendors.map(v => `<tr><td><b>${esc(v.vendor)}</b><div class="small muted">${esc(v.category || '')}</div></td><td class="small">${esc(v.terms || '')}</td><td class="small">${esc(v.reportsTo || '')}</td><td class="num">${money(v.limit)}</td><td class="small nowrap">${date(v.opened)}</td><td><span class="badge ${v.status === 'current' ? 'b-ok' : v.status === 'late' ? 'b-high' : 'b-low'}">${esc(v.status || 'applied')}</span></td><td class="right"><button class="btn sm ghost" data-act="edit-vendor" data-id="${c.id}" data-vid="${v.id}">Edit</button></td></tr>`).join('')}</tbody></table></div>` : empty('No tradelines yet', 'Track net-30 vendors and business cards as they start reporting.'),
         { flush: true, actions: `<button class="btn sm" data-act="edit-vendor" data-id="${c.id}">${icon('plus')} Account</button>` })}
@@ -3827,6 +3964,37 @@ Thank you for considering this request.`
     </div></div>`;
   }
 
+  function planCard(c) {
+    const B = root.Business, t = T();
+    const ps = B.planStatus(c, t);
+    if (!ps) return card('90-day business credit plan', `<p class="small">A dated, step-by-step plan for a new business: foundation, free D-U-N-S Number, monitoring, starter vendor accounts that report, a credit-builder account, then store/fleet accounts and a 90-day review. Ledger creates a task for every step and ticks steps off as the checklist below is completed.</p><button class="btn primary" data-act="plan-start" data-id="${c.id}">Start the 90-day plan</button>`, { sub: 'Fast track for new companies — built on real, reporting accounts' });
+    const pct = Math.round(ps.done / ps.total * 100);
+    return card('90-day business credit plan', `<div class="row" style="margin-bottom:10px"><div class="bar" style="flex:1"><i style="width:${pct}%"></i></div><span class="small muted">${ps.done} of ${ps.total} steps</span></div><ul class="steps">${ps.steps.map(st => `<li><span class="tick ${st.complete ? 'on' : ''}" style="${st.overdue ? 'border-color:var(--high)' : ''}">${st.complete ? '✓' : ''}</span><div class="grow"><b style="font-weight:550">Day ${st.day} · ${esc(st.title)}</b><div class="small muted">${esc(st.how)}${st.url ? ` <a href="${esc(st.url)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div><div class="small ${st.overdue ? '' : 'muted'}" style="${st.overdue ? 'color:var(--high)' : ''}">${st.complete ? 'Done' : (st.overdue ? 'Overdue · was due ' : 'Due ') + date(st.due)}</div></div>${st.checklist ? '' : `<label class="check small"><input type="checkbox" data-act="plan-step" data-id="${c.id}" data-key="${st.key}" ${st.complete ? 'checked' : ''}> Done</label>`}</li>`).join('')}</ul>`,
+      { sub: `Started ${date(ps.startedAt)}`, actions: `<button class="btn sm" data-act="plan-print" data-id="${c.id}">${icon('print')} Print plan</button>` });
+  }
+
+  // ---------- Buy a business (acquisition due diligence) ----------
+  function clientAcquisition(c, cs, params) {
+    const Aq = root.Acquisition, t = T();
+    const deals = c.deals || [];
+    const sel = deals.find(d => d.id === (params && params.deal)) || deals[0];
+    const st = (c.business || {}).stateOfFormation || c.state || '';
+    const finder = card('Find a business to buy', `<p class="small">Search live listings of operating businesses for sale, then add the ones worth a closer look and work through due diligence here.</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><select id="aq-state" style="width:auto"><option value="">All states</option>${Object.entries(Aq.STATES).map(([k, v]) => `<option value="${k}" ${k === st ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select><button class="btn" data-act="aq-listings">Open live listings ↗</button><a class="btn ghost" href="${Aq.LINKS.sba()}" target="_blank" rel="noopener">SBA guide to buying a business ↗</a><button class="btn primary" data-act="aq-add" data-id="${c.id}">+ Add a business</button></div>
+      <p class="small muted" style="margin-top:10px">Business credit history belongs to the legal entity. In a stock or membership-interest purchase the entity keeps its EIN, D-U-N-S Number and history; in an asset purchase the buyer’s company starts its own file. Always disclose the change of ownership accurately to lenders.</p>`);
+    if (!sel) return `<div class="stack">${finder}${card('', empty('No target businesses yet', 'Add a business you are considering to start the due-diligence checklist.'))}</div>`;
+    const e = Aq.evaluate(sel, t);
+    const checks = sel.checks || {};
+    const groups = [...new Set(Aq.CHECKS.map(x => x.group))];
+    const list = deals.length > 1 ? `<div class="tabs" style="margin-bottom:12px">${deals.map(d => `<a href="#/clients/${c.id}/acquisition?deal=${d.id}" class="${d.id === sel.id ? 'active' : ''}">${esc(d.name)}</a>`).join('')}</div>` : '';
+    return `<div class="stack">${finder}${list}
+      <div class="grid g4">${kpi('Due diligence', e.pct + '%', `${e.done} of ${e.total} checks`)}${kpi('Issues found', e.issues, e.issues ? 'Resolve before closing' : 'None so far')}${kpi('Years in business', e.years === null ? '—' : e.years, sel.formedOn ? 'formed ' + date(sel.formedOn) : 'add formation date')}${kpi('Price ÷ earnings', e.multiple === null ? '—' : e.multiple + '×', e.revMultiple !== null ? e.revMultiple + '× revenue' : 'add SDE or revenue')}</div>
+      ${e.flags.length ? `<div class="callout warn"><b>Red flags</b>${e.flags.map(f => esc(f.text)).join('<br>')}</div>` : ''}
+      ${card(esc(sel.name), `<div class="small muted" style="margin-bottom:8px">${[sel.state && Aq.STATES[sel.state], sel.entityNumber && 'Entity # ' + sel.entityNumber, sel.askingPrice && 'Asking ' + money(sel.askingPrice), sel.structure].filter(Boolean).map(esc).join(' · ')}${sel.listingUrl ? ` · <a href="${esc(sel.listingUrl)}" target="_blank" rel="noopener">Listing ↗</a>` : ''}</div>
+        ${groups.map(g => `<h3 style="margin:14px 0 6px">${esc(g)}</h3><div class="table-wrap"><table><tbody>${Aq.CHECKS.filter(x => x.group === g).map(x => { const s = checks[x.key] || {}; return `<tr><td><b style="font-weight:550">${esc(x.label)}</b><div class="small muted">${esc(x.why)}</div>${s.note ? `<div class="small">Note: ${esc(s.note)}</div>` : ''}</td><td class="nowrap">${x.link ? `<a class="btn sm ghost" href="${esc(x.link(sel))}" target="_blank" rel="noopener">${esc(x.linkText || 'Search')} ↗</a>` : ''}</td><td class="nowrap"><select data-act="aq-check" data-id="${c.id}" data-deal="${sel.id}" data-key="${x.key}" style="width:auto">${Aq.STATUS.map(([k, l]) => `<option value="${k}" ${k === (s.status || 'pending') ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="btn sm ghost" data-act="aq-note" data-id="${c.id}" data-deal="${sel.id}" data-key="${x.key}">Note</button></td></tr>`; }).join('')}</tbody></table></div>`).join('')}`,
+        { actions: `<button class="btn sm" data-act="aq-edit" data-id="${c.id}" data-deal="${sel.id}">Edit</button><button class="btn sm" data-act="aq-print" data-id="${c.id}" data-deal="${sel.id}">${icon('print')} Report</button><button class="btn sm ghost danger" data-act="aq-delete" data-id="${c.id}" data-deal="${sel.id}">Remove</button>` })}
+      <p class="small muted">This checklist organizes the review; it is not legal, tax or accounting advice. Have an attorney and CPA review the purchase agreement and structure before closing.</p></div>`;
+  }
   // ---------- Partner recommendations ----------
   const stageLabel = k => (root.Partners.REFERRAL_STAGES.find(s => s[0] === k) || [k, k])[1];
   const offerStatus = st => { const [l, c] = root.Partners.STATUS_LABEL[st] || [st, 'b-low']; return `<span class="badge ${c}">${esc(l)}</span>`; };
@@ -4329,6 +4497,29 @@ Thank you for considering this request.`
     commit(`Generated ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
+  function aqModal(c, d) {
+    const isNew = !d;
+    d = d || { structure: '' };
+    const Aq = root.Acquisition;
+    modal({
+      title: isNew ? 'Add a business to evaluate' : 'Edit ' + d.name, wide: true,
+      body: `<div class="form-grid">${field('Business legal name', 'name', d.name, { required: true, cls: 'span2' })}
+        ${field('State', 'state', d.state || (c.business || {}).stateOfFormation || '', { type: 'select', options: [['', '—']].concat(Object.entries(Aq.STATES)) })}${field('State entity / file number', 'entityNumber', d.entityNumber)}
+        ${field('Formation date', 'formedOn', d.formedOn, { type: 'date' })}${field('Structure', 'structure', d.structure, { type: 'select', options: [['', 'Undecided'], ['Asset purchase', 'Asset purchase'], ['Stock / membership-interest purchase', 'Stock / membership-interest purchase']] })}
+        ${field('Asking price ($)', 'askingPrice', d.askingPrice, { type: 'number', attrs: 'min="0"' })}${field('Annual revenue ($)', 'revenue', d.revenue, { type: 'number', attrs: 'min="0"' })}
+        ${field('Seller’s discretionary earnings / cash flow ($)', 'sde', d.sde, { type: 'number', attrs: 'min="0"' })}${field('Listing link', 'listingUrl', d.listingUrl, { placeholder: 'https://…' })}</div>`,
+      onSubmit: x => {
+        if (!x.name) { toast('Name is required'); return false; }
+        if (x.listingUrl && !/^https?:\/\//.test(x.listingUrl)) { toast('Listing link must start with https://'); return false; }
+        c.deals = c.deals || [];
+        Object.assign(d, x);
+        if (isNew) { Object.assign(d, { id: Store.uid(), createdAt: Store.now(), checks: {} }); c.deals.push(d); }
+        Store.log(`${isNew ? 'Added' : 'Updated'} acquisition target ${x.name}`, c.id);
+        Store.save();
+        go(`#/clients/${c.id}/acquisition?deal=${d.id}`);
+      }
+    });
+  }
   // ---------- invoice documents ----------
   function invoicePdf(id) {
     const inv = S().invoices.find(x => x.id === id);
@@ -4693,6 +4884,36 @@ Thank you for considering this request.`
 
   // ---------- actions ----------
   const A = {
+    'plan-start': el => {
+      const c = Store.get.client(el.dataset.id);
+      c.creditPlan = { startedAt: T(), done: {} };
+      root.Business.FAST_TRACK.forEach(st => S().tasks.push({ id: Store.uid(), clientId: c.id, title: `Business credit plan · Day ${st.day}: ${st.title}`, due: Law.addDays(T(), st.day), done: false, createdAt: Store.now(), planKey: st.key }));
+      commit(`Started the 90-day business credit plan (${root.Business.FAST_TRACK.length} dated tasks)`, c.id);
+    },
+    'plan-step': el => {
+      const c = Store.get.client(el.dataset.id);
+      c.creditPlan.done = c.creditPlan.done || {};
+      if (el.checked) c.creditPlan.done[el.dataset.key] = T(); else delete c.creditPlan.done[el.dataset.key];
+      S().tasks.filter(t => t.clientId === c.id && t.planKey === el.dataset.key).forEach(t => { t.done = el.checked; });
+      commit(null, c.id);
+    },
+    'plan-print': el => {
+      const c = Store.get.client(el.dataset.id);
+      const ps = root.Business.planStatus(c, T());
+      const name = (c.business || {}).legalName || c.name;
+      UI.printDoc('90-day business credit plan — ' + name, [`90-DAY BUSINESS CREDIT PLAN — ${name}`, `Prepared ${UI.date(T())} by ${S().settings.company.name || ''} · started ${UI.date(ps.startedAt)}`, '', ...ps.steps.map(st => `[${st.complete ? 'x' : ' '}] Day ${st.day} (${UI.date(st.due)}): ${st.title}\n    ${st.how}${st.url ? '\n    ' + st.url : ''}`), '', 'STARTER VENDORS (confirm reporting with each vendor before relying on it)', ...root.Business.STARTER_VENDORS.map(v => `• ${v.vendor} — ${v.category}, ${v.terms}. ${v.reportsTo}`), '', 'Business credit builds from real accounts paid on time. Results depend on lenders and bureaus; no score or approval is guaranteed.'].join('\n'));
+    },
+    'aq-listings': () => { const st = (document.getElementById('aq-state') || {}).value; window.open(root.Acquisition.LINKS.listings(st), '_blank', 'noopener'); },
+    'aq-add': el => aqModal(Store.get.client(el.dataset.id)),
+    'aq-edit': el => { const c = Store.get.client(el.dataset.id); aqModal(c, (c.deals || []).find(d => d.id === el.dataset.deal)); },
+    'aq-note': el => {
+      const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal);
+      const cur = (d.checks || {})[el.dataset.key] || {};
+      const chk = root.Acquisition.CHECKS.find(x => x.key === el.dataset.key);
+      modal({ title: chk.label, body: field('What did you find? (source, date, document)', 'note', cur.note || '', { type: 'textarea', rows: 4 }), onSubmit: x => { d.checks = d.checks || {}; d.checks[el.dataset.key] = Object.assign({ status: 'pending' }, cur, { note: x.note, at: T() }); commit(null, c.id); } });
+    },
+    'aq-print': el => { const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal); UI.printDoc('Due diligence — ' + d.name, root.Acquisition.report(d, c, T(), S().settings.company)); },
+    'aq-delete': el => { const c = Store.get.client(el.dataset.id); if (!confirm('Remove this business and its checklist?')) return; c.deals = c.deals.filter(x => x.id !== el.dataset.deal); commit('Removed acquisition target', c.id); go(`#/clients/${c.id}/acquisition`); },
     'invoice-pdf': el => invoicePdf(el.dataset.id),
     'invoice-email': el => invoiceEmail(el.dataset.id),
     analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id); },
@@ -5093,6 +5314,12 @@ Thank you for considering this request.`
         p.set(e.target.dataset.k, e.target.value);
         if (e.target.dataset.k === 'cmp') { p.delete('from'); p.delete('to'); }
         location.hash = path + '?' + p.toString();
+      }
+      if (e.target.matches('[data-act="aq-check"]')) {
+        const c = Store.get.client(e.target.dataset.id); const d = c.deals.find(x => x.id === e.target.dataset.deal);
+        d.checks = d.checks || {};
+        d.checks[e.target.dataset.key] = Object.assign(d.checks[e.target.dataset.key] || {}, { status: e.target.value, at: T() });
+        commit(null, c.id);
       }
       if (e.target.matches('[data-act="vio-status"]')) {
         S().violations = S().violations || {};

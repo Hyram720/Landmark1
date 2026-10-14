@@ -168,11 +168,11 @@
     const c = Store.get.client(params.id);
     if (!c) return empty('Client not found', '<a href="#/clients">Back to clients</a>');
     const tab = params.tab || 'overview';
-    const tabs = [['overview', 'Overview']].concat(c.kind !== 'personal' ? [['business', 'Business credit']] : [], c.kind !== 'business' ? [['reports', 'Credit reports'], ['audit', 'Metro 2 audit']] : [],
+    const tabs = [['overview', 'Overview']].concat(c.kind !== 'personal' ? [['business', 'Business credit'], ['acquisition', 'Buy a business']] : [], c.kind !== 'business' ? [['reports', 'Credit reports'], ['audit', 'Metro 2 audit']] : [],
       [['disputes', 'Disputes'], ['documents', 'Documents'], ['messages', 'Messages'], ['partners', 'Recommendations'], ['billing', 'Billing'], ['compliance', 'Agreements'], ['activity', 'Activity']]);
     const cs = Store.croaStatus(c);
     const nFind = clientFindings(c.id).filter(f => f.severity !== 'low').length;
-    const body = ({ overview: clientOverview, business: clientBusiness, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs);
+    const body = ({ overview: clientOverview, business: clientBusiness, acquisition: clientAcquisition, reports: clientReports, audit: clientAudit, disputes: clientDisputes, partners: clientPartners, documents: clientDocuments, messages: clientMessages, billing: clientBilling, compliance: clientCompliance, activity: clientActivity }[tab] || clientOverview)(c, cs, params);
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
       `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}${c.status === 'lead' ? `<button class="btn" data-act="analysis" data-id="${c.id}">${icon('print')} Credit analysis</button>` : `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button>`}<button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
@@ -622,6 +622,7 @@
       ${B.SCORE_MODELS.filter(m => ['paydex', 'intelliscore', 'eqx-payment'].includes(m.key)).map(m => { const s = latest[m.key]; return kpi(m.bureau + ' · ' + m.name, s ? s.score : '—', s ? `as of ${date(s.date)} · ${m.lowerIsBetter ? (s.score <= m.good ? 'strong' : 'needs work') : (s.score >= m.good ? 'strong' : 'needs work')}` : `Range ${m.min}–${m.max}`); }).join('')}
     </div>
     <div class="grid g-main"><div class="stack">
+      ${planCard(c)}
       ${card('Fundability checklist', `<form data-form="biz-checklist" data-id="${c.id}"><ul class="steps">${B.FOUNDATION.map(f => `<li><input type="checkbox" name="${f.key}" ${done[f.key] ? 'checked' : ''} style="margin-top:3px"><div class="grow"><b style="font-weight:550">${esc(f.label)}</b><div class="small muted">${esc(f.why)}${done[f.key] ? ' · done ' + date(done[f.key]) : ''}</div></div></li>`).join('')}</ul><div class="row" style="margin-top:8px"><button class="btn primary">Save checklist</button><div class="bar" style="flex:1;max-width:260px"><i style="width:${fz.pct}%"></i></div></div></form>`, { sub: 'What lenders and business bureaus check before extending credit' })}
       ${card('Vendor & credit tradelines', vendors.length ? `<div class="table-wrap"><table><thead><tr><th>Account</th><th>Terms</th><th>Reports to</th><th class="num">Limit</th><th>Opened</th><th>Status</th><th></th></tr></thead><tbody>${vendors.map(v => `<tr><td><b>${esc(v.vendor)}</b><div class="small muted">${esc(v.category || '')}</div></td><td class="small">${esc(v.terms || '')}</td><td class="small">${esc(v.reportsTo || '')}</td><td class="num">${money(v.limit)}</td><td class="small nowrap">${date(v.opened)}</td><td><span class="badge ${v.status === 'current' ? 'b-ok' : v.status === 'late' ? 'b-high' : 'b-low'}">${esc(v.status || 'applied')}</span></td><td class="right"><button class="btn sm ghost" data-act="edit-vendor" data-id="${c.id}" data-vid="${v.id}">Edit</button></td></tr>`).join('')}</tbody></table></div>` : empty('No tradelines yet', 'Track net-30 vendors and business cards as they start reporting.'),
         { flush: true, actions: `<button class="btn sm" data-act="edit-vendor" data-id="${c.id}">${icon('plus')} Account</button>` })}
@@ -634,6 +635,37 @@
     </div></div>`;
   }
 
+  function planCard(c) {
+    const B = root.Business, t = T();
+    const ps = B.planStatus(c, t);
+    if (!ps) return card('90-day business credit plan', `<p class="small">A dated, step-by-step plan for a new business: foundation, free D-U-N-S Number, monitoring, starter vendor accounts that report, a credit-builder account, then store/fleet accounts and a 90-day review. Ledger creates a task for every step and ticks steps off as the checklist below is completed.</p><button class="btn primary" data-act="plan-start" data-id="${c.id}">Start the 90-day plan</button>`, { sub: 'Fast track for new companies — built on real, reporting accounts' });
+    const pct = Math.round(ps.done / ps.total * 100);
+    return card('90-day business credit plan', `<div class="row" style="margin-bottom:10px"><div class="bar" style="flex:1"><i style="width:${pct}%"></i></div><span class="small muted">${ps.done} of ${ps.total} steps</span></div><ul class="steps">${ps.steps.map(st => `<li><span class="tick ${st.complete ? 'on' : ''}" style="${st.overdue ? 'border-color:var(--high)' : ''}">${st.complete ? '✓' : ''}</span><div class="grow"><b style="font-weight:550">Day ${st.day} · ${esc(st.title)}</b><div class="small muted">${esc(st.how)}${st.url ? ` <a href="${esc(st.url)}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div><div class="small ${st.overdue ? '' : 'muted'}" style="${st.overdue ? 'color:var(--high)' : ''}">${st.complete ? 'Done' : (st.overdue ? 'Overdue · was due ' : 'Due ') + date(st.due)}</div></div>${st.checklist ? '' : `<label class="check small"><input type="checkbox" data-act="plan-step" data-id="${c.id}" data-key="${st.key}" ${st.complete ? 'checked' : ''}> Done</label>`}</li>`).join('')}</ul>`,
+      { sub: `Started ${date(ps.startedAt)}`, actions: `<button class="btn sm" data-act="plan-print" data-id="${c.id}">${icon('print')} Print plan</button>` });
+  }
+
+  // ---------- Buy a business (acquisition due diligence) ----------
+  function clientAcquisition(c, cs, params) {
+    const Aq = root.Acquisition, t = T();
+    const deals = c.deals || [];
+    const sel = deals.find(d => d.id === (params && params.deal)) || deals[0];
+    const st = (c.business || {}).stateOfFormation || c.state || '';
+    const finder = card('Find a business to buy', `<p class="small">Search live listings of operating businesses for sale, then add the ones worth a closer look and work through due diligence here.</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><select id="aq-state" style="width:auto"><option value="">All states</option>${Object.entries(Aq.STATES).map(([k, v]) => `<option value="${k}" ${k === st ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select><button class="btn" data-act="aq-listings">Open live listings ↗</button><a class="btn ghost" href="${Aq.LINKS.sba()}" target="_blank" rel="noopener">SBA guide to buying a business ↗</a><button class="btn primary" data-act="aq-add" data-id="${c.id}">+ Add a business</button></div>
+      <p class="small muted" style="margin-top:10px">Business credit history belongs to the legal entity. In a stock or membership-interest purchase the entity keeps its EIN, D-U-N-S Number and history; in an asset purchase the buyer’s company starts its own file. Always disclose the change of ownership accurately to lenders.</p>`);
+    if (!sel) return `<div class="stack">${finder}${card('', empty('No target businesses yet', 'Add a business you are considering to start the due-diligence checklist.'))}</div>`;
+    const e = Aq.evaluate(sel, t);
+    const checks = sel.checks || {};
+    const groups = [...new Set(Aq.CHECKS.map(x => x.group))];
+    const list = deals.length > 1 ? `<div class="tabs" style="margin-bottom:12px">${deals.map(d => `<a href="#/clients/${c.id}/acquisition?deal=${d.id}" class="${d.id === sel.id ? 'active' : ''}">${esc(d.name)}</a>`).join('')}</div>` : '';
+    return `<div class="stack">${finder}${list}
+      <div class="grid g4">${kpi('Due diligence', e.pct + '%', `${e.done} of ${e.total} checks`)}${kpi('Issues found', e.issues, e.issues ? 'Resolve before closing' : 'None so far')}${kpi('Years in business', e.years === null ? '—' : e.years, sel.formedOn ? 'formed ' + date(sel.formedOn) : 'add formation date')}${kpi('Price ÷ earnings', e.multiple === null ? '—' : e.multiple + '×', e.revMultiple !== null ? e.revMultiple + '× revenue' : 'add SDE or revenue')}</div>
+      ${e.flags.length ? `<div class="callout warn"><b>Red flags</b>${e.flags.map(f => esc(f.text)).join('<br>')}</div>` : ''}
+      ${card(esc(sel.name), `<div class="small muted" style="margin-bottom:8px">${[sel.state && Aq.STATES[sel.state], sel.entityNumber && 'Entity # ' + sel.entityNumber, sel.askingPrice && 'Asking ' + money(sel.askingPrice), sel.structure].filter(Boolean).map(esc).join(' · ')}${sel.listingUrl ? ` · <a href="${esc(sel.listingUrl)}" target="_blank" rel="noopener">Listing ↗</a>` : ''}</div>
+        ${groups.map(g => `<h3 style="margin:14px 0 6px">${esc(g)}</h3><div class="table-wrap"><table><tbody>${Aq.CHECKS.filter(x => x.group === g).map(x => { const s = checks[x.key] || {}; return `<tr><td><b style="font-weight:550">${esc(x.label)}</b><div class="small muted">${esc(x.why)}</div>${s.note ? `<div class="small">Note: ${esc(s.note)}</div>` : ''}</td><td class="nowrap">${x.link ? `<a class="btn sm ghost" href="${esc(x.link(sel))}" target="_blank" rel="noopener">${esc(x.linkText || 'Search')} ↗</a>` : ''}</td><td class="nowrap"><select data-act="aq-check" data-id="${c.id}" data-deal="${sel.id}" data-key="${x.key}" style="width:auto">${Aq.STATUS.map(([k, l]) => `<option value="${k}" ${k === (s.status || 'pending') ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="btn sm ghost" data-act="aq-note" data-id="${c.id}" data-deal="${sel.id}" data-key="${x.key}">Note</button></td></tr>`; }).join('')}</tbody></table></div>`).join('')}`,
+        { actions: `<button class="btn sm" data-act="aq-edit" data-id="${c.id}" data-deal="${sel.id}">Edit</button><button class="btn sm" data-act="aq-print" data-id="${c.id}" data-deal="${sel.id}">${icon('print')} Report</button><button class="btn sm ghost danger" data-act="aq-delete" data-id="${c.id}" data-deal="${sel.id}">Remove</button>` })}
+      <p class="small muted">This checklist organizes the review; it is not legal, tax or accounting advice. Have an attorney and CPA review the purchase agreement and structure before closing.</p></div>`;
+  }
   // ---------- Partner recommendations ----------
   const stageLabel = k => (root.Partners.REFERRAL_STAGES.find(s => s[0] === k) || [k, k])[1];
   const offerStatus = st => { const [l, c] = root.Partners.STATUS_LABEL[st] || [st, 'b-low']; return `<span class="badge ${c}">${esc(l)}</span>`; };

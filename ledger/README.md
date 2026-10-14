@@ -89,6 +89,8 @@ Deploy it like the main site: one Node service with a persistent volume mounted 
 - **Sales pipeline** (sidebar): lead stages, a 0–100 readiness score, a booking link, and a free **credit analysis** you can print for prospects.
 - **Partner portal** (`/partner`): referral partners log in to get their sign-up link and see their referrals' stage and their commissions (flat per enrolled client, or a percentage of paid invoices). A client's progress is shown only if that client agreed to share it.
 - **FCRA violation tracker** (sidebar): flags missed 30-day and 15-day deadlines, reinsertion without notice, accounts not marked disputed, and items reported past 7 years. It also prints an attorney packet with the timeline and every letter.
+- **Buy a business** (client tab for business clients): open live BizBuySell listings by state, add target businesses, and work through a 24-point due-diligence checklist. It covers state standing, UCC liens, tax liens, judgments, PACER bankruptcy search, business credit reports, IRS transcripts (Form 8821), state tax clearance, financials, leases, licenses, contracts and deal structure, with links to the official searches. It also shows red flags and price-to-earnings multiples, and prints a report.
+- **90-day business credit plan** (Business credit tab): dated steps from foundation and a free D-U-N-S Number through starter vendors that report, a credit-builder account, store/fleet accounts and a 90-day review. Each step becomes a task and completes automatically from the fundability checklist.
 - **More letters:** unauthorized hard inquiries, wrong personal information, and authorized-user removal.
 
 **Business credit:**

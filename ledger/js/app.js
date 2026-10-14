@@ -416,6 +416,29 @@
     commit(`Generated ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
+  function aqModal(c, d) {
+    const isNew = !d;
+    d = d || { structure: '' };
+    const Aq = root.Acquisition;
+    modal({
+      title: isNew ? 'Add a business to evaluate' : 'Edit ' + d.name, wide: true,
+      body: `<div class="form-grid">${field('Business legal name', 'name', d.name, { required: true, cls: 'span2' })}
+        ${field('State', 'state', d.state || (c.business || {}).stateOfFormation || '', { type: 'select', options: [['', '—']].concat(Object.entries(Aq.STATES)) })}${field('State entity / file number', 'entityNumber', d.entityNumber)}
+        ${field('Formation date', 'formedOn', d.formedOn, { type: 'date' })}${field('Structure', 'structure', d.structure, { type: 'select', options: [['', 'Undecided'], ['Asset purchase', 'Asset purchase'], ['Stock / membership-interest purchase', 'Stock / membership-interest purchase']] })}
+        ${field('Asking price ($)', 'askingPrice', d.askingPrice, { type: 'number', attrs: 'min="0"' })}${field('Annual revenue ($)', 'revenue', d.revenue, { type: 'number', attrs: 'min="0"' })}
+        ${field('Seller’s discretionary earnings / cash flow ($)', 'sde', d.sde, { type: 'number', attrs: 'min="0"' })}${field('Listing link', 'listingUrl', d.listingUrl, { placeholder: 'https://…' })}</div>`,
+      onSubmit: x => {
+        if (!x.name) { toast('Name is required'); return false; }
+        if (x.listingUrl && !/^https?:\/\//.test(x.listingUrl)) { toast('Listing link must start with https://'); return false; }
+        c.deals = c.deals || [];
+        Object.assign(d, x);
+        if (isNew) { Object.assign(d, { id: Store.uid(), createdAt: Store.now(), checks: {} }); c.deals.push(d); }
+        Store.log(`${isNew ? 'Added' : 'Updated'} acquisition target ${x.name}`, c.id);
+        Store.save();
+        go(`#/clients/${c.id}/acquisition?deal=${d.id}`);
+      }
+    });
+  }
   // ---------- invoice documents ----------
   function invoicePdf(id) {
     const inv = S().invoices.find(x => x.id === id);
@@ -780,6 +803,36 @@
 
   // ---------- actions ----------
   const A = {
+    'plan-start': el => {
+      const c = Store.get.client(el.dataset.id);
+      c.creditPlan = { startedAt: T(), done: {} };
+      root.Business.FAST_TRACK.forEach(st => S().tasks.push({ id: Store.uid(), clientId: c.id, title: `Business credit plan · Day ${st.day}: ${st.title}`, due: Law.addDays(T(), st.day), done: false, createdAt: Store.now(), planKey: st.key }));
+      commit(`Started the 90-day business credit plan (${root.Business.FAST_TRACK.length} dated tasks)`, c.id);
+    },
+    'plan-step': el => {
+      const c = Store.get.client(el.dataset.id);
+      c.creditPlan.done = c.creditPlan.done || {};
+      if (el.checked) c.creditPlan.done[el.dataset.key] = T(); else delete c.creditPlan.done[el.dataset.key];
+      S().tasks.filter(t => t.clientId === c.id && t.planKey === el.dataset.key).forEach(t => { t.done = el.checked; });
+      commit(null, c.id);
+    },
+    'plan-print': el => {
+      const c = Store.get.client(el.dataset.id);
+      const ps = root.Business.planStatus(c, T());
+      const name = (c.business || {}).legalName || c.name;
+      UI.printDoc('90-day business credit plan — ' + name, [`90-DAY BUSINESS CREDIT PLAN — ${name}`, `Prepared ${UI.date(T())} by ${S().settings.company.name || ''} · started ${UI.date(ps.startedAt)}`, '', ...ps.steps.map(st => `[${st.complete ? 'x' : ' '}] Day ${st.day} (${UI.date(st.due)}): ${st.title}\n    ${st.how}${st.url ? '\n    ' + st.url : ''}`), '', 'STARTER VENDORS (confirm reporting with each vendor before relying on it)', ...root.Business.STARTER_VENDORS.map(v => `• ${v.vendor} — ${v.category}, ${v.terms}. ${v.reportsTo}`), '', 'Business credit builds from real accounts paid on time. Results depend on lenders and bureaus; no score or approval is guaranteed.'].join('\n'));
+    },
+    'aq-listings': () => { const st = (document.getElementById('aq-state') || {}).value; window.open(root.Acquisition.LINKS.listings(st), '_blank', 'noopener'); },
+    'aq-add': el => aqModal(Store.get.client(el.dataset.id)),
+    'aq-edit': el => { const c = Store.get.client(el.dataset.id); aqModal(c, (c.deals || []).find(d => d.id === el.dataset.deal)); },
+    'aq-note': el => {
+      const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal);
+      const cur = (d.checks || {})[el.dataset.key] || {};
+      const chk = root.Acquisition.CHECKS.find(x => x.key === el.dataset.key);
+      modal({ title: chk.label, body: field('What did you find? (source, date, document)', 'note', cur.note || '', { type: 'textarea', rows: 4 }), onSubmit: x => { d.checks = d.checks || {}; d.checks[el.dataset.key] = Object.assign({ status: 'pending' }, cur, { note: x.note, at: T() }); commit(null, c.id); } });
+    },
+    'aq-print': el => { const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal); UI.printDoc('Due diligence — ' + d.name, root.Acquisition.report(d, c, T(), S().settings.company)); },
+    'aq-delete': el => { const c = Store.get.client(el.dataset.id); if (!confirm('Remove this business and its checklist?')) return; c.deals = c.deals.filter(x => x.id !== el.dataset.deal); commit('Removed acquisition target', c.id); go(`#/clients/${c.id}/acquisition`); },
     'invoice-pdf': el => invoicePdf(el.dataset.id),
     'invoice-email': el => invoiceEmail(el.dataset.id),
     analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id); },
@@ -1180,6 +1233,12 @@
         p.set(e.target.dataset.k, e.target.value);
         if (e.target.dataset.k === 'cmp') { p.delete('from'); p.delete('to'); }
         location.hash = path + '?' + p.toString();
+      }
+      if (e.target.matches('[data-act="aq-check"]')) {
+        const c = Store.get.client(e.target.dataset.id); const d = c.deals.find(x => x.id === e.target.dataset.deal);
+        d.checks = d.checks || {};
+        d.checks[e.target.dataset.key] = Object.assign(d.checks[e.target.dataset.key] || {}, { status: e.target.value, at: T() });
+        commit(null, c.id);
       }
       if (e.target.matches('[data-act="vio-status"]')) {
         S().violations = S().violations || {};

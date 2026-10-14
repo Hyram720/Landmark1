@@ -34,13 +34,49 @@
     { key: 'tradelines', label: '3–5 vendor or credit accounts reporting on-time payments', why: 'Payment history builds the file.' }
   ];
 
+  // Bureau reporting changes and sources disagree — always confirm with the vendor's credit department.
   const STARTER_VENDORS = [
-    { vendor: 'Uline', category: 'Shipping & packaging', terms: 'Net 30', reportsTo: 'Commonly reported to D&B — verify' },
-    { vendor: 'Quill', category: 'Office supplies', terms: 'Net 30', reportsTo: 'Commonly reported to D&B — verify' },
-    { vendor: 'Grainger', category: 'Industrial supplies', terms: 'Net 30', reportsTo: 'Verify reporting' },
-    { vendor: 'CreditStrong Business', category: 'Credit-builder account', terms: 'Monthly', reportsTo: 'Equifax Business, PayNet, SBFE per company — verify' },
+    { vendor: 'Uline', category: 'Shipping & packaging', terms: 'Net 30', reportsTo: 'D&B per most sources; some say Experian too — confirm' },
+    { vendor: 'Quill', category: 'Office supplies', terms: 'Net 30', reportsTo: 'D&B and/or Experian per sources — confirm' },
+    { vendor: 'Grainger', category: 'Industrial supplies', terms: 'Net 30', reportsTo: 'D&B per sources — confirm' },
+    { vendor: 'Crown Office Supplies', category: 'Office supplies (credit-builder program)', terms: 'Net 30 · annual fee', reportsTo: 'SBFE and Creditsafe, shared with D&B/Experian/Equifax per Ramp — confirm' },
+    { vendor: 'Summa Office Supplies', category: 'Office supplies', terms: 'Net 30', reportsTo: 'Equifax and Experian Business per Tipalti — confirm' },
+    { vendor: 'CreditStrong Business', category: 'Credit-builder account', terms: 'Monthly', reportsTo: 'Business bureaus per company — confirm current list' },
     { vendor: 'Nav Prime', category: 'Monitoring + tradeline', terms: 'Monthly', reportsTo: 'Verify current reporting' }
   ];
+
+  /**
+   * 90-day fast-track plan for a new business. Each step has a day offset; steps tied to a
+   * foundation checklist item count as done when that item is checked.
+   */
+  const FAST_TRACK = [
+    { day: 0, key: 'foundation', checklist: ['entity', 'ein', 'nameMatch', 'address', 'bank'], title: 'Foundation: entity in good standing, EIN, one legal name and address everywhere, business bank account', how: 'Use the exact same legal name, address and phone on the state filing, IRS, bank, licenses and every application.' },
+    { day: 1, key: 'phone-web', checklist: ['phone', 'web', 'naics'], title: 'Business phone listed in 411, website and domain email, accurate NAICS code', how: 'Lenders verify the phone listing and website. Pick the NAICS code that truly describes the business — some codes are treated as higher risk.' },
+    { day: 1, key: 'duns', checklist: ['duns'], title: 'Request a free D-U-N-S Number from Dun & Bradstreet', how: 'Free at dnb.com (Get a D-U-N-S). D&B says it can take up to 30 business days — there is no need to pay for expedited service to build credit.', url: 'https://www.dnb.com/en-us/smb/duns/get-a-duns.html' },
+    { day: 3, key: 'monitor', checklist: ['monitoring'], title: 'Set up business credit monitoring (e.g. Nav)', how: 'Watch the D&B, Experian and Equifax business files appear and catch errors early.' },
+    { day: 7, key: 'vendors1', title: 'Open 2–3 starter net-30 vendor accounts', how: 'Choose vendors you will actually use (see the starter list). Make a small real purchase with each and pay before the due date — PAYDEX rewards paying early.' },
+    { day: 10, key: 'builder', title: 'Add a business credit-builder account', how: 'An installment-style builder account adds another reporting tradeline while vendor accounts season.' },
+    { day: 30, key: 'verify', title: 'Confirm the first accounts are reporting', how: 'Check your monitoring. If an account is not reporting after a full billing cycle, call the vendor’s credit department with your EIN and D-U-N-S.' },
+    { day: 35, key: 'vendors2', checklist: ['tradelines'], title: 'Add 2 more reporting accounts (aim for 3–5 total)', how: 'Spread across bureaus — some vendors report only to D&B, others to Experian or Equifax.' },
+    { day: 45, key: 'books', checklist: ['books', 'licenses'], title: 'Bookkeeping, financial statements, licenses and permits in order', how: 'Larger credit lines ask for statements and licenses.' },
+    { day: 60, key: 'store', title: 'Apply for a store or fleet account in the business name', how: 'With several reporting tradelines, retail and fleet accounts become easier. Many still ask for a personal guarantee early on.' },
+    { day: 75, key: 'scores', title: 'Record business scores (PAYDEX, Intelliscore, Equifax) in Ledger', how: 'Use the score log on this page to track progress.' },
+    { day: 90, key: 'next', checklist: ['guarantor'], title: 'Review: business credit card, SBA microloan or line of credit', how: 'Apply only for what the business needs. Owner credit still matters for most early approvals — keep personal utilization low.' }
+  ];
+
+  function planStatus(c, today) {
+    const plan = c.creditPlan;
+    if (!plan || !plan.startedAt) return null;
+    const done = c.businessChecklist || {};
+    const steps = FAST_TRACK.map(s => {
+      const due = addDays(plan.startedAt, s.day);
+      const complete = (plan.done || {})[s.key] || (s.checklist && s.checklist.every(k => done[k]));
+      return Object.assign({}, s, { due, complete: !!complete, overdue: !complete && due < today });
+    });
+    return { startedAt: plan.startedAt, steps, done: steps.filter(s => s.complete).length, total: steps.length };
+  }
+  function addDays(d, n) { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+
 
   const BUREAU_CONTACTS = {
     'Dun & Bradstreet': 'Update or dispute through D&B’s customer service / D-U-N-S Manager.',
@@ -54,7 +90,7 @@
     return { done: n, total: FOUNDATION.length, pct: Math.round(n / FOUNDATION.length * 100) };
   }
 
-  const api = { SCORE_MODELS, FOUNDATION, STARTER_VENDORS, BUREAU_CONTACTS, fundability };
+  const api = { SCORE_MODELS, FOUNDATION, STARTER_VENDORS, BUREAU_CONTACTS, FAST_TRACK, fundability, planStatus };
   root.Business = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'sequences.js', 'furnishers.js', 'violations.js', 'billing.js', 'automations.js', 'sales.js', 'reports.js', 'invoices.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'sequences.js', 'furnishers.js', 'violations.js', 'billing.js', 'automations.js', 'sales.js', 'reports.js', 'invoices.js', 'acquisition.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates, Sequences, Furnishers, Violations, Billing, Automations, Sales, Reports, Invoices } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates, Sequences, Furnishers, Violations, Billing, Automations, Sales, Reports, Invoices, Acquisition } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -369,4 +369,27 @@ test('invoices render as a valid PDF with number, client and total', () => {
   const start = pdf.indexOf('stream\n') + 7;
   assert.strictEqual(pdf.slice(start + len, start + len + 10), '\nendstream');
   assert.match(Invoices.text(ws, inv), /TOTAL: \$49\.00/);
+});
+
+test('acquisition due diligence: progress, red flags, official search links, report', () => {
+  const d = { id: 'd1', name: 'Example Bakery LLC', state: 'TX', formedOn: '2025-06-01', askingPrice: 500000, sde: 100000, checks: { filing: { status: 'clear' }, ucc: { status: 'issue', note: 'UCC-1 by Example Bank' } } };
+  const e = Acquisition.evaluate(d, '2026-10-14');
+  assert.strictEqual(e.done, 1); assert.strictEqual(e.issues, 1); assert.strictEqual(e.multiple, 5);
+  assert.ok(e.flags.some(f => /UCC-1/.test(f.text)) && e.flags.some(f => /5× seller/.test(f.text)) && e.flags.some(f => /years since formation/.test(f.text)));
+  assert.match(Acquisition.LINKS.opencorporates(d), /opencorporates\.com\/companies\?q=Example%20Bakery%20LLC&jurisdiction_code=us_tx/);
+  assert.strictEqual(Acquisition.LINKS.listings('NY'), 'https://www.bizbuysell.com/new-york-businesses-for-sale/');
+  const r = Acquisition.report(d, { name: 'Avery' }, '2026-10-14', { name: 'Co' });
+  assert.ok(r.includes('[Issue found] UCC lien search') && r.includes('not legal, tax or accounting advice'));
+  assert.ok(Acquisition.CHECKS.some(c => c.key === 'disclose'));
+});
+
+test('90-day business credit plan dates steps and completes them from the checklist', () => {
+  const c = { creditPlan: { startedAt: '2026-10-01', done: { vendors1: '2026-10-09' } }, businessChecklist: { duns: '2026-10-02' } };
+  const ps = Business.planStatus(c, '2026-10-14');
+  const duns = ps.steps.find(s => s.key === 'duns');
+  assert.ok(duns.complete && duns.due === '2026-10-02' && duns.url.includes('dnb.com'));
+  assert.ok(ps.steps.find(s => s.key === 'vendors1').complete);
+  assert.ok(ps.steps.find(s => s.key === 'monitor').overdue);
+  assert.strictEqual(ps.steps.find(s => s.key === 'next').due, '2026-12-30');
+  assert.strictEqual(Business.planStatus({}, '2026-10-14'), null);
 });
