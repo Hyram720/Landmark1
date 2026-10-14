@@ -8,9 +8,9 @@ const vm = require('node:vm');
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'store.js', 'sample.js'].forEach(f =>
+['law.js', 'partners.js', 'business.js', 'library.js', 'metro2.js', 'results.js', 'letters.js', 'templates.js', 'store.js', 'sample.js'].forEach(f =>
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx, { filename: f }));
-const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library } = ctx;
+const { Law, Metro2, Letters, Store, Sample, Partners, Business, Results, Library, Templates } = ctx;
 const codes = (t, today) => Metro2.auditTradeline(t, { today: today || '2026-10-14' }).map(f => f.code);
 
 test('current account with past-due amount is flagged', () => {
@@ -202,4 +202,29 @@ test('library has content for every section tab and search finds terms', () => {
   for (const t of ['collections', 'judgments', 'evictions']) assert.ok(Library.TABS.some(([k]) => k === t) && Library.SECTIONS.filter(x => x.tab === t).length === 3);
   assert.ok(Library.search('sealed').some(h => h.tab === 'evictions'));
   assert.ok(Library.search('satisfaction').some(h => h.tab === 'judgments'));
+});
+
+test('letter templates fill every situation and build a valid letter', () => {
+  const client = { name: 'Jordan Example', address: '1 Main St', city: 'Austin', state: 'TX', zip: '78701', dob: '1990-01-01', ssnLast4: '1234' };
+  const sample = { plaintiff: 'Example Funding LLC', caseNumber: 'CV-2019-123', court: 'Example County Court', landlord: 'Example Apartments', property: '9 Elm St',
+    creditor: 'Example Servicing', accountNumber: '9876', originalCreditor: 'Example Bank', months: 'November 2023', amount: '500', balance: '200', detail: 'paid 2024-01-02',
+    reportedAmount: '3000', correctAmount: '0', newHolder: 'Example Consolidation' };
+  for (const t of Templates.TEMPLATES) {
+    assert.ok(Templates.CATS.some(([k]) => k === t.cat), t.id);
+    const v = {};
+    t.fields.forEach(f => { v[f.k] = sample[f.k] || (f.options ? f.options[0] : f.type === 'month' ? '2023-11' : f.type === 'date' ? '2024-01-15' : 'Example'); });
+    const r = Templates.fill(t.id, v);
+    assert.ok(r.ok, t.id);
+    for (const kind of t.to) {
+      const type = Templates.typeFor(t, kind);
+      assert.ok(Law.DISPUTE_TYPES[type], t.id + ' ' + type);
+      const out = Letters.build(type, { client, recipient: { name: 'X', address: 'Y' }, items: [r.item], today: 'October 14, 2026', recipientName: 'X' });
+      assert.ok(out.ok, t.id + ' ' + kind);
+      assert.ok(out.text.includes('Jordan Example') && out.text.includes('1234'));
+      assert.ok(!/\bundefined\b/.test(out.text), t.id + ' has undefined');
+    }
+  }
+  assert.strictEqual(Templates.fill('judgment_satisfied', { plaintiff: 'A' }).ok, false);
+  const cats = new Set(Templates.TEMPLATES.map(t => t.cat));
+  ['judgments', 'evictions', 'student', 'collections'].forEach(c => assert.ok(cats.has(c)));
 });

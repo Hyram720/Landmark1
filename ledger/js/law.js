@@ -91,6 +91,12 @@
       note: 'Escalation after a verified result: restates the specific inaccuracy, the evidence, and the furnisher’s duties to investigate, correct and report the account as disputed.' },
     cfpb_complaint: { label: 'CFPB complaint narrative', cite: 'consumerfinance.gov/complaint', recipient: 'regulator', days: 15,
       note: 'For the consumer to file at consumerfinance.gov. Companies generally respond within 15 days. Never file a complaint without the consumer’s review and consent.' },
+    public_record_611: { label: 'Public record dispute (judgment)', cite: 'FCRA §§ 607(b), 611 (15 U.S.C. §§ 1681e(b), 1681i)', recipient: 'bureau', days: 30,
+      note: 'For civil judgments on bureau, LexisNexis or background reports. Attach court records. Results within 5 business days of completion.' },
+    tenant_screening_611: { label: 'Tenant screening dispute (eviction)', cite: 'FCRA §§ 607(b), 609, 611 (15 U.S.C. §§ 1681e(b), 1681g, 1681i)', recipient: 'bureau', days: 30,
+      note: 'Send to the screening company named in the landlord’s adverse action notice. Attach the court record.' },
+    student_loan_623: { label: 'Student loan dispute to servicer', cite: 'FCRA § 623(a)(8); 12 C.F.R. § 1022.43', recipient: 'furnisher', days: 30,
+      note: 'Direct dispute to the loan servicer or guaranty agency with the servicer’s own letters as evidence.' },
     goodwill: { label: 'Goodwill adjustment request', cite: 'Courtesy request — not a dispute', recipient: 'furnisher', days: 0,
       note: 'Asks a creditor to reconsider accurate late payments. Never describe accurate information as inaccurate.' }
   };
@@ -180,7 +186,7 @@ Signed: ______________________   Date: __________`;
    * says the item is inaccurate and can document it; accurate items leave the ladder.
    */
   const STRATEGY = [
-    { step: 1, title: 'Letter 1 — Dispute with the bureau', types: ['cra_611', 'obsolete_605', 'block_605b', 'validation_809', 'business_correction'], when: 'Start here for every confirmed inaccuracy.' },
+    { step: 1, title: 'Letter 1 — Dispute with the bureau', types: ['cra_611', 'obsolete_605', 'block_605b', 'validation_809', 'business_correction', 'public_record_611', 'tenant_screening_611', 'student_loan_623'], when: 'Start here for every confirmed inaccuracy.' },
     { step: 2, title: 'Letter 2 — Method of verification + direct dispute', types: ['mov_611a7', 'furnisher_623', 'reinsertion_611'], when: 'The bureau verified, or the 30/45 days passed with no answer.' },
     { step: 3, title: 'Letter 3 — Final notice + CFPB complaint', types: ['furnisher_final', 'cfpb_complaint'], when: 'Still verified despite your evidence.' },
     { step: 4, title: 'Step 4 — Attorney review', types: [], when: 'Documented inaccuracy still reporting after Letter 3. FCRA §§ 616–617 allow actual and statutory damages and attorney fees; many consumer attorneys take these cases at no cost to the consumer.' }

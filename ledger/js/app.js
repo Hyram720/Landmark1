@@ -406,6 +406,84 @@
     commit(`Generated ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
+  // ---------- letter templates ----------
+  function templatePicker(cid) {
+    const Tp = root.Templates;
+    modal({
+      title: 'Letter templates', wide: true,
+      body: Tp.CATS.map(([k, l, d]) => `<h3 style="margin:14px 0 4px">${esc(l)}</h3><p class="small muted" style="margin:0 0 8px">${esc(d)}</p><div class="tpl-grid">${Tp.TEMPLATES.filter(t => t.cat === k).map(t => `<button type="button" class="tpl-card" data-tpl="${t.id}"><b>${esc(t.title)}</b><small>${esc(t.when)}</small></button>`).join('')}</div>`).join(''),
+      foot: '<button type="button" class="btn" data-close>Close</button>',
+      onOpen: f => f.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => templateModal(b.dataset.tpl, cid))
+    });
+  }
+
+  function templateModal(id, cid) {
+    const Tp = root.Templates, t = Tp.byId(id);
+    if (!t) return;
+    if (!S().clients.length) { toast('Add a client first'); return; }
+    cid = cid || S().clients[0].id;
+    const fieldHtml = t.fields.map(x => field(x.label + (x.required ? ' *' : ''), 'v_' + x.k, '', { type: x.type || 'text', options: x.options, help: x.help, cls: x.type === 'textarea' ? 'span2' : '', rows: 2 })).join('');
+    const hasCreditor = t.fields.some(x => x.k === 'creditor');
+    const kinds = t.to.map(k => k === 'bureaus'
+      ? `<label class="check"><input type="checkbox" name="to[]" value="Equifax" checked> Equifax</label><label class="check"><input type="checkbox" name="to[]" value="Experian" checked> Experian</label><label class="check"><input type="checkbox" name="to[]" value="TransUnion" checked> TransUnion</label>`
+      : k === 'lexis' ? `<label class="check"><input type="checkbox" name="to[]" value="lexis" ${t.to[0] === 'lexis' ? 'checked' : ''}> LexisNexis Risk Solutions</label>`
+      : `<label class="check"><input type="checkbox" name="to[]" value="other" ${t.to[0] === 'other' || t.otherRequired ? 'checked' : ''}> ${esc(t.otherLabel)}</label>`).join('');
+    modal({
+      title: t.title, wide: true,
+      body: `<p class="small muted" style="margin-top:0">${esc(t.when)} The client’s name, address, date of birth and SSN last 4 come from their profile.</p>
+        <div class="form-grid">
+        ${field('Client', 'clientId', cid, { type: 'select', options: S().clients.map(c => [c.id, c.name]), cls: 'span2' })}
+        ${hasCreditor ? '<label class="field span2"><span>Fill from the client’s report (optional)</span><select name="pick"></select></label>' : ''}
+        ${fieldHtml}
+        <div class="field span2"><span>Send to</span><div class="row" style="flex-wrap:wrap;gap:14px">${kinds}</div></div>
+        ${t.to.includes('other') ? field(t.otherLabel + ' — name', 'otherName', '') + field('Mailing address', 'otherAddress', '', { type: 'textarea', rows: 2 }) : ''}
+        <label class="check span2"><input type="checkbox" name="confirmed" value="1"> The client reviewed these facts and confirmed every statement is true</label></div>`,
+      foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Generate letters</button>',
+      onOpen: f => {
+        const fillPick = () => {
+          if (!f.elements.pick) return;
+          const accts = [];
+          Store.get.reportsFor(f.elements.clientId.value).forEach(r => (r.accounts || []).forEach(a => accts.push([r, a])));
+          f.elements.pick.innerHTML = '<option value="">— choose an account —</option>' + accts.map(([r, a], i) => `<option value="${i}">${esc(a.creditor)} ${esc(a.accountNumber || '')} · ${esc(r.bureau)} · ${a.balance != null ? '$' + a.balance : ''}</option>`).join('');
+          f.elements.pick.onchange = () => {
+            const p = accts[Number(f.elements.pick.value)];
+            if (!p) return;
+            const a = p[1];
+            if (f.elements.v_creditor) f.elements.v_creditor.value = a.creditor || '';
+            if (f.elements.v_accountNumber) f.elements.v_accountNumber.value = a.accountNumber || '';
+            if (f.elements.v_originalCreditor && a.originalCreditor) f.elements.v_originalCreditor.value = a.originalCreditor;
+          };
+        };
+        f.elements.clientId.onchange = fillPick;
+        fillPick();
+      },
+      onSubmit: d => {
+        const values = {};
+        t.fields.forEach(x => { values[x.k] = d['v_' + x.k]; });
+        const res = Tp.fill(id, values);
+        if (!res.ok) { toast(res.errors[0]); return false; }
+        const to = d.to || [];
+        if (!to.length) { toast('Choose at least one recipient'); return false; }
+        if (to.includes('other') && (!d.otherName || !d.otherAddress)) { toast(`Enter the ${t.otherLabel.toLowerCase()} name and address`); return false; }
+        if (!d.confirmed) { toast('Confirm the client verified every statement'); return false; }
+        const made = to.map(k => {
+          const kind = Law.BUREAUS[k] ? 'bureaus' : k;
+          const recipient = kind === 'bureaus' ? k : kind === 'lexis' ? Tp.LEXIS.name : d.otherName.trim();
+          const recipientAddress = kind === 'lexis' ? Tp.LEXIS.address : kind === 'other' ? d.otherAddress.trim() : '';
+          const type = Tp.typeFor(t, kind);
+          const disp = { id: Store.uid(), clientId: d.clientId, type, round: nextRound(d.clientId, recipient), recipient, recipientAddress, status: 'draft', items: [Object.assign({}, res.item)], letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: 'From template: ' + t.title, template: t.id };
+          S().disputes.push(disp);
+          generateLetter(disp);
+          return disp;
+        });
+        Store.log(`Generated ${made.length} “${t.title}” letter${made.length > 1 ? 's' : ''} from a template`, d.clientId);
+        Store.save();
+        toast(`${made.length} letter${made.length > 1 ? 's' : ''} generated — review, approve and print`);
+        go(made.length === 1 ? `#/disputes/${made[0].id}` : `#/clients/${d.clientId}/disputes`);
+      }
+    });
+  }
+
   function invoiceModal(cid) {
     const done = cId => S().disputes.filter(d => d.clientId === cId && d.sentAt && !S().invoices.some(i => i.disputeId === d.id && i.status !== 'void'));
     modal({
@@ -475,6 +553,8 @@
 
   // ---------- actions ----------
   const A = {
+    templates: el => templatePicker(el.dataset.client),
+    'use-template': el => templateModal(el.dataset.tpl, el.dataset.client),
     'new-client': () => clientModal(),
     'edit-client': el => clientModal(Store.get.client(el.dataset.id)),
     'load-demo': () => { if (S().clients.length && !confirm('Replace the current workspace with demo data?')) return; Store.replace(Sample.build()); toast('Demo workspace loaded'); go('#/'); },

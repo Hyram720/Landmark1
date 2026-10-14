@@ -120,6 +120,30 @@ Conduct a reasonable investigation of the documents I provided, correct or delet
 
 [Attach copies of the dispute letters, mailing receipts, the bureau's results and the supporting documents listed above. Read every statement before submitting — it must be true and complete.]`,
 
+    public_record_611: (c, items) => `Re: Dispute of public record information — FCRA §§ 607(b) and 611
+
+I am disputing the following public record information in my consumer file. Court records show it is inaccurate or incomplete for the reason stated, and copies are enclosed.
+
+${items.map(itemBlock).join('\n\n')}
+
+You must follow reasonable procedures to assure maximum possible accuracy (15 U.S.C. § 1681e(b)) and conduct a reasonable reinvestigation of my dispute (15 U.S.C. § 1681i). Please review the enclosed court documents rather than relying only on a data vendor, delete or correct the information, and send me the results, the source of this record, and an updated copy of my file.`,
+
+    tenant_screening_611: (c, items) => `Re: Dispute of eviction record in my tenant screening file — FCRA §§ 607(b), 609 and 611
+
+You prepared a tenant screening report about me that includes the eviction information below. It is inaccurate or incomplete for the reason stated, and court records are enclosed.
+
+${items.map(itemBlock).join('\n\n')}
+
+As a consumer reporting agency you must use reasonable procedures to assure maximum possible accuracy (15 U.S.C. § 1681e(b)) and reinvestigate within 30 days (15 U.S.C. § 1681i). Please delete or correct this record, tell me the source of the information (15 U.S.C. § 1681g), send me the results in writing, and send a corrected report to anyone who received my report in the past six months if I request it.`,
+
+    student_loan_623: (c, items) => `Re: Direct dispute of student loan reporting — 12 C.F.R. § 1022.43
+
+I am disputing information you report to the consumer reporting agencies about my student loan. The specific information, the reason it is inaccurate, and supporting documents are below.
+
+${items.map(itemBlock).join('\n\n')}
+
+Please investigate, review the enclosed documents (several are your own records), and send me the results within 30 days. If the information is inaccurate, please correct it with every consumer reporting agency you report to (15 U.S.C. § 1681s-2(a)(2), (a)(8)). While the investigation is pending, please report the account as disputed.`,
+
     goodwill: (c, items) => `Re: Request for a goodwill adjustment
 
 I am writing about my account(s) listed below. I am not disputing the accuracy of this information. I am asking you to consider a courtesy adjustment of the late payment reporting in light of my payment history since then.
@@ -157,7 +181,7 @@ Thank you for considering this request.`
     if (type === 'block_605b') e.push('Identity theft report (IdentityTheft.gov / police report)');
     if (type === 'disclosure_609') return e;
     if (items.some(i => i.evidence)) e.push('Supporting documents referenced above');
-    if (type === 'cra_611' || type === 'obsolete_605') e.push('Copy of the credit report page with the disputed items marked');
+    if (['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611'].includes(type)) e.push('Copy of the credit report page with the disputed items marked');
     return e;
   }
 
