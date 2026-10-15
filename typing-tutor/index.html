@@ -145,11 +145,11 @@ button:focus-visible, .lesson:focus-visible { outline: 3px solid var(--accent); 
 .ch.sp.err { background: var(--err-soft); }
 .ch.cur { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 -3px 0 var(--accent); }
 .ch.cur.err { background: var(--err-soft); box-shadow: inset 0 -3px 0 var(--err); color: var(--err); }
-.ta { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; pointer-events: none; }
+.ta { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; margin: 0; resize: none; font-size: 16px; color: transparent; caret-color: transparent; background: transparent; cursor: text; z-index: 1; }
 .focus-hint {
   position: absolute; inset: 0; display: grid; place-items: center; border-radius: 12px; border: 0; width: 100%;
   background: color-mix(in srgb, var(--sunken) 80%, transparent); font-weight: 700; color: var(--ink);
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px); z-index: 2; font-size: 17px;
 }
 
 .hint-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px 16px; }
@@ -295,7 +295,7 @@ button:focus-visible, .lesson:focus-visible { outline: 3px solid var(--accent); 
         <div class="typebox" id="typebox">
           <div class="viewport" id="viewport"><div class="inner" id="inner"></div></div>
           <textarea class="ta" id="ta" aria-label="Type here" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
-          <button class="focus-hint" id="focus-hint" hidden>Tap here to start typing</button>
+          <button class="focus-hint" id="focus-hint" hidden>Click here, then start typing</button>
         </div>
       </div>
       <div id="results" hidden></div>
@@ -587,6 +587,7 @@ button:focus-visible, .lesson:focus-visible { outline: 3px solid var(--accent); 
       else state.text = testText();
     }
     Object.assign(state, { i: 0, errAt: new Set(), strokes: 0, correct: 0, start: 0, end: 0, finished: false, miss: {} });
+    ta.value = ""; prevVal = "";
     renderHead();
     renderText();
     $("results").hidden = true; $("play").hidden = false;
@@ -788,15 +789,21 @@ button:focus-visible, .lesson:focus-visible { outline: 3px solid var(--accent); 
 
   // ---------- Input ----------
   const isTouch = matchMedia("(pointer: coarse)").matches;
-  let lastKeyAt = 0;
+  if (isTouch) $("focus-hint").textContent = "Tap here to start typing";
+  let lastKeyAt = 0, prevVal = "";
+  // Keys only reach the page once it has focus, so show a prompt until it does.
+  function syncHint() {
+    const ready = document.hasFocus() && (!isTouch || document.activeElement === ta);
+    $("focus-hint").hidden = ready || state.finished;
+  }
   function focusTyping() {
     try { ta.focus({ preventScroll: true }); } catch (e) {}
-    $("focus-hint").hidden = !isTouch || document.activeElement === ta;
+    syncHint();
   }
   typebox.addEventListener("click", focusTyping);
   $("focus-hint").addEventListener("click", e => { e.stopPropagation(); focusTyping(); });
-  ta.addEventListener("blur", () => { if (isTouch) $("focus-hint").hidden = false; });
-  ta.addEventListener("focus", () => { $("focus-hint").hidden = true; });
+  ["focus", "blur"].forEach(ev => { ta.addEventListener(ev, () => setTimeout(syncHint, 0)); window.addEventListener(ev, () => setTimeout(syncHint, 0)); });
+  document.addEventListener("pointerdown", e => { if (!e.target.closest("button")) setTimeout(focusTyping, 0); });
 
   document.addEventListener("keydown", e => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -818,10 +825,14 @@ button:focus-visible, .lesson:focus-visible { outline: 3px solid var(--accent); 
       handleChar(e.key);
     }
   });
-  ta.addEventListener("input", () => {
-    const v = ta.value; ta.value = "";
+  // Phone keyboards often skip keydown, so read new characters from the textarea itself.
+  ta.addEventListener("input", e => {
+    const v = ta.value;
+    const added = v.startsWith(prevVal) ? v.slice(prevVal.length) : (e.data || "");
+    prevVal = v;
+    if (!e.isComposing && v.length > 200) { ta.value = ""; prevVal = ""; }
     if (performance.now() - lastKeyAt < 40) return;
-    for (const c of v) if (c !== "\n") handleChar(c);
+    for (const c of added) if (c !== "\n") handleChar(c);
   });
 
   // ---------- Wiring ----------
