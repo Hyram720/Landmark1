@@ -11,6 +11,15 @@
   const enc = encodeURIComponent;
   const slug = s => String(s || '').toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
 
+  // Target age range for buying an existing company (years since formation).
+  const PRIME_AGE = { min: 4, max: 7 };
+  /** Formation-date window for a target age range, as of `today` (YYYY-MM-DD). */
+  function ageWindow(today, min, max) {
+    const shift = y => { const d = new Date(today + 'T00:00:00'); d.setFullYear(d.getFullYear() - y); return d.toISOString().slice(0, 10); };
+    min = min === undefined ? PRIME_AGE.min : min; max = max === undefined ? PRIME_AGE.max : max;
+    return { min, max, from: shift(max), to: shift(min) };
+  }
+
   const LINKS = {
     ocSearch: (name, st) => (name || st) ? `https://opencorporates.com/companies?q=${enc(name || '')}${st ? '&jurisdiction_code=us_' + st.toLowerCase() : ''}` : 'https://opencorporates.com/',
     opencorporates: d => `https://opencorporates.com/companies?q=${enc(d.name || '')}${d.state ? '&jurisdiction_code=us_' + d.state.toLowerCase() : ''}`,
@@ -81,6 +90,7 @@
     const price = Number(d.askingPrice) || 0, sde = Number(d.sde) || 0, rev = Number(d.revenue) || 0;
     const multiple = price && sde ? Math.round((price / sde) * 10) / 10 : null;
     const revMultiple = price && rev ? Math.round((price / rev) * 100) / 100 : null;
+    if (years !== null && (years < PRIME_AGE.min || years > PRIME_AGE.max)) flags.push({ sev: 'low', text: `${years} years since formation — outside the ${PRIME_AGE.min}–${PRIME_AGE.max} year target range.` });
     if (years !== null && years < 2) flags.push({ sev: 'medium', text: `Only ${years} years since formation — limited history to verify.` });
     if (multiple !== null && multiple > 4) flags.push({ sev: 'medium', text: `Asking price is ${multiple}× seller’s discretionary earnings — high for most small businesses (often 2–3.5×). Ask how it was valued.` });
     if (price && !sde && !rev) flags.push({ sev: 'medium', text: 'No revenue or earnings figures yet — get financials before negotiating.' });
@@ -104,7 +114,7 @@
     return L.join('\n');
   }
 
-  const api = { STATES, LINKS, SHELF_SELLERS, CHECKS, STATUS, evaluate, report, yearsBetween };
+  const api = { PRIME_AGE, ageWindow, STATES, LINKS, SHELF_SELLERS, CHECKS, STATUS, evaluate, report, yearsBetween };
   root.Acquisition = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

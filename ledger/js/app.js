@@ -1233,6 +1233,11 @@
       if (row && !e.target.closest('a,button,input')) go(row.dataset.href);
     });
     document.addEventListener('change', e => {
+      if (e.target.matches('#age-min, #age-max')) {
+        const mn = Number(document.getElementById('age-min').value), mx = Number(document.getElementById('age-max').value);
+        const out = document.getElementById('age-window');
+        if (out) out.textContent = mn > mx ? 'pick a lower “from” age' : (w => `formed ${UI.date(w.from)} – ${UI.date(w.to)}`)(root.Acquisition.ageWindow(T(), mn, mx));
+      }
       if (e.target.matches('[data-act="filter-client"]')) go('#/disputes' + (e.target.value ? '?client=' + e.target.value : ''));
       if (e.target.matches('.pick')) updateBulk();
       if (e.target.matches('[data-act="lead-stage"]')) {
