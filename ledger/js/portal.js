@@ -73,7 +73,7 @@
       const j = await r.json(); if (!r.ok) return toast(j.error); toast('Uploaded — thank you'); load();
     });
     const cancel = root.querySelector('[data-cancel]');
-    if (cancel) cancel.onclick = async () => { if (!confirm('Cancel your agreement? This cannot be undone here.')) return; await api('POST', '/api/portal/cancel'); load(); };
+    if (cancel) cancel.onclick = async () => { if (!UI.ask('Cancel your agreement? This cannot be undone here.')) return; await api('POST', '/api/portal/cancel'); load(); };
   }
 
   async function load() {

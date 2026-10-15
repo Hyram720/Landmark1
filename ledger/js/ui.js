@@ -53,6 +53,57 @@
   const cBadge = s => { const [l, c] = CSTATE[s] || [s, 'b-low']; return `<span class="badge ${c}">${esc(l)}</span>`; };
 
   let modalEl = null;
+
+  // ---------- work inside sandboxed frames (e.g. the claude.ai artifact viewer) ----------
+  // Sandboxed frames without "allow-forms" silently drop form submits, and without
+  // "allow-modals" confirm() returns false at once. Submits are dispatched by hand so they
+  // never depend on the browser's submit, and confirmations fall back to an in-page dialog.
+  function submitForm(form, submitter) {
+    if (!form.noValidate && !form.reportValidity()) return;
+    let ev;
+    try { ev = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter || null }); }
+    catch (e) { ev = new Event('submit', { bubbles: true, cancelable: true }); }
+    form.dispatchEvent(ev);
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('click', e => {
+      lastClick = e.target;
+      const b = e.target.closest && e.target.closest('button, input[type=submit]');
+      if (!b || !b.form || b.disabled) return;
+      const type = (b.getAttribute('type') || 'submit').toLowerCase();
+      if (type !== 'submit') return;
+      e.preventDefault();
+      submitForm(b.form, b);
+    }, true);
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      const el = e.target;
+      if (!el.form || el.tagName !== 'INPUT' || ['checkbox', 'radio', 'button', 'submit', 'file'].includes(el.type)) return;
+      e.preventDefault();
+      submitForm(el.form, el.form.querySelector('button:not([type=button]), input[type=submit]'));
+    }, true);
+  }
+  let lastClick = null, preconfirmed = null;
+  /** confirm() that also works where pop-up dialogs are blocked: shows an in-page dialog,
+   *  then repeats the original click once the user agrees. */
+  function ask(msg) {
+    if (preconfirmed === msg) { preconfirmed = null; return true; }
+    const t0 = Date.now();
+    let ok = false;
+    try { ok = root.confirm(msg); } catch (e) { ok = false; }
+    if (ok || Date.now() - t0 > 40) return ok;
+    // Returned "no" instantly: dialogs are blocked. Ask in the page instead.
+    const target = lastClick;
+    const prev = modalEl; modalEl = null;
+    const wrap = document.createElement('div');
+    wrap.className = 'overlay'; wrap.dataset.ask = '1'; wrap.style.zIndex = 1000;
+    wrap.innerHTML = `<div class="modal"><div class="modal-h"><h2>Please confirm</h2></div><div class="modal-b"><p>${esc(msg)}</p></div><div class="modal-f"><button type="button" class="btn" data-no>Cancel</button><button type="button" class="btn primary" data-yes>OK</button></div></div>`;
+    document.body.appendChild(wrap);
+    const done = yes => { wrap.remove(); modalEl = prev; if (yes && target && target.isConnected) { preconfirmed = msg; target.click(); preconfirmed = null; } };
+    wrap.querySelector('[data-no]').onclick = () => done(false);
+    wrap.querySelector('[data-yes]').onclick = () => done(true);
+    return false;
+  }
   function modal({ title, body, foot, wide, onSubmit, onOpen }) {
     close();
     const wrap = document.createElement('div');
@@ -77,7 +128,7 @@
     if (onOpen) onOpen(form);
     return form;
   }
-  function close() { if (modalEl) { modalEl.remove(); modalEl = null; } }
+  function close() { if (modalEl) { modalEl.remove(); modalEl = null; } document.querySelectorAll('.overlay[data-ask]').forEach(o => o.remove()); }
   function formData(form) {
     const out = {};
     Array.from(form.elements).forEach(el => {
@@ -104,10 +155,20 @@
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+    if (inFrame) toast('If nothing downloaded, this preview blocks downloads — use the live site to download files.');
   }
+  // When a new window can't open (pop-ups blocked or a sandboxed preview), show the document
+  // in the page with a copy button instead of failing silently.
+  function showDoc(title, text, html) {
+    modal({ title, wide: true, body: `<p class="small muted">Printing isn’t available here (pop-ups are blocked${inFrame ? ' in this preview — open the live site to print' : ''}). Copy the text below, or allow pop-ups and try again.</p>${html ? `<iframe style="width:100%;height:60vh;border:1px solid var(--line);border-radius:8px;background:#fff" sandbox srcdoc="${esc(html)}"></iframe>` : `<textarea readonly rows="18" class="mono" style="width:100%">${esc(text)}</textarea>`}`,
+      foot: `<button type="button" class="btn" data-close>Close</button>${text ? '<button type="button" class="btn primary" data-copy>Copy text</button>' : ''}`,
+      onOpen: f => { const b = f.querySelector('[data-copy]'); if (b) b.onclick = () => { const ta = f.querySelector('textarea'); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } if (!ok && navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Select the text and copy it')); else toast(ok ? 'Copied' : 'Select the text and copy it'); }; } });
+  }
+  const inFrame = (() => { try { return root.self !== root.top; } catch (e) { return true; } })();
+  function openWin() { try { return window.open('', '_blank'); } catch (e) { return null; } }
   function printDocs(title, texts) {
-    const w = window.open('', '_blank');
-    if (!w) { toast('Allow pop-ups to print'); return; }
+    const w = openWin();
+    if (!w) { showDoc(title, texts.join('\n\n\f\n\n')); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
       body{font:12pt/1.55 Georgia,'Times New Roman',serif;color:#000;margin:0}
       .page{max-width:6.5in;margin:0.9in auto;white-space:pre-wrap;page-break-after:always}
@@ -116,14 +177,14 @@
     w.document.close();
   }
   function printHtml(html) {
-    const w = window.open('', '_blank');
-    if (!w) { toast('Allow pop-ups to print'); return; }
+    const w = openWin();
+    if (!w) { showDoc('Preview', '', html); return; }
     w.document.write(html.replace('</body>', '<script>window.onload=()=>{window.print()}<\/script></body>'));
     w.document.close();
   }
   function printDoc(title, text) {
-    const w = window.open('', '_blank');
-    if (!w) { toast('Allow pop-ups to print'); return; }
+    const w = openWin();
+    if (!w) { showDoc(title, text); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
       body{font:12pt/1.55 Georgia,'Times New Roman',serif;color:#000;margin:0}
       .page{max-width:6.5in;margin:0.9in auto;white-space:pre-wrap}
@@ -142,5 +203,5 @@
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
+  root.UI = { inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
 })(typeof window !== 'undefined' ? window : globalThis);

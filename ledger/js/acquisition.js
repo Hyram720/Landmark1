@@ -12,6 +12,7 @@
   const slug = s => String(s || '').toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
 
   const LINKS = {
+    ocSearch: (name, st) => (name || st) ? `https://opencorporates.com/companies?q=${enc(name || '')}${st ? '&jurisdiction_code=us_' + st.toLowerCase() : ''}` : 'https://opencorporates.com/',
     opencorporates: d => `https://opencorporates.com/companies?q=${enc(d.name || '')}${d.state ? '&jurisdiction_code=us_' + d.state.toLowerCase() : ''}`,
     dnb: () => 'https://www.dnb.com/en-us/smb/duns/duns-lookup.html',
     pacer: () => 'https://pcl.uscourts.gov/',
