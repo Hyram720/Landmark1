@@ -11,8 +11,10 @@
   const enc = encodeURIComponent;
   const slug = s => String(s || '').toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
 
-  // Target age range for buying an existing company (years since formation).
-  const PRIME_AGE = { min: 4, max: 7 };
+  // Company age (years since formation): 2 years is the usual lender minimum; 4+ years
+  // generally qualifies for larger funding; 4–7 is the target range to shop in.
+  const PRIME_AGE = { minimum: 2, min: 4, max: 7 };
+  const ageTier = years => years === null || years === undefined ? null : years < PRIME_AGE.minimum ? 'under' : years < PRIME_AGE.min ? 'minimum' : 'prime';
   /** Formation-date window for a target age range, as of `today` (YYYY-MM-DD). */
   function ageWindow(today, min, max) {
     const shift = y => { const d = new Date(today + 'T00:00:00'); d.setFullYear(d.getFullYear() - y); return d.toISOString().slice(0, 10); };
@@ -90,12 +92,13 @@
     const price = Number(d.askingPrice) || 0, sde = Number(d.sde) || 0, rev = Number(d.revenue) || 0;
     const multiple = price && sde ? Math.round((price / sde) * 10) / 10 : null;
     const revMultiple = price && rev ? Math.round((price / rev) * 100) / 100 : null;
-    if (years !== null && (years < PRIME_AGE.min || years > PRIME_AGE.max)) flags.push({ sev: 'low', text: `${years} years since formation — outside the ${PRIME_AGE.min}–${PRIME_AGE.max} year target range.` });
-    if (years !== null && years < 2) flags.push({ sev: 'medium', text: `Only ${years} years since formation — limited history to verify.` });
+    const tier = ageTier(years);
+    if (tier === 'under') flags.push({ sev: 'medium', text: `Only ${years} years since formation — below the ${PRIME_AGE.minimum}-year minimum most lenders require, and limited history to verify.` });
+    if (tier === 'minimum') flags.push({ sev: 'low', text: `${years} years since formation — meets the ${PRIME_AGE.minimum}-year minimum; companies ${PRIME_AGE.min}+ years old usually qualify for more funding.` });
     if (multiple !== null && multiple > 4) flags.push({ sev: 'medium', text: `Asking price is ${multiple}× seller’s discretionary earnings — high for most small businesses (often 2–3.5×). Ask how it was valued.` });
     if (price && !sde && !rev) flags.push({ sev: 'medium', text: 'No revenue or earnings figures yet — get financials before negotiating.' });
     if (!d.formedOn) flags.push({ sev: 'low', text: 'Formation date not recorded yet.' });
-    return { done, total: CHECKS.length, pct: Math.round((done / CHECKS.length) * 100), issues: issues.length, flags, years, multiple, revMultiple };
+    return { tier, done, total: CHECKS.length, pct: Math.round((done / CHECKS.length) * 100), issues: issues.length, flags, years, multiple, revMultiple };
   }
 
   /** Plain-text due-diligence report. */
@@ -114,7 +117,7 @@
     return L.join('\n');
   }
 
-  const api = { PRIME_AGE, ageWindow, STATES, LINKS, SHELF_SELLERS, CHECKS, STATUS, evaluate, report, yearsBetween };
+  const api = { PRIME_AGE, ageTier, ageWindow, STATES, LINKS, SHELF_SELLERS, CHECKS, STATUS, evaluate, report, yearsBetween };
   root.Acquisition = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

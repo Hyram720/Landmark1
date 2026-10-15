@@ -3105,8 +3105,10 @@ Thank you for considering this request.`
   const enc = encodeURIComponent;
   const slug = s => String(s || '').toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
 
-  // Target age range for buying an existing company (years since formation).
-  const PRIME_AGE = { min: 4, max: 7 };
+  // Company age (years since formation): 2 years is the usual lender minimum; 4+ years
+  // generally qualifies for larger funding; 4–7 is the target range to shop in.
+  const PRIME_AGE = { minimum: 2, min: 4, max: 7 };
+  const ageTier = years => years === null || years === undefined ? null : years < PRIME_AGE.minimum ? 'under' : years < PRIME_AGE.min ? 'minimum' : 'prime';
   /** Formation-date window for a target age range, as of `today` (YYYY-MM-DD). */
   function ageWindow(today, min, max) {
     const shift = y => { const d = new Date(today + 'T00:00:00'); d.setFullYear(d.getFullYear() - y); return d.toISOString().slice(0, 10); };
@@ -3184,12 +3186,13 @@ Thank you for considering this request.`
     const price = Number(d.askingPrice) || 0, sde = Number(d.sde) || 0, rev = Number(d.revenue) || 0;
     const multiple = price && sde ? Math.round((price / sde) * 10) / 10 : null;
     const revMultiple = price && rev ? Math.round((price / rev) * 100) / 100 : null;
-    if (years !== null && (years < PRIME_AGE.min || years > PRIME_AGE.max)) flags.push({ sev: 'low', text: `${years} years since formation — outside the ${PRIME_AGE.min}–${PRIME_AGE.max} year target range.` });
-    if (years !== null && years < 2) flags.push({ sev: 'medium', text: `Only ${years} years since formation — limited history to verify.` });
+    const tier = ageTier(years);
+    if (tier === 'under') flags.push({ sev: 'medium', text: `Only ${years} years since formation — below the ${PRIME_AGE.minimum}-year minimum most lenders require, and limited history to verify.` });
+    if (tier === 'minimum') flags.push({ sev: 'low', text: `${years} years since formation — meets the ${PRIME_AGE.minimum}-year minimum; companies ${PRIME_AGE.min}+ years old usually qualify for more funding.` });
     if (multiple !== null && multiple > 4) flags.push({ sev: 'medium', text: `Asking price is ${multiple}× seller’s discretionary earnings — high for most small businesses (often 2–3.5×). Ask how it was valued.` });
     if (price && !sde && !rev) flags.push({ sev: 'medium', text: 'No revenue or earnings figures yet — get financials before negotiating.' });
     if (!d.formedOn) flags.push({ sev: 'low', text: 'Formation date not recorded yet.' });
-    return { done, total: CHECKS.length, pct: Math.round((done / CHECKS.length) * 100), issues: issues.length, flags, years, multiple, revMultiple };
+    return { tier, done, total: CHECKS.length, pct: Math.round((done / CHECKS.length) * 100), issues: issues.length, flags, years, multiple, revMultiple };
   }
 
   /** Plain-text due-diligence report. */
@@ -3208,7 +3211,7 @@ Thank you for considering this request.`
     return L.join('\n');
   }
 
-  const api = { PRIME_AGE, ageWindow, STATES, LINKS, SHELF_SELLERS, CHECKS, STATUS, evaluate, report, yearsBetween };
+  const api = { PRIME_AGE, ageTier, ageWindow, STATES, LINKS, SHELF_SELLERS, CHECKS, STATUS, evaluate, report, yearsBetween };
   root.Acquisition = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4076,7 +4079,10 @@ Thank you for considering this request.`
     const Aq = root.Acquisition;
     const w = Aq.ageWindow(T());
     return card('Aged shelf companies for sale', `<p class="small">Companies that a seller formed and kept on file, then sells with the original formation date. Click a seller to see its live inventory by state and age.</p>
-      <div class="callout good" style="margin-bottom:10px"><b>Target age: ${w.min}–${w.max} years</b>Look for companies formed between <strong>${date(w.from)}</strong> and <strong>${date(w.to)}</strong>. On each seller’s site, sort or filter by formation date (or “age”) and pick from that window.
+      <div class="grid g2" style="margin-bottom:10px">
+        <div class="callout"><b>Minimum: ${Aq.PRIME_AGE.minimum}+ years</b>Most lenders require at least ${Aq.PRIME_AGE.minimum} years in business — formed on or before <strong>${date(Aq.ageWindow(T(), Aq.PRIME_AGE.minimum, Aq.PRIME_AGE.minimum).to)}</strong>.</div>
+        <div class="callout good"><b>More funding: ${Aq.PRIME_AGE.min}+ years (target ${Aq.PRIME_AGE.min}–${Aq.PRIME_AGE.max})</b>Companies ${Aq.PRIME_AGE.min}+ years old usually qualify for larger amounts — formed between <strong>${date(w.from)}</strong> and <strong>${date(w.to)}</strong>.</div></div>
+      <div class="callout good" style="margin-bottom:10px"><b>Search window</b>On each seller’s site, sort or filter by formation date (or “age”) and pick from this window.
         <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center"><span class="small">Change range:</span><select id="age-min" style="width:auto">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<option ${n === w.min ? 'selected' : ''}>${n}</option>`).join('')}</select><span class="small">to</span><select id="age-max" style="width:auto">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20].map(n => `<option ${n === w.max ? 'selected' : ''}>${n}</option>`).join('')}</select><span class="small">years →</span><strong class="small" id="age-window">formed ${date(w.from)} – ${date(w.to)}</strong></div></div>
       <div class="table-wrap"><table><thead><tr><th>Seller</th><th>States</th><th></th></tr></thead><tbody>${Aq.SHELF_SELLERS.map(x => `<tr><td><b>${esc(x.name)}</b><div class="small muted">${esc(x.note)}</div></td><td class="small">${esc(x.states)}</td><td class="right nowrap"><a class="btn sm primary" href="${esc(x.url)}" target="_blank" rel="noopener">Go to site ↗</a></td></tr>`).join('')}</tbody></table></div>
       <div class="callout" style="margin-top:10px"><b>OpenCorporates — look up any company, any state</b>OpenCorporates is a free public database of company registrations in all 50 states (it does not sell companies). Use it to check a shelf company’s formation date and status before you buy.
@@ -4097,7 +4103,7 @@ Thank you for considering this request.`
     const groups = [...new Set(Aq.CHECKS.map(x => x.group))];
     const list = deals.length > 1 ? `<div class="tabs" style="margin-bottom:12px">${deals.map(d => `<a href="#/clients/${c.id}/acquisition?deal=${d.id}" class="${d.id === sel.id ? 'active' : ''}">${esc(d.name)}</a>`).join('')}</div>` : '';
     return `<div class="stack">${finder}${shelfCard()}${list}
-      <div class="grid g4">${kpi('Due diligence', e.pct + '%', `${e.done} of ${e.total} checks`)}${kpi('Issues found', e.issues, e.issues ? 'Resolve before closing' : 'None so far')}${kpi('Years in business', e.years === null ? '—' : e.years, sel.formedOn ? 'formed ' + date(sel.formedOn) : 'add formation date')}${kpi('Price ÷ earnings', e.multiple === null ? '—' : e.multiple + '×', e.revMultiple !== null ? e.revMultiple + '× revenue' : 'add SDE or revenue')}</div>
+      <div class="grid g4">${kpi('Due diligence', e.pct + '%', `${e.done} of ${e.total} checks`)}${kpi('Issues found', e.issues, e.issues ? 'Resolve before closing' : 'None so far')}${kpi('Years in business', e.years === null ? '—' : e.years, sel.formedOn ? 'formed ' + date(sel.formedOn) + ({ under: ' · under 2-yr minimum', minimum: ' · meets minimum', prime: ' · 4+ yrs: more funding' }[e.tier] || '') : 'add formation date')}${kpi('Price ÷ earnings', e.multiple === null ? '—' : e.multiple + '×', e.revMultiple !== null ? e.revMultiple + '× revenue' : 'add SDE or revenue')}</div>
       ${e.flags.length ? `<div class="callout warn"><b>Red flags</b>${e.flags.map(f => esc(f.text)).join('<br>')}</div>` : ''}
       ${card(esc(sel.name), `<div class="small muted" style="margin-bottom:8px">${[sel.state && Aq.STATES[sel.state], sel.entityNumber && 'Entity # ' + sel.entityNumber, sel.askingPrice && 'Asking ' + money(sel.askingPrice), sel.structure].filter(Boolean).map(esc).join(' · ')}${sel.listingUrl ? ` · <a href="${esc(sel.listingUrl)}" target="_blank" rel="noopener">Listing ↗</a>` : ''}</div>
         ${groups.map(g => `<h3 style="margin:14px 0 6px">${esc(g)}</h3><div class="table-wrap"><table><tbody>${Aq.CHECKS.filter(x => x.group === g).map(x => { const s = checks[x.key] || {}; return `<tr><td><b style="font-weight:550">${esc(x.label)}</b><div class="small muted">${esc(x.why)}</div>${s.note ? `<div class="small">Note: ${esc(s.note)}</div>` : ''}</td><td class="nowrap">${x.link ? `<a class="btn sm ghost" href="${esc(x.link(sel))}" target="_blank" rel="noopener">${esc(x.linkText || 'Search')} ↗</a>` : ''}</td><td class="nowrap"><select data-act="aq-check" data-id="${c.id}" data-deal="${sel.id}" data-key="${x.key}" style="width:auto">${Aq.STATUS.map(([k, l]) => `<option value="${k}" ${k === (s.status || 'pending') ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="btn sm ghost" data-act="aq-note" data-id="${c.id}" data-deal="${sel.id}" data-key="${x.key}">Note</button></td></tr>`; }).join('')}</tbody></table></div>`).join('')}`,
