@@ -120,13 +120,29 @@
     form.addEventListener('submit', e => {
       e.preventDefault();
       const data = formData(form);
-      const res = onSubmit ? onSubmit(data, form, e.submitter) : true;
+      let res;
+      try { res = onSubmit ? onSubmit(data, form, e.submitter) : true; }
+      catch (err) { if (root.reportError) root.reportError(err, 'save “' + title + '”'); else toast('Could not save: ' + err.message); return; }
+      if (res && res.catch) res.catch(err => root.reportError && root.reportError(err, 'save “' + title + '”'));
       if (res !== false) close();
     });
     const first = form.querySelector('input:not([type=hidden]):not([type=checkbox]), select, textarea');
     if (first) setTimeout(() => first.focus(), 30);
     if (onOpen) onOpen(form);
     return form;
+  }
+  /** Marks a field as needing attention: red outline, message under it, scrolled into view, focused. */
+  function fieldError(form, name, msg) {
+    const el = form && form.elements[name];
+    toast(msg);
+    if (!el) return;
+    const lab = el.closest('label') || el.parentNode;
+    let note = lab.querySelector('.field-err');
+    if (!note) { note = document.createElement('small'); note.className = 'field-err'; lab.appendChild(note); }
+    note.textContent = msg;
+    el.classList.add('invalid');
+    el.addEventListener('input', () => { el.classList.remove('invalid'); note.remove(); }, { once: true });
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus();
   }
   function close() { if (modalEl) { modalEl.remove(); modalEl = null; } document.querySelectorAll('.overlay[data-ask]').forEach(o => o.remove()); }
   function formData(form) {
@@ -203,5 +219,5 @@
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
+  root.UI = { fieldError, inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
 })(typeof window !== 'undefined' ? window : globalThis);

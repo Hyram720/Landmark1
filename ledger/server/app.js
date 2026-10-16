@@ -322,6 +322,15 @@ export function createApp({ dataDir, encryptionKey } = {}) {
 
   app.get('/api/config', need('owner', 'staff'), (req, res) => res.json(Object.assign(commsConfig(), { assistant: assistantConfigured() })));
   const aiLimit = rateLimiter(60, 60 * 60 * 1000);
+  // Browser-side errors, so a button that silently fails shows up in the server log.
+  // Only the message, location in code and page route are kept — never form data.
+  app.post('/api/client-error', need('owner', 'staff'), (req, res) => {
+    const b = req.body || {};
+    const clip = (v, n) => String(v || '').replace(/[\r\n]+/g, ' | ').slice(0, n);
+    console.error(`[client-error] ${clip(b.where, 60)} route=${clip(b.route, 80)} build=${clip(String(b.build || "").split("v=")[1], 40)} msg=${clip(b.message, 300)} stack=${clip(b.stack, 800)}`);
+    res.json({ ok: true });
+  });
+
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });

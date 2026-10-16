@@ -336,6 +336,9 @@ tr.cmp-changed td { background: var(--med-soft); }
 /* Keep the page usable while Ledger AI is open: on wide screens the page shifts left instead of being covered. */
 @media (min-width: 1100px) { body.ai-open .main { padding-right: 440px; } body.ai-open .ai-fab { display: none; } }
 
+.field-err { color: var(--high); font-weight: 550; }
+input.invalid, select.invalid, textarea.invalid { border-color: var(--high) !important; box-shadow: 0 0 0 3px var(--high-soft); }
+
 </style>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3EL%3C/text%3E%3C/svg%3E">
 </head>
@@ -2129,7 +2132,11 @@ Thank you for considering this request.`
       // Add catalog offers introduced after this workspace was created.
       const have = new Set((ws.offers || []).map(o => o.key));
       ws.offers = (ws.offers || []).concat(seed.filter(o => !have.has(o.key)));
-      ['partnerReferrals', 'signatures', 'messages', 'documents', 'sequences'].forEach(k => { if (!Array.isArray(ws[k])) ws[k] = []; });
+      // Any list that is missing or damaged (null, object) becomes an empty list so pages and forms never crash on it.
+      Object.keys(base).forEach(k => { if (Array.isArray(base[k]) && !Array.isArray(ws[k])) ws[k] = []; });
+      ['sequences', 'pendingImports', 'automationLog'].forEach(k => { if (ws[k] !== undefined && !Array.isArray(ws[k])) ws[k] = []; });
+      if (!ws.settings.company || typeof ws.settings.company !== 'object') ws.settings.company = base.settings.company;
+      ws.clients = ws.clients.filter(c => c && typeof c === 'object');
       return ws;
     }
     if (data.version !== 1) throw new Error('Unsupported backup version: ' + data.version);
@@ -3328,13 +3335,29 @@ Thank you for considering this request.`
     form.addEventListener('submit', e => {
       e.preventDefault();
       const data = formData(form);
-      const res = onSubmit ? onSubmit(data, form, e.submitter) : true;
+      let res;
+      try { res = onSubmit ? onSubmit(data, form, e.submitter) : true; }
+      catch (err) { if (root.reportError) root.reportError(err, 'save “' + title + '”'); else toast('Could not save: ' + err.message); return; }
+      if (res && res.catch) res.catch(err => root.reportError && root.reportError(err, 'save “' + title + '”'));
       if (res !== false) close();
     });
     const first = form.querySelector('input:not([type=hidden]):not([type=checkbox]), select, textarea');
     if (first) setTimeout(() => first.focus(), 30);
     if (onOpen) onOpen(form);
     return form;
+  }
+  /** Marks a field as needing attention: red outline, message under it, scrolled into view, focused. */
+  function fieldError(form, name, msg) {
+    const el = form && form.elements[name];
+    toast(msg);
+    if (!el) return;
+    const lab = el.closest('label') || el.parentNode;
+    let note = lab.querySelector('.field-err');
+    if (!note) { note = document.createElement('small'); note.className = 'field-err'; lab.appendChild(note); }
+    note.textContent = msg;
+    el.classList.add('invalid');
+    el.addEventListener('input', () => { el.classList.remove('invalid'); note.remove(); }, { once: true });
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus();
   }
   function close() { if (modalEl) { modalEl.remove(); modalEl = null; } document.querySelectorAll('.overlay[data-ask]').forEach(o => o.remove()); }
   function formData(form) {
@@ -3411,7 +3434,7 @@ Thank you for considering this request.`
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
+  root.UI = { fieldError, inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -4454,22 +4477,24 @@ Thank you for considering this request.`
   function clientModal(c, defaults) {
     const isNew = !c;
     c = c || Object.assign({ status: 'lead', kind: 'personal' }, defaults || {});
+    const bizBlock = `<div class="span2" data-biz ${c.kind && c.kind !== 'personal' ? '' : 'hidden'}><hr><h3 style="margin-bottom:10px">Business</h3><div class="form-grid">
+          ${field('Legal business name', 'b_legalName', (c.business || {}).legalName)}${field('DBA', 'b_dba', (c.business || {}).dba)}
+          ${field('Entity type', 'b_entityType', (c.business || {}).entityType, { type: 'select', options: ['', 'LLC', 'S-Corp', 'C-Corp', 'Partnership', 'Sole proprietor', 'Nonprofit'] })}${field('State of formation', 'b_stateOfFormation', (c.business || {}).stateOfFormation)}
+          ${field('Formation date', 'b_formedOn', (c.business || {}).formedOn, { type: 'date' })}${field('EIN — last 4 only', 'b_einLast4', (c.business || {}).einLast4, { attrs: 'maxlength="4" inputmode="numeric"' })}
+          ${field('NAICS code', 'b_naics', (c.business || {}).naics)}${field('D-U-N-S number', 'b_duns', (c.business || {}).duns)}
+          ${field('Business phone', 'b_phone', (c.business || {}).phone)}${field('Website', 'b_website', (c.business || {}).website)}</div></div>`;
     modal({
       title: isNew ? (c.kind === 'business' ? 'New business client' : 'New client') : 'Edit client',
       body: `<div class="form-grid">
-        ${field('First name', 'firstName', c.firstName, { required: true })}${field('Last name', 'lastName', c.lastName, { required: true })}
+        ${c.kind === 'business' ? bizBlock.replace('<hr>', '') : ''}
+        ${field(c.kind && c.kind !== 'personal' ? 'Owner first name' : 'First name', 'firstName', c.firstName)}${field(c.kind && c.kind !== 'personal' ? 'Owner last name' : 'Last name', 'lastName', c.lastName)}
         ${field('Email', 'email', c.email, { type: 'email' })}${field('Phone', 'phone', c.phone)}
         ${field('Street address', 'address', c.address, { cls: 'span2' })}
         ${field('City', 'city', c.city)}<div class="form-grid" style="gap:10px">${field('State', 'state', c.state)}${field('ZIP', 'zip', c.zip)}</div>
         ${field('Date of birth', 'dob', c.dob, { type: 'date' })}${field('SSN — last 4 only', 'ssnLast4', c.ssnLast4, { attrs: 'maxlength="4" inputmode="numeric" pattern="\\d{4}"', help: 'Ledger never stores full SSNs' })}
         ${field('Client type', 'kind', c.kind || 'personal', { type: 'select', options: [['personal', 'Personal credit'], ['business', 'Business credit only'], ['both', 'Personal + business']], help: 'Business-only work is outside CROA; personal work requires the CROA steps' })}
         ${field('Status', 'status', c.status, { type: 'select', options: Object.entries(UI.CSTATE).map(([k, v]) => [k, v[0]]) })}
-        <div class="span2" data-biz ${c.kind && c.kind !== 'personal' ? '' : 'hidden'}><hr><h3 style="margin-bottom:10px">Business</h3><div class="form-grid">
-          ${field('Legal business name', 'b_legalName', (c.business || {}).legalName)}${field('DBA', 'b_dba', (c.business || {}).dba)}
-          ${field('Entity type', 'b_entityType', (c.business || {}).entityType, { type: 'select', options: ['', 'LLC', 'S-Corp', 'C-Corp', 'Partnership', 'Sole proprietor', 'Nonprofit'] })}${field('State of formation', 'b_stateOfFormation', (c.business || {}).stateOfFormation)}
-          ${field('Formation date', 'b_formedOn', (c.business || {}).formedOn, { type: 'date' })}${field('EIN — last 4 only', 'b_einLast4', (c.business || {}).einLast4, { attrs: 'maxlength="4" inputmode="numeric"' })}
-          ${field('NAICS code', 'b_naics', (c.business || {}).naics)}${field('D-U-N-S number', 'b_duns', (c.business || {}).duns)}
-          ${field('Business phone', 'b_phone', (c.business || {}).phone)}${field('Website', 'b_website', (c.business || {}).website)}</div></div>
+        ${c.kind === 'business' ? '' : bizBlock}
         ${field('Referred by', 'referralId', c.referralId, { type: 'select', options: [['', '—']].concat(S().referrals.map(r => [r.id, r.name])) })}
         ${field('Billing', 'billingModel', c.billingModel || 'inherit', { type: 'select', options: [['inherit', 'Use the company default']].concat(root.Billing.MODELS) })}
         ${field('Credit monitoring service', 'monitoring', c.monitoring || '', { type: 'select', options: ['', 'MyFreeScoreNow', 'IdentityIQ', 'SmartCredit', 'MyScoreIQ', 'Other'] , help: 'Where the client gets their monthly 3-bureau report' })}
@@ -4477,13 +4502,14 @@ Thank you for considering this request.`
         ${field('Notes', 'notes', c.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Delete client</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
       onOpen: f => { f.elements.kind.onchange = () => { f.querySelector('[data-biz]').hidden = f.elements.kind.value === 'personal'; }; const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { if (UI.ask(`Delete ${c.name} and all their reports, disputes and invoices?`)) { const id = c.id; ['reports', 'disputes', 'letters', 'tasks', 'invoices'].forEach(k => { S()[k] = S()[k].filter(x => x.clientId !== id); }); S().clients = S().clients.filter(x => x.id !== id); UI.close(); Store.log('Deleted client ' + c.name); Store.save(); go('#/clients'); } }; },
-      onSubmit: d => {
-        if (!d.firstName || !d.lastName) { toast('Name is required'); return false; }
-        if (d.ssnLast4 && !/^\d{4}$/.test(d.ssnLast4)) { toast('Enter only the last 4 digits of the SSN'); return false; }
-        if (d.b_einLast4 && !/^\d{4}$/.test(d.b_einLast4)) { toast('Enter only the last 4 digits of the EIN'); return false; }
+      onSubmit: (d, f) => {
+        const bizOnly = d.kind !== 'personal' && d.b_legalName;
+        if (!bizOnly && (!d.firstName || !d.lastName)) { UI.fieldError(f, d.firstName ? 'lastName' : 'firstName', d.kind === 'personal' ? 'Enter the client’s first and last name' : 'Enter the owner’s first and last name, or the legal business name'); return false; }
+        if (d.ssnLast4 && !/^\d{4}$/.test(d.ssnLast4)) { UI.fieldError(f, 'ssnLast4', 'Enter only the last 4 digits of the SSN'); return false; }
+        if (d.b_einLast4 && !/^\d{4}$/.test(d.b_einLast4)) { UI.fieldError(f, 'b_einLast4', 'Enter only the last 4 digits of the EIN'); return false; }
         const biz = {};
         Object.keys(d).filter(k => k.startsWith('b_')).forEach(k => { biz[k.slice(2)] = d[k]; delete d[k]; });
-        Object.assign(c, d, { name: `${d.firstName} ${d.lastName}`.trim() });
+        Object.assign(c, d, { name: `${d.firstName} ${d.lastName}`.trim() || biz.legalName });
         if (d.kind !== 'personal') c.business = Object.assign(c.business || {}, biz);
         if (isNew) { Object.assign(c, { id: Store.uid(), createdAt: Store.now(), onboarding: {}, addedBy: Remote.user ? Remote.user.name : 'Me' }); S().clients.push(c); }
         Store.log((isNew ? 'Added ' : 'Updated ') + c.name, c.id);
@@ -5454,7 +5480,10 @@ Thank you for considering this request.`
       const act = e.target.closest('[data-act]');
       if (act && act.tagName !== 'SELECT' && act.tagName !== 'TEXTAREA' && A[act.dataset.act]) {
         if (act.tagName === 'INPUT' && act.type === 'checkbox') { A[act.dataset.act](act, e); return; }
-        e.preventDefault(); A[act.dataset.act](act, e); return;
+        e.preventDefault();
+        try { const r = A[act.dataset.act](act, e); if (r && r.catch) r.catch(err => reportError(err, 'action ' + act.dataset.act)); }
+        catch (err) { reportError(err, 'action ' + act.dataset.act); }
+        return;
       }
       const row = e.target.closest('[data-href]');
       if (row && !e.target.closest('a,button,input')) go(row.dataset.href);
@@ -5581,13 +5610,21 @@ Thank you for considering this request.`
     window.addEventListener('hashchange', render);
   }
 
+  // Any error is shown on screen and, in server mode, sent to the server log.
+  function reportError(err, where) {
+    const msg = (err && err.message) || String(err);
+    console.error(where, err);
+    try { UI.toast(`Something went wrong (${where}): ${msg}`); } catch (e) { /* ignore */ }
+    if (Store.remote) fetch('/api/client-error', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ where, message: msg, stack: err && err.stack, route: location.hash, build: (document.querySelector('script[src*="app.js"]') || {}).src }) }).catch(() => {});
+  }
+  root.reportError = reportError;
   // Never leave a blank screen: if startup fails, say so and offer a reload.
   function showFatal(msg) {
     const v = document.getElementById('view');
     if (v && !v.textContent.trim()) v.innerHTML = `<div class="callout bad"><b>Ledger couldn’t start</b>${esc(String(msg || 'Unknown error'))}<div class="row" style="margin-top:10px"><button class="btn" onclick="location.reload()">Reload</button></div></div>`;
   }
-  window.addEventListener('error', e => showFatal(e.message));
-  window.addEventListener('unhandledrejection', e => showFatal((e.reason && e.reason.message) || e.reason));
+  window.addEventListener('error', e => { showFatal(e.message); reportError(e.error || e.message, 'page'); });
+  window.addEventListener('unhandledrejection', e => { showFatal((e.reason && e.reason.message) || e.reason); reportError(e.reason, 'async'); });
   async function boot() {
     try { const th = localStorage.getItem('ledger-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) { /* ignore */ }
     let session = null;

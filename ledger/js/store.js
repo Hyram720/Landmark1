@@ -35,7 +35,11 @@
       // Add catalog offers introduced after this workspace was created.
       const have = new Set((ws.offers || []).map(o => o.key));
       ws.offers = (ws.offers || []).concat(seed.filter(o => !have.has(o.key)));
-      ['partnerReferrals', 'signatures', 'messages', 'documents', 'sequences'].forEach(k => { if (!Array.isArray(ws[k])) ws[k] = []; });
+      // Any list that is missing or damaged (null, object) becomes an empty list so pages and forms never crash on it.
+      Object.keys(base).forEach(k => { if (Array.isArray(base[k]) && !Array.isArray(ws[k])) ws[k] = []; });
+      ['sequences', 'pendingImports', 'automationLog'].forEach(k => { if (ws[k] !== undefined && !Array.isArray(ws[k])) ws[k] = []; });
+      if (!ws.settings.company || typeof ws.settings.company !== 'object') ws.settings.company = base.settings.company;
+      ws.clients = ws.clients.filter(c => c && typeof c === 'object');
       return ws;
     }
     if (data.version !== 1) throw new Error('Unsupported backup version: ' + data.version);
