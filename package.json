@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "DEV_SKIP_PAYMENT=true IMAGE_PROVIDER=mock node --watch src/server.js",
-    "content": "node scripts/content-engine.js 30"
+    "content": "node scripts/content-engine.js 30",
+    "test": "node --test test/"
   },
   "repository": {
     "type": "git",

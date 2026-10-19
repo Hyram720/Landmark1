@@ -46,6 +46,21 @@ const config = {
     // false = orders are created as drafts you approve in Printful; true = fully hands-off.
     autoConfirm: env.PRINTFUL_AUTO_CONFIRM === 'true',
   },
+
+  // Printify product pipeline (OFF by default). When on, each finished portrait becomes an
+  // UNPUBLISHED Printify product in the Etsy-connected store, copied from an existing product
+  // template. Nothing is ever published; see docs/PRINTIFY-PIPELINE.md.
+  printify: {
+    enabled: env.PRINTIFY_PIPELINE_ENABLED === 'true',
+    token: env.PRINTIFY_API_TOKEN || '',
+    shopId: env.PRINTIFY_SHOP_ID || '',
+    // Comma-separated template keys from PRINTIFY_TEMPLATES below.
+    templates: (env.PRINTIFY_TEMPLATES || 'ceramic').split(',').map((s) => s.trim()).filter(Boolean),
+    templateIds: {
+      ceramic: env.PRINTIFY_TEMPLATE_CERAMIC || '6ad698866a4ea2b9ee07ebed',
+      metal: env.PRINTIFY_TEMPLATE_METAL || '6ad699a62f9eed4da1017ce5',
+    },
+  },
 };
 
 // Art styles. The prompt is sent with the customer's photo to the image model.

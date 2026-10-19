@@ -16,6 +16,7 @@ import { alertOwner } from './notify.js';
 import { startHealthcheck } from './healthcheck.js';
 import { INDEXNOW_KEY, submitIndexNow } from './indexnow.js';
 import { runPrintfulSelftest } from './printful-selftest.js';
+import { pushOrderToPrintify } from './printify-pipeline.js';
 import { PROMO_VIDEO_SOURCE, promoVideoPath, promoVideoCached, cachePromoVideo } from './promo-video.js';
 
 let stripeSetupStatus = 'pending';
@@ -359,7 +360,7 @@ app.get('/admin', requireAdmin, (req, res) => {
     .map(
       (o) => `<tr><td>${o.createdAt.slice(0, 16)}</td><td>${o.status}</td><td>${o.email}</td><td>${o.style}</td><td>${o.product}</td>
       <td>${o.source || ''}</td><td>${o.error ? `<small>${String(o.error).replace(/</g, '&lt;')}</small>` : ''}</td>
-      <td><a href="/o/${o.id}" target="_blank">view</a>${['failed', 'print_failed'].includes(o.status) ? ` · <form method="post" action="/admin/retry/${o.id}?key=${encodeURIComponent(req.query.key)}" style="display:inline"><button>retry</button></form>` : ''}</td></tr>`
+      <td><a href="/o/${o.id}" target="_blank">view</a>${config.printify.enabled && o.images?.length ? ` · <form method="post" action="/admin/printify/${o.id}?key=${encodeURIComponent(req.query.key)}" style="display:inline"><button title="Create unpublished Printify product(s); never publishes">Printify${o.printify?.status ? ` (${o.printify.status})` : ''}</button></form>` : ''}${['failed', 'print_failed'].includes(o.status) ? ` · <form method="post" action="/admin/retry/${o.id}?key=${encodeURIComponent(req.query.key)}" style="display:inline"><button>retry</button></form>` : ''}</td></tr>`
     )
     .join('');
   res.send(`<!doctype html><title>Admin</title><style>body{font-family:sans-serif;padding:16px}td,th{padding:4px 8px;border-bottom:1px solid #ddd;font-size:13px;text-align:left}</style>
@@ -401,7 +402,8 @@ app.get('/admin/check', requireAdmin, async (req, res) => {
     probe('https://api.printful.com/stores', config.printful.token),
     probe('https://api.stripe.com/v1/balance', config.stripe.secretKey),
   ]);
-  res.json({ openai, resend, printful, stripe, stripeSetup: stripeSetupStatus, emailDomain: emailDomainStatus });
+  const printify = config.printify.token ? await probe('https://api.printify.com/v1/shops.json', config.printify.token) : 'not configured';
+  res.json({ openai, resend, printful, stripe, printify, printifyPipeline: config.printify.enabled ? 'on' : 'off', stripeSetup: stripeSetupStatus, emailDomain: emailDomainStatus });
 });
 
 app.post('/admin/retry/:id', requireAdmin, (req, res) => {
@@ -415,6 +417,19 @@ app.post('/admin/retry/:id', requireAdmin, (req, res) => {
     selectForPrint(order.id, order.selectedImage).catch(() => {});
   }
   res.redirect(`/admin?key=${encodeURIComponent(req.query.key)}`);
+});
+
+// Manually (re)create the unpublished Printify product(s) for an order, e.g. after a failure or
+// to use a different portrait. Optional body field "image" picks the file. Never publishes.
+app.post('/admin/printify/:id', requireAdmin, express.urlencoded({ extended: false }), async (req, res) => {
+  const order = findOrder(req.params.id);
+  if (!order) return res.sendStatus(404);
+  try {
+    const result = await pushOrderToPrintify(order.id, { imageName: req.body?.image || undefined, force: true });
+    res.json({ status: result.status || 'skipped', skipped: result.skipped, error: result.error || null, products: result.products || {} });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 if (!fs.existsSync(path.join(publicDir, 'index.html'))) console.warn('public/index.html missing');
