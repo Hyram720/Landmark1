@@ -8,6 +8,7 @@ import { applyNameplate, cleanName, lookFor } from './nameplate.js';
 import { enhancePortrait, upgradeToMaster, makePrintFile, ENHANCE_ENABLED, MASTER_VERSION } from './enhance.js';
 import { sendEmail, alertOwner, portraitsReadyEmail } from './notify.js';
 import { createPrintOrder } from './printful.js';
+import { pushOrderToPrintify } from './printify-pipeline.js';
 
 // Single in-process queue keeps API usage predictable and avoids double-processing.
 const queue = [];
@@ -69,6 +70,11 @@ async function processOrder(id) {
     error: null,
     deliveredAt: new Date().toISOString(),
   });
+  // Optional: copy the finished portrait into an unpublished Printify product. Off unless
+  // PRINTIFY_PIPELINE_ENABLED=true; runs in the background and can never fail the order.
+  if (config.printify.enabled) {
+    pushOrderToPrintify(id).catch((err) => console.error(`Printify push for ${id}`, err.message));
+  }
   // The gallery page already shows the portraits, so a failed email must not fail the order.
   if (!done.email) return; // Etsy orders: the gallery link goes to the buyer via Etsy messages
   try {

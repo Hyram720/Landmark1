@@ -81,11 +81,19 @@ Customer uploads photo ─► Stripe Checkout ─► webhook ─► AI paints 4 
 6. **Search engines:** Submit `https://yourdomain.com/sitemap.xml` to Google Search Console and Bing Webmaster Tools.
 7. **Marketing content:** Run `BASE_URL=https://yourdomain.com npm run content`, then follow `docs/MARKETING.md`.
 
+## Printify pipeline (optional, off by default)
+
+Set `PRINTIFY_PIPELINE_ENABLED=true` with `PRINTIFY_API_TOKEN` and `PRINTIFY_SHOP_ID` and every
+finished portrait is copied into an **unpublished** Printify product in the Etsy-connected store,
+based on the existing ornament drafts (same blueprint, provider, variants, prices), with the 13
+Etsy tags. Nothing is ever published. Details, limits and setup: [`docs/PRINTIFY-PIPELINE.md`](docs/PRINTIFY-PIPELINE.md).
+
 ## Local development
 
 ```bash
 npm install
 npm run dev          # http://localhost:3000. No payments, mock images, emails print to the console.
+npm test             # unit tests (node:test, no network)
 ```
 
 Owner dashboard: `/admin?key=YOUR_ADMIN_KEY`. It shows revenue, every order, which ad or page each order came from, and retry buttons.
@@ -99,6 +107,8 @@ src/generate.js     AI portrait generation (OpenAI image edits; mock mode for te
 src/stripe.js       Stripe Checkout + webhook signature verification (no SDK)
 src/stripe-setup.js automatic webhook + promo code setup on boot
 src/printful.js     print-on-demand fulfillment
+src/printify.js     Printify API client (no publish call)
+src/printify-pipeline.js  portrait -> unpublished Printify product (flagged)
 src/followups.js    abandoned-checkout recovery, review + referral emails
 src/seo.js          38 breed pages + 7 gift-occasion pages, schema.org, sitemap, robots
 src/config.js       styles (prompts), products, prices, all settings
