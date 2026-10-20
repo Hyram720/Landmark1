@@ -9,14 +9,14 @@
 </head>
 <body>
   <div class="wrap">
-    <header class="top"><a class="logo" href="/">Ship<span>Check</span></a></header>
+    <header class="top"><a class="logo" href="/">Ship<span>Check</span></a><a href="/guides">Guides</a></header>
 
     <section class="hero">
       <h1>Is your AI-built app safe to launch?</h1>
       <p>Find leaked API keys, open databases and fake-able payments in your Cursor, Lovable, Bolt or Claude Code project. Get a copy-paste fix prompt for each one.</p>
     </section>
 
-    <form class="panel" id="scan-form">
+    <form class="panel" id="scan">
       <label for="repoUrl">Your public GitHub repo</label>
       <input type="url" id="repoUrl" name="repoUrl" placeholder="https://github.com/you/your-app">
       <p class="or">or upload your project as a .zip (private repos: download the zip from GitHub)</p>
@@ -45,10 +45,13 @@
       <div class="card"><h3>3. Paste and ship</h3><p>Every finding has a fix prompt for your AI coding tool. Re-scan free to confirm it's clean.</p></div>
     </div>
 
+    <h2>Guides</h2>
+    <p><a href="/guides/lovable-app-security-checklist">Lovable security checklist</a> · <a href="/guides/supabase-rls-checker">Supabase RLS checker</a> · <a href="/guides/exposed-openai-api-key">Exposed OpenAI key?</a> · <a href="/guides">All guides</a></p>
+
     <footer>ShipCheck is an automated static check, not a full security audit or a guarantee. It catches common, costly mistakes before launch.</footer>
   </div>
   <script>
-    const form = document.getElementById('scan-form');
+    const form = document.getElementById('scan');
     const err = document.getElementById('error');
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

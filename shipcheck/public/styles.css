@@ -35,6 +35,6 @@ h2 { letter-spacing: -.02em; margin-top: 48px; }
 .finding .meta { color: var(--muted); font-size: 13px; font-family: ui-monospace, monospace; margin: 4px 0 10px; word-break: break-all; }
 .finding p { color: var(--text); margin: 6px 0; font-size: 15px; }
 .locked { filter: blur(5px); user-select: none; color: var(--muted); }
-pre.prompt { white-space: pre-wrap; background: #0e1115; border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 13px; color: var(--text); }
+pre.prompt { white-space: pre-wrap; overflow-wrap: anywhere; background: #0e1115; border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 13px; color: var(--text); }
 .copy { width: auto; margin-top: 8px; padding: 8px 14px; font-size: 14px; }
 footer { color: var(--muted); font-size: 13px; padding: 40px 0; text-align: center; }

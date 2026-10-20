@@ -14,7 +14,20 @@ People build apps in Cursor, Lovable, Bolt and Claude Code, then launch them wit
 
 **Why the free scan sells the paid report:** the free scan tells someone "Supabase service_role key in code" but not where it is. That gap between "you have a problem" and "here's the fix" is what they pay $19 for.
 
-**Fully automated:** scan → preview → Stripe Checkout → webhook unlocks the report → email with the private link. The only human work is reading the failure alerts that `ALERT_EMAIL` receives and checking `/admin?key=...` (scans, paid count, conversion rate, revenue).
+**Fully automated:**
+
+```
+free scan ─► score + issue names ─► $19 Stripe Checkout ─► webhook unlocks report ─► email with private link
+     │                                                              │
+     └─ left email, didn't buy, has critical/high issues            ├─ up to 5 free re-scans of the same project (30 days)
+        └─ ~1h later: one reminder with SHIPIT20 (20% off)          └─ README badge with live score ─► new visitors
+```
+
+The only human work is reading the failure alerts that `ALERT_EMAIL` receives and checking `/admin?key=...` (scans, paid count, conversion rate, revenue).
+
+**Growth built in:**
+- 8 SEO guide pages under `/guides`, each targeting a real search ("supabase rls checker", "lovable app security checklist", "exposed openai api key", and more), plus `sitemap.xml` and `robots.txt`.
+- A README badge (`/badge/<id>.svg`) for paying customers. It uses its own public id, so the private report link is never exposed.
 
 ## What it checks
 
@@ -45,9 +58,7 @@ People build apps in Cursor, Lovable, Bolt and Claude Code, then launch them wit
    - Use start command `npm start`.
    - Mount a persistent volume at `/data`.
    - Copy `.env.example` into the host's environment variables and fill them in.
-3. **Stripe:**
-   - Add a webhook pointing to `https://YOURDOMAIN/webhooks/stripe` for `checkout.session.completed`.
-   - Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
+3. **Stripe:** set only `STRIPE_SECRET_KEY`. On boot the app creates its own webhook (and moves it when `BASE_URL` changes) and creates the `SHIPIT20` promo code.
 4. **Smoke test:** scan one of your own repos, pay $19 with a real card, confirm the email arrives, then refund yourself.
 
 ## Getting customers (playbook)
@@ -75,6 +86,10 @@ src/scanner.js   the checks, masking, scoring, fix prompts
 src/intake.js    GitHub zip download + in-memory zip reading
 src/server.js    scan API, free preview vs paid report, Stripe webhook, admin
 src/stripe.js    Checkout + webhook signature verification (no SDK)
+src/stripe-setup.js  automatic webhook + promo code setup on boot
+src/followups.js recovery email for unpaid scans with serious issues
+src/seo.js       guide pages, sitemap, robots
+src/badge.js     README score badge
 src/notify.js    report email + owner alerts (Resend)
 public/          landing page + report page
 ```

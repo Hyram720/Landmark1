@@ -9,6 +9,10 @@ const config = {
   supportEmail: env.SUPPORT_EMAIL || '',
   adminKey: env.ADMIN_KEY || '',
   price: Number(env.PRICE_REPORT || 1900), // cents
+  // A paid report includes free re-scans of the same project for a while, to confirm fixes.
+  rescans: { limit: Number(env.RESCAN_LIMIT || 5), days: Number(env.RESCAN_DAYS || 30) },
+  // Free scanners who left an email but didn't buy get one reminder with this code.
+  recovery: { code: env.RECOVERY_CODE || 'SHIPIT20', percentOff: Number(env.RECOVERY_PERCENT || 20), afterHours: 1 },
 
   // Set DEV_SKIP_PAYMENT=true to unlock reports without Stripe (local testing only).
   devSkipPayment: env.DEV_SKIP_PAYMENT === 'true',

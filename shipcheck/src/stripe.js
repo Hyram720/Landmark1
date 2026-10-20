@@ -13,18 +13,25 @@ function formEncode(obj, prefix = '', out = new URLSearchParams()) {
   return out;
 }
 
+// Pin the API version so Stripe changes can't silently alter request/response shapes.
+export const STRIPE_API_VERSION = '2024-06-20';
+
 export async function stripeRequest(method, path, params) {
   const res = await fetch(`https://api.stripe.com/v1${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${config.stripe.secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Stripe-Version': '2024-06-20',
+      'Stripe-Version': STRIPE_API_VERSION,
     },
     body: params ? formEncode(params) : undefined,
   });
   const body = await res.json();
-  if (!res.ok) throw new Error(`Stripe: ${body.error?.message || res.status}`);
+  if (!res.ok) {
+    const err = new Error(`Stripe: ${body.error?.message || res.status}`);
+    err.code = body.error?.code;
+    throw err;
+  }
   return body;
 }
 

@@ -33,6 +33,22 @@
         <div class="title" style="margin-top:8px">${esc(f.title)}</div>${body}</div>`;
     }
 
+    const badgeMd = (url) => `[![ShipCheck score](${url})](${location.origin}/)`;
+
+    function rescanHtml(r) {
+      if (!r.rescan) return '';
+      if (!r.rescan.left) return '<p class="fine">No free re-scans left on this report. You can still run a normal free scan from the home page.</p>';
+      const gh = r.rescan.source.type === 'github';
+      return `<form class="panel" id="rescan">
+        <h3 style="margin-top:0">Fixed things? Re-scan free</h3>
+        <p class="fine">${r.rescan.left} free re-scan${r.rescan.left === 1 ? '' : 's'} left${gh ? ` for ${esc(r.rescan.source.name)}` : ''}.</p>
+        <input type="hidden" name="rescanOf" value="${esc(r.id)}">
+        ${gh ? `<input type="hidden" name="repoUrl" value="https://github.com/${esc(r.rescan.source.name)}">`
+             : '<input type="file" name="archive" accept=".zip,application/zip" required>'}
+        <button type="submit">Re-scan</button>
+      </form>`;
+    }
+
     async function load() {
       const res = await fetch(`/api/scan/${id}`);
       if (!res.ok) { root.innerHTML = '<p class="error">Report not found.</p>'; return; }
@@ -56,7 +72,26 @@
             <p class="fine">One-time payment. You get every file and line, plain-English explanations, and a copy-paste fix prompt for Cursor, Claude Code, Lovable or Bolt.</p>` : ''}
           ${paidPending ? '<p class="fine">Payment received. Unlocking your report…</p>' : ''}
         </div>
-        ${r.findings.map((f) => findingHtml(f, r.unlocked)).join('')}`;
+        ${r.findings.map((f) => findingHtml(f, r.unlocked)).join('')}
+        ${rescanHtml(r)}
+        ${r.badge ? `<div class="panel"><h3 style="margin-top:0">Show it off</h3>
+          <p class="fine">Add your live score to your README. It updates when you re-scan.</p>
+          <p><img src="${esc(r.badge)}" alt="ShipCheck score"></p>
+          <pre class="prompt">${esc(badgeMd(r.badge))}</pre>
+          <button class="copy" data-prompt="${esc(badgeMd(r.badge))}">Copy badge markdown</button></div>` : ''}`;
+
+      document.getElementById('rescan')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = e.target.querySelector('button');
+        btn.disabled = true;
+        btn.textContent = 'Re-scanning…';
+        const data = new FormData(e.target);
+        if (!e.target.archive?.files.length) data.delete('archive');
+        const res2 = await fetch('/api/scan', { method: 'POST', body: data });
+        const body = await res2.json();
+        if (res2.ok) location.href = `/r/${body.id}`;
+        else { btn.disabled = false; btn.textContent = 'Re-scan'; alert(body.error); }
+      });
 
       document.getElementById('unlock')?.addEventListener('click', async (e) => {
         e.target.disabled = true;
