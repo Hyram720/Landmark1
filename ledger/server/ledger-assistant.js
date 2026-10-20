@@ -11,8 +11,8 @@
 // emails, phones). The audit log records metadata only (who, which client id, mode, token counts) —
 // never the question or the answer.
 import crypto from 'node:crypto';
-import { Law, Metro2, Store, Letters, KB, DisputeReasons, FileCheck, Business } from './shared.js';
-import { redact, lastFour } from './redact.js';
+import { Law, Metro2, Store, Letters, KB, DisputeReasons, FileCheck, Business, Acquisition } from './shared.js';
+import { redact, lastFour, redactPayload, assertNoSensitive } from './redact.js';
 import { rateLimiter } from './auth.js';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
@@ -25,12 +25,14 @@ export function aiConfig(env = process.env) {
   return { enabled, provider: enabled ? 'openai' : null, model: env.LEDGER_OPENAI_MODEL || 'gpt-5-mini', flag: String(env.LEDGER_AI_ENABLED || '').toLowerCase() === 'true', keyPresent: !!env.OPENAI_API_KEY };
 }
 
+export async function chatCompletion(args) { return chat(args); }
 async function chat({ system, messages, maxTokens = 1200, env = process.env }) {
   const cfg = aiConfig(env);
   const r = await fetchImpl(OPENAI_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: cfg.model, max_completion_tokens: maxTokens, messages: [{ role: 'system', content: system }].concat(messages) }),
+    // Shared redaction on every message, then the final SSN/card guard on the exact body (throws; nothing sent).
+    body: JSON.stringify(assertNoSensitive(redactPayload({ model: cfg.model, max_completion_tokens: maxTokens, messages: [{ role: 'system', content: system }].concat(messages) }))),
     signal: AbortSignal.timeout ? AbortSignal.timeout(45000) : undefined
   });
   const data = await r.json().catch(() => ({}));
@@ -40,7 +42,7 @@ async function chat({ system, messages, maxTokens = 1200, env = process.env }) {
 }
 
 // ---------- grounding ----------
-const RAILS = `Hard rules — never break them:
+export const RAILS = `Hard rules — never break them:
 - Never promise or predict results, deletions, score increases or timelines for approval. Say "may", not "will".
 - You are not a lawyer or CPA and do not give legal or tax advice; flag questions that need one.
 - Only treat an item as disputable if the data shows a specific inaccuracy, it is obsolete, or the consumer says it is inaccurate and can explain why. Accurate, current, verifiable information cannot be removed by disputing it.
@@ -80,8 +82,32 @@ export function clientDigest(ws, clientId, today = new Date().toISOString().slic
   if (sugg.length) { lines.push('\nRules-engine findings that are dispute-ready:'); sugg.forEach(s => lines.push(`* [${s.code}] ${s.bureau} ${redact(s.creditor)}: ${redact(s.discrepancy)} → ask: ${s.requested} (kb: ${s.kb.join(', ')})`)); }
   const dl = deadlinesFor(ws, c.id, today);
   if (dl.length) { lines.push('\nOpen disputes and response deadlines (FCRA 30 days, 45 if extended):'); dl.forEach(d => lines.push(`- ${d.recipient} round ${d.round} (${d.type}): mailed ${d.sentAt}, response due ${d.dueAt || '?'}${d.daysLeft !== null ? ` (${d.overdue ? Math.abs(d.daysLeft) + ' days OVERDUE' : d.daysLeft + ' days left'})` : ''}`)); }
-  if (c.kind !== 'personal' && c.business) lines.push(`\nBusiness: ${c.business.entityType || 'entity ?'}, formed ${c.business.formedOn || '?'}.`);
+  if (c.kind !== 'personal') lines.push(businessDigest(c, ws, today));
   return { text: lines.join('\n'), suggestions: sugg, deadlines: dl };
+}
+
+/** Business-credit section of the digest (business / both clients). Every free-text value is redacted. */
+export function businessDigest(c, ws, today = new Date().toISOString().slice(0, 10)) {
+  const b = c.business || {};
+  const L = [`\nBusiness file: ${redact(b.entityType || 'entity ?')} formed ${b.formedOn || '?'} in ${b.stateOfFormation || '?'}; NAICS ${b.naics || '?'}${b.sic ? ', SIC ' + b.sic : ''}; D-U-N-S ${b.duns ? 'on file' : 'not on file'}; EIN ${b.einLast4 ? 'on file' : 'not on file'}.`];
+  const fu = Business.fundability(c);
+  const chk = c.businessChecklist || {};
+  L.push(`Fundability checklist ${fu.done}/${fu.total} (${fu.pct}%). Missing: ${Business.FOUNDATION.filter(f => !chk[f.key]).map(f => f.key).join(', ') || 'none'}.`);
+  const sc = (c.businessScores || []).slice().sort((x, y) => String(x.date).localeCompare(String(y.date)));
+  if (sc.length) L.push('Business scores: ' + sc.map(x => { const m = Business.SCORE_MODELS.find(k => k.key === x.model); return `${m ? m.name : x.model} ${x.score} (${x.date}${x.source ? ', ' + redact(x.source) : ''})`; }).join('; ') + '.');
+  const va = c.vendorAccounts || [];
+  if (va.length) { L.push('Vendor / net-30 accounts:'); va.forEach(v => L.push(`- ${redact(v.vendor)} | ${redact(v.terms || '?')} | limit ${v.limit ?? '?'} | balance ${v.balance ?? '?'} | ${v.status || '?'} | reports to ${redact(v.reportsTo || '?')} | opened ${v.opened || '?'}`)); }
+  const cs = Business.coachState(c, ws, today);
+  if (cs.started) {
+    L.push(`90-day plan started ${cs.startedAt}: ${cs.done}/${cs.total} steps done.${cs.current ? ` Current step: [${cs.current.key}] ${cs.current.title} (due ${cs.current.due}${cs.current.overdue ? ', OVERDUE' : ''}).` : ' All steps done.'}${cs.next ? ` Next: [${cs.next.key}] due ${cs.next.due}.` : ''}`);
+    if (cs.overdue.length) L.push('Overdue steps: ' + cs.overdue.map(o => `${o.key} (due ${o.due})`).join(', ') + '.');
+  } else L.push('90-day plan: not started.');
+  if (cs.pending.length) L.push('Client-confirmed steps awaiting staff review: ' + cs.pending.map(p => p.key).join(', ') + '.');
+  const u = cs.utilization;
+  if (u.business.accounts.length) L.push(`Business revolving utilization: ${u.business.pct}% overall (${u.business.accounts.map(a => `${redact(a.name)} ${a.pct}%`).join(', ')}).`);
+  u.personal.forEach(p => { if (p.pct !== null) L.push(`Personal revolving utilization (${p.bureau}): ${p.pct}%${p.includesGuaranteed ? ' incl. owner-guaranteed accounts' : ''}.`); });
+  (c.deals || []).forEach(d => { try { const ev = Acquisition.evaluate(d, today); L.push(`Acquisition target ${redact(d.name || 'deal')}: diligence ${ev.done}/${ev.total}${ev.flags && ev.flags.length ? ', ' + ev.flags.length + ' issue(s): ' + ev.flags.map(f => redact(f.text)).join('; ') : ''}.`); } catch { /* skip */ } });
+  return L.join('\n');
 }
 
 const STAFF_SYSTEM = `You are Ledger Assistant, an expert credit-repair analyst inside a credit repair company's software, helping STAFF (not consumers). You cover three areas: personal credit (FCRA, FDCPA/Reg F, FCBA, ECOA/Reg B, CROA, Metro 2), business credit, and buying an existing corporation.
@@ -114,6 +140,7 @@ export function faqAnswer(text) {
 // Output check: block any answer that promises results.
 const BANNED = /\b(guarantee[ds]?|we will (remove|delete|erase)|100% (removal|deletion)|instant(ly)? fundable|raise your score by \d+|new credit (identity|file)|cpn)\b/i;
 const ID_THEFT_HELP = /\b(605B|identity[- ]theft (block|report|letter|dispute|affidavit)|block (this|the) (information|account)|fraud alert)\b/i;
+export function safeAnswer(text, fallback) { return safeText(text, fallback); }
 function safeText(text, fallback) {
   const lint = (Law.lintText ? Law.lintText(text) : []) || [];
   // Empty output (e.g. a reasoning model that spent its whole token budget thinking) falls back too.
@@ -225,7 +252,9 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
         messages: [{ role: 'user', content: redact(body) }], maxTokens: 4000
       });
       const fixed = safeText(out.text, body);
-      const keepsFacts = items.every(i => !i.accountNumber || fixed.text.includes(i.accountNumber));
+      // If redaction removed something the letter needs (e.g. an address the client never lived at), the AI
+      // version contains a placeholder — fall back to the template, which still has the real text.
+      const keepsFacts = items.every(i => !i.accountNumber || fixed.text.includes(i.accountNumber)) && !/\[(NAME|ADDRESS|EMAIL|PHONE|SSN REDACTED|DOB REDACTED|EIN REDACTED|ROUTING REDACTED)\]/.test(fixed.text);
       const text = head + (fixed.replaced || !keepsFacts ? body : fixed.text) + tail;
       meta(req.user.email, 'letter.draft', `${c.id} ${recipient} ai n=${items.length} in=${out.usage.prompt_tokens || '?'} out=${out.usage.completion_tokens || '?'}${fixed.replaced || !keepsFacts ? ' fallback' : ''}`);
       res.json(Object.assign(base, { mode: fixed.replaced || !keepsFacts ? 'template' : 'ai', model: out.model, text, lint: Law.lintText ? Law.lintText(text) : [] }));

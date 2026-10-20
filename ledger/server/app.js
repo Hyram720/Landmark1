@@ -11,6 +11,7 @@ import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
 import { hashPassword, verifyPassword, burnPasswordCheck, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
 import { mountLedgerAssistant } from './ledger-assistant.js';
+import { mountCoach } from './coach.js';
 import { mountPartnerLinks } from './partner-links.js';
 import { mountClientAuth } from './client-auth.js';
 import { sendMail, mailEnabled } from './mailer.js';
@@ -438,7 +439,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
     if (!doc) return res.status(404).json({ error: 'Document not found' });
     try {
-      const out = await scanReport({ buffer: readFile(doc.id), mime: doc.mime });
+      const out = await scanReport({ buffer: readFile(doc.id), mime: doc.mime, client: workspace().clients.find(x => x.id === req.params.id) });
       db.audit({ actor: req.user.email, action: 'ai.scan', detail: doc.name });
       db.persist();
       res.json(out);
@@ -452,7 +453,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     if (!workspace().clients.some(c => c.id === req.params.id)) return res.status(404).json({ error: 'Client not found' });
     try {
       const isHtml = /<(table|div|td|html)\b/i.test(text);
-      const out = await scanReport({ buffer: Buffer.from(text.slice(0, 600000), 'utf8'), mime: isHtml ? 'text/html' : 'text/plain' });
+      const out = await scanReport({ buffer: Buffer.from(text.slice(0, 600000), 'utf8'), mime: isHtml ? 'text/html' : 'text/plain', client: workspace().clients.find(x => x.id === req.params.id) });
       db.audit({ actor: req.user.email, action: 'ai.scan', detail: 'pasted text' });
       db.persist();
       res.json(out);
@@ -524,13 +525,13 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       return;
     }
     try {
-      const out = await scanReport({ buffer: readFile(doc.id), mime: doc.mime });
+      const out = await scanReport({ buffer: readFile(doc.id), mime: doc.mime, client: c });
       ws.pendingImports.unshift({ id: uid(), clientId: c.id, docId: doc.id, docName: doc.name, scannedAt: new Date().toISOString(), result: out });
       activity(`AI read the report ${c.name} uploaded — ready to import`, c.id);
       ws.tasks.push({ id: uid(), clientId: c.id, title: `Review & import the report ${c.name} uploaded (AI already read it)`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'ai.autoscan', doc.name);
     } catch (e) {
-      ws.tasks.push({ id: uid(), clientId: c.id, title: `AI could not read ${doc.name} for ${c.name} — import it manually (${String(e.message).slice(0, 80)})`, due: today(), done: false, createdAt: new Date().toISOString() });
+      ws.tasks.push({ id: uid(), clientId: c.id, title: e.privacyBlock ? `Import ${doc.name} for ${c.name} by hand — it’s an image or scanned PDF, so it wasn’t sent to AI (can’t be redacted)` : `AI could not read ${doc.name} for ${c.name} — import it manually (${String(e.message).slice(0, 80)})`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'ai.autoscan.failed', doc.name);
     }
   }
@@ -754,6 +755,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
   mountLedgerAssistant(app, { need, workspace, db, D, uid });
   mountPartnerLinks(app, { need, workspace, db, D, currentUser });
+  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity });
 
   // ---------- static ----------
   // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old

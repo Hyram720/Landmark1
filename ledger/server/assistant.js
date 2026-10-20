@@ -3,6 +3,7 @@
 // and stays inside FCRA / CROA / FDCPA limits.
 import Anthropic from '@anthropic-ai/sdk';
 import { Law, Metro2, Business, Store } from './shared.js';
+import { redact, lastFour, redactPayload, assertNoSensitive } from './redact.js';
 
 export const MODEL = 'claude-opus-5-5';
 
@@ -31,19 +32,20 @@ function clientContext(ws, clientId, opts = {}) {
   const c = ws.clients.find(x => x.id === clientId);
   if (!c) return null;
   const cs = Store.croaStatus(c);
-  const lines = [`CLIENT FILE — ${c.name} (${c.kind || 'personal'} client, status ${c.status})`];
-  lines.push(`Location: ${[c.city, c.state].filter(Boolean).join(', ') || 'unknown'}. Notes: ${c.notes || 'none'}`);
+  // Privacy: no name, contact details, street address, DOB or SSN; account numbers last 4 only; free text redacted.
+  const lines = [`CLIENT FILE — client ${opts.withIds ? c.id : ''} (${c.kind || 'personal'} client, status ${c.status})`];
+  lines.push(`Location: ${[c.city, c.state].filter(Boolean).join(', ') || 'unknown'}. Notes: ${c.notes ? redact(c.notes) : 'none'}`);
   if (cs.required) lines.push(`CROA: disclosure ${c.onboarding?.disclosureSignedAt || 'NOT recorded'}, contract ${c.onboarding?.contractSignedAt || 'NOT signed'}, cancellation deadline ${cs.deadline || 'n/a'}, cleared for services: ${cs.cleared ? 'yes' : 'NO'}${cs.cancelled ? ', CANCELLED' : ''}`);
   const byBureau = {};
   ws.reports.filter(r => r.clientId === c.id).sort((a, b) => String(b.date).localeCompare(String(a.date))).forEach(r => { if (!byBureau[r.bureau]) byBureau[r.bureau] = r; });
   const latest = Object.values(byBureau);
   latest.forEach(r => {
     lines.push(`\n${r.bureau} report dated ${r.date} (source: ${r.source || 'n/a'})${r.scores?.[r.bureau] ? `, score ${r.scores[r.bureau]}` : ''}:`);
-    r.accounts.forEach(a => lines.push(`- ${opts.withIds ? `[id=${a.id}] ` : ''}${a.creditor} ${a.accountNumber || ''} | type ${a.type || '?'} | status ${a.status} (${Metro2.ACCOUNT_STATUS[a.status] || 'unknown'}) | bal ${a.balance} | past due ${a.pastDue} | limit ${a.limit} | high ${a.highCredit} | opened ${a.opened || '?'} | closed ${a.closed || '-'} | DOFD ${a.dofd || '-'} | last pay ${a.lastPayment || '-'} | ECOA ${a.ecoa || '?'} | CCC ${a.complianceCode || '-'} | CII ${a.cii || '-'} | history ${a.paymentHistory || '-'}${a.originalCreditor ? ` | original creditor ${a.originalCreditor}` : ''}${a.issue ? ` | CONSUMER SAYS: ${a.issue}` : ''}${a.evidence ? ` | evidence: ${a.evidence}` : ''}${a.consumerDisputed ? ' | disputed' : ''}`));
+    r.accounts.forEach(a => lines.push(`- ${opts.withIds ? `[id=${a.id}] ` : ''}${redact(a.creditor)} ${lastFour(a.accountNumber)} | type ${a.type || '?'} | status ${a.status} (${Metro2.ACCOUNT_STATUS[a.status] || 'unknown'}) | bal ${a.balance} | past due ${a.pastDue} | limit ${a.limit} | high ${a.highCredit} | opened ${a.opened || '?'} | closed ${a.closed || '-'} | DOFD ${a.dofd || '-'} | last pay ${a.lastPayment || '-'} | ECOA ${a.ecoa || '?'} | CCC ${a.complianceCode || '-'} | CII ${a.cii || '-'} | history ${a.paymentHistory || '-'}${a.originalCreditor ? ` | original creditor ${redact(a.originalCreditor)}` : ''}${a.issue ? ` | CONSUMER SAYS: ${redact(a.issue)}` : ''}${a.evidence ? ` | evidence: ${redact(a.evidence)}` : ''}${a.consumerDisputed ? ' | disputed' : ''}`));
     const findings = Metro2.auditReport(r);
     if (findings.length) {
       lines.push(`  Automated Metro 2 findings for ${r.bureau}:`);
-      findings.forEach(f => lines.push(`  * [${f.severity}] ${f.creditor}: ${f.title} — ${f.detail}`));
+      findings.forEach(f => lines.push(`  * [${f.severity}] ${redact(f.creditor)}: ${f.title} — ${redact(f.detail)}`));
     }
   });
   const cmp = Metro2.compareBureaus(latest).filter(g => g.differences.length);
@@ -54,17 +56,17 @@ function clientContext(ws, clientId, opts = {}) {
   const ds = ws.disputes.filter(d => d.clientId === c.id);
   if (ds.length) {
     lines.push('\nDisputes:');
-    ds.forEach(d => lines.push(`- Round ${d.round} ${Law.DISPUTE_TYPES[d.type]?.label || d.type} to ${d.recipient}: ${d.outcome || d.status}${d.sentAt ? `, mailed ${d.sentAt}` : ''}${d.dueAt ? `, due ${d.dueAt}` : ''}. Items: ${d.items.map(i => `${i.creditor}${i.bureau ? ' @' + i.bureau : ''} (${i.discrepancy})${i.result ? ' → ' + i.result.toUpperCase() : ''}`).join('; ')}`));
+    ds.forEach(d => lines.push(`- Round ${d.round} ${Law.DISPUTE_TYPES[d.type]?.label || d.type} to ${d.recipient}: ${d.outcome || d.status}${d.sentAt ? `, mailed ${d.sentAt}` : ''}${d.dueAt ? `, due ${d.dueAt}` : ''}. Items: ${d.items.map(i => `${redact(i.creditor)}${i.bureau ? ' @' + i.bureau : ''} (${redact(i.discrepancy)})${i.result ? ' → ' + i.result.toUpperCase() : ''}`).join('; ')}`));
   }
   if (c.kind !== 'personal') {
     const b = c.business || {};
     const fz = Business.fundability(c);
-    lines.push(`\nBUSINESS: ${b.legalName || 'unnamed'} (${b.entityType || 'entity ?'}, formed ${b.formedOn || '?'}, state ${b.stateOfFormation || '?'}, NAICS ${b.naics || '?'}, D-U-N-S ${b.duns ? 'yes' : 'no'})`);
+    lines.push(`\nBUSINESS: (name withheld) (${b.entityType || 'entity ?'}, formed ${b.formedOn || '?'}, state ${b.stateOfFormation || '?'}, NAICS ${b.naics || '?'}, D-U-N-S ${b.duns ? 'yes' : 'no'})`);
     lines.push(`Fundability foundation ${fz.done}/${fz.total}. Missing: ${Business.FOUNDATION.filter(f => !(c.businessChecklist || {})[f.key]).map(f => f.label).join('; ') || 'none'}`);
     (c.businessScores || []).forEach(s => lines.push(`- Score ${s.model} = ${s.score} on ${s.date}`));
-    (c.vendorAccounts || []).forEach(v => lines.push(`- Vendor ${v.vendor}: ${v.terms || ''}, limit ${v.limit || '?'}, ${v.status}, reports to ${v.reportsTo || '?'}`));
+    (c.vendorAccounts || []).forEach(v => lines.push(`- Vendor ${redact(v.vendor)}: ${redact(v.terms || '')}, limit ${v.limit || '?'}, ${v.status}, reports to ${v.reportsTo || '?'}`));
   }
-  return lines.join('\n');
+  return redact(lines.join('\n'));
 }
 
 // The key comes from ANTHROPIC_API_KEY or, if unset, from the owner's Settings (stored encrypted).
@@ -73,9 +75,30 @@ let client = null, clientKey = null;
 export function setKeyProvider(fn) { keyProvider = fn; }
 export function currentKey(env = process.env) { return env.ANTHROPIC_API_KEY || keyProvider() || ''; }
 export function assistantConfigured(env = process.env) { return Boolean(currentKey(env)); }
+let anthropicFactory = key => new Anthropic({ apiKey: key });
+/** Tests only: replace the SDK client (e.g. with a mock that records requests). */
+export function setAnthropicFactory(fn) { anthropicFactory = fn || (key => new Anthropic({ apiKey: key })); client = null; }
+/**
+ * Every Anthropic request goes through this wrapper: redactPayload() masks identifiers in the
+ * messages and system prompt, then assertNoSensitive() refuses to send if an SSN or a Luhn-valid
+ * card number is still in the exact request body.
+ */
+function safeClient(raw) {
+  const prep = p => assertNoSensitive(redactPayload(p));
+  return {
+    beta: { messages: {
+      create: p => raw.beta.messages.create(prep(p)),
+      stream: p => raw.beta.messages.stream(prep(p))
+    } },
+    messages: {
+      create: p => raw.messages.create(prep(p)),
+      stream: p => raw.messages.stream(prep(p))
+    }
+  };
+}
 export function getClient() {
   const key = currentKey();
-  if (!client || clientKey !== key) { client = new Anthropic({ apiKey: key }); clientKey = key; }
+  if (!client || clientKey !== key) { client = safeClient(anthropicFactory(key)); clientKey = key; }
   return client;
 }
 /** Checks a key with a cheap Models API call. Returns 'ok', 'invalid' or 'unreachable'. */

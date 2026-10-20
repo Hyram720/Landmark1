@@ -155,7 +155,8 @@ test('Ledger AI needs an API key and sees the client file', async () => {
   if (saved) process.env.ANTHROPIC_API_KEY = saved;
   const { clientContext } = await import('../server/assistant.js');
   const ctx = clientContext(db.data.workspace, clientId);
-  assert.match(ctx, /CLIENT FILE — Jordan Sample/);
+  assert.match(ctx, /CLIENT FILE — client/);
+  assert.ok(!ctx.includes('Jordan Sample'), 'no client name sent to the AI');
   assert.match(ctx, /CROA:/);
 });
 

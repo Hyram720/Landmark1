@@ -21,6 +21,7 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `/go/<id>` | Tracked partner links: counts the click, then redirects to your affiliate link |
 | `/go/partner/<key>` | Partner links with a hashed sub-ID per client/staff (metadata-only click log; report under Partners → Click report) |
 | `/api/health` (`/healthz`) | Health check for Railway: status, uptime, build, encryption and storage |
+| `/api/coach/:id`, `/api/portal/coach` | Business credit coach (staff; signed-in client sees only their own plan) — see docs/assistant-spec.md §10 |
 
 **Master file (personal use, no login):** `ledger/dist/ledger-master.html` is the whole workspace in one file. Double-click it to open it in your browser. It needs no login and no server, and it saves everything in that browser. Use **Settings → Export backup** regularly, and keep the file and backups private. Rebuild it after changes with `npm run ledger:master`. The client portal, uploads, text/email sending and AI features need the server.
 
@@ -132,6 +133,8 @@ On Railway, set the start command to `node ledger/server/index.js` (or `npm run 
 See [RESEARCH.md](RESEARCH.md) for the research behind each feature, with sources.
 
 ## Data & security
+
+- **AI privacy:** every outbound AI call (Anthropic and OpenAI) goes through `server/redact.js`: SSN/ITIN, EIN, card/account numbers (last 4 kept), routing numbers, DOBs, emails, phones, street addresses and known names are masked, and a final guard refuses to send if an SSN or Luhn-valid card number remains. PDFs are text-extracted locally with `pdftotext` (poppler-utils) before redaction; images and scanned PDFs are never sent. See docs/assistant-spec.md §12.
 
 In server mode everything is saved on your server:
 

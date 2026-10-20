@@ -199,13 +199,17 @@ test('letters/draft: AI mode sends only the redacted body; output is checked', a
   try {
     const r = await owner('POST', '/api/letters/draft', { clientId: 'ca', recipient: 'Experian', items: [{ accountId: 'ta1', code: 'M2-CURRENT-PASTDUE' }], newEvidence: 'statement attached; my SSN 123-45-6789; card 4111 2222 3333 4444' });
     assert.strictEqual(r.status, 200);
-    assert.strictEqual(r.body.mode, 'ai');
+    // The echo mock returns "[SSN REDACTED]": the AI version lost a fact, so the template is used instead.
+    assert.strictEqual(r.body.mode, 'template');
     assert.ok(payload, 'AI was called');
     for (const leak of ['123-45-6789', '4111222233334444', '4111 2222 3333 4444', 'Alice', '1980-02-03', '1 Test St', 'sk-test-not-real']) {
       const inMessages = JSON.stringify(JSON.parse(payload).messages);
       assert.ok(!inMessages.includes(leak), 'payload leaked ' + leak);
     }
     assert.match(r.body.text, /Alice Example/, 'header/signature re-attached locally');
+    const rClean = await owner('POST', '/api/letters/draft', { clientId: 'ca', recipient: 'Experian', items: [{ accountId: 'ta1', code: 'M2-CURRENT-PASTDUE' }], newEvidence: 'statement attached' });
+    assert.strictEqual(rClean.body.mode, 'ai');
+    assert.match(rClean.body.text, /Alice Example/, 'header/signature re-attached locally');
     // A model that promises results is replaced with the template.
     setAiFetch(async () => new Response(JSON.stringify({ choices: [{ message: { content: 'We guarantee this will be deleted.' } }] }), { status: 200 }));
     const r2 = await owner('POST', '/api/letters/draft', { clientId: 'ca', recipient: 'Experian', items: [{ accountId: 'ta1', code: 'M2-CURRENT-PASTDUE' }] });

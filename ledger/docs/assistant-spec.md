@@ -53,7 +53,7 @@ With AI off, every feature still works: letters come from the statutory template
 - Partner products are optional, never a condition of service, and always carry the FTC affiliate disclosure.
 - Every legal statement cites a KB id in brackets, e.g. `[fcra-611]`, which the UI links to the source.
 
-## 5. Knowledge base (44 rules, each with cite, URL, verifiedAt)
+## 5. Knowledge base (52 rules, version 2026-10-19.3, each with cite, URL, verifiedAt)
 
 **PERSONAL** — FCRA §§ 605 (obsolescence 7/10 years, DOFD + 180 days), 609/612 (file disclosure, free weekly reports), 611 (30 days, 45 with consumer-supplied info during the period; 5-business-day notice to furnisher), 611(a)(3) frivolous, 611(a)(6)-(7) method of verification (15 days), 611(a)(5)(B) reinsertion (5 business days' notice), 623 furnisher duties incl. (a)(5) DOFD; Reg V 12 CFR 1022.43 direct disputes; FDCPA § 809 / Reg F 1006.34 validation; FCBA / Reg Z 1026.13 (60 days); ECOA / Reg B 1002.9 adverse action; Metro 2 CRRG fields (status 17A, payment history 18, CCC 20 incl. XB/XC/XH, DOFD 25); score building (utilization, authorized users, goodwill without false statements).
 
@@ -92,3 +92,34 @@ Prompt caching (repeat system prompts) can lower input cost further. At 1,000 le
 - Client-facing helper on `/apply` and `/portal` with FAQ fallback, per-session/IP rate limits and staff hand-off.
 - Partner recommendations always carry the affiliate disclosure and are never required.
 - Empty or unsafe model output always falls back to the template/FAQ.
+
+## 9. Business credit in the assistant (A)
+
+- **Where:** `businessDigest()` in `server/ledger-assistant.js` (appended to `clientDigest` for business/both clients); business checks in `js/filecheck.js` (`businessChecks`); letters through the existing `POST /api/letters/draft`.
+- **Digest (redacted, no names/EIN/phone/address):** fundability checklist with missing items, latest business scores (PAYDEX, Intelliscore Plus, FICO SBSS…), net-30 vendor list, 90-day plan position and overdue steps, client confirmations awaiting review, business + personal utilization, acquisition-checklist flags per deal.
+- **Business error checks** (on a bureau-reported business profile the staff enter via “Business report”): name, address, phone mismatch; formation date (>31 days off) or years in business; NAICS/SIC; tradeline closed but reported open; stale (>365 days not updated, with a balance); paid but showing a balance; duplicate tradeline; UCC/lien/judgment the client documented as satisfied but shown open.
+- **Letters:** D&B, Experian Business, Equifax Business. Always `business_correction`; recipient must match the bureau that reported the item; business and personal items can’t be mixed; same finding requirement, repeat/frivolous guard (409) and staff approval before Lob mailing. The letter and response carry a scope note: the FCRA mostly doesn’t cover business credit files [biz-fcra-scope]; disputes rely on each bureau’s correction process [biz-dispute-letters]. Mailing addresses are placeholders — staff confirm the current address.
+- **Cost:** checks are deterministic and free. An AI-polished business letter costs the same as a personal one (≈ $0.005).
+
+## 10. Business credit coach and utilization (B)
+
+- **Where:** `server/coach.js`, `Business.coachState()` and `Business.utilization()` in `js/business.js`; staff UI: Business tab → “Business credit coach” card and modal; client UI: portal → “Your business credit plan”.
+- **Routes:** staff — `GET /api/coach/:id`, `POST /api/coach/:id/start`, `POST /api/coach/:id/step {key, done}`, `POST /api/coach/:id/chat`. Client — `GET /api/portal/coach`, `POST /api/portal/coach/step {key, note}`, `POST /api/portal/coach/chat`. Client routes use `need('client')` and the session’s `clientId` only (a `clientId` in the body is ignored); personal-only clients get 404; clients get 403 on staff routes. 120 requests/hour/user.
+- **Flow:** explains the current step and asks “Is this step done?”. Staff can mark a step done. A client’s “I’ve done this” is recorded as a confirmation, flagged in the activity feed and the staff card, and never completes the step — staff accept it (which marks it reviewed). Step-due reminder emails go to the client two days before a step is due (once per step/due date, only if notifications are on and the client hasn’t confirmed it).
+- **Utilization:** per account and overall (closed accounts excluded), personal revolving per bureau including owner-guaranteed lines that report personally. Tips are phrased as “may” and cite [util-30] (CFPB: keep use at or under 30%), [biz-util-intelliscore], [biz-paydex-timing] (PAYDEX is payment timing only: 80 = on terms), [util-guarantee].
+- **Cost:** offline plan coach is free. With AI on, each coach turn ≈ $0.005–0.01 (capped at 2,500 output tokens); similar to a staff chat turn.
+
+## 11. Remove what isn’t supposed to be there (C)
+
+- **Where:** `FileCheck.personalChecks()` and `FileCheck.notDisputed()` in `js/filecheck.js`; reasons in `js/disputereasons.js`; staff UI: client Audit → “File check” card → “Personal info & inquiries” editor.
+- **Checks:** name variants/AKAs the client doesn’t use, addresses the client never lived at or that are stale, employers (only when the client’s employers are on file), DOB and SSN variations (staff-only, values never shown or put in letters), unrecognized inquiries (§ 604 permissible purpose), hard inquiries older than 2 years, obsolete items and duplicates (rules engine), and items the client says are wrong — which require a written explanation (12+ characters) before any letter can be made.
+- **Letters:** personal info goes to the bureau under § 611 (`pii_611`) — a bureau may keep a verified current address; inquiries use `inquiry_604`. Accurate negative items are listed under “Not disputed — no inaccuracy found” with the reason; Ledger never drafts letters for them.
+- **Cost:** deterministic, no AI cost.
+
+## 12. Privacy: redaction on every outbound AI call (2026-10-19)
+
+- **One module:** `server/redact.js` — `redact()`, `redactObject()`, `redactPayload()`, `nameTerms()`, `findSensitive()`, `assertNoSensitive()`. Used by both providers: Anthropic (`server/assistant.js` `getClient()` wraps the SDK so every `messages.create` / `messages.stream` call is redacted and guarded — covers report scan, background portal-upload scan, round planning and Ledger AI chat) and OpenAI (`server/ledger-assistant.js` `chat()` — staff/public assistant, letter polish, coach).
+- **Masked:** SSNs and ITINs (dashed, spaced, dotted, labelled 9-digit) → `[SSN REDACTED]`; EINs → `[EIN REDACTED]`; card and account numbers (8–19 digits, grouped, Amex layout, X-masked, labelled alphanumeric) → `****1234` (last 4 kept so tradelines match); labelled routing numbers → `[ROUTING REDACTED]`; labelled dates of birth → `[DOB REDACTED]`; emails → `[EMAIL]`; US phone numbers → `[PHONE]`; street addresses and PO boxes → `[ADDRESS]` (city/state kept); labelled names and the known client/business names → `[NAME]`. Other dates (opened, DOFD, last payment) are kept.
+- **Final guard:** `assertNoSensitive()` runs on the exact request body; if an SSN/ITIN pattern or a Luhn-valid 13–19 digit number is still present, the call throws (HTTP 422 → staff error, or the template/offline fallback) and nothing is sent.
+- **Files:** PDFs are converted to text locally with `pdftotext` (poppler-utils) and redacted; the raw PDF is never sent. Images and PDFs with no text layer are blocked with a staff message (“can’t be redacted … Nothing was sent”); background portal uploads create a manual-import task instead. If `pdftotext` isn’t installed on the server, every PDF is blocked (fails safe).
+- **Letters:** if the AI-polished letter comes back with a redaction placeholder, the template letter (with the real text) is used instead.
