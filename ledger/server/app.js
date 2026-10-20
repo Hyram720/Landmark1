@@ -37,6 +37,46 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   const fileKey = encryptionKey ? crypto.createHash('sha256').update('files:' + encryptionKey).digest() : null;
   const D = () => db.data;
   setKeyProvider(() => (db.data.secrets && db.data.secrets.anthropicKey) || '');
+
+  // ---------- owner access from Railway variables ----------
+  // Lets the business owner get in when the owner account was created earlier and the password is
+  // lost (mail-based reset is off by default). Set BOTH on the server:
+  //   LEDGER_BOOTSTRAP_OWNER_EMAIL=<email>
+  //   LEDGER_BOOTSTRAP_OWNER_PASSWORD_HASH=<scrypt hash from hashPassword(), never the password itself>
+  // On start, that email becomes an owner with that password (created if missing, password replaced
+  // if it is already an owner; client/partner/staff accounts are never promoted). Each email+hash
+  // pair is applied once, so changing the password later in the app is not undone by a restart.
+  // Remove both variables from Railway after signing in.
+  (function applyOwnerBootstrap(env) {
+    const email = String(env.LEDGER_BOOTSTRAP_OWNER_EMAIL || '').toLowerCase().trim();
+    const hash = String(env.LEDGER_BOOTSTRAP_OWNER_PASSWORD_HASH || '').trim();
+    if (!email && !hash) return;
+    if (!/^\S+@\S+\.\S+$/.test(email) || !/^scrypt\$[A-Za-z0-9+/=]{16,}\$[A-Za-z0-9+/=]{40,}$/.test(hash)) {
+      console.warn('[bootstrap] LEDGER_BOOTSTRAP_OWNER_EMAIL / LEDGER_BOOTSTRAP_OWNER_PASSWORD_HASH are incomplete or malformed; ignored.');
+      return;
+    }
+    const marker = sha(email + '|' + hash);
+    D().bootstrapApplied = D().bootstrapApplied || [];
+    if (D().bootstrapApplied.includes(marker)) return;
+    let u = D().users.find(x => x.email === email);
+    let action;
+    if (u && u.role !== 'owner') {
+      console.warn('[bootstrap] that email belongs to a non-owner account; not changed.');
+      return;
+    }
+    if (u) {
+      u.password = hash; u.disabled = false; u.sessionEpoch = (u.sessionEpoch || 1) + 1;
+      action = 'password replaced';
+    } else {
+      u = { id: uid(), name: String(env.LEDGER_BOOTSTRAP_OWNER_NAME || 'Owner').slice(0, 100), email, role: 'owner', password: hash, sessionEpoch: 1, createdAt: new Date().toISOString() };
+      D().users.push(u);
+      action = 'created';
+    }
+    D().bootstrapApplied.push(marker);
+    db.audit({ actor: 'system', action: 'bootstrap.owner', detail: `Owner ${action} from server variables` });
+    db.persist();
+    console.log(`[bootstrap] owner account ${action} from LEDGER_BOOTSTRAP_OWNER_* — remove those variables from Railway after signing in.`);
+  })(process.env);
   const app = express();
   // Railway puts exactly one proxy in front of the app. Trusting only that hop means req.ip is the
   // address the proxy saw, not whatever a client writes into X-Forwarded-For (which would let

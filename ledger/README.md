@@ -37,6 +37,7 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_RESEND_KEY` (or `RESEND_API_KEY`) + `LEDGER_EMAIL_FROM` | Sends client emails from the app through Resend. Without these, Email opens your mail app and logs the message |
 | `ANTHROPIC_API_KEY` | Turns on **Ledger AI**, the built-in credit repair expert (Claude). Without it, the AI panel explains how to enable it |
 | `LEDGER_SETUP_CODE` | Required to create the owner account on first visit, so nobody else can claim a freshly deployed server |
+| `LEDGER_BOOTSTRAP_OWNER_EMAIL` + `LEDGER_BOOTSTRAP_OWNER_PASSWORD_HASH` | Owner recovery: on start, that email becomes an owner with that password (scrypt hash from `hashPassword()`, never the plain password). Creates the owner if missing or replaces an existing owner's password; never touches client/partner/staff accounts. Applied once per email+hash. Remove both after signing in. Optional `LEDGER_BOOTSTRAP_OWNER_NAME` |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Sends texts through Twilio. Texts go only to clients with SMS consent on file (TCPA). Business texting also needs A2P 10DLC registration |
 | `LEDGER_AI_ENABLED` + `OPENAI_API_KEY` | Turns on the OpenAI-backed Ledger Assistant, AI-polished Metro 2 letters and the website helper. Off unless `LEDGER_AI_ENABLED=true`. See `docs/assistant-spec.md` |
 | `LEDGER_OPENAI_MODEL` | Model for the above (default `gpt-5-mini`) |
