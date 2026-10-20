@@ -18,6 +18,7 @@ import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
 import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
+import { createStripe } from './stripe-pay.js';
 
 const SESSION_COOKIE = 'ledger_session';
 const SESSION_TTL = 60 * 60 * 12; // 12 hours
@@ -30,7 +31,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
-export function createApp({ dataDir, encryptionKey } = {}) {
+export function createApp({ dataDir, encryptionKey, stripeClient } = {}) {
   const db = openDb({ dir: dataDir, encryptionKey });
   const filesDir = path.join(dataDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -56,11 +57,16 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       'Referrer-Policy': 'same-origin',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
       'Cross-Origin-Opener-Policy': 'same-origin',
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self' https://accept.authorize.net https://test.authorize.net"
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self' https://accept.authorize.net https://test.authorize.net https://checkout.stripe.com"
     });
     if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     next();
   });
+  // Stripe (off unless PAYMENTS_ENABLED=true and STRIPE_SECRET_KEY is set; see stripe-pay.js). The
+  // webhook needs the raw body for signature checks, so it is mounted before the JSON parsers.
+  const stripePay = createStripe({ D, db, workspace, commit: commitWorkspace, activity, uid, today, Invoices, client: stripeClient });
+  stripePay.mountWebhook(app);
+
   // Public endpoints get a small body limit; signed-in staff need room for whole-workspace saves.
   const smallJson = express.json({ limit: '32kb' });
   const bigJson = express.json({ limit: '10mb' });
@@ -659,6 +665,12 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   // ---------- online invoice payments ----------
   const findInvoiceByToken = t => (workspace().invoices || []).find(i => i.payToken && i.payToken === t);
   const payPage = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${htmlEsc(title)}</title><link rel="stylesheet" href="/css/app.css"></head><body style="background:var(--bg)"><main style="max-width:520px;margin:8vh auto;padding:0 16px"><section class="card"><div class="card-b stack">${body}</div></section></main></body></html>`;
+  // CROA § 1679b(b): payable only after the service is complete and the cancellation window has passed.
+  function notPayable(inv) {
+    const payClient = workspace().clients.find(x => x.id === inv.clientId);
+    const payCs = payClient ? Store.croaStatus(payClient) : null;
+    return !inv.serviceCompletedAt || !!(payCs && (!payCs.cleared || payCs.cancelled));
+  }
   async function confirmPayment(inv) {
     const a = anet();
     if (!a || inv.status === 'paid') return inv.status === 'paid';
@@ -676,11 +688,14 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     if (inv.status === 'paid') return res.send(payPage('Paid', `<h1>Thank you</h1><p>This invoice was paid${inv.paidAt ? ' on ' + htmlEsc(inv.paidAt) : ''}.</p>`));
     // CROA § 1679b(b): no payment before the service is fully performed, and nothing inside the
     // 3-business-day cancellation window. Enforced here too, not just when invoices are created.
-    const payClient = workspace().clients.find(x => x.id === inv.clientId);
-    const payCs = payClient ? Store.croaStatus(payClient) : null;
-    if (!inv.serviceCompletedAt || (payCs && (!payCs.cleared || payCs.cancelled))) return res.status(409).send(payPage('Not payable yet', `<h1>This invoice can’t be paid online yet</h1><p class="muted">We only accept payment after the service has been completed and your cancellation period has ended. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
+    if (notPayable(inv)) return res.status(409).send(payPage('Not payable yet', `<h1>This invoice can’t be paid online yet</h1><p class="muted">We only accept payment after the service has been completed and your cancellation period has ended. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
     const billing = (workspace().settings || {}).billing || {};
     if (billing.provider === 'link' && /^https:\/\//.test(billing.payLink || '')) return res.redirect(302, billing.payLink);
+    if (billing.provider === 'stripe') {
+      if (!stripePay.config().ready) return res.send(payPage('Invoice', `<h1>Invoice — $${Number(inv.amount).toFixed(2)}</h1><p>${htmlEsc(inv.description)}</p><p class="muted">Online payment isn’t set up yet. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
+      return res.send(payPage('Pay invoice', `<h1>Invoice — $${Number(inv.amount).toFixed(2)}</h1><p>${htmlEsc(inv.description)}</p><p class="small muted">Service completed ${htmlEsc(inv.serviceCompletedAt || '')}. You will pay on Stripe’s secure page; card numbers never reach our systems.</p>
+        <form method="post" action="/pay/${htmlEsc(req.params.token)}/stripe"><button class="btn primary" style="width:100%">Continue to secure payment</button></form>`));
+    }
     const a = anet();
     if (!a) return res.send(payPage('Invoice', `<h1>Invoice — $${Number(inv.amount).toFixed(2)}</h1><p>${htmlEsc(inv.description)}</p><p class="muted">Online payment isn’t set up yet. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
     const c = workspace().clients.find(x => x.id === inv.clientId) || {};
@@ -705,6 +720,8 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     try { const paid = await confirmPayment(inv); res.json({ paid, version: D().workspaceVersion }); } catch (e) { res.status(502).json({ error: 'Authorize.net: ' + e.message }); }
   });
 
+  stripePay.mountCheckout(app, { need, payPage, htmlEsc, company, notPayable, findInvoiceByToken });
+
   // ---------- invoices: email with PDF attached ----------
   app.post('/api/invoices/:id/email', need('owner', 'staff'), async (req, res) => {
     const ws = workspace();
@@ -716,7 +733,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     if (!commsConfig().email) return res.status(501).json({ error: 'Email sending is not set up on the server (Resend). Download the PDF and attach it to your own email instead.' });
     const origin = `${req.protocol}://${req.get('host')}`;
     const billing = (ws.settings || {}).billing || {};
-    const payLink = billing.provider === 'link' && billing.payLink ? billing.payLink : billing.provider === 'authorizenet' && inv.payToken ? `${origin}/pay/${inv.payToken}` : '';
+    const payLink = billing.provider === 'link' && billing.payLink ? billing.payLink : ['authorizenet', 'stripe'].includes(billing.provider) && inv.payToken ? `${origin}/pay/${inv.payToken}` : '';
     const co = company();
     const note = String((req.body || {}).message || '').trim();
     const body = `Hi ${(c && (c.firstName || c.name)) || ''},\n\n${note ? note + '\n\n' : ''}Your invoice ${Invoices.number(inv)} for ${Invoices.money(inv.amount)} is attached.${payLink && inv.status !== 'paid' ? `\n\nPay securely online: ${payLink}` : ''}\n\n${Invoices.text(ws, inv, { payLink })}\n\nThank you,\n${co.name || ''}${co.phone ? '\n' + co.phone : ''}`;

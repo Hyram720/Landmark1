@@ -2921,7 +2921,7 @@ Thank you for considering this request.`
     const v = Object.assign({ first: c.firstName || String(c.name || '').split(' ')[0], name: c.name, company: co.name || 'our office', phone: co.phone || '', portal: (ctx.origin || '') + '/portal',
       booking, booking_line: booking ? `Pick a time that works for you: ${booking} ` : '', booking_or_reply: booking ? `pick a time here: ${booking}` : 'just reply to this message and we’ll set it up' }, ev.vars || {});
     const billing = Object.assign({ provider: 'none', payLink: '' }, ws.settings.billing || {});
-    v.pay_line = billing.provider === 'authorizenet' && v.payToken && ctx.origin ? `Pay securely online: ${ctx.origin}/pay/${v.payToken} ` : billing.provider === 'link' && billing.payLink ? `Pay online: ${billing.payLink} ` : '';
+    v.pay_line = ['authorizenet', 'stripe'].includes(billing.provider) && v.payToken && ctx.origin ? `Pay securely online: ${ctx.origin}/pay/${v.payToken} ` : billing.provider === 'link' && billing.payLink ? `Pay online: ${billing.payLink} ` : '';
     return v;
   }
 
@@ -4140,7 +4140,7 @@ Thank you for considering this request.`
         ${UI.field('Billing model', 'model', bs.model, { type: 'select', options: B.MODELS, cls: 'span2', help: 'Each client can override this on their profile' })}
         ${UI.field('Per letter ($)', 'perLetter', bs.perLetter, { type: 'number', attrs: 'step="0.01" min="0"' })}${UI.field('Per deletion ($)', 'perDelete', bs.perDelete, { type: 'number', attrs: 'step="0.01" min="0"' })}
         ${UI.field('Monthly ($)', 'monthly', bs.monthly, { type: 'number', attrs: 'step="0.01" min="0"' })}${UI.field('Days to pay', 'dueDays', bs.dueDays, { type: 'number', attrs: 'min="0"' })}
-        ${UI.field('Online payments', 'provider', bs.provider, { type: 'select', options: [['none', 'Off — mark invoices paid by hand'], ['authorizenet', 'Authorize.net (connect in Settings)'], ['link', 'My own payment link']], cls: 'span2' })}
+        ${UI.field('Online payments', 'provider', bs.provider, { type: 'select', options: [['none', 'Off — mark invoices paid by hand'], ['authorizenet', 'Authorize.net (connect in Settings)'], ['stripe', 'Stripe Checkout (server keys; see README)'], ['link', 'My own payment link']], cls: 'span2' })}
         ${UI.field('Payment link (if using your own)', 'payLink', bs.payLink, { cls: 'span2', placeholder: 'https://…', help: 'e.g. a payment page from your processor. Clients see it on invoice emails.' })}
         </div><div class="row" style="margin-top:12px"><button class="btn primary">Save</button>${dueList.length ? `<button type="button" class="btn" data-act="bill-now">Create ${dueList.length} due invoice${dueList.length > 1 ? 's' : ''} now</button>` : '<span class="small muted">No invoices due right now.</span>'}</div></form>
         <p class="small muted" style="margin-top:10px">With a billing model on, Ledger creates invoices automatically each time you open the app — only for work already done and only after the cancellation period. Turn on the “Invoice issued” automation to email them.</p>`, { sub: 'Invoices are created only after the work is done' }); })() +
@@ -4937,7 +4937,7 @@ Thank you for considering this request.`
     const inv = S().invoices.find(x => x.id === id);
     const origin = location.protocol.startsWith('http') ? location.origin : '';
     const b = S().settings.billing || {};
-    const payLink = b.provider === 'link' && b.payLink ? b.payLink : b.provider === 'authorizenet' && Store.remote ? root.Invoices.payUrl(inv, origin) : '';
+    const payLink = b.provider === 'link' && b.payLink ? b.payLink : ['authorizenet', 'stripe'].includes(b.provider) && Store.remote ? root.Invoices.payUrl(inv, origin) : '';
     UI.download(root.Invoices.filename(S(), inv), root.Invoices.pdfBytes(S(), inv, { payLink }), 'application/pdf');
   }
   function invoiceEmail(id) {
@@ -5078,6 +5078,14 @@ Thank you for considering this request.`
     if (form) form.onsubmit = async e => { e.preventDefault(); const d = UI.formData(form); const msg = document.getElementById('pay-msg'); msg.textContent = 'Testing with Authorize.net…'; try { const r = await api('PUT', '/api/settings/payments', d); toast(r.verified ? 'Authorize.net connected' : 'Saved — could not verify yet'); loadPaySettings(); } catch (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message; } };
     const rm = document.getElementById('pay-remove');
     if (rm) rm.onclick = async () => { if (UI.ask('Disconnect Authorize.net?')) { await api('DELETE', '/api/settings/payments'); loadPaySettings(); } };
+    try {
+      const st = await api('GET', '/api/settings/stripe');
+      const box = document.createElement('div');
+      box.className = 'stack';
+      box.innerHTML = `<div><b>Stripe Checkout</b> ${st.ready ? `<span class="badge ${st.mode === 'live' ? 'b-ok' : 'b-med'}">${st.mode === 'live' ? 'Live' : 'Test mode'}</span>` : '<span class="badge b-low">Off</span>'} <span class="small muted">${st.enabled ? 'PAYMENTS_ENABLED on' : 'PAYMENTS_ENABLED off'} · secret key ${st.keyConfigured ? 'set' : 'not set'} · webhook ${st.webhookConfigured ? 'set' : 'not set'}</span></div>
+        <p class="small muted">Stripe is configured on the server (Railway → Variables), not here. Then set Billing → Online payments to Stripe.</p>`;
+      el.appendChild(box);
+    } catch (e) { /* older server */ }
   }
 
   /** Suggest creditor names from the address book and fill the address when one matches. */
