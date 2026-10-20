@@ -45,10 +45,40 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_SMTP_URL` | SMTP connection URL when `LEDGER_MAIL_MODE=smtp` (needs the optional `nodemailer` package) |
 | `LEDGER_BACKUPS` / `LEDGER_BACKUP_DAYS` | Daily encrypted DB snapshot in `<data dir>/backups` (on by default; `off` disables); days kept (default 14) |
 | `LEDGER_TRUST_PROXY_HOPS` | Proxy hops in front of the app (default 1 for Railway); used for client IPs in rate limits |
+| `PAYMENTS_ENABLED` | Kill switch for Stripe. Stripe payment routes return 503 unless this is exactly `true` **and** `STRIPE_SECRET_KEY` is set. Default off |
+| `STRIPE_SECRET_KEY` | Stripe secret (`sk_live_…`/`sk_test_…`) or restricted (`rk_…`) key. Server-side only; never shown in the app |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) of **Ledger's own** webhook endpoint. Each endpoint has its own secret — don't reuse another site's |
+| `STRIPE_CURRENCY` | Three-letter currency for Checkout (default `usd`) |
+| `APP_BASE_URL` | Public URL used for Stripe's success/cancel links, e.g. `https://ledger.example.com` (default: the request's host) |
 
 Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
 
 On Railway, set the start command to `node ledger/server/index.js` (or `npm run ledger:start`; running node directly avoids npm's `production` config warning and the `npm error signal SIGTERM` lines on every redeploy) and the health check path to `/api/health`. The server shuts down gracefully on SIGTERM and flushes pending writes. Tests: `npm run test:ledger`.
+
+### Stripe payments (optional)
+
+Clients pay **one issued invoice at a time** on Stripe's hosted Checkout page, for the amount on that invoice. There are no subscriptions and no Stripe products or prices to create: under CROA (15 U.S.C. § 1679b(b)) nothing may be charged before the service is performed, so Ledger only bills completed work (Billing → Automatic billing sets the per-letter / per-delete / monthly amounts), and the pay routes refuse any invoice whose service isn't complete or whose client is still inside the cancellation window.
+
+> **Read before turning this on:** Stripe's Prohibited and Restricted Businesses list (stripe.com/legal/restricted-businesses, updated 2026-09-22) names "credit repair, and counseling services" as **prohibited** under Lending and credit, and the Stripe Services Agreement (§ 1.2(a)(ix)) forbids prohibited businesses without Stripe's prior written approval. Running Ledger payments through an existing Stripe account risks that whole account (and every other business on it) being closed. Get Stripe's written approval first, or use Authorize.net through a processor that accepts credit repair.
+
+Routes:
+
+| Method & path | Who | What |
+|---|---|---|
+| `POST /pay/:token/stripe` | Anyone with the invoice pay link | Creates a Checkout Session for that invoice and redirects (303) to Stripe |
+| `POST /api/portal/invoices/:id/checkout` | Signed-in client (own invoices only) | Same, returns `{ url }` |
+| `GET /pay/:token/stripe/done?session_id=…` | Payer | Return page; confirms the session with Stripe and marks the invoice paid |
+| `POST /api/stripe/webhook` | Stripe | Signed webhook (raw body, verified with `STRIPE_WEBHOOK_SECRET`) |
+| `GET /api/settings/stripe` | Owner / staff | On/off status only (never the key) |
+
+Setup:
+
+1. Railway → the Ledger service → Variables: set `STRIPE_SECRET_KEY` (and `APP_BASE_URL`). Leave `PAYMENTS_ENABLED` unset for now.
+2. Stripe Dashboard → Developers → Webhooks → **Add endpoint**: URL `https://<your Ledger domain>/api/stripe/webhook`; events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`. Open the endpoint → **Signing secret → Reveal**, and put it in `STRIPE_WEBHOOK_SECRET`.
+3. Test with test-mode keys first (`sk_test_…` plus a test-mode webhook), then set `PAYMENTS_ENABLED=true`.
+4. In Ledger: Billing → Online payments → **Stripe Checkout**. Invoice pay links (`/pay/<token>`) now show "Continue to secure payment".
+
+The webhook is the source of truth: `checkout.session.completed` (or `async_payment_succeeded` for bank payments) marks the invoice paid if the amount and currency match; a mismatch creates a staff task instead. Failed payments and any subscription changes made by hand in Stripe are recorded and raise a task. Events are de-duplicated by id.
 
 ## What's inside
 
@@ -94,7 +124,7 @@ On Railway, set the start command to `node ledger/server/index.js` (or `npm run 
 **Running the business (added after the competitor review):**
 - **One-click report import:** reports a client uploads in the portal are read by AI in the background and wait under *Credit reports → Ready to import*. The monthly re-pull automation asks active clients for a fresh report every ~35 days. (Pulling reports directly from IdentityIQ, MyFreeScoreNow or SmartCredit needs a partner agreement and API access from that provider.)
 - **Mail online (Lob):** Settings → Print & mail. Approved letters are printed and mailed first-class, certified, or certified with return receipt, from the client's address, with photo ID and proof of address attached as pages. The tracking number, expected delivery and delivered date are saved, and the response deadline is counted from delivery. Test keys (`test_…`) never mail anything.
-- **Online payments and automatic billing:** Billing → Automatic billing (per letter, pay per delete, or monthly after service). Invoices are created only for work already done and only after the cancellation period. Clients pay through a secure pay link on Authorize.net's hosted page (Settings → Online payments), or through your own payment link. Payments are matched automatically.
+- **Online payments and automatic billing:** Billing → Automatic billing (per letter, pay per delete, or monthly after service). Invoices are created only for work already done and only after the cancellation period. Clients pay through a secure pay link on Authorize.net's hosted page (Settings → Online payments), on Stripe Checkout (server variables, see above), or through your own payment link. Payments are matched automatically.
 - **Side-by-side report comparison** on *Credit reports* (removed, changed and new accounts), plus a printable **monthly progress report** with a score chart.
 - **Creditor address book** (Library → Creditor addresses): 71 researched dispute and correspondence addresses for banks, card issuers, auto lenders, student-loan servicers, collectors and specialty bureaus, each with a source link. Every address you type is saved and suggested next time.
 - **Automations** (sidebar): emails, texts and tasks for new leads, follow-ups, signed agreements, missing reports, monthly re-pulls, mailed letters, removed items, overdue responses, invoices and monthly progress. Each rule fires once per event and never for events from before it was turned on.

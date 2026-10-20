@@ -463,7 +463,7 @@
     const inv = S().invoices.find(x => x.id === id);
     const origin = location.protocol.startsWith('http') ? location.origin : '';
     const b = S().settings.billing || {};
-    const payLink = b.provider === 'link' && b.payLink ? b.payLink : b.provider === 'authorizenet' && Store.remote ? root.Invoices.payUrl(inv, origin) : '';
+    const payLink = b.provider === 'link' && b.payLink ? b.payLink : ['authorizenet', 'stripe'].includes(b.provider) && Store.remote ? root.Invoices.payUrl(inv, origin) : '';
     UI.download(root.Invoices.filename(S(), inv), root.Invoices.pdfBytes(S(), inv, { payLink }), 'application/pdf');
   }
   function invoiceEmail(id) {
@@ -604,6 +604,14 @@
     if (form) form.onsubmit = async e => { e.preventDefault(); const d = UI.formData(form); const msg = document.getElementById('pay-msg'); msg.textContent = 'Testing with Authorize.net…'; try { const r = await api('PUT', '/api/settings/payments', d); toast(r.verified ? 'Authorize.net connected' : 'Saved — could not verify yet'); loadPaySettings(); } catch (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message; } };
     const rm = document.getElementById('pay-remove');
     if (rm) rm.onclick = async () => { if (UI.ask('Disconnect Authorize.net?')) { await api('DELETE', '/api/settings/payments'); loadPaySettings(); } };
+    try {
+      const st = await api('GET', '/api/settings/stripe');
+      const box = document.createElement('div');
+      box.className = 'stack';
+      box.innerHTML = `<div><b>Stripe Checkout</b> ${st.ready ? `<span class="badge ${st.mode === 'live' ? 'b-ok' : 'b-med'}">${st.mode === 'live' ? 'Live' : 'Test mode'}</span>` : '<span class="badge b-low">Off</span>'} <span class="small muted">${st.enabled ? 'PAYMENTS_ENABLED on' : 'PAYMENTS_ENABLED off'} · secret key ${st.keyConfigured ? 'set' : 'not set'} · webhook ${st.webhookConfigured ? 'set' : 'not set'}</span></div>
+        <p class="small muted">Stripe is configured on the server (Railway → Variables), not here. Then set Billing → Online payments to Stripe.</p>`;
+      el.appendChild(box);
+    } catch (e) { /* older server */ }
   }
 
   /** Suggest creditor names from the address book and fill the address when one matches. */

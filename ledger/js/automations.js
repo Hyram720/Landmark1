@@ -85,7 +85,7 @@
     const v = Object.assign({ first: c.firstName || String(c.name || '').split(' ')[0], name: c.name, company: co.name || 'our office', phone: co.phone || '', portal: (ctx.origin || '') + '/portal',
       booking, booking_line: booking ? `Pick a time that works for you: ${booking} ` : '', booking_or_reply: booking ? `pick a time here: ${booking}` : 'just reply to this message and we’ll set it up' }, ev.vars || {});
     const billing = Object.assign({ provider: 'none', payLink: '' }, ws.settings.billing || {});
-    v.pay_line = billing.provider === 'authorizenet' && v.payToken && ctx.origin ? `Pay securely online: ${ctx.origin}/pay/${v.payToken} ` : billing.provider === 'link' && billing.payLink ? `Pay online: ${billing.payLink} ` : '';
+    v.pay_line = ['authorizenet', 'stripe'].includes(billing.provider) && v.payToken && ctx.origin ? `Pay securely online: ${ctx.origin}/pay/${v.payToken} ` : billing.provider === 'link' && billing.payLink ? `Pay online: ${billing.payLink} ` : '';
     return v;
   }
 
