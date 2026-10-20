@@ -53,13 +53,14 @@ app.get('/confirm/:id', async (req, res) => {
   if (!sub) return res.status(404).send(page('Not found', '<h1>Link not found</h1><p>Try signing up again.</p>'));
   const first = !sub.confirmed;
   saveSubscriber({ ...sub, confirmed: true, unsubscribed: false, confirmedAt: sub.confirmedAt || new Date().toISOString() });
-  // Instant value: send this week's issue right away, and mark it so the weekly run doesn't repeat it.
+  // Instant value: send the latest issue right away. If this week's send already went out, mark it so
+  // it isn't repeated; if it's still a midweek preview, they also get the real issue on Thursday.
   const issue = first && latestIssue();
   if (issue && !issue.sentTo.includes(sub.id)) {
     sendIssueTo(issue, { ...sub, confirmed: true })
       .then(() => {
         const fresh = getIssue(issue.week);
-        if (!fresh.sentTo.includes(sub.id)) saveIssue({ ...fresh, sentTo: [...fresh.sentTo, sub.id] });
+        if (fresh.sendStartedAt && !fresh.sentTo.includes(sub.id)) saveIssue({ ...fresh, sentTo: [...fresh.sentTo, sub.id] });
       })
       .catch((e) => console.error('welcome issue failed', e.message));
   }

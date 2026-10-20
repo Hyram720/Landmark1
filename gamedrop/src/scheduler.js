@@ -3,6 +3,8 @@
 // so a restart mid-send picks up where it left off and nobody gets it twice.
 import config from './config.js';
 import { listSubscribers, getIssue, saveIssue } from './store.js';
+
+const PREVIEW_MAX_AGE = 12 * 3600_000;
 import { isoWeek, buildIssue, renderEmail } from './issue.js';
 import { sendEmail, alertOwner } from './mailer.js';
 
@@ -52,12 +54,23 @@ export async function sendIssue(issue) {
 
 let running = false;
 let alertedWeek = null; // one failure alert per week, not one every 10 minutes
+// Before the send slot: keep a fresh preview of this week's issue for the site (rebuilt every 12h).
+// At the slot: rebuild from fresh data unless sending already started, then send.
 export async function tick(now = new Date()) {
-  if (running || now < sendSlot(now)) return;
+  if (running) return;
   running = true;
   try {
     const week = isoWeek(now);
-    const issue = getIssue(week) || (await buildIssue(week));
+    const slot = sendSlot(now);
+    let issue = getIssue(week);
+    if (now < slot) {
+      if (!issue || now - Date.parse(issue.createdAt) > PREVIEW_MAX_AGE) await buildIssue(week, { force: true });
+      return;
+    }
+    if (!issue || (!issue.sendStartedAt && Date.parse(issue.createdAt) < slot.getTime())) {
+      issue = await buildIssue(week, { force: true });
+    }
+    if (!issue.sendStartedAt) saveIssue(Object.assign(issue, { sendStartedAt: now.toISOString() }));
     const result = await sendIssue(issue);
     if (result.sent || result.failed) console.log(`[send] ${week}: sent ${result.sent}, failed ${result.failed}`);
   } catch (err) {

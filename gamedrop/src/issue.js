@@ -26,6 +26,7 @@ export async function buildIssue(week = isoWeek(), { force = false } = {}) {
     ...picks,
     copy,
     sentTo: existing?.sentTo || [],
+    sendStartedAt: existing?.sendStartedAt || null,
     clicks: existing?.clicks || {},
   });
 }
