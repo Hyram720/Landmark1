@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 import { hashPassword, passwordProblem, rateLimiter } from './auth.js';
 import { sendMail, mailEnabled, mailMode } from './mailer.js';
+import { Business } from './shared.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const RESET_TTL = 30 * 60 * 1000, MAGIC_TTL = 15 * 60 * 1000, OTP_TTL = 10 * 60 * 1000;
@@ -184,6 +185,12 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     const soon = Date.now() + 3 * 86400000;
     ((workspace().disputes) || []).forEach(d => {
       if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`);
+    });
+    // Business credit plan: remind the client when a step is due within 2 days (once per step and due date).
+    const t0 = new Date().toISOString().slice(0, 10);
+    ((workspace().clients) || []).filter(c => c.kind !== 'personal' && c.creditPlan && c.creditPlan.startedAt).forEach(c => {
+      const cur = Business.coachState(c, workspace(), t0).current;
+      if (cur && Date.parse(cur.due) <= Date.now() + 2 * 86400000 && !(c.creditPlan.clientConfirmed || {})[cur.key]) notifyClient(c.id, `step:${c.id}:${cur.key}:${cur.due}`, 'Your next business credit step', `Your next business credit plan step is due ${cur.due}: ${cur.title.split(':')[0]}. Sign in to your portal to see how to do it, and tap “I’ve done this” when it’s finished.`);
     });
     db.persistSoon();
   }

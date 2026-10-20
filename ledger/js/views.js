@@ -235,7 +235,7 @@
         actions: `<button class="btn sm" data-act="edit-tradeline" data-report="${r.id}">${icon('plus')} Tradeline</button><button class="btn sm" data-act="edit-report" data-id="${r.id}">Edit</button><button class="btn sm ghost danger" data-act="delete-report" data-id="${r.id}">Delete</button>` })).join('')}</div>`;
   }
 
-  function clientAudit(c) {
+  function clientAuditBase(c) {
     const fs = clientFindings(c.id);
     const reps = Store.get.latestByBureau(c.id);
     if (!reps.length) return card('', empty('Nothing to audit yet', 'Add at least one credit report. With reports from all three bureaus the audit also compares each tradeline across bureaus.'));
@@ -622,8 +622,27 @@
     if (!KB) return '';
     return card(title, `<ul class="list kb-list">${KB.section(section).map(r => `<li><div class="grow"><b>${esc(r.title)}</b><div class="small" style="margin-top:2px">${esc(r.rule)}</div><div class="small muted" style="margin-top:4px"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.cite)} ↗</a>${r.needsLawyer ? ' · <span class="badge b-med">Confirm with an attorney</span>' : ''}</div></div></li>`).join('')}</ul>`, { flush: true, sub: sub || `Knowledge base v${esc(KB.version)} · not legal advice` });
   }
+  // Accuracy checks beyond Metro 2 fields (js/filecheck.js): personal info, inquiries and items the
+  // client flagged. Accurate negatives are listed separately with the reason they're left alone.
+  function fileCheckCard(c) {
+    const FC = root.FileCheck; if (!FC) return '';
+    const reps = Store.get.latestByBureau(c.id);
+    const fs = [], left = [];
+    reps.forEach(r => { const pf = FC.personalChecks(r, c); fs.push(...pf); left.push(...FC.notDisputed(r, Metro2.auditReport(r).concat(pf))); });
+    const sev = x => `<span class="badge ${x === 'high' ? 'b-high' : x === 'medium' ? 'b-med' : 'b-low'}">${esc(x)}</span>`;
+    return card('Personal info, inquiries & client-flagged items', `${fs.length ? fs.map(x => `<div class="finding ${x.severity}"><div class="row between"><b class="t">${esc(x.title)}</b>${sev(x.severity)}</div><div class="small muted">${esc(x.creditor)} · ${esc(x.bureau)} · <span class="mono">${esc(x.code)}</span>${x.actionOnly ? ' · <b>needs action before it can be disputed</b>' : ''}</div><div class="d small">${esc(x.detail)}</div></div>`).join('') : '<p class="small muted" style="padding:12px 16px">No personal-information or inquiry issues recorded. Add what the report shows with “Personal info & inquiries”.</p>'}
+      ${left.length ? `<div style="padding:10px 16px"><b class="small">Not disputed — no inaccuracy found</b><ul class="small" style="margin:6px 0 0 16px">${left.map(l => `<li>${esc(l.creditor)} (${esc(l.bureau)}): ${esc(l.why)}</li>`).join('')}</ul></div>` : ''}
+      <p class="small muted" style="padding:0 16px 12px">Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.</p>`,
+      { flush: true, sub: 'Names, addresses, employers, DOB/SSN variations (masked), unrecognized or 2-year-old hard inquiries, client-disputed items', actions: `<button class="btn sm" data-act="pii-edit" data-id="${c.id}">Personal info & inquiries</button>` });
+  }
+  function clientAudit(c, ...rest) { return clientAuditBase(c, ...rest) + '<div style="margin-top:16px">' + fileCheckCard(c) + '</div>'; }
+
   function clientBusiness(c, ...rest) {
-    return clientBusinessBase(c, ...rest) + '<div style="margin-top:16px">' + kbCard('business', 'Business credit rules & dispute paths') + '</div>';
+    const st = root.Business && root.Business.coachState ? root.Business.coachState(c, S()) : null;
+    const u = st ? st.utilization : null;
+    const coach = card('Business credit coach', `<div class="small stack" style="gap:6px">${st && st.started ? (st.current ? `<div><b>Current step:</b> ${esc(st.current.title)} <span class="muted">(due ${esc(st.current.due)}${st.current.overdue ? ', overdue' : ''})</span></div>` : '<div>All plan steps complete.</div>') : '<div>The 90-day plan hasn’t been started.</div>'}${st && st.pending.length ? `<div class="callout warn"><b>${st.pending.length} step(s) the client marked done</b>Review them in the coach.</div>` : ''}${u && u.business.accounts.length ? `<div><b>Business utilization:</b> ${u.business.pct}% overall · ${u.business.accounts.map(a => `${esc(a.name)} ${a.pct}%`).join(' · ')}</div>` : ''}${u ? u.personal.filter(p => p.pct !== null).map(p => `<div><b>Personal utilization (${esc(p.bureau)}):</b> ${p.pct}%${p.includesGuaranteed ? ' incl. owner-guaranteed accounts' : ''}</div>`).join('') : ''}</div>`,
+      { sub: 'Step-by-step 90-day plan, net-30 vendors and utilization', actions: `<button class="btn sm primary" data-act="biz-coach" data-id="${c.id}">✦ Open coach</button><button class="btn sm" data-act="biz-report" data-id="${c.id}">Business bureau file</button><button class="btn sm" data-act="m2-letters" data-id="${c.id}">✦ Dispute letters</button>` });
+    return coach + '<div style="margin-top:16px"></div>' + clientBusinessBase(c, ...rest) + '<div style="margin-top:16px">' + kbCard('business', 'Business credit rules & dispute paths') + '</div>';
   }
   function clientBusinessBase(c) {
     const B = root.Business;

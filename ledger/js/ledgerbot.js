@@ -128,6 +128,103 @@
       onSubmit: async d => { try { await App().api('PUT', '/api/settings/auth', { magicLink: !!d.magicLink, emailOtp: !!d.emailOtp, notifications: !!d.notifications }); toast('Saved'); } catch (e) { toast(e.message); return false; } } });
   }
 
+  // ---------- personal info & inquiries (feeds js/filecheck.js) ----------
+  const lines = v => String(v || '').split('\n').map(x => x.trim()).filter(Boolean);
+  function piiModal(cid, rid) {
+    const c = Store.get.client(cid);
+    const reps = Store.get.latestByBureau(cid);
+    if (!reps.length) return toast('Add a credit report first');
+    const r0 = reps.find(x => x.id === rid) || reps[0];
+    const render = r => {
+      const P = r.personal || {};
+      const inq = (r.inquiries || []).map(q => [q.creditor, q.date, q.kind || 'hard', q.clientSays === 'unrecognized' ? 'unrecognized' : ''].join(' | ')).join('\n');
+      return `<p class="small">Enter what the <b>${esc(r.bureau)}</b> report (${esc(r.date || '')}) shows, then record what the client says. Only items the client confirms are wrong become disputes; accurate information is left alone. DOB and SSN variations are compared but never printed in letters. Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.</p>
+        <label class="field"><span>Report</span><select name="rid">${reps.map(x => `<option value="${esc(x.id)}" ${x.id === r.id ? 'selected' : ''}>${esc(x.bureau)} · ${esc(x.date || '')}</option>`).join('')}</select></label>
+        <div class="form-grid">
+          <label class="field"><span>Names on the report (one per line)</span><textarea name="names" rows="3">${esc((P.names || []).join('\n'))}</textarea></label>
+          <label class="field"><span>Client’s other names / AKAs (one per line)</span><textarea name="aka" rows="3">${esc((c.aka || []).join('\n'))}</textarea></label>
+          <label class="field"><span>Addresses on the report</span><textarea name="addresses" rows="3">${esc((P.addresses || []).join('\n'))}</textarea></label>
+          <label class="field"><span>Client’s previous addresses</span><textarea name="previousAddresses" rows="3">${esc((c.previousAddresses || []).join('\n'))}</textarea></label>
+          <label class="field"><span>Employers on the report</span><textarea name="employers" rows="2">${esc((P.employers || []).join('\n'))}</textarea></label>
+          <label class="field"><span>Client’s employers</span><textarea name="clientEmployers" rows="2">${esc((c.employers || []).join('\n'))}</textarea></label>
+          <label class="field"><span>Dates of birth on the report</span><input name="dobs" type="password" autocomplete="off" value="${esc((P.dobs || []).join(', '))}" placeholder="YYYY-MM-DD, comma separated"></label>
+          <label class="field"><span>SSN last-4 variations on the report</span><input name="ssns" type="password" autocomplete="off" inputmode="numeric" value="${esc((P.ssnLast4s || []).join(', '))}" placeholder="last 4 only"></label>
+        </div>
+        <label class="field"><span>Inquiries (one per line: company | YYYY-MM-DD | hard or soft | “unrecognized” if the client didn’t authorize it)</span><textarea name="inquiries" rows="4">${esc(inq)}</textarea></label>
+        <h3 style="margin:10px 0 4px">Accounts the client disputes as inaccurate or unverifiable</h3>
+        <div class="stack" style="gap:6px">${(r.accounts || []).map(t => `<div class="row" style="gap:8px;align-items:flex-start"><div style="min-width:180px" class="small"><b>${esc(t.creditor)}</b><br><span class="muted">${esc(t.status || '')}</span></div><select name="says:${esc(t.id)}"><option value="">No issue</option><option value="unrecognized" ${t.clientSays === 'unrecognized' ? 'selected' : ''}>Client says inaccurate / unverifiable</option><option value="accurate" ${t.clientSays === 'accurate' ? 'selected' : ''}>Client confirms accurate</option></select><input class="grow" name="why:${esc(t.id)}" maxlength="400" placeholder="What exactly is wrong (required to dispute)" value="${esc(t.clientExplanation || '')}"></div>`).join('')}</div>`;
+    };
+    modal({ title: `Personal info & inquiries — ${c.name}`, wide: true, body: render(r0), foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>',
+      onOpen: f => { f.elements.rid.onchange = () => { const rid = f.elements.rid.value; const x = f.querySelector('[data-close]'); if (x) x.click(); piiModal(cid, rid); }; },
+      onSubmit: d => {
+        const r = reps.find(x => x.id === d.rid) || r0;
+        r.personal = { names: lines(d.names), addresses: lines(d.addresses), employers: lines(d.employers), dobs: String(d.dobs || '').split(',').map(x => x.trim()).filter(Boolean), ssnLast4s: String(d.ssns || '').split(',').map(x => x.replace(/\D/g, '').slice(-4)).filter(Boolean) };
+        r.inquiries = lines(d.inquiries).map((l, i) => { const [creditor, date, kind, flag] = l.split('|').map(x => (x || '').trim()); return { id: 'inq-' + i + '-' + (creditor || '').toLowerCase().replace(/\W+/g, '').slice(0, 12), creditor, date, kind: /soft/i.test(kind || '') ? 'soft' : 'hard', clientSays: /unrec/i.test(flag || '') ? 'unrecognized' : 'authorized' }; });
+        c.aka = lines(d.aka); c.previousAddresses = lines(d.previousAddresses); c.employers = lines(d.clientEmployers);
+        (r.accounts || []).forEach(t => { const v = d['says:' + t.id]; if (v) t.clientSays = v; else delete t.clientSays; t.clientExplanation = String(d['why:' + t.id] || '').trim(); if (!t.clientExplanation) delete t.clientExplanation; });
+        App().commit(`Updated personal info & inquiries for ${c.name} (${r.bureau})`, cid);
+        App().go(`#/clients/${cid}/audit`);
+      } });
+  }
+
+  // ---------- business bureau file (feeds js/filecheck.js business checks) ----------
+  function bizReportModal(cid) {
+    const c = Store.get.client(cid);
+    c.businessReports = c.businessReports || [];
+    const BUREAUS = ['Dun & Bradstreet', 'Experian Business', 'Equifax Business'];
+    modal({ title: `Business bureau file — ${c.name}`, wide: true, foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save report</button>',
+      body: `<p class="small">Enter what the business bureau shows. Ledger compares it with the client file (legal name/DBA, address, phone, formation date, NAICS/SIC) and the vendor accounts. Business files are corrected through each bureau’s own process, not FCRA § 611.</p>
+        <div class="form-grid">
+          <label class="field"><span>Bureau</span><select name="bureau">${BUREAUS.map(b => `<option>${esc(b)}</option>`).join('')}</select></label>
+          <label class="field"><span>Report date</span><input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
+          <label class="field"><span>Business name shown</span><input name="name"></label>
+          <label class="field"><span>Address shown</span><input name="address"></label>
+          <label class="field"><span>Phone shown</span><input name="phone"></label>
+          <label class="field"><span>Formation date shown</span><input name="formedOn" type="date"></label>
+          <label class="field"><span>Years in business shown</span><input name="yearsInBusiness" type="number" min="0" step="0.5"></label>
+          <label class="field"><span>NAICS shown</span><input name="naics"></label>
+          <label class="field"><span>SIC shown</span><input name="sic"></label>
+        </div>
+        <label class="field"><span>Tradelines (one per line: creditor | last 4 | open/closed/paid | balance | limit | opened YYYY-MM-DD | last reported YYYY-MM-DD | closed on)</span><textarea name="tradelines" rows="4" placeholder="Uline | 1234 | open | 250 | 1000 | 2026-08-01 | 2026-10-01 |"></textarea></label>
+        <label class="field"><span>Liens, judgments and UCC filings (one per line: ucc/lien/judgment | filed YYYY-MM-DD | open/satisfied | secured party or court | amount | date the client’s documents show it satisfied/terminated | document)</span><textarea name="records" rows="3" placeholder="ucc | 2024-02-01 | open | Example Equipment Finance | 12000 | 2025-09-15 | UCC-3 termination"></textarea></label>
+        <p class="small muted">Saved reports: ${c.businessReports.length ? c.businessReports.map(r => esc(r.bureau + ' ' + r.date)).join(', ') : 'none yet'}.</p>`,
+      onSubmit: d => {
+        const id = Store.uid();
+        const tl = lines(d.tradelines).map((l, i) => { const [creditor, last4, status, balance, limit, opened, lastReported, closedOn] = l.split('|').map(x => (x || '').trim()); return { id: `${id}-t${i}`, creditor, accountNumber: last4, status: (status || 'open').toLowerCase(), balance, limit, opened, lastReported, closedOn }; });
+        const pr = lines(d.records).map((l, i) => { const [type, filedOn, status, securedParty, amount, clientSatisfiedOn, docRef] = l.split('|').map(x => (x || '').trim()); return { id: `${id}-p${i}`, type: (type || '').toLowerCase(), filedOn, status: (status || 'open').toLowerCase(), securedParty, amount, clientSatisfiedOn, docRef }; });
+        c.businessReports.push({ id, bureau: d.bureau, date: d.date, profile: { name: d.name, address: d.address, phone: d.phone, formedOn: d.formedOn, yearsInBusiness: d.yearsInBusiness, naics: d.naics, sic: d.sic }, tradelines: tl, publicRecords: pr });
+        App().commit(`Added ${d.bureau} business report for ${c.name}`, cid);
+        const n = DisputeReasons.suggestionsFor(S(), cid).filter(x => x.business).length;
+        toast(n ? `${n} business item(s) ready for a correction letter — use ✦ Dispute letters` : 'Saved. No business inaccuracies found.');
+        App().go(`#/clients/${cid}/business`);
+      } });
+  }
+
+  // ---------- business credit coach (staff) ----------
+  async function coachModal(cid, msg) {
+    const c = Store.get.client(cid);
+    if (!Store.remote) return toast('The coach runs on the Ledger server');
+    let v;
+    try { v = msg ? await App().api('POST', `/api/coach/${encodeURIComponent(cid)}/chat`, { message: msg }) : await App().api('GET', `/api/coach/${encodeURIComponent(cid)}`); } catch (e) { return toast(e.message); }
+    const st = v.state;
+    const u = st.utilization;
+    modal({ title: `Business credit coach — ${c.name}`, wide: true, foot: '<button type="button" class="btn" data-close>Close</button><button class="btn primary">Ask</button>',
+      body: `<div class="callout">${md(v.text)}</div>
+        ${st.started ? '' : '<button type="button" class="btn primary" data-coach-start>Start the 90-day plan today</button>'}
+        ${(st.pending || []).length ? `<h3 style="margin:12px 0 4px">Client said these are done — review</h3>${st.pending.map(p => `<div class="row small" style="gap:8px"><span class="grow">${esc(p.key)} · ${esc(String(p.at).slice(0, 10))}${p.note ? ' · “' + esc(p.note) + '”' : ''}</span><button type="button" class="btn sm primary" data-step="${esc(p.key)}" data-done="1">Accept</button><button type="button" class="btn sm" data-step="${esc(p.key)}" data-done="0">Not yet</button></div>`).join('')}` : ''}
+        ${st.started ? `<h3 style="margin:12px 0 4px">Plan steps</h3><ul class="list">${st.steps.map(s => `<li><div class="grow small"><b>${esc(s.title)}</b><div class="meta">due ${esc(s.due)}${s.overdue ? ' · <b style="color:var(--high)">overdue</b>' : ''}${s.clientConfirmed ? ' · client says done' : ''}</div></div>${s.complete ? '<span class="badge b-ok">Done</span>' : `<button type="button" class="btn sm" data-step="${esc(s.key)}" data-done="1">Mark done</button>`}</li>`).join('')}</ul>` : ''}
+        <h3 style="margin:12px 0 4px">Utilization</h3>
+        ${u.business.accounts.length ? `<div class="table-wrap"><table><thead><tr><th>Account</th><th class="right">Balance</th><th class="right">Limit</th><th class="right">Used</th></tr></thead><tbody>${u.business.accounts.map(a => `<tr><td>${esc(a.name)}${a.guaranteed ? ' <span class="badge b-low">PG</span>' : ''}</td><td class="right">$${a.balance.toLocaleString()}</td><td class="right">$${a.limit.toLocaleString()}</td><td class="right"><span class="badge ${a.pct >= 50 ? 'b-high' : a.pct >= 30 ? 'b-med' : 'b-ok'}">${a.pct}%</span></td></tr>`).join('')}<tr><td><b>Overall</b></td><td class="right">$${u.business.balance.toLocaleString()}</td><td class="right">$${u.business.limit.toLocaleString()}</td><td class="right"><b>${u.business.pct}%</b></td></tr></tbody></table></div>` : '<p class="small muted">Add a balance and limit to vendor accounts or credit lines to see utilization.</p>'}
+        ${u.personal.filter(p => p.pct !== null).map(p => `<div class="small">Personal revolving (${esc(p.bureau)}): <b>${p.pct}%</b>${p.includesGuaranteed ? ' incl. owner-guaranteed accounts' : ''}</div>`).join('')}
+        <label class="field" style="margin-top:12px"><span>Ask the coach</span><input name="q" maxlength="1000" placeholder="e.g. What should we do this week? Which vendor should we add next?"></label>`,
+      onOpen: f => {
+        const start = f.querySelector('[data-coach-start]');
+        if (start) start.onclick = async () => { try { await App().api('POST', `/api/coach/${encodeURIComponent(cid)}/start`); await App().reload(); coachModal(cid); } catch (e) { toast(e.message); } };
+        f.querySelectorAll('[data-step]').forEach(b => b.onclick = async () => { try { await App().api('POST', `/api/coach/${encodeURIComponent(cid)}/step`, { key: b.dataset.step, done: b.dataset.done === '1' }); await App().reload(); coachModal(cid); } catch (e) { toast(e.message); } });
+      },
+      onSubmit: d => { const q = String(d.q || '').trim(); if (!q) return false; coachModal(cid, q); } });
+  }
+
   function fab() {
     if (document.getElementById('lb-fab')) return;
     const b = document.createElement('button');
@@ -143,7 +240,10 @@
       'm2-letters': el => lettersModal(el.dataset.id),
       'ledger-assistant': el => assistantModal(el.dataset.id || ''),
       'partner-clicks': () => clicksModal(),
-      'auth-settings': () => authSettingsModal()
+      'auth-settings': () => authSettingsModal(),
+      'pii-edit': el => piiModal(el.dataset.id),
+      'biz-report': el => bizReportModal(el.dataset.id),
+      'biz-coach': el => coachModal(el.dataset.id)
     });
     fab();
   }

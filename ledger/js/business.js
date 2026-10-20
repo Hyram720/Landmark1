@@ -134,10 +134,11 @@
     const t = today || new Date().toISOString().slice(0, 10);
     const ps = planStatus(c, t);
     const pending = Object.entries((c.creditPlan && c.creditPlan.clientConfirmed) || {}).filter(([k, v]) => v && !v.reviewedAt).map(([key, v]) => ({ key, at: v.at, note: v.note || '' }));
-    if (!ps) return { started: false, pending, utilization: utilization(c, ws), vendors: (c.vendorAccounts || []).length };
+    const vendors = (c.vendorAccounts || []).map(v => ({ vendor: v.vendor, terms: v.terms, limit: v.limit, balance: v.balance, status: v.status, reportsTo: v.reportsTo, opened: v.opened }));
+    if (!ps) return { started: false, pending, utilization: utilization(c, ws), vendors };
     const current = ps.steps.find(s => !s.complete) || null;
     const next = current ? ps.steps.slice(ps.steps.indexOf(current) + 1).find(s => !s.complete) || null : null;
-    return { started: true, startedAt: ps.startedAt, done: ps.done, total: ps.total, current, next, overdue: ps.steps.filter(s => s.overdue).map(s => ({ key: s.key, title: s.title, due: s.due })), steps: ps.steps.map(s => ({ key: s.key, title: s.title, due: s.due, complete: s.complete, overdue: s.overdue, clientConfirmed: !!(((c.creditPlan || {}).clientConfirmed || {})[s.key]) })), pending, utilization: utilization(c, ws), vendors: (c.vendorAccounts || []).map(v => ({ vendor: v.vendor, terms: v.terms, limit: v.limit, balance: v.balance, status: v.status, reportsTo: v.reportsTo, opened: v.opened })) };
+    return { started: true, startedAt: ps.startedAt, done: ps.done, total: ps.total, current, next, overdue: ps.steps.filter(s => s.overdue).map(s => ({ key: s.key, title: s.title, due: s.due })), steps: ps.steps.map(s => ({ key: s.key, title: s.title, due: s.due, complete: s.complete, overdue: s.overdue, clientConfirmed: !!(((c.creditPlan || {}).clientConfirmed || {})[s.key]) })), pending, utilization: utilization(c, ws), vendors };
   }
 
   const api = { SCORE_MODELS, FOUNDATION, STARTER_VENDORS, BUREAU_CONTACTS, FAST_TRACK, fundability, planStatus, utilization, coachState };

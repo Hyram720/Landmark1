@@ -48,6 +48,26 @@
     });
   }
 
+  // Business credit plan, one step at a time (own file only; staff review every step the client marks done).
+  const mdLite = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\s?\[[a-z0-9-]+\]/g, '').replace(/\n/g, '<br>');
+  function coachCard(v) {
+    if (!v || !v.state) return '';
+    const st = v.state, u = st.utilization;
+    return `<section class="card" id="coach"><div class="card-h"><div><h2>Your business credit plan</h2><p>${st.started ? `${st.done} of ${st.total} steps done` : 'Not started yet'}</p></div></div><div class="card-b stack">
+      <div class="small" id="coach-text">${mdLite(v.text)}</div>
+      ${st.current && !st.steps.find(s => s.key === st.current.key).clientConfirmed ? `<div class="row"><input id="coach-note" class="grow" maxlength="300" placeholder="Optional note for your advisor" aria-label="Note for your advisor"><button class="btn primary" id="coach-done" data-key="${esc(st.current.key)}">I’ve done this</button></div>` : st.current ? '<p class="small muted">Thanks — your advisor is reviewing this step.</p>' : ''}
+      ${u && u.business.accounts.length ? `<div class="small"><b>Utilization</b> (balance ÷ limit): ${u.business.accounts.map(a => `${esc(a.name)} ${a.pct}%`).join(' · ')} · overall <b>${u.business.pct}%</b>. Keeping balances low relative to limits (many experts suggest under 30%, lower is better) may help; paying vendors before the due date matters most for PAYDEX.</div>` : ''}
+      ${(st.vendors || []).length ? `<div class="small"><b>Net-30 accounts:</b> ${st.vendors.map(x => `${esc(x.vendor)} (${esc(x.terms || '')}${x.status ? ', ' + esc(x.status) : ''})`).join(' · ')}</div>` : ''}
+      <form class="row" id="coach-ask"><label class="sr-only" for="coach-q">Ask about your plan</label><input id="coach-q" class="grow" maxlength="800" placeholder="Ask about your plan…"><button class="btn">Ask</button></form>
+      <p class="small muted">General information about your own plan — not a promise of any score, approval or funding.</p></div></section>`;
+  }
+  function bindCoach() {
+    const done = document.getElementById('coach-done');
+    if (done) done.onclick = async () => { try { const r = await api('POST', '/api/portal/coach/step', { key: done.dataset.key, note: (document.getElementById('coach-note') || {}).value || '' }); toast(r.message); document.getElementById('coach').outerHTML = coachCard(r); bindCoach(); } catch (e) { toast(e.message); } };
+    const f = document.getElementById('coach-ask');
+    if (f) f.onsubmit = async e => { e.preventDefault(); const q = document.getElementById('coach-q').value.trim(); if (!q) return; const t = document.getElementById('coach-text'); t.textContent = '…'; try { const r = await api('POST', '/api/portal/coach/chat', { message: q }); t.innerHTML = mdLite(r.text); } catch (ex) { t.textContent = ex.message; } };
+  }
+
   // Bureau response clock: 30 days from receipt (45 if extended), shown as a bar.
   function deadline(d) {
     if (!d.sentAt || d.respondedAt || !d.dueAt) return '';
@@ -87,6 +107,7 @@
       <section class="card"><div class="card-h"><h2>Your disputes</h2></div><div class="card-b flush">${disputes}</div></section>
       ${me.business ? `<section class="card"><div class="card-h"><h2>Business credit${me.business.name ? ' — ' + esc(me.business.name) : ''}</h2></div><div class="card-b small">${Object.keys(me.business.checklist).length} foundation items complete. ${me.business.scores.length ? 'Latest scores: ' + me.business.scores.slice(-3).map(s => esc(s.model) + ' ' + esc(s.score)).join(' · ') : ''}</div></section>` : ''}
       <section class="card"><div class="card-h"><div><h2>Recommended for you</h2><p>Optional products that may help your goals</p></div></div><div class="card-b flush">${recs}</div></section>
+      ${coachCard(me.coach)}
       <section class="card"><div class="card-h"><div><h2>Email updates</h2><p>We can email you when a bureau responds, an item is removed or corrected, or a deadline is near. Emails never include account details.</p></div></div><div class="card-b"><label class="check small"><input type="checkbox" id="notify" ${me.notify && me.notify.email ? 'checked' : ''} ${me.notify && me.notify.available ? '' : 'disabled'}> Email me about updates to my file${me.notify && !me.notify.available ? ' (not available yet)' : ''}</label></div></section>
       <section class="card"><div class="card-h"><h2>Your rights</h2></div><div class="card-b small stack" style="gap:6px">
         <p>You have the right to dispute inaccurate information with the credit bureaus yourself, for free, and to get free credit reports at <a href="https://www.annualcreditreport.com/" target="_blank" rel="noopener">AnnualCreditReport.com</a>.</p>
@@ -107,6 +128,7 @@
       const r = await fetch('/api/portal/files', { method: 'POST', body: fd, credentials: 'same-origin' });
       const j = await r.json(); if (!r.ok) return toast(j.error); toast('Uploaded — thank you'); load();
     });
+    bindCoach();
     const nt = document.getElementById('notify');
     if (nt) nt.onchange = async () => { try { await api('PUT', '/api/portal/notifications', { email: nt.checked }); toast(nt.checked ? 'Email updates on' : 'Email updates off'); } catch (e) { toast(e.message); nt.checked = !nt.checked; } };
     const cancel = root.querySelector('[data-cancel]');
@@ -114,7 +136,7 @@
   }
 
   async function load() {
-    try { const me = await api('GET', '/api/portal/me'); try { me.notify = await api('GET', '/api/portal/notifications'); } catch { me.notify = null; } render(me); } catch (e) { root.innerHTML = `<div class="callout bad"><b>We couldn’t load your file</b>${esc(e.message)}</div>`; }
+    try { const me = await api('GET', '/api/portal/me'); try { me.notify = await api('GET', '/api/portal/notifications'); } catch { me.notify = null; } try { me.coach = await api('GET', '/api/portal/coach'); } catch { me.coach = null; } render(me); } catch (e) { root.innerHTML = `<div class="callout bad"><b>We couldn’t load your file</b>${esc(e.message)}</div>`; }
   }
 
   async function boot() {

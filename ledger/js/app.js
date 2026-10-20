@@ -1407,6 +1407,6 @@
     runEngine().then(n => { if (n) render(); }).catch(e => console.error(e));
     setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
-  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound };
+  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
   document.addEventListener('DOMContentLoaded', boot);
 })(window);
