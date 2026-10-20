@@ -1,0 +1,21 @@
+{
+  "name": "gamedrop",
+  "version": "1.0.0",
+  "description": "Weekly AI-curated digest of free games and deals actually worth playing",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "DEV_MODE=true node --watch src/server.js",
+    "issue": "node src/cli.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "express": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "ISC"
+}

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GameDrop: free games and deals actually worth playing</title>
+  <meta name="description" content="Every Thursday: the free games worth claiming on Epic, Steam, GOG, itch.io, mobile and console, plus well-reviewed deals at half price or better. Filtered to your platforms. Free.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top"><a class="logo" href="/">Game<span>Drop</span></a><a href="/issues">Past issues</a></header>
+
+    <h1>What's actually worth playing this week?</h1>
+    <p class="lead">Every Thursday, one short email: the free games worth claiming and the deals worth buying. Picked by an AI editor, filtered to the platforms you play on. Free, no spam, unsubscribe in one click.</p>
+
+    <form class="panel" id="signup">
+      <label for="email">Your email</label>
+      <input type="email" id="email" name="email" placeholder="you@example.com" required>
+      <label>I play on</label>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" name="platforms" value="pc" checked> PC</label>
+        <label class="chip"><input type="checkbox" name="platforms" value="console"> Console</label>
+        <label class="chip"><input type="checkbox" name="platforms" value="mobile"> Mobile</label>
+        <label class="chip"><input type="checkbox" name="platforms" value="vr"> VR</label>
+      </div>
+      <label for="maxPrice">Don't show deals over ($)</label>
+      <input type="number" id="maxPrice" name="maxPrice" min="0" max="200" value="30">
+      <button type="submit" id="go">Send me the drops</button>
+      <p class="fine" id="msg">You'll get a confirm email first.</p>
+    </form>
+
+    <div id="latest"></div>
+
+    <h2>What makes the cut</h2>
+    <div class="grid">
+      <div class="card"><h3>🎁 Free to keep</h3><p>Giveaways from Epic, Steam, GOG, itch.io, Prime, mobile and console. Anything needing a points grind is labelled.</p></div>
+      <div class="card"><h3>💸 Real deals only</h3><p>80%+ on Steam from 500+ reviews, at least 50% off, cheapest store wins.</p></div>
+      <div class="card"><h3>🤖 An AI editor</h3><p>One line per game on who it's for, plus a pick of the week. Prices and dates come straight from the stores.</p></div>
+    </div>
+
+    <footer>Free games via <a href="https://www.gamerpower.com">GamerPower</a> · deals via <a href="https://www.cheapshark.com">CheapShark</a></footer>
+  </div>
+  <script>
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const form = document.getElementById('signup');
+    const msg = document.getElementById('msg');
+    const params = new URLSearchParams(location.search);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('go');
+      btn.disabled = true;
+      const data = Object.fromEntries(new FormData(form));
+      data.platforms = [...form.querySelectorAll('input[name=platforms]:checked')].map((i) => i.value);
+      data.source = params.get('ref') || params.get('utm_source') || '';
+      try {
+        const res = await fetch('/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error);
+        form.innerHTML = `<h2 style="margin:0">Almost there</h2><p>${esc(body.message)}</p>`;
+      } catch (err) {
+        msg.textContent = err.message || 'Something went wrong. Try again.';
+        btn.disabled = false;
+      }
+    });
+    fetch('/api/latest').then((r) => r.json()).then((i) => {
+      if (!i) return;
+      document.getElementById('latest').innerHTML = `
+        <h2>This week: ${esc(i.headline)}</h2>
+        <p class="fine">${esc(i.intro)}</p>
+        <div class="grid preview">${i.free.map((g) => `<div class="card">${g.image ? `<img src="${esc(g.image)}" alt="">` : ''}<h3>${esc(g.title)}</h3><p>${esc(g.store || '')}${g.worth ? ` · normally $${g.worth.toFixed(2)}` : ''}</p></div>`).join('')}</div>
+        <p><a href="/issues/${esc(i.week)}">See all ${i.freeCount} free games and ${i.dealCount} deals →</a></p>`;
+    }).catch(() => {});
+  </script>
+</body>
+</html>
