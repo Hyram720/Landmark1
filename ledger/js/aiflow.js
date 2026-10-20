@@ -191,7 +191,7 @@
           <section class="up-card"><h3>Spreadsheet (CSV)</h3><p class="small muted">One row per account with Metro 2 columns. Download the template from Settings.</p><button type="button" class="btn sm" data-up="csv">Import CSV</button></section>
           <section class="up-card"><h3>Enter by hand</h3><p class="small muted">Create the report, then add each account.</p><button type="button" class="btn sm" data-up="manual">Add report manually</button></section>
           ${Store.remote ? `<section class="up-card"><h3>Ask the client to upload</h3><p class="small muted">They upload it in their portal and it appears in Documents for scanning.</p><button type="button" class="btn sm" data-up="ask">Message client</button></section>` : ''}
-          <section class="up-card"><h3>Need a report first?</h3><p class="small muted">3-bureau monitoring with downloadable reports:</p><div class="row small">${offers.map(o => `<a href="${esc(o.affiliateUrl || o.url)}" target="_blank" rel="noopener">${esc(o.name)} ↗</a>`).join('')}<a href="https://www.annualcreditreport.com" target="_blank" rel="noopener">AnnualCreditReport.com (free) ↗</a></div></section>
+          <section class="up-card"><h3>Need a report first?</h3><p class="small muted">3-bureau monitoring with downloadable reports:</p><div class="row small"><button type="button" class="btn sm" data-up="mycreditiq">MyCreditIQ (guided)</button>${offers.map(o => `<a href="${esc(o.affiliateUrl || o.url)}" target="_blank" rel="noopener">${esc(o.name)} ↗</a>`).join('')}<a href="https://www.annualcreditreport.com" target="_blank" rel="noopener">AnnualCreditReport.com (free) ↗</a></div></section>
         </div>`,
       foot: '<button type="button" class="btn" data-close>Close</button>',
       onOpen: f => {
@@ -207,15 +207,58 @@
           const k = b.dataset.up;
           if (k === 'text') { const t = f.querySelector('#up-text').value; UI.close(); scanText(id, t); }
           if (k === 'csv' || k === 'manual') { UI.close(); App().A['add-report']({ dataset: { id } }); }
+          if (k === 'mycreditiq') { UI.close(); myCreditIq(id); }
           if (k === 'ask') { UI.close(); App().messageModal(id, 'email', { subject: 'Please upload your credit report', body: TEMPLATE_ASK(Store.get.client(id)) }); }
         });
       }
     });
   }
+  // ---------- MyCreditIQ: open the site, download the report, upload it back ----------
+  const MCIQ_DEFAULT = 'https://www.mycreditiq.com/';
+  const MCIQ_STEPS = [
+    'Click <b>Open MyCreditIQ</b>. It opens in a new tab. The client signs in (or signs up) there with their own details. Ledger never sees their MyCreditIQ password.',
+    'Open the full credit report on MyCreditIQ.',
+    'Save it as a <b>PDF</b>: use the site’s Download or Print button, or press Ctrl+P (⌘P on a Mac) and choose <b>Save as PDF</b>. A saved web page (.html, “Webpage, HTML only”) also works.',
+    'Come back to this tab and upload the file below.'
+  ];
+  async function myCreditIq(cid) {
+    const c = Store.get.client(cid);
+    if (!c) { toast('Open a client first'); return; }
+    let cfg = {};
+    if (Store.remote) { try { cfg = await App().api('GET', '/api/config'); } catch { cfg = {}; } }
+    const src = (cfg.reportSources || {}).mycreditiq || { url: MCIQ_DEFAULT };
+    const aiOn = !!cfg.assistant;
+    const url = /^https:\/\//.test(src.url || '') ? src.url : MCIQ_DEFAULT;
+    modal({
+      title: `Get report from MyCreditIQ — ${c.name}`, wide: true,
+      body: `<div class="callout"><b>MyCreditIQ can’t send the report straight into Ledger</b>MyCreditIQ has no public connection (API) for other apps, so the report doesn’t come back on its own. Download it on MyCreditIQ, then upload it here. It’s saved to ${esc(c.name)}’s Documents, tagged “MyCreditIQ”.</div>
+        <ol class="small" style="margin:14px 0 14px 18px;display:grid;gap:6px">${MCIQ_STEPS.map(x => `<li>${x}</li>`).join('')}</ol>
+        <div class="row" style="margin-bottom:14px"><a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open MyCreditIQ ↗</a><span class="small muted">Opens ${esc(url.replace(/^https:\/\//, '').replace(/\/$/, ''))} in a new tab</span></div>
+        ${Store.remote ? `<label class="field"><span>Upload the MyCreditIQ report</span><input type="file" name="file" accept=".pdf,.html,.htm,.txt"><small>PDF or saved web page (HTML), up to 15 MB. Stored encrypted when LEDGER_ENCRYPTION_KEY is set.</small></label>
+        <div class="callout ${aiOn ? 'good' : 'warn'}" style="margin-top:12px">${aiOn ? '<b>✦ AI scan is on</b>After the upload, AI reads the accounts (names, SSNs, account numbers and addresses are hidden first). You review everything before anything is saved.' : '<b>AI scanning is off</b>The report is saved, but nothing reads it automatically. After the upload you’ll add the accounts by hand or from a CSV so the audit can run.'}</div>`
+        : '<div class="callout warn"><b>Uploads need the Ledger server</b>In this preview, files can’t be stored. You can still enter the tradelines by hand.</div>'}`,
+      foot: `<button type="button" class="btn" data-close>Close</button>${Store.remote ? '<button class="btn primary">Upload report</button>' : ''}`,
+      onSubmit: (d, f) => {
+        if (!Store.remote) return;
+        const file = f.elements.file && f.elements.file.files[0];
+        if (!file) { toast('Choose the report file you downloaded from MyCreditIQ'); return false; }
+        if (file.size > 15 * 1024 * 1024) { toast(`${file.name} is over 15 MB`); return false; }
+        const fd = new FormData(); fd.append('type', 'report'); fd.append('source', 'MyCreditIQ'); fd.append('file', file);
+        (Store.remote.flushNow ? Store.remote.flushNow() : Promise.resolve()).then(() => fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' })).then(async r => {
+          const j = await r.json(); if (!r.ok) throw new Error(j.error);
+          await Store.remote.reload();
+          toast('MyCreditIQ report saved to Documents');
+          if (aiOn) scanDoc(cid, j.doc.id); else App().A['add-report']({ dataset: { id: cid, source: 'MyCreditIQ' } });
+        }).catch(e => toast(e.message));
+      }
+    });
+  }
+
   const TEMPLATE_ASK = c => `Hi ${c.firstName || c.name}, please download your 3-bureau credit report as a PDF and upload it in your client portal under "Your documents" (choose "Credit report"). If you don't have one yet, reply and we'll send you a link. Thank you!`;
 
   Object.assign(root.App.A, {
     'upload-report': el => uploadHub(el.dataset.id || el.dataset.client),
+    'mycreditiq': el => myCreditIq(el.dataset.id),
     'ai-key': () => {
       modal({ title: 'AI in this browser', body: `<p class="small">Paste your Anthropic API key (from console.anthropic.com → API keys). It is saved only in this browser, never in backups, and is used to scan reports directly from this file.</p>${field('Anthropic API key', 'key', root.AIDirect.getKey() ? '••••••••' + root.AIDirect.getKey().slice(-4) : '', { attrs: 'autocomplete="off"' })}<p class="small muted">Anyone who can open this browser can use the key. Remove it on shared computers.</p>`,
         foot: '<button type="button" class="btn danger" data-rm style="margin-right:auto">Remove key</button><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>',
@@ -225,5 +268,5 @@
     'ai-scan': el => (Store.remote ? scanDoc(el.dataset.client, el.dataset.id) : toast('AI scanning runs on the Ledger server')),
     'ai-plan': el => (Store.remote ? planRound(el.dataset.id) : toast('AI round planning runs on the Ledger server with ANTHROPIC_API_KEY set'))
   });
-  root.AIFlow = { afterImport, showWins, scanDoc, planRound, uploadHub, scanFiles, scanText, reviewScan };
+  root.AIFlow = { afterImport, showWins, scanDoc, planRound, uploadHub, scanFiles, scanText, reviewScan, myCreditIq };
 })(window);
