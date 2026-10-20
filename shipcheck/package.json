@@ -1,0 +1,21 @@
+{
+  "name": "shipcheck",
+  "version": "1.0.0",
+  "description": "Pre-launch security check for vibe-coded apps",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "DEV_SKIP_PAYMENT=true node --watch src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "express": "^5.1.0",
+    "multer": "^2.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "ISC"
+}

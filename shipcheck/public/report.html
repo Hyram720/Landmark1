@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Your ShipCheck report</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top"><a class="logo" href="/">Ship<span>Check</span></a><a href="/">New scan</a></header>
+    <div id="root"><p class="fine">Loading report…</p></div>
+    <footer>ShipCheck is an automated static check, not a full security audit or a guarantee.</footer>
+  </div>
+  <script>
+    const id = location.pathname.split('/').pop();
+    const root = document.getElementById('root');
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const gradeColor = (n) => (n >= 90 ? 'var(--accent)' : n >= 60 ? 'var(--medium)' : 'var(--critical)');
+
+    function findingHtml(f, unlocked) {
+      const body = unlocked
+        ? `<div class="meta">${esc(f.file)}:${f.line} · ${esc(f.evidence)}</div>
+           <p><strong>Why it matters:</strong> ${esc(f.why)}</p>
+           <p><strong>Fix:</strong> ${esc(f.fix)}</p>
+           <pre class="prompt">${esc(f.prompt)}</pre>
+           <button class="copy" data-prompt="${esc(f.prompt)}">Copy fix prompt</button>`
+        : `<div class="meta locked">src/somewhere/file.ts:42 · sk-proj…••••••</div>
+           <p class="locked">Why it matters and the exact fix prompt for your AI coding tool.</p>`;
+      return `<div class="card finding ${f.severity}" style="margin:12px 0">
+        <span class="pill ${f.severity}">${f.severity}</span>
+        <div class="title" style="margin-top:8px">${esc(f.title)}</div>${body}</div>`;
+    }
+
+    async function load() {
+      const res = await fetch(`/api/scan/${id}`);
+      if (!res.ok) { root.innerHTML = '<p class="error">Report not found.</p>'; return; }
+      const r = await res.json();
+      const s = r.summary;
+      const paidPending = new URLSearchParams(location.search).has('paid') && !r.unlocked;
+      root.innerHTML = `
+        <div class="panel">
+          <div class="score">
+            <div class="num" style="color:${gradeColor(s.score)}">${s.score}</div>
+            <div>
+              <div><strong>${esc(r.source.name)}</strong> · ${r.filesScanned} files scanned</div>
+              <div class="pills" style="margin-top:8px">
+                ${['critical', 'high', 'medium', 'low'].map((k) => `<span class="pill ${k}">${s[k]} ${k}</span>`).join('')}
+              </div>
+            </div>
+          </div>
+          ${s.total === 0 ? '<p>No issues found by our checks. Nice work. Ship it! 🚀</p>' : ''}
+          ${!r.unlocked && s.total ? `
+            <button id="unlock">Unlock exact locations + fix prompts · $${(r.price / 100).toFixed(0)}</button>
+            <p class="fine">One-time payment. You get every file and line, plain-English explanations, and a copy-paste fix prompt for Cursor, Claude Code, Lovable or Bolt.</p>` : ''}
+          ${paidPending ? '<p class="fine">Payment received. Unlocking your report…</p>' : ''}
+        </div>
+        ${r.findings.map((f) => findingHtml(f, r.unlocked)).join('')}`;
+
+      document.getElementById('unlock')?.addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        const c = await fetch(`/api/scan/${id}/checkout`, { method: 'POST' });
+        const body = await c.json();
+        if (body.url) location.href = body.url;
+        else { e.target.disabled = false; alert(body.error || 'Checkout failed'); }
+      });
+      root.querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(b.dataset.prompt);
+        b.textContent = 'Copied ✓';
+      }));
+      // The Stripe webhook can land a few seconds after the redirect back.
+      if (paidPending) setTimeout(load, 2500);
+    }
+    load();
+  </script>
+</body>
+</html>

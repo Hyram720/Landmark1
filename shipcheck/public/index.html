@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShipCheck: security check for vibe-coded apps</title>
+  <meta name="description" content="Built your app with Cursor, Lovable, Bolt or Claude Code? Find leaked API keys, open Supabase tables and fake-able Stripe webhooks before you launch. Free scan in 30 seconds.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top"><a class="logo" href="/">Ship<span>Check</span></a></header>
+
+    <section class="hero">
+      <h1>Is your AI-built app safe to launch?</h1>
+      <p>Find leaked API keys, open databases and fake-able payments in your Cursor, Lovable, Bolt or Claude Code project. Get a copy-paste fix prompt for each one.</p>
+    </section>
+
+    <form class="panel" id="scan-form">
+      <label for="repoUrl">Your public GitHub repo</label>
+      <input type="url" id="repoUrl" name="repoUrl" placeholder="https://github.com/you/your-app">
+      <p class="or">or upload your project as a .zip (private repos: download the zip from GitHub)</p>
+      <input type="file" id="archive" name="archive" accept=".zip,application/zip">
+      <label for="email">Email (optional, so we can send your report)</label>
+      <input type="email" id="email" name="email" placeholder="you@example.com">
+      <button type="submit" id="go">Run free scan</button>
+      <p class="fine">Scan only code you own. We read your files once to check them and don't keep your source code. Found secrets are masked in the report.</p>
+      <p class="error" id="error" hidden></p>
+    </form>
+
+    <h2>What it catches</h2>
+    <div class="grid">
+      <div class="card"><h3>🔑 Leaked API keys</h3><p>OpenAI, Anthropic, Stripe, AWS, GitHub, Google and more, committed in code or in .env files.</p></div>
+      <div class="card"><h3>🗄️ Open Supabase tables</h3><p>Tables without Row Level Security, policies of <code>using (true)</code>, and service_role keys in the browser.</p></div>
+      <div class="card"><h3>💳 Fake-able payments</h3><p>Stripe webhooks that never check the signature, so anyone can "pay" with a forged request.</p></div>
+      <div class="card"><h3>🌐 Secrets in the frontend</h3><p>NEXT_PUBLIC_ / VITE_ variables holding secrets, and AI SDKs running in the browser.</p></div>
+      <div class="card"><h3>🔥 Open Firebase rules</h3><p><code>allow read, write: if true</code> lets anyone dump or wipe your database.</p></div>
+      <div class="card"><h3>🧹 Launch hygiene</h3><p>Missing .gitignore entries, CORS wildcards with credentials, raw HTML rendering, no lockfile.</p></div>
+    </div>
+
+    <h2>How it works</h2>
+    <div class="grid">
+      <div class="card"><h3>1. Free scan</h3><p>Paste a repo link or upload a zip. In about 30 seconds you see your score and what's wrong.</p></div>
+      <div class="card"><h3>2. Unlock the fixes ($19)</h3><p>Get the exact file and line for each problem, why it matters, and how to fix it.</p></div>
+      <div class="card"><h3>3. Paste and ship</h3><p>Every finding has a fix prompt for your AI coding tool. Re-scan free to confirm it's clean.</p></div>
+    </div>
+
+    <footer>ShipCheck is an automated static check, not a full security audit or a guarantee. It catches common, costly mistakes before launch.</footer>
+  </div>
+  <script>
+    const form = document.getElementById('scan-form');
+    const err = document.getElementById('error');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      const btn = document.getElementById('go');
+      btn.disabled = true;
+      btn.textContent = 'Scanning…';
+      try {
+        const data = new FormData(form);
+        if (!document.getElementById('archive').files.length) data.delete('archive');
+        const res = await fetch('/api/scan', { method: 'POST', body: data });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Scan failed');
+        location.href = `/r/${body.id}`;
+      } catch (e2) {
+        err.textContent = e2.message;
+        err.hidden = false;
+        btn.disabled = false;
+        btn.textContent = 'Run free scan';
+      }
+    });
+  </script>
+</body>
+</html>
