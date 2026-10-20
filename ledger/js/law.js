@@ -115,7 +115,7 @@
 
   const CROA_DISCLOSURE = `Consumer Credit File Rights Under State and Federal Law
 
-You have a right to dispute inaccurate information in your credit report by contacting the credit bureau directly. However, neither you nor any “credit repair” company or credit repair organization has the right to have accurate, current, and verifiable information removed from your credit report. The credit bureau must remove accurate, negative information from your report only if it is over 7 years old. Bankruptcy information can be reported for 10 years.
+You have a right to dispute inaccurate information in your credit report by contacting the credit bureau directly. However, neither you nor any “credit repair” company or credit repair organization has the right to have accurate, current, and verifiable information removed from your credit report. The credit bureau must remove accurate, negative information from your report only if it is over 7 years old. Bankruptcy information can be reported up to 10 years.
 
 You have a right to obtain a copy of your credit report from a credit bureau. You may be charged a reasonable fee. There is no fee, however, if you have been turned down for credit, employment, insurance, or a rental dwelling because of information in your credit report within the preceding 60 days. The credit bureau must provide someone to help you interpret the information in your credit file. You are entitled to receive a free copy of your credit report if you are unemployed and intend to apply for employment in the next 60 days, if you are a recipient of public welfare assistance, or if you have reason to believe that there is inaccurate information in your credit report due to fraud.
 
@@ -165,6 +165,8 @@ Between ${company.name || '[Company]'} (“we”) and ${client.name} (“you”)
 5. Your rights. You may cancel this contract within 3 business days of signing — see the attached Notice of Cancellation. You have also received the separate statement “Consumer Credit File Rights Under State and Federal Law.” No services will be performed until the cancellation period ends (15 U.S.C. § 1679d(a)(2)).
 
 Company: ${company.name || ''} · ${(company.address || '').replace(/\n/g, ', ')}
+
+YOU MAY CANCEL THIS CONTRACT WITHOUT PENALTY OR OBLIGATION AT ANY TIME BEFORE MIDNIGHT OF THE 3RD BUSINESS DAY AFTER THE DATE ON WHICH YOU SIGNED THE CONTRACT. SEE THE ATTACHED NOTICE OF CANCELLATION FORM FOR AN EXPLANATION OF THIS RIGHT.
 
 Signed: ______________________   Date: __________`;
   }

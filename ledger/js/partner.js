@@ -14,16 +14,21 @@
 
   function authForm(mode, invite) {
     root.innerHTML = `<form class="card" id="auth" style="max-width:420px;margin:6vh auto"><div class="card-b stack">
-      <h1>${mode === 'invite' ? 'Set up your partner access' : 'Partner sign in'}</h1>
-      ${mode === 'invite' ? '<p class="small muted">Choose a password to finish creating your account.</p>' : field('Email', 'email', '', { type: 'email', required: true })}
-      ${field('Password', 'password', '', { type: 'password', required: true, help: mode === 'invite' ? 'At least 10 characters' : '' })}
+      <h1>${mode === 'invite' ? 'Set up your partner access' : mode === 'reset' ? 'Choose a new password' : 'Partner sign in'}</h1>
+      ${mode === 'invite' ? '<p class="small muted">Choose a password to finish creating your account.</p>' : mode === 'reset' ? '<p class="small muted">Choose a new password. This signs you out everywhere else.</p>' : field('Email', 'email', '', { type: 'email', required: true })}
+      ${field('Password', 'password', '', { type: 'password', required: true, help: mode !== 'login' ? 'At least 10 characters' : '' })}
       <div id="err" class="small" style="color:var(--high)"></div><button class="btn primary" style="width:100%">${mode === 'invite' ? 'Create account' : 'Sign in'}</button></div></form>`;
     document.getElementById('auth').addEventListener('submit', async e => {
       e.preventDefault();
       const d = UI.formData(e.target);
       try {
         if (mode === 'invite') await api('POST', '/api/invites/accept', { token: invite, password: d.password });
-        else await api('POST', '/api/login', d);
+        else if (mode === 'reset') await api('POST', '/api/auth/reset', { token: invite, password: d.password });
+        else {
+          const r = await api('POST', '/api/login', d);
+          // Optional emailed sign-in code (Settings → sign-in security).
+          if (r && r.otpRequired) { const code = window.prompt((r.message || 'We emailed you a code.') + ' Enter the 6-digit code:'); if (!code) return; await api('POST', '/api/auth/otp', { code: code.trim() }); }
+        }
         location.hash = ''; location.reload();
       } catch (err) { document.getElementById('err').textContent = err.message; }
     });
@@ -48,6 +53,8 @@
     try { s = await api('GET', '/api/session'); } catch (e) { /* preview */ }
     if (!s || s.mode !== 'server') { root.innerHTML = '<div class="callout"><b>Preview</b>The partner portal runs on the Ledger server.</div>'; return; }
     const invite = (location.hash.match(/invite=([\w-]+)/) || [])[1];
+    const reset = (location.hash.match(/reset=([\w-]+)/) || [])[1];
+    if (reset) return authForm('reset', reset);
     if (invite && !s.user) return authForm('invite', invite);
     if (!s.user) return authForm('login');
     if (s.user.role !== 'partner') { location.href = s.user.role === 'client' ? '/portal' : '/'; return; }

@@ -17,11 +17,12 @@
     .doc-box { white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; max-height: 320px; overflow: auto; }
   </style>
 </head>
-<body>
+<body data-helper="portal">
   <header class="portal-top"><div class="inner row between"><div class="brand" style="padding:0"><div class="brand-mark">L</div><div><b id="co-name">Client Portal</b><small>Your credit file, in one place</small></div></div><div id="portal-user" class="row"></div></div></header>
-  <main class="portal-main" id="portal"><p class="muted">Loading…</p></main>
+  <main class="portal-main" id="portal" aria-live="polite"><p class="muted">Loading…</p></main>
   <script src="js/law.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/portal.js"></script>
+  <script src="js/helper.js"></script>
 </body>
 </html>

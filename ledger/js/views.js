@@ -18,6 +18,14 @@
       if (merged[key]) { merged[key].targets.push(target); merged[key].bureau += ' / ' + r.bureau; }
       else merged[key] = Object.assign({}, f, { targets: [target] });
     }));
+    // Rules engine v2: compare each bureau's latest report with the one before it (re-aging, reinsertion).
+    reports.forEach(r => {
+      const prev = S().reports.filter(x => x.clientId === cid && x.bureau === r.bureau && x.id !== r.id && String(x.date) <= String(r.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+      if (prev && Metro2.compareOverTime) Metro2.compareOverTime(prev, r).forEach(f => {
+        const t = r.accounts.find(a => a.id === f.accountId) || {};
+        merged[f.code + '|' + Metro2.matchKey(t) + '|' + r.bureau] = Object.assign({}, f, { targets: [{ bureau: r.bureau, reportId: r.id, accountId: f.accountId, accountNumber: t.accountNumber || '', evidence: t.evidence || '', issue: t.issue || '', detail: f.detail }] });
+      });
+    });
     const out = Object.values(merged);
     Metro2.compareBureaus(reports).filter(g => g.differences.length).forEach(g => {
       const detail = g.differences.map(d => `${d.label}: ` + Object.entries(d.values).map(([b, v]) => `${b} ${v === '' ? '—' : MONEY_FIELDS.includes(d.field) ? money(v) : v}`).join(', ')).join('; ') + '. The same account cannot be accurate with different values at each bureau.';
@@ -240,7 +248,7 @@
       <div class="small muted" style="margin:2px 0 0 24px">${esc(f.creditor)} · ${esc(f.bureau)} · <span class="mono">${esc(f.code)}</span></div>
       <div class="d" style="margin-left:24px">${esc(f.detail)}</div>
       <div class="f" style="margin-left:24px">${f.fields && f.fields.length ? 'Fields: ' + esc(f.fields.join(', ')) + ' · ' : ''}Basis: ${esc(f.basis)} · Next step: ${esc(f.action)}</div></div>`).join('')}</div>` : `<div class="callout good"><b>No inconsistencies found</b>The reported data is internally consistent. If the consumer believes something is inaccurate, add it as an issue on the tradeline with their evidence.</div>`,
-      { sub: 'Select the items the consumer confirms are inaccurate', actions: fs.length ? `<button class="btn primary" data-act="disputes-from-audit" data-id="${c.id}">${icon('mail')} Create disputes</button>` : '' })}</div>
+      { sub: 'Select the items the consumer confirms are inaccurate', actions: fs.length ? `<button class="btn" data-act="m2-letters" data-id="${c.id}">✦ Metro 2 letters</button><button class="btn primary" data-act="disputes-from-audit" data-id="${c.id}">${icon('mail')} Create disputes</button>` : '' })}</div>
     <div>${card('Cross-bureau comparison', `<div class="table-wrap"><table><thead><tr><th>Tradeline</th>${['Equifax', 'Experian', 'TransUnion'].map(b => `<th>${b}</th>`).join('')}</tr></thead><tbody>${cmp.map(g => `<tr><td><b>${esc(g.creditor)}</b>${g.differences.length ? `<div class="small" style="color:var(--med)">${g.differences.length} difference(s)</div>` : ''}</td>${['Equifax', 'Experian', 'TransUnion'].map(b => { const t = g.byBureau[b]; if (!t) return '<td class="muted small">Not reported</td>'; const diffs = g.differences.map(d => d.field); return `<td class="small ${diffs.length ? 'diff' : ''}">${esc(t.status)} · ${money(t.balance)}${t.dofd ? '<br>DOFD ' + esc(t.dofd) : ''}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div>`, { flush: true, sub: 'Latest report from each bureau' })}</div></div>`;
   }
 
@@ -250,7 +258,7 @@
       ${list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(d => `<tr class="click" data-href="#/disputes/${d.id}">${showClient ? `<td>${clientName(d.clientId)}</td>` : ''}<td><b>${esc(d.recipient)}</b></td><td class="small">${esc(Law.DISPUTE_TYPES[d.type].label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td><td>${dBadge(Store.disputeState(d))}</td><td class="small nowrap">${date(d.sentAt)}</td><td class="small nowrap">${date(d.dueAt)}</td></tr>`).join('')}</tbody></table></div>`;
   }
   function clientDisputes(c) {
-    return clientViolationsCard(c) + (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
+    return clientViolationsCard(c) + (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="m2-letters" data-id="${c.id}">✦ Metro 2 letters</button><button class="btn sm" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
   }
 
   function invoiceTable(list, showClient) {
@@ -608,7 +616,16 @@
   const KIND = { personal: ['Personal', 'b-low'], business: ['Business', 'b-info'], both: ['Personal + business', 'b-accent'] };
   const kindBadge = k => { const [l, c] = KIND[k] || KIND.personal; return `<span class="badge ${c} plain">${l}</span>`; };
 
-  function clientBusiness(c) {
+  // Knowledge-base card: the rules behind a section, each with its official source (kb/ledger-kb.json).
+  function kbCard(section, title, sub) {
+    const KB = root.KB;
+    if (!KB) return '';
+    return card(title, `<ul class="list kb-list">${KB.section(section).map(r => `<li><div class="grow"><b>${esc(r.title)}</b><div class="small" style="margin-top:2px">${esc(r.rule)}</div><div class="small muted" style="margin-top:4px"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.cite)} ↗</a>${r.needsLawyer ? ' · <span class="badge b-med">Confirm with an attorney</span>' : ''}</div></div></li>`).join('')}</ul>`, { flush: true, sub: sub || `Knowledge base v${esc(KB.version)} · not legal advice` });
+  }
+  function clientBusiness(c, ...rest) {
+    return clientBusinessBase(c, ...rest) + '<div style="margin-top:16px">' + kbCard('business', 'Business credit rules & dispute paths') + '</div>';
+  }
+  function clientBusinessBase(c) {
     const B = root.Business;
     const b = c.business || {};
     const fz = B.fundability(c);
@@ -646,6 +663,9 @@
 
   // ---------- Buy a business (acquisition due diligence) ----------
   function shelfCard() {
+    return `<div class="callout bad" style="margin-bottom:16px"><b>Read before buying an aged or shelf company</b>A company’s formation date is not your operating history. Telling a lender the business has operated for years, or presenting the prior owner’s credit, revenue or tradelines as yours, can be fraud. Lenders and bureaus check ownership changes, officer history, bank statements and tax returns. An aged shell with no tradelines or revenue adds little, and no company is “instantly fundable.” Always disclose the purchase date and true ownership history, and use an attorney and CPA for the purchase.</div>` + shelfCardBase() + '<div style="margin-top:16px">' + kbCard('corp', 'Buying a corporation: what it involves', 'Stock vs. asset purchase, due diligence, filings, BOI status · not legal or tax advice') + '</div>';
+  }
+  function shelfCardBase() {
     const Aq = root.Acquisition;
     const w = Aq.ageWindow(T());
     const step = (n, title, body) => `<li><span class="tick">${n}</span><div class="grow"><b style="font-weight:550">${title}</b><div class="small" style="margin-top:4px">${body}</div></div></li>`;
@@ -748,13 +768,14 @@
     const earned = refs.filter(r => ['approved', 'paid'].includes(r.status)).reduce((a, r) => a + Number(r.payout || 0), 0);
     const paid = refs.filter(r => r.status === 'paid').reduce((a, r) => a + Number(r.payout || 0), 0);
     const clicks = refs.reduce((a, r) => a + (r.clicks || 0), 0) + s.offers.reduce((a, o) => a + (o.clicks || 0), 0);
-    return head('Partner offers', 'Credit-builder, monitoring and business-credit programs you can refer clients to', `<button class="btn" data-act="new-offer">${icon('plus')} Custom offer</button><button class="btn primary" data-act="new-ref">${icon('plus')} Recommend to client</button>`) +
+    return head('Partner offers', 'Credit-builder, monitoring and business-credit programs you can refer clients to', `<button class="btn" data-act="partner-clicks">Click report</button><button class="btn" data-act="new-offer">${icon('plus')} Custom offer</button><button class="btn primary" data-act="new-ref">${icon('plus')} Recommend to client</button>`) +
       `<div class="grid g4" style="margin-bottom:16px">${kpi('Recommendations', refs.length, `${refs.filter(r => r.status === 'signed_up' || r.status === 'approved' || r.status === 'paid').length} signed up`)}${kpi('Link clicks', clicks)}${kpi('Commissions earned', money(earned), 'approved + paid')}${kpi('Paid out', money(paid))}</div>
       <div class="callout warn" style="margin-bottom:16px"><b>Check terms before promoting</b>Affiliate payouts change often and third-party listings disagree. Each offer shows how well its terms were confirmed as of the research date. Paste your own affiliate link from each program's dashboard. Tracked links (<span class="mono">/go/…</span>) count clicks, then redirect.</div>
       <div class="grid g2">${s.offers.map(o => card(`${esc(o.name)} ${kindBadge(o.audience === 'business' ? 'business' : 'personal')}`, `
         <div class="row between small" style="margin-bottom:6px"><span class="muted">${esc(o.category)}</span>${offerStatus(o.status)}</div>
         <div class="grid g2 small" style="gap:6px 16px;margin-bottom:10px"><div><span class="muted">Program</span><br>${esc(o.program)}</div><div><span class="muted">Referral bonus</span><br><b>${esc(o.bonus)}</b></div><div><span class="muted">Cookie</span><br>${esc(o.cookie)}</div><div><span class="muted">Clicks</span><br>${(o.clicks || 0) + refs.filter(r => r.offerId === o.id).reduce((a, r) => a + (r.clicks || 0), 0)}</div></div>
         <p class="small">${esc(o.note || '')}</p>
+        <div class="small muted">Tracked link: <span class="mono">/go/partner/${esc(o.key)}</span>${o.subIdParam ? ` · sub-ID sent as <span class="mono">${esc(o.subIdParam)}</span>` : ' · no sub-ID for this network'}</div>
         <form data-form="offer" data-id="${o.id}" class="row" style="margin-top:8px;flex-wrap:nowrap"><input name="affiliateUrl" value="${esc(o.affiliateUrl || '')}" placeholder="Paste your affiliate / referral link (https://…)" class="small"><button class="btn sm">Save</button></form>
         <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
       <div style="margin-top:16px">${card('Referral pipeline', referralRows(refs.slice().sort((a, b) => String(b.recommendedAt).localeCompare(String(a.recommendedAt))), true), { flush: true })}</div>
@@ -797,6 +818,7 @@
       ${Store.remote ? card('Print & mail', '<div id="mail-settings"><p class="small muted">Loading…</p></div>', { sub: 'Mail letters (first-class or certified) from Ledger through Lob' }) : ''}
       ${Store.remote ? card('Online payments', '<div id="pay-settings"><p class="small muted">Loading…</p></div>', { sub: 'Clients pay invoices on Authorize.net’s secure page' }) : ''}
       ${Store.remote ? card('AI settings', '<div id="ai-settings"><p class="small muted">Loading…</p></div>', { sub: 'Anthropic API key for Ledger AI, report scanning and round planning' }) : ''}
+      ${Store.remote ? card('Sign-in & email', '<p class="small muted">Password reset links, optional magic-link sign-in, optional emailed sign-in codes and client email updates.</p><div class="row" style="margin-top:10px"><button class="btn" data-act="auth-settings">Open sign-in settings</button></div>', { sub: 'Outbound email is set on the server with LEDGER_MAIL_MODE' }) : ''}
       ${Store.remote ? '' : card('AI in this browser', `<p class="small">${root.AIDirect && root.AIDirect.getKey() ? '<span class="badge b-ok">On</span> AI scanning works in this file using your Anthropic API key.' : 'Add your own Anthropic API key to scan credit reports with AI right here — no server needed. The key stays in this browser and is never included in backups.'}</p><div class="row" style="margin-top:10px"><button class="btn primary" data-act="ai-key">${root.AIDirect && root.AIDirect.getKey() ? 'Change key' : 'Add API key'}</button><a class="btn ghost" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key ↗</a></div>`)}
       ${card('Demo & reset', `<div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn danger" data-act="reset">Erase workspace</button></div>`)}
     </div></div>`;

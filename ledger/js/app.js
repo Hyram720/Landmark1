@@ -103,15 +103,16 @@
 
   function authScreen(session) {
     const invite = (location.hash.match(/invite=([\w-]+)/) || [])[1];
-    const mode = invite ? 'invite' : session.setupRequired ? 'setup' : 'login';
-    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger' }[mode];
+    const reset = (location.hash.match(/reset=([\w-]+)/) || [])[1];
+    const mode = reset ? 'reset' : invite ? 'invite' : session.setupRequired ? 'setup' : 'login';
+    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger', reset: 'Choose a new password' }[mode];
     document.body.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:24px 16px">
       <form class="card" id="auth" style="width:100%;max-width:400px"><div class="card-b stack">
         <div class="brand" style="padding:0;color:var(--ink)"><div class="brand-mark">L</div><div><b>Ledger</b><small style="color:var(--muted)">Credit workspace</small></div></div>
         <h1>${title}</h1>
         ${mode === 'setup' ? field('Your name', 'name', '', { required: true }) : ''}
         ${mode === 'setup' && session.setupCodeRequired ? field('Setup code', 'setupCode', '', { required: true, help: 'The LEDGER_SETUP_CODE value from your server settings' }) : ''}
-        ${mode !== 'invite' ? field('Email', 'email', '', { type: 'email', required: true }) : ''}
+        ${mode !== 'invite' && mode !== 'reset' ? field('Email', 'email', '', { type: 'email', required: true }) : ''}
         ${field('Password', 'password', '', { type: 'password', required: true, help: mode === 'login' ? '' : 'At least 10 characters' })}
         <div id="auth-err" class="small" style="color:var(--high)"></div>
         <button class="btn primary" style="width:100%">${mode === 'login' ? 'Sign in' : 'Continue'}</button>
@@ -123,7 +124,12 @@
       try {
         if (mode === 'setup') await api('POST', '/api/setup', d);
         else if (mode === 'invite') await api('POST', '/api/invites/accept', { token: invite, password: d.password });
-        else await api('POST', '/api/login', d);
+        else if (mode === 'reset') await api('POST', '/api/auth/reset', { token: reset, password: d.password });
+        else {
+          const r = await api('POST', '/api/login', d);
+          // Optional emailed sign-in code (Settings → sign-in security).
+          if (r && r.otpRequired) { const code = window.prompt((r.message || 'We emailed you a code.') + ' Enter the 6-digit code:'); if (!code) return; await api('POST', '/api/auth/otp', { code: code.trim() }); }
+        }
         location.hash = '';
         location.reload();
       } catch (err) { document.getElementById('auth-err').textContent = err.message; }

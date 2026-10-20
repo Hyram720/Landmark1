@@ -246,7 +246,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     ws.reports.filter(r => r.clientId === c.id).sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach(r => Object.entries(r.scores || {}).forEach(([b, v]) => { if (v) (scores[b] = scores[b] || []).push({ date: r.date, score: Number(v) }); }));
     const disputes = ws.disputes.filter(d => d.clientId === c.id).map(d => ({
       id: d.id, recipient: d.recipient, type: (Law.DISPUTE_TYPES[d.type] || {}).label, round: d.round, state: Store.disputeState(d),
-      sentAt: d.sentAt, dueAt: d.dueAt, respondedAt: d.respondedAt, items: d.items.map(i => i.creditor + (i.result === 'deleted' ? ' (removed)' : i.result === 'corrected' ? ' (corrected)' : ''))
+      sentAt: d.sentAt, receivedAt: d.receivedAt, dueAt: d.dueAt, respondedAt: d.respondedAt, items: d.items.map(i => i.creditor + (i.result === 'deleted' ? ' (removed)' : i.result === 'corrected' ? ' (corrected)' : ''))
     }));
     const removed = []; ws.disputes.filter(d => d.clientId === c.id).forEach(d => d.items.forEach(i => { if (i.result === 'deleted' || i.result === 'corrected' || (!i.result && ['deleted', 'corrected'].includes(d.outcome))) removed.push({ creditor: i.creditor, bureau: i.bureau || d.recipient, result: i.result || d.outcome, at: i.resultAt || d.respondedAt }); }));
     const recs = (ws.partnerReferrals || []).filter(r => r.clientId === c.id && r.status !== 'declined').map(r => {
