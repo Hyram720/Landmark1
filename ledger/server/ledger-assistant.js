@@ -113,6 +113,8 @@ export function faqAnswer(text) {
 const BANNED = /\b(guarantee[ds]?|we will (remove|delete|erase)|100% (removal|deletion)|instant(ly)? fundable|raise your score by \d+|new credit (identity|file)|cpn)\b/i;
 function safeText(text, fallback) {
   const lint = (Law.lintText ? Law.lintText(text) : []) || [];
+  // Empty output (e.g. a reasoning model that spent its whole token budget thinking) falls back too.
+  if (!String(text || '').trim()) return { text: fallback, replaced: true };
   if (BANNED.test(text) || lint.some(x => /guarantee|promise/i.test(x.phrase || ''))) return { text: fallback, replaced: true };
   return { text, replaced: false };
 }
@@ -155,7 +157,7 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     try {
       const sys = `${STAFF_SYSTEM}\n\nKNOWLEDGE BASE v${KB.version}:\n${kbDigest()}`;
       if (dig) msgs[0] = { role: 'user', content: `<client_file redacted="true">\n${dig.text}\n</client_file>\n\n${msgs[0].content}` };
-      const out = await chat({ system: sys, messages: msgs, maxTokens: 1500 });
+      const out = await chat({ system: sys, messages: msgs, maxTokens: 4000 });
       const safe = safeText(out.text, 'I can’t phrase that as a promise of results. Here is what the data supports:\n\n' + offlineStaffAnswer(dig));
       meta(req.user.email, 'assistant.staff', `${clientId || 'general'} ai in=${out.usage.prompt_tokens || '?'} out=${out.usage.completion_tokens || '?'}${safe.replaced ? ' replaced' : ''}`);
       res.json({ mode: 'ai', model: out.model, text: safe.text, suggestions: dig ? dig.suggestions : [], deadlines: dig ? dig.deadlines : [] });
@@ -211,7 +213,7 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
       const tail = sign > marker ? built.text.slice(sign) : '';
       const out = await chat({
         system: `You edit consumer dispute letters. Rewrite the letter below in clear, plain, polite first-person English, specific to each item. Keep every fact, account reference (****1234 form), field name, statute citation and [CONFIRM ...] marker exactly. Do not add facts, threats, legal conclusions, or any promise of deletion. Do not add items. Keep it under 450 words. Return only the letter body.\n${RAILS}`,
-        messages: [{ role: 'user', content: redact(body) }], maxTokens: 1400
+        messages: [{ role: 'user', content: redact(body) }], maxTokens: 4000
       });
       const fixed = safeText(out.text, body);
       const keepsFacts = items.every(i => !i.accountNumber || fixed.text.includes(i.accountNumber));
@@ -236,7 +238,7 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     const cfg = aiConfig();
     if (!cfg.enabled) { meta('public', 'assistant.public', `${page} faq`); return res.json({ mode: 'faq', text: faqAnswer(q) }); }
     try {
-      const out = await chat({ system: `${PUBLIC_SYSTEM}\n\nApproved answers you may draw on:\n${FAQ.map(f => '- ' + f.a).join('\n')}\n\nKnowledge base:\n${kbDigest(['compliance', 'personal'])}`, messages: [{ role: 'user', content: redact(q) }], maxTokens: 400 });
+      const out = await chat({ system: `${PUBLIC_SYSTEM}\n\nApproved answers you may draw on:\n${FAQ.map(f => '- ' + f.a).join('\n')}\n\nKnowledge base:\n${kbDigest(['compliance', 'personal'])}`, messages: [{ role: 'user', content: redact(q) }], maxTokens: 1500 });
       const safe = safeText(out.text, faqAnswer(q));
       meta('public', 'assistant.public', `${page} ai in=${out.usage.prompt_tokens || '?'} out=${out.usage.completion_tokens || '?'}${safe.replaced ? ' replaced' : ''}`);
       res.json({ mode: 'ai', text: safe.text + (/team member/i.test(safe.text) ? '' : ' A team member can help with anything specific to your file.') });
