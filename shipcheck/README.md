@@ -23,7 +23,7 @@ free scan ─► score + issue names ─► $19 Stripe Checkout ─► webhook u
         └─ ~1h later: one reminder with SHIPIT20 (20% off)          └─ README badge with live score ─► new visitors
 ```
 
-The only human work is reading the failure alerts that `ALERT_EMAIL` receives and checking `/admin?key=...` (scans, paid count, conversion rate, revenue).
+The only human work is reading the failure alerts that `ALERT_EMAIL` receives and checking `/admin` (sign in with `ADMIN_KEY`; scans, paid count, conversion rate, revenue).
 
 **Growth built in:**
 - 8 SEO guide pages under `/guides`, each targeting a real search ("supabase rls checker", "lovable app security checklist", "exposed openai api key", and more), plus `sitemap.xml` and `robots.txt`.

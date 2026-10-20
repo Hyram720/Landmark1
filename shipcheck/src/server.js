@@ -11,6 +11,7 @@ import { startFollowupScheduler } from './followups.js';
 import { guidePage, guidesIndex, sitemap, robots } from './seo.js';
 import { badgeSvg } from './badge.js';
 import { sendAdmin } from './admin-view.js';
+import { mountAdminAuth, requireAdmin } from './admin-auth.js';
 
 const app = express();
 app.set('trust proxy', true);
@@ -198,13 +199,13 @@ app.post('/api/scan/:id/checkout', async (req, res) => {
   }
 });
 
-app.get('/admin', (req, res) => {
-  if (!config.adminKey || req.query.key !== config.adminKey) return res.status(401).send('unauthorized');
+mountAdminAuth(app);
+app.get('/admin', requireAdmin, (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const scans = listScans();
   const paid = scans.filter((s) => s.paid);
   sendAdmin(req, res, {
     title: config.brandName,
-    key: config.adminKey,
     setup: [
       { name: 'Stripe (payments)', ok: Boolean(config.stripe.secretKey && config.stripe.webhookSecret), hint: 'Add STRIPE_SECRET_KEY in Railway → Variables. The webhook sets itself up.' },
       { name: 'Resend (report and alert emails)', ok: Boolean(config.email.resendKey), hint: 'Add RESEND_API_KEY and EMAIL_FROM in Railway → Variables.' },

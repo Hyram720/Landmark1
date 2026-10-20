@@ -27,8 +27,8 @@ function section(key, v) {
 }
 
 // setup: [{ name, ok, hint }] - what's configured and what's still missing.
-// actions: [{ label, path }] - POST buttons (the admin key is added automatically).
-export function sendAdmin(req, res, { title, data, setup = [], actions = [], key }) {
+// actions: [{ label, path }] - POST buttons (authorized by the admin session cookie).
+export function sendAdmin(req, res, { title, data, setup = [], actions = [] }) {
   if (req.query.format === 'json' || !req.accepts('html')) return res.json(data);
   const top = Object.entries(data).filter(([, v]) => v === null || typeof v !== 'object');
   const rest = Object.entries(data).filter(([, v]) => v !== null && typeof v === 'object').map(([k, v]) => section(k, v));
@@ -52,11 +52,11 @@ export function sendAdmin(req, res, { title, data, setup = [], actions = [], key
   .note { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--ok); padding: 10px 12px; border-radius: 8px; }
 </style></head><body><div class="wrap">
   <h1>${esc(title)} admin</h1>
-  <p class="muted">Live numbers. Bookmark this page; keep the link private. <a href="?key=${encodeURIComponent(key)}&format=json">Raw data</a></p>
+  <p class="muted">Live numbers. <a href="?format=json">Raw data</a> <form method="post" action="/admin/logout"><button>Sign out</button></form></p>
   ${req.query.msg ? `<p class="note">${esc(req.query.msg)}</p>` : ''}
   ${setup.length ? `<h2>Setup ${missing ? `<span class="warn">(${missing} to do)</span>` : '<span class="ok">(all set)</span>'}</h2><ul class="setup">${setup.map((s) => `<li>${s.ok ? '<span class="ok">✅</span>' : '<span class="warn">⚠️</span>'} <strong>${esc(s.name)}</strong>${s.ok ? '' : ` <span class="muted">${esc(s.hint || '')}</span>`}</li>`).join('')}</ul>` : ''}
   ${top.length ? `<div class="cards" style="margin-top:16px">${top.map(([k, v]) => `<div class="card"><div class="num">${value(v)}</div><div class="muted">${label(k)}</div></div>`).join('')}</div>` : ''}
   ${rest.join('')}
-  ${actions.length ? `<h2>Actions</h2>${actions.map((a) => `<form method="post" action="${esc(a.path)}?key=${encodeURIComponent(key)}"><button>${esc(a.label)}</button></form>`).join('')}` : ''}
+  ${actions.length ? `<h2>Actions</h2>${actions.map((a) => `<form method="post" action="${esc(a.path)}"><button>${esc(a.label)}</button></form>`).join('')}` : ''}
 </div></body></html>`);
 }
