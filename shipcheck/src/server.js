@@ -10,6 +10,7 @@ import { setupStripe } from './stripe-setup.js';
 import { startFollowupScheduler } from './followups.js';
 import { guidePage, guidesIndex, sitemap, robots } from './seo.js';
 import { badgeSvg } from './badge.js';
+import { sendAdmin } from './admin-view.js';
 
 const app = express();
 app.set('trust proxy', true);
@@ -201,12 +202,20 @@ app.get('/admin', (req, res) => {
   if (!config.adminKey || req.query.key !== config.adminKey) return res.status(401).send('unauthorized');
   const scans = listScans();
   const paid = scans.filter((s) => s.paid);
-  res.json({
-    scans: scans.length,
-    paid: paid.length,
-    conversion: scans.length ? `${((paid.length / scans.length) * 100).toFixed(1)}%` : '0%',
-    revenue: `$${(paid.reduce((n, s) => n + (s.amountPaid || 0), 0) / 100).toFixed(2)}`,
-    recent: scans.slice(0, 50).map((s) => ({ id: s.id, at: s.createdAt, source: s.source, issues: s.summary.total, score: s.summary.score, paid: s.paid })),
+  sendAdmin(req, res, {
+    title: config.brandName,
+    key: config.adminKey,
+    setup: [
+      { name: 'Stripe (payments)', ok: Boolean(config.stripe.secretKey && config.stripe.webhookSecret), hint: 'Add STRIPE_SECRET_KEY in Railway → Variables. The webhook sets itself up.' },
+      { name: 'Resend (report and alert emails)', ok: Boolean(config.email.resendKey), hint: 'Add RESEND_API_KEY and EMAIL_FROM in Railway → Variables.' },
+    ],
+    data: {
+      scans: scans.length,
+      paid: paid.length,
+      conversion: scans.length ? `${((paid.length / scans.length) * 100).toFixed(1)}%` : '0%',
+      revenue: `$${(paid.reduce((n, s) => n + (s.amountPaid || 0), 0) / 100).toFixed(2)}`,
+      recentScans: scans.slice(0, 50).map((s) => ({ at: s.createdAt, source: s.source.name, issues: s.summary.total, score: s.summary.score, paid: s.paid })),
+    },
   });
 });
 

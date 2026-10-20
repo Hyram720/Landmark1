@@ -5,6 +5,7 @@ import { cleanPrefs, PLATFORM_LABELS } from './curate.js';
 import { isoWeek, buildIssue, renderIssuePage, renderEmail, destination } from './issue.js';
 import { sendEmail, confirmEmail, alertOwner } from './mailer.js';
 import { startScheduler, sendIssueTo, recipients } from './scheduler.js';
+import { sendAdmin } from './admin-view.js';
 
 const app = express();
 app.set('trust proxy', true);
@@ -155,19 +156,30 @@ app.get('/admin', (req, res) => {
   if (!isAdmin(req)) return res.status(401).send('unauthorized');
   const subs = listSubscribers();
   const active = recipients(subs);
-  res.json({
-    subscribers: { active: active.length, pending: subs.filter((s) => !s.confirmed).length, unsubscribed: subs.filter((s) => s.unsubscribed).length },
-    byPlatform: Object.fromEntries(Object.keys(PLATFORM_LABELS).map((p) => [p, active.filter((s) => s.prefs.platforms.includes(p)).length])),
-    issues: listIssues().slice(0, 12).map((i) => ({ week: i.week, headline: i.copy.headline, copyBy: i.copy.source, sent: i.sentTo.length, clicks: Object.values(i.clicks).reduce((a, b) => a + b, 0) })),
+  sendAdmin(req, res, {
+    title: config.brandName,
+    key: config.adminKey,
+    setup: [
+      { name: 'Resend (emails)', ok: Boolean(config.email.resendKey), hint: 'Add RESEND_API_KEY and EMAIL_FROM in Railway → Variables. Needed before anyone can confirm a signup.' },
+      { name: 'AI editor (optional)', ok: Boolean(config.anthropic.apiKey), hint: 'Add ANTHROPIC_API_KEY for written blurbs; without it issues use template text.' },
+    ],
+    actions: [{ label: "Build this week's issue now", path: '/admin/build' }],
+    data: {
+      subscribers: { active: active.length, pending: subs.filter((s) => !s.confirmed).length, unsubscribed: subs.filter((s) => s.unsubscribed).length },
+      byPlatform: Object.fromEntries(Object.keys(PLATFORM_LABELS).map((p) => [p, active.filter((s) => s.prefs.platforms.includes(p)).length])),
+      issues: listIssues().slice(0, 12).map((i) => ({ week: i.week, headline: i.copy.headline, copyBy: i.copy.source, sent: i.sentTo.length, clicks: Object.values(i.clicks).reduce((a, b) => a + b, 0) })),
+    },
   });
 });
 
 app.post('/admin/build', async (req, res) => {
   if (!isAdmin(req)) return res.status(401).send('unauthorized');
   try {
-    const issue = await buildIssue(isoWeek(), { force: req.query.force === '1' });
+    const issue = await buildIssue(isoWeek(), { force: req.query.force === '1' || req.accepts(['json', 'html']) === 'html' });
+    if (req.accepts(['json', 'html']) === 'html') return res.redirect(303, `/admin?key=${encodeURIComponent(config.adminKey)}&msg=${encodeURIComponent(`Built ${issue.week}: ${issue.copy.headline}`)}`);
     res.json({ week: issue.week, headline: issue.copy.headline, copyBy: issue.copy.source, free: issue.free.length, deals: issue.deals.length, url: `${config.baseUrl}/issues/${issue.week}` });
   } catch (err) {
+    if (req.accepts(['json', 'html']) === 'html') return res.redirect(303, `/admin?key=${encodeURIComponent(config.adminKey)}&msg=${encodeURIComponent(`Build failed: ${err.message}`)}`);
     res.status(500).json({ error: err.message });
   }
 });

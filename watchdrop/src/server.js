@@ -6,6 +6,7 @@ import { isoWeek, buildIssue, renderIssuePage, renderEmail, destination, allItem
 import { getServices, apiUsage } from './sources.js';
 import { sendEmail, confirmEmail, alertOwner } from './mailer.js';
 import { startScheduler, sendIssueTo, recipients } from './scheduler.js';
+import { sendAdmin } from './admin-view.js';
 
 const app = express();
 app.set('trust proxy', true);
@@ -168,21 +169,33 @@ app.get('/admin', (req, res) => {
   if (!isAdmin(req)) return res.status(401).send('unauthorized');
   const subs = listSubscribers();
   const active = recipients(subs);
-  res.json({
-    subscribers: { active: active.length, pending: subs.filter((s) => !s.confirmed).length, unsubscribed: subs.filter((s) => s.unsubscribed).length },
-    byService: active.flatMap((s) => s.prefs.services).reduce((acc, id) => ({ ...acc, [id]: (acc[id] || 0) + 1 }), {}),
-    wantsFree: active.filter((s) => s.prefs.free).length,
-    streamingApi: apiUsage(),
-    issues: listIssues().slice(0, 12).map((i) => ({ week: i.week, headline: i.copy.headline, copyBy: i.copy.source, picks: { new: i.new.length, leaving: i.leaving.length, free: i.free.length }, sent: i.sentTo.length, clicks: Object.values(i.clicks).reduce((a, b) => a + b, 0) })),
+  sendAdmin(req, res, {
+    title: config.brandName,
+    key: config.adminKey,
+    setup: [
+      { name: 'Streaming data', ok: Boolean(config.streaming.apiKey), hint: 'Add STREAMING_API_KEY (free at developers.movieofthenight.com) in Railway → Variables. No issue can be built without it.' },
+      { name: 'Resend (emails)', ok: Boolean(config.email.resendKey), hint: 'Add RESEND_API_KEY and EMAIL_FROM in Railway → Variables. Needed before anyone can confirm a signup.' },
+      { name: 'AI editor (optional)', ok: Boolean(config.anthropic.apiKey), hint: 'Add ANTHROPIC_API_KEY for written blurbs; without it issues use template text.' },
+    ],
+    actions: [{ label: "Build this week's issue now", path: '/admin/build' }],
+    data: {
+      subscribers: { active: active.length, pending: subs.filter((s) => !s.confirmed).length, unsubscribed: subs.filter((s) => s.unsubscribed).length },
+      byService: active.flatMap((s) => s.prefs.services).reduce((acc, id) => ({ ...acc, [id]: (acc[id] || 0) + 1 }), {}),
+      wantsFree: active.filter((s) => s.prefs.free).length,
+      streamingApi: apiUsage(),
+      issues: listIssues().slice(0, 12).map((i) => ({ week: i.week, headline: i.copy.headline, copyBy: i.copy.source, picks: { new: i.new.length, leaving: i.leaving.length, free: i.free.length }, sent: i.sentTo.length, clicks: Object.values(i.clicks).reduce((a, b) => a + b, 0) })),
+    },
   });
 });
 
 app.post('/admin/build', async (req, res) => {
   if (!isAdmin(req)) return res.status(401).send('unauthorized');
   try {
-    const issue = await buildIssue(isoWeek(), { force: req.query.force === '1' });
+    const issue = await buildIssue(isoWeek(), { force: req.query.force === '1' || req.accepts(['json', 'html']) === 'html' });
+    if (req.accepts(['json', 'html']) === 'html') return res.redirect(303, `/admin?key=${encodeURIComponent(config.adminKey)}&msg=${encodeURIComponent(`Built ${issue.week}: ${issue.copy.headline}`)}`);
     res.json({ week: issue.week, headline: issue.copy.headline, copyBy: issue.copy.source, new: issue.new.length, leaving: issue.leaving.length, free: issue.free.length, url: `${config.baseUrl}/issues/${issue.week}` });
   } catch (err) {
+    if (req.accepts(['json', 'html']) === 'html') return res.redirect(303, `/admin?key=${encodeURIComponent(config.adminKey)}&msg=${encodeURIComponent(`Build failed: ${err.message}`)}`);
     res.status(500).json({ error: err.message });
   }
 });
