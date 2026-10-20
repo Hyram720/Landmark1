@@ -18,6 +18,14 @@
       if (merged[key]) { merged[key].targets.push(target); merged[key].bureau += ' / ' + r.bureau; }
       else merged[key] = Object.assign({}, f, { targets: [target] });
     }));
+    // Rules engine v2: compare each bureau's latest report with the one before it (re-aging, reinsertion).
+    reports.forEach(r => {
+      const prev = S().reports.filter(x => x.clientId === cid && x.bureau === r.bureau && x.id !== r.id && String(x.date) <= String(r.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+      if (prev && Metro2.compareOverTime) Metro2.compareOverTime(prev, r).forEach(f => {
+        const t = r.accounts.find(a => a.id === f.accountId) || {};
+        merged[f.code + '|' + Metro2.matchKey(t) + '|' + r.bureau] = Object.assign({}, f, { targets: [{ bureau: r.bureau, reportId: r.id, accountId: f.accountId, accountNumber: t.accountNumber || '', evidence: t.evidence || '', issue: t.issue || '', detail: f.detail }] });
+      });
+    });
     const out = Object.values(merged);
     Metro2.compareBureaus(reports).filter(g => g.differences.length).forEach(g => {
       const detail = g.differences.map(d => `${d.label}: ` + Object.entries(d.values).map(([b, v]) => `${b} ${v === '' ? '—' : MONEY_FIELDS.includes(d.field) ? money(v) : v}`).join(', ')).join('; ') + '. The same account cannot be accurate with different values at each bureau.';
@@ -125,7 +133,7 @@
         <div class="stack">
           ${card('Response deadlines', deadlines.length ? `<ul class="list">${deadlines.map(d => {
             const days = Law.daysBetween(t, d.dueAt);
-            return `<li><span class="dot" style="background:${days < 0 ? 'var(--high)' : days <= 7 ? 'var(--med)' : 'var(--accent)'}"></span><div class="grow"><a href="#/disputes/${d.id}"><b>${esc(d.recipient)}</b> · ${esc(Law.DISPUTE_TYPES[d.type].label)} · round ${d.round}</a><div class="meta">${clientName(d.clientId)} · mailed ${date(d.sentAt)}${d.tracking ? ' · tracking ' + esc(d.tracking) : ''}</div></div><div class="right nowrap"><b>${date(d.dueAt)}</b><div class="meta">${days < 0 ? Math.abs(days) + ' days overdue' : days + ' days left'}</div></div></li>`;
+            return `<li><span class="dot" style="background:${days < 0 ? 'var(--high)' : days <= 7 ? 'var(--med)' : 'var(--accent)'}"></span><div class="grow"><a href="#/disputes/${d.id}"><b>${esc(d.recipient)}</b> · ${esc(Law.typeInfo(d.type).label)} · round ${d.round}</a><div class="meta">${clientName(d.clientId)} · mailed ${date(d.sentAt)}${d.tracking ? ' · tracking ' + esc(d.tracking) : ''}</div></div><div class="right nowrap"><b>${date(d.dueAt)}</b><div class="meta">${days < 0 ? Math.abs(days) + ' days overdue' : days + ' days left'}</div></div></li>`;
           }).join('')}</ul>` : empty('Nothing in flight', 'Mailed disputes and their statutory deadlines appear here.'), { flush: true, sub: 'Calculated from the date each dispute was received' })}
           ${card('Dispute outcomes', `<div class="stack">${outcomes.map(([o, n]) => `<div><div class="row between small"><span>${UI.DSTATE[o][0]}</span><b>${n}</b></div><div class="bar"><i style="width:${n / maxO * 100}%;${['verified', 'frivolous', 'no_response'].includes(o) ? 'background:var(--med)' : ''}"></i></div></div>`).join('')}</div>`)}
         </div>
@@ -227,7 +235,7 @@
         actions: `<button class="btn sm" data-act="edit-tradeline" data-report="${r.id}">${icon('plus')} Tradeline</button><button class="btn sm" data-act="edit-report" data-id="${r.id}">Edit</button><button class="btn sm ghost danger" data-act="delete-report" data-id="${r.id}">Delete</button>` })).join('')}</div>`;
   }
 
-  function clientAudit(c) {
+  function clientAuditBase(c) {
     const fs = clientFindings(c.id);
     const reps = Store.get.latestByBureau(c.id);
     if (!reps.length) return card('', empty('Nothing to audit yet', 'Add at least one credit report. With reports from all three bureaus the audit also compares each tradeline across bureaus.'));
@@ -240,17 +248,17 @@
       <div class="small muted" style="margin:2px 0 0 24px">${esc(f.creditor)} · ${esc(f.bureau)} · <span class="mono">${esc(f.code)}</span></div>
       <div class="d" style="margin-left:24px">${esc(f.detail)}</div>
       <div class="f" style="margin-left:24px">${f.fields && f.fields.length ? 'Fields: ' + esc(f.fields.join(', ')) + ' · ' : ''}Basis: ${esc(f.basis)} · Next step: ${esc(f.action)}</div></div>`).join('')}</div>` : `<div class="callout good"><b>No inconsistencies found</b>The reported data is internally consistent. If the consumer believes something is inaccurate, add it as an issue on the tradeline with their evidence.</div>`,
-      { sub: 'Select the items the consumer confirms are inaccurate', actions: fs.length ? `<button class="btn primary" data-act="disputes-from-audit" data-id="${c.id}">${icon('mail')} Create disputes</button>` : '' })}</div>
+      { sub: 'Select the items the consumer confirms are inaccurate', actions: fs.length ? `<button class="btn" data-act="m2-letters" data-id="${c.id}">✦ Metro 2 letters</button><button class="btn primary" data-act="disputes-from-audit" data-id="${c.id}">${icon('mail')} Create disputes</button>` : '' })}</div>
     <div>${card('Cross-bureau comparison', `<div class="table-wrap"><table><thead><tr><th>Tradeline</th>${['Equifax', 'Experian', 'TransUnion'].map(b => `<th>${b}</th>`).join('')}</tr></thead><tbody>${cmp.map(g => `<tr><td><b>${esc(g.creditor)}</b>${g.differences.length ? `<div class="small" style="color:var(--med)">${g.differences.length} difference(s)</div>` : ''}</td>${['Equifax', 'Experian', 'TransUnion'].map(b => { const t = g.byBureau[b]; if (!t) return '<td class="muted small">Not reported</td>'; const diffs = g.differences.map(d => d.field); return `<td class="small ${diffs.length ? 'diff' : ''}">${esc(t.status)} · ${money(t.balance)}${t.dofd ? '<br>DOFD ' + esc(t.dofd) : ''}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div>`, { flush: true, sub: 'Latest report from each bureau' })}</div></div>`;
   }
 
   function disputeTable(list, showClient) {
     if (!list.length) return empty('No disputes', 'Create disputes from the Metro 2 audit.');
     return `<div class="table-wrap"><table><thead><tr>${showClient ? '<th>Client</th>' : ''}<th>Recipient</th><th>Type</th><th class="num">Round</th><th class="num">Items</th><th>Status</th><th>Mailed</th><th>Due</th></tr></thead><tbody>
-      ${list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(d => `<tr class="click" data-href="#/disputes/${d.id}">${showClient ? `<td>${clientName(d.clientId)}</td>` : ''}<td><b>${esc(d.recipient)}</b></td><td class="small">${esc(Law.DISPUTE_TYPES[d.type].label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td><td>${dBadge(Store.disputeState(d))}</td><td class="small nowrap">${date(d.sentAt)}</td><td class="small nowrap">${date(d.dueAt)}</td></tr>`).join('')}</tbody></table></div>`;
+      ${list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(d => `<tr class="click" data-href="#/disputes/${d.id}">${showClient ? `<td>${clientName(d.clientId)}</td>` : ''}<td><b>${esc(d.recipient)}</b></td><td class="small">${esc(Law.typeInfo(d.type).label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td><td>${dBadge(Store.disputeState(d))}</td><td class="small nowrap">${date(d.sentAt)}</td><td class="small nowrap">${date(d.dueAt)}</td></tr>`).join('')}</tbody></table></div>`;
   }
   function clientDisputes(c) {
-    return clientViolationsCard(c) + (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
+    return clientViolationsCard(c) + (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="m2-letters" data-id="${c.id}">✦ Metro 2 letters</button><button class="btn sm" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
   }
 
   function invoiceTable(list, showClient) {
@@ -314,7 +322,7 @@
     const cols = [['draft', 'Draft'], ['ready', 'Approved'], ['sent', 'Awaiting response'], ['overdue', 'Overdue'], ['done', 'Resolved']];
     const bucket = d => { const st = Store.disputeState(d); return d.outcome || st === 'closed' ? 'done' : st; };
     return head('Disputes', 'Every dispute, round and statutory deadline in one pipeline', `<select data-act="filter-client" style="width:auto"><option value="">All clients</option>${S().clients.map(c => `<option value="${c.id}" ${c.id === cid ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button class="btn" data-act="mail-room">${icon('print')} Send round (${all.filter(d => d.status === 'ready').length} ready)</button><button class="btn" data-act="templates">Letter templates</button><button class="btn primary" data-act="new-dispute">${icon('plus')} New dispute</button>`) +
-      `<div class="board">${cols.map(([k, l]) => { const items = all.filter(d => bucket(d) === k); return `<div class="col"><h3>${l}<span>${items.length}</span></h3>${items.map(d => `<a class="ticket" href="#/disputes/${d.id}"><div class="row between"><b>${esc(d.recipient)}</b>${k === 'done' ? dBadge(d.outcome || 'closed') : `<span class="small muted">R${d.round}</span>`}</div><div class="meta">${clientName(d.clientId)} · ${esc(Law.DISPUTE_TYPES[d.type].label)}</div><div class="meta">${d.items.length} item(s)${d.dueAt && !d.outcome ? ' · due ' + date(d.dueAt) : ''}</div></a>`).join('') || '<div class="small muted" style="padding:8px">—</div>'}</div>`; }).join('')}</div>`;
+      `<div class="board">${cols.map(([k, l]) => { const items = all.filter(d => bucket(d) === k); return `<div class="col"><h3>${l}<span>${items.length}</span></h3>${items.map(d => `<a class="ticket" href="#/disputes/${d.id}"><div class="row between"><b>${esc(d.recipient)}</b>${k === 'done' ? dBadge(d.outcome || 'closed') : `<span class="small muted">R${d.round}</span>`}</div><div class="meta">${clientName(d.clientId)} · ${esc(Law.typeInfo(d.type).label)}</div><div class="meta">${d.items.length} item(s)${d.dueAt && !d.outcome ? ' · due ' + date(d.dueAt) : ''}</div></a>`).join('') || '<div class="small muted" style="padding:8px">—</div>'}</div>`; }).join('')}</div>`;
   }
 
   function dispute(params) {
@@ -458,7 +466,7 @@
       const n = Sq.stepOf(S(), d);
       const ds = Store.disputeState(d);
       const until = !d.outcome && !list.some(x => x.parentId === d.id) && Sq.waitUntil(d);
-      return `<tr><td><b>Letter ${n}</b></td><td><a href="#/disputes/${d.id}">${esc(Law.DISPUTE_TYPES[d.type].label)}</a></td><td>${esc(d.recipient)}</td><td>${dBadge(ds)}</td><td class="small muted">${d.sentAt ? 'mailed ' + date(d.sentAt) : 'not mailed'}${until ? ' · next letter ' + date(until) : ''}</td></tr>`;
+      return `<tr><td><b>Letter ${n}</b></td><td><a href="#/disputes/${d.id}">${esc(Law.typeInfo(d.type).label)}</a></td><td>${esc(d.recipient)}</td><td>${dBadge(ds)}</td><td class="small muted">${d.sentAt ? 'mailed ' + date(d.sentAt) : 'not mailed'}${until ? ' · next letter ' + date(until) : ''}</td></tr>`;
     }).join('');
     const actions = q.status === 'stopped'
       ? `<button class="btn sm" data-act="seq-resume" data-id="${q.id}">Resume</button>`
@@ -485,7 +493,7 @@
     if (d.status === 'ready') return `<p class="small">${Store.remote ? 'Mail it online (Lob prints and mails it, certified if you choose, and saves the tracking number), or mail it yourself and record the mailing.' : 'Mail by certified mail with return receipt and record the tracking number.'}</p>${Store.remote ? `<button class="btn primary" data-act="mail-lob" data-id="${d.id}" ${cs.cleared ? '' : 'disabled'}>${icon('mail')} Mail online</button> ` : ''}<button class="btn ${Store.remote ? '' : 'primary'}" data-act="mark-sent" data-id="${d.id}" ${cs.cleared ? '' : 'disabled'}>${Store.remote ? 'I mailed it myself' : icon('mail') + ' Record mailing'}</button><button class="btn" data-act="unapprove" data-id="${d.id}" style="margin-left:6px">Back to draft</button>`;
     if (!d.outcome) return `<p class="small">${st === 'overdue' ? '<b style="color:var(--high)">The response period has passed.</b> Record “no response” and follow up.' : 'Waiting for the response. Record it when the results arrive.'}</p><button class="btn primary" data-act="record-response" data-id="${d.id}">Record response</button>${['cra_611', 'furnisher_623', 'obsolete_605', 'reinsertion_611'].includes(d.type) ? `<button class="btn" data-act="mark-received" data-id="${d.id}" style="margin-left:6px">Set received date</button>` : ''}`;
     const follow = { verified: 'Request the method of verification, dispute directly with the furnisher with new evidence, or add a consumer statement (§ 611(b)).', frivolous: 'The bureau must say what information it needs. Provide it and re-submit.', no_response: 'Information that cannot be verified within the period must be deleted (§ 611(a)(5)(A)). Send a follow-up and consider a CFPB complaint.', deleted: 'Watch for reinsertion — the bureau must notify the consumer within 5 business days if it is reinserted.', corrected: 'Pull updated reports to confirm the correction at every bureau.' }[d.outcome] || '';
-    return `<p class="small">${dBadge(d.outcome)} ${date(d.respondedAt)}</p><p class="small">${esc(follow)}</p>${['verified', 'frivolous', 'no_response'].includes(d.outcome) ? (() => { const n = Law.nextStrategy(d.type, d.outcome, (Law.DISPUTE_TYPES[d.type] || {}).recipient); return n && n.type ? `<button class="btn primary" data-act="next-round" data-id="${d.id}">Draft Letter ${n.step}: ${esc(Law.DISPUTE_TYPES[n.type].label)}</button>` : `<div class="callout warn"><b>Step 4 — attorney review</b>${esc(n ? n.reason : '')}</div>`; })() : ''}`;
+    return `<p class="small">${dBadge(d.outcome)} ${date(d.respondedAt)}</p><p class="small">${esc(follow)}</p>${['verified', 'frivolous', 'no_response'].includes(d.outcome) ? (() => { const n = Law.nextStrategy(d.type, d.outcome, (Law.DISPUTE_TYPES[d.type] || {}).recipient); return n && n.type ? `<button class="btn primary" data-act="next-round" data-id="${d.id}">Draft Letter ${n.step}: ${esc(Law.typeInfo(n.type).label)}</button>` : `<div class="callout warn"><b>Step 4 — attorney review</b>${esc(n ? n.reason : '')}</div>`; })() : ''}`;
   }
 
   // ---------- Audit queue ----------
@@ -578,7 +586,7 @@
         <li><b>Import reports</b> — one per bureau, tradelines mapped to Metro 2 fields.</li>
         <li><b>Audit</b> — internal-consistency rules, cross-bureau comparison, duplicate-debt detection and obsolescence dates.</li>
         <li><b>Client review</b> — the consumer confirms which items are actually inaccurate. Accurate negative items are not disputed.</li>
-        <li><b>Letters</b> — specific, evidence-backed disputes to the right party: bureau (§ 611), furnisher (§ 623 / Reg V § 1022.43), collector (FDCPA § 809), identity-theft block (§ 605B).</li>
+        <li><b>Letters</b> — specific, evidence-backed disputes to the right party: bureau (§ 611), furnisher (§ 623 / Reg V § 1022.43), collector (FDCPA § 809).</li>
         <li><b>Tracking</b> — certified-mail tracking, received date, 30/45-day deadline, outcomes, method-of-verification and follow-up rounds, with a guard against frivolous repeat disputes.</li>
         <li><b>Billing</b> — invoices only for completed work, after the cancellation period.</li></ol>
         <h3>What “Metro 2 compliance” does not mean</h3>
@@ -590,7 +598,7 @@
         <li><a href="https://www.law.cornell.edu/uscode/text/15/1679e" target="_blank" rel="noopener">15 U.S.C. § 1679e — Right to cancel (Cornell LII)</a></li>
         <li><a href="https://law.justia.com/codes/us/title-15/chapter-41/subchapter-ii-a" target="_blank" rel="noopener">15 U.S.C. ch. 41 subch. II-A — Credit Repair Organizations (Justia)</a></li>
         <li><a href="https://www.govinfo.gov/link/uscode/15/1679b" target="_blank" rel="noopener">15 U.S.C. § 1679b — Prohibited practices (GovInfo)</a></li>
-        <li><a href="https://www.law.cornell.edu/uscode/text/15/1681i" target="_blank" rel="noopener">15 U.S.C. § 1681i — FCRA reinvestigations</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681s-2" target="_blank" rel="noopener">§ 1681s-2 — furnisher duties</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681c" target="_blank" rel="noopener">§ 1681c — obsolete information</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681c-2" target="_blank" rel="noopener">§ 1681c-2 — identity theft block</a></li>
+        <li><a href="https://www.law.cornell.edu/uscode/text/15/1681i" target="_blank" rel="noopener">15 U.S.C. § 1681i — FCRA reinvestigations</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681s-2" target="_blank" rel="noopener">§ 1681s-2 — furnisher duties</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1681c" target="_blank" rel="noopener">§ 1681c — obsolete information</a></li>
         <li><a href="https://www.law.cornell.edu/uscode/text/15/1692g" target="_blank" rel="noopener">15 U.S.C. § 1692g — FDCPA validation</a> · <a href="https://www.law.cornell.edu/uscode/text/15/1692e" target="_blank" rel="noopener">§ 1692e — false representations</a> · <a href="https://www.law.cornell.edu/cfr/text/12/part-1006" target="_blank" rel="noopener">12 C.F.R. part 1006 — Regulation F</a></li>
         <li><a href="https://www.ftc.gov/news-events/news/press-releases/2023/10/ftc-cfpb-settlement-require-trans-union-pay-15-million-over-charges-it-failed-ensure-accuracy-tenant" target="_blank" rel="noopener">FTC/CFPB $15M TransUnion Rental Screening settlement — eviction records (2023)</a></li>
         <li><a href="https://www.consumerfinance.gov/rules-policy/final-rules/prohibition-on-creditors-and-consumer-reporting-agencies-concerning-medical-information-regulation-v/" target="_blank" rel="noopener">CFPB medical debt rule — vacated July 11, 2025 (CFPB page)</a></li>
@@ -608,7 +616,35 @@
   const KIND = { personal: ['Personal', 'b-low'], business: ['Business', 'b-info'], both: ['Personal + business', 'b-accent'] };
   const kindBadge = k => { const [l, c] = KIND[k] || KIND.personal; return `<span class="badge ${c} plain">${l}</span>`; };
 
-  function clientBusiness(c) {
+  // Knowledge-base card: the rules behind a section, each with its official source (kb/ledger-kb.json).
+  function kbCard(section, title, sub) {
+    const KB = root.KB;
+    if (!KB) return '';
+    return card(title, `<ul class="list kb-list">${KB.section(section).map(r => `<li><div class="grow"><b>${esc(r.title)}</b><div class="small" style="margin-top:2px">${esc(r.rule)}</div><div class="small muted" style="margin-top:4px"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.cite)} ↗</a>${r.needsLawyer ? ' · <span class="badge b-med">Confirm with an attorney</span>' : ''}</div></div></li>`).join('')}</ul>`, { flush: true, sub: sub || `Knowledge base v${esc(KB.version)} · not legal advice` });
+  }
+  // Accuracy checks beyond Metro 2 fields (js/filecheck.js): personal info, inquiries and items the
+  // client flagged. Accurate negatives are listed separately with the reason they're left alone.
+  function fileCheckCard(c) {
+    const FC = root.FileCheck; if (!FC) return '';
+    const reps = Store.get.latestByBureau(c.id);
+    const fs = [], left = [];
+    reps.forEach(r => { const pf = FC.personalChecks(r, c); fs.push(...pf); left.push(...FC.notDisputed(r, Metro2.auditReport(r).concat(pf))); });
+    const sev = x => `<span class="badge ${x === 'high' ? 'b-high' : x === 'medium' ? 'b-med' : 'b-low'}">${esc(x)}</span>`;
+    return card('Personal info, inquiries & client-flagged items', `${fs.length ? fs.map(x => `<div class="finding ${x.severity}"><div class="row between"><b class="t">${esc(x.title)}</b>${sev(x.severity)}</div><div class="small muted">${esc(x.creditor)} · ${esc(x.bureau)} · <span class="mono">${esc(x.code)}</span>${x.actionOnly ? ' · <b>needs action before it can be disputed</b>' : ''}</div><div class="d small">${esc(x.detail)}</div></div>`).join('') : '<p class="small muted" style="padding:12px 16px">No personal-information or inquiry issues recorded. Add what the report shows with “Personal info & inquiries”.</p>'}
+      ${left.length ? `<div style="padding:10px 16px"><b class="small">Not disputed — no inaccuracy found</b><ul class="small" style="margin:6px 0 0 16px">${left.map(l => `<li>${esc(l.creditor)} (${esc(l.bureau)}): ${esc(l.why)}</li>`).join('')}</ul></div>` : ''}
+      <p class="small muted" style="padding:0 16px 12px">Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.</p>`,
+      { flush: true, sub: 'Names, addresses, employers, DOB/SSN variations (masked), unrecognized or 2-year-old hard inquiries, client-disputed items', actions: `<button class="btn sm" data-act="pii-edit" data-id="${c.id}">Personal info & inquiries</button>` });
+  }
+  function clientAudit(c, ...rest) { return clientAuditBase(c, ...rest) + '<div style="margin-top:16px">' + fileCheckCard(c) + '</div>'; }
+
+  function clientBusiness(c, ...rest) {
+    const st = root.Business && root.Business.coachState ? root.Business.coachState(c, S()) : null;
+    const u = st ? st.utilization : null;
+    const coach = card('Business credit coach', `<div class="small stack" style="gap:6px">${st && st.started ? (st.current ? `<div><b>Current step:</b> ${esc(st.current.title)} <span class="muted">(due ${esc(st.current.due)}${st.current.overdue ? ', overdue' : ''})</span></div>` : '<div>All plan steps complete.</div>') : '<div>The 90-day plan hasn’t been started.</div>'}${st && st.pending.length ? `<div class="callout warn"><b>${st.pending.length} step(s) the client marked done</b>Review them in the coach.</div>` : ''}${u && u.business.accounts.length ? `<div><b>Business utilization:</b> ${u.business.pct}% overall · ${u.business.accounts.map(a => `${esc(a.name)} ${a.pct}%`).join(' · ')}</div>` : ''}${u ? u.personal.filter(p => p.pct !== null).map(p => `<div><b>Personal utilization (${esc(p.bureau)}):</b> ${p.pct}%${p.includesGuaranteed ? ' incl. owner-guaranteed accounts' : ''}</div>`).join('') : ''}</div>`,
+      { sub: 'Step-by-step 90-day plan, net-30 vendors and utilization', actions: `<button class="btn sm primary" data-act="biz-coach" data-id="${c.id}">✦ Open coach</button><button class="btn sm" data-act="biz-report" data-id="${c.id}">Business bureau file</button><button class="btn sm" data-act="m2-letters" data-id="${c.id}">✦ Dispute letters</button>` });
+    return coach + '<div style="margin-top:16px"></div>' + clientBusinessBase(c, ...rest) + '<div style="margin-top:16px">' + kbCard('business', 'Business credit rules & dispute paths') + '</div>';
+  }
+  function clientBusinessBase(c) {
     const B = root.Business;
     const b = c.business || {};
     const fz = B.fundability(c);
@@ -646,6 +682,9 @@
 
   // ---------- Buy a business (acquisition due diligence) ----------
   function shelfCard() {
+    return `<div class="callout bad" style="margin-bottom:16px"><b>Read before buying an aged or shelf company</b>A company’s formation date is not your operating history. Telling a lender the business has operated for years, or presenting the prior owner’s credit, revenue or tradelines as yours, can be fraud. Lenders and bureaus check ownership changes, officer history, bank statements and tax returns. An aged shell with no tradelines or revenue adds little, and no company is “instantly fundable.” Always disclose the purchase date and true ownership history, and use an attorney and CPA for the purchase.</div>` + shelfCardBase() + '<div style="margin-top:16px">' + kbCard('corp', 'Buying a corporation: what it involves', 'Stock vs. asset purchase, due diligence, filings, BOI status · not legal or tax advice') + '</div>';
+  }
+  function shelfCardBase() {
     const Aq = root.Acquisition;
     const w = Aq.ageWindow(T());
     const step = (n, title, body) => `<li><span class="tick">${n}</span><div class="grow"><b style="font-weight:550">${title}</b><div class="small" style="margin-top:4px">${body}</div></div></li>`;
@@ -748,13 +787,14 @@
     const earned = refs.filter(r => ['approved', 'paid'].includes(r.status)).reduce((a, r) => a + Number(r.payout || 0), 0);
     const paid = refs.filter(r => r.status === 'paid').reduce((a, r) => a + Number(r.payout || 0), 0);
     const clicks = refs.reduce((a, r) => a + (r.clicks || 0), 0) + s.offers.reduce((a, o) => a + (o.clicks || 0), 0);
-    return head('Partner offers', 'Credit-builder, monitoring and business-credit programs you can refer clients to', `<button class="btn" data-act="new-offer">${icon('plus')} Custom offer</button><button class="btn primary" data-act="new-ref">${icon('plus')} Recommend to client</button>`) +
+    return head('Partner offers', 'Credit-builder, monitoring and business-credit programs you can refer clients to', `<button class="btn" data-act="partner-clicks">Click report</button><button class="btn" data-act="new-offer">${icon('plus')} Custom offer</button><button class="btn primary" data-act="new-ref">${icon('plus')} Recommend to client</button>`) +
       `<div class="grid g4" style="margin-bottom:16px">${kpi('Recommendations', refs.length, `${refs.filter(r => r.status === 'signed_up' || r.status === 'approved' || r.status === 'paid').length} signed up`)}${kpi('Link clicks', clicks)}${kpi('Commissions earned', money(earned), 'approved + paid')}${kpi('Paid out', money(paid))}</div>
       <div class="callout warn" style="margin-bottom:16px"><b>Check terms before promoting</b>Affiliate payouts change often and third-party listings disagree. Each offer shows how well its terms were confirmed as of the research date. Paste your own affiliate link from each program's dashboard. Tracked links (<span class="mono">/go/…</span>) count clicks, then redirect.</div>
       <div class="grid g2">${s.offers.map(o => card(`${esc(o.name)} ${kindBadge(o.audience === 'business' ? 'business' : 'personal')}`, `
         <div class="row between small" style="margin-bottom:6px"><span class="muted">${esc(o.category)}</span>${offerStatus(o.status)}</div>
         <div class="grid g2 small" style="gap:6px 16px;margin-bottom:10px"><div><span class="muted">Program</span><br>${esc(o.program)}</div><div><span class="muted">Referral bonus</span><br><b>${esc(o.bonus)}</b></div><div><span class="muted">Cookie</span><br>${esc(o.cookie)}</div><div><span class="muted">Clicks</span><br>${(o.clicks || 0) + refs.filter(r => r.offerId === o.id).reduce((a, r) => a + (r.clicks || 0), 0)}</div></div>
         <p class="small">${esc(o.note || '')}</p>
+        <div class="small muted">Tracked link: <span class="mono">/go/partner/${esc(o.key)}</span>${o.subIdParam ? ` · sub-ID sent as <span class="mono">${esc(o.subIdParam)}</span>` : ' · no sub-ID for this network'}</div>
         <form data-form="offer" data-id="${o.id}" class="row" style="margin-top:8px;flex-wrap:nowrap"><input name="affiliateUrl" value="${esc(o.affiliateUrl || '')}" placeholder="Paste your affiliate / referral link (https://…)" class="small"><button class="btn sm">Save</button></form>
         <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
       <div style="margin-top:16px">${card('Referral pipeline', referralRows(refs.slice().sort((a, b) => String(b.recommendedAt).localeCompare(String(a.recommendedAt))), true), { flush: true })}</div>
@@ -797,6 +837,7 @@
       ${Store.remote ? card('Print & mail', '<div id="mail-settings"><p class="small muted">Loading…</p></div>', { sub: 'Mail letters (first-class or certified) from Ledger through Lob' }) : ''}
       ${Store.remote ? card('Online payments', '<div id="pay-settings"><p class="small muted">Loading…</p></div>', { sub: 'Clients pay invoices on Authorize.net’s secure page' }) : ''}
       ${Store.remote ? card('AI settings', '<div id="ai-settings"><p class="small muted">Loading…</p></div>', { sub: 'Anthropic API key for Ledger AI, report scanning and round planning' }) : ''}
+      ${Store.remote ? card('Sign-in & email', '<p class="small muted">Password reset links, optional magic-link sign-in, optional emailed sign-in codes and client email updates.</p><div class="row" style="margin-top:10px"><button class="btn" data-act="auth-settings">Open sign-in settings</button></div>', { sub: 'Outbound email is set on the server with LEDGER_MAIL_MODE' }) : ''}
       ${Store.remote ? '' : card('AI in this browser', `<p class="small">${root.AIDirect && root.AIDirect.getKey() ? '<span class="badge b-ok">On</span> AI scanning works in this file using your Anthropic API key.' : 'Add your own Anthropic API key to scan credit reports with AI right here — no server needed. The key stays in this browser and is never included in backups.'}</p><div class="row" style="margin-top:10px"><button class="btn primary" data-act="ai-key">${root.AIDirect && root.AIDirect.getKey() ? 'Change key' : 'Add API key'}</button><a class="btn ghost" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key ↗</a></div>`)}
       ${card('Demo & reset', `<div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn danger" data-act="reset">Erase workspace</button></div>`)}
     </div></div>`;

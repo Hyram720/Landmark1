@@ -19,6 +19,9 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `/portal` | Clients: e-sign the CROA disclosure and agreement, upload ID and bureau letters, follow disputes and scores, see recommendations, cancel within 3 days |
 | `/apply` | Prospects: public onboarding form (personal, business or both). Every submission becomes a lead with a call task. Add `?ref=<source id>` to credit a referral source |
 | `/go/<id>` | Tracked partner links: counts the click, then redirects to your affiliate link |
+| `/go/partner/<key>` | Partner links with a hashed sub-ID per client/staff (metadata-only click log; report under Partners → Click report) |
+| `/api/health` (`/healthz`) | Health check for Railway: status, uptime, build, encryption and storage |
+| `/api/coach/:id`, `/api/portal/coach` | Business credit coach (staff; signed-in client sees only their own plan) — see docs/assistant-spec.md §10 |
 
 **Master file (personal use, no login):** `ledger/dist/ledger-master.html` is the whole workspace in one file. Double-click it to open it in your browser. It needs no login and no server, and it saves everything in that browser. Use **Settings → Export backup** regularly, and keep the file and backups private. Rebuild it after changes with `npm run ledger:master`. The client portal, uploads, text/email sending and AI features need the server.
 
@@ -35,8 +38,17 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `ANTHROPIC_API_KEY` | Turns on **Ledger AI**, the built-in credit repair expert (Claude). Without it, the AI panel explains how to enable it |
 | `LEDGER_SETUP_CODE` | Required to create the owner account on first visit, so nobody else can claim a freshly deployed server |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Sends texts through Twilio. Texts go only to clients with SMS consent on file (TCPA). Business texting also needs A2P 10DLC registration |
+| `LEDGER_AI_ENABLED` + `OPENAI_API_KEY` | Turns on the OpenAI-backed Ledger Assistant, AI-polished Metro 2 letters and the website helper. Off unless `LEDGER_AI_ENABLED=true`. See `docs/assistant-spec.md` |
+| `LEDGER_OPENAI_MODEL` | Model for the above (default `gpt-5-mini`) |
+| `LEDGER_AI_LETTERS_PER_HOUR` | Abuse ceiling per staff user for AI letter polish (default 300); templates are always unlimited |
+| `LEDGER_MAIL_MODE` | `off` (default), `console` (dev: prints emails to the log), `resend` or `smtp`. Needed for password-reset emails, magic links, sign-in codes and client update emails |
+| `LEDGER_SMTP_URL` | SMTP connection URL when `LEDGER_MAIL_MODE=smtp` (needs the optional `nodemailer` package) |
+| `LEDGER_BACKUPS` / `LEDGER_BACKUP_DAYS` | Daily encrypted DB snapshot in `<data dir>/backups` (on by default; `off` disables); days kept (default 14) |
+| `LEDGER_TRUST_PROXY_HOPS` | Proxy hops in front of the app (default 1 for Railway); used for client IPs in rate limits |
 
 Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
+
+On Railway, set the start command to `node ledger/server/index.js` (or `npm run ledger:start`; running node directly avoids npm's `production` config warning and the `npm error signal SIGTERM` lines on every redeploy) and the health check path to `/api/health`. The server shuts down gracefully on SIGTERM and flushes pending writes. Tests: `npm run test:ledger`.
 
 ## What's inside
 
@@ -53,7 +65,7 @@ Deploy it like the main site: one Node service with a persistent volume mounted 
 - Open it from **✦ Ledger AI** (bottom right) or **Ask AI** on any client.
 - It reads the open client's reports, Metro 2 findings, cross-bureau differences, disputes, CROA status and business-credit setup.
 - One-click prompts: explain the audit, plan the next round, draft a client update, build a 90-day rebuild plan, write a business credit plan. Also general questions: Metro 2 codes, marketing compliance review, consultation scripts.
-- Guardrails: it separates provable errors from items the client must document and from accurate negatives, and it refuses mass disputes, CPNs, false identity-theft claims and promised results. It also flags CROA problems it notices.
+- Guardrails: it separates provable errors from items the client must document and from accurate negatives, and it refuses mass disputes, CPNs and promised results. Identity theft disputes are out of scope; refer clients to IdentityTheft.gov. It also flags CROA problems it notices.
 - Staff only. Runs on Claude Opus 5.5 with automatic fallback if a request is declined. Rate-limited to 60 questions per staff member per hour. Every question is logged in the audit trail (not the content).
 
 **Uploading credit reports (Upload credit report button on the dashboard, client list and client page):**
@@ -122,6 +134,8 @@ See [RESEARCH.md](RESEARCH.md) for the research behind each feature, with source
 
 ## Data & security
 
+- **AI privacy:** every outbound AI call (Anthropic and OpenAI) goes through `server/redact.js`: SSN/ITIN, EIN, card/account numbers (last 4 kept), routing numbers, DOBs, emails, phones, street addresses and known names are masked, and a final guard refuses to send if an SSN or Luhn-valid card number remains. PDFs are text-extracted locally with `pdftotext` (poppler-utils) before redaction; images and scanned PDFs are never sent. See docs/assistant-spec.md §12.
+
 In server mode everything is saved on your server:
 
 - Passwords are hashed with scrypt.
@@ -147,6 +161,12 @@ In preview mode, data stays in the browser. The JSON-file database fits a small 
 | `js/portal.js`, `portal.html`, `apply.html` | Client portal and public onboarding form |
 | `server/` | Express API: auth, workspace sync, portal, e-sign, intake, uploads, messaging, tracked links, Ledger AI (`server/assistant.js`) |
 | `js/assistant.js` | Ledger AI chat drawer |
+| `js/disputereasons.js`, `kb/`, `js/kb.js` | Finding → dispute reason mapping, repeat/frivolous guard; versioned sourced knowledge base |
+| `js/ledgerbot.js`, `js/helper.js` | Staff Metro 2 letters modal, Ledger Assistant chat, partner click report, sign-in settings; public/portal helper |
+| `server/ledger-assistant.js`, `server/redact.js` | OpenAI assistant, letter drafting and helper (off by default); redaction |
+| `server/client-auth.js`, `server/mailer.js` | Forgot/reset password, magic link, email sign-in code, client notifications; pluggable mailer (off by default) |
+| `server/partner-links.js` | `/go/partner/:key` sub-ID redirect and click report |
+| `docs/assistant-spec.md` | Assistant / letters / KB spec, guardrails, data flow, costs |
 
 Tests: `npm run test:ledger`
 

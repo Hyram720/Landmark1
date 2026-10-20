@@ -3,6 +3,25 @@ import { Law, AIPrompts } from './shared.js';
 
 const { REPORT_SCHEMA, SCAN_PROMPT, SCAN_SYSTEM, htmlToText } = AIPrompts;
 import { MODEL, clientContext, getClient } from './assistant.js';
+import { execFile } from 'node:child_process';
+import { redact, nameTerms } from './redact.js';
+
+/**
+ * PDFs are turned into text locally (poppler's pdftotext) so the text can be redacted before it is sent.
+ * Raw PDFs and images are never sent: they can't be redacted. Returns '' when no text layer is found.
+ */
+export function pdfText(buffer) {
+  return new Promise(resolve => {
+    try {
+      const p = execFile('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { maxBuffer: 20 * 1024 * 1024, timeout: 30000 }, (err, out) => resolve(err ? '' : String(out || '')));
+      p.on('error', () => resolve(''));
+      p.stdin.on('error', () => {});
+      p.stdin.end(buffer);
+    } catch { resolve(''); }
+  });
+}
+const NO_TEXT = 'This PDF has no readable text layer (it is probably a scan or photo), so it can’t be redacted before AI scanning. Nothing was sent to the AI. Download the report as text/HTML from the bureau or monitoring site, or enter the tradelines by hand.';
+const IMAGE_BLOCK = 'Images can’t be redacted before AI scanning, so they are not sent. Nothing was sent to the AI. Upload the report as a text PDF or HTML, paste the report text, or enter the tradelines by hand.';
 
 const api = () => getClient();
 const str = { type: 'string' };
@@ -25,17 +44,19 @@ async function structured({ content, schema, system, maxTokens }) {
 }
 
 /** Reads a credit report file (PDF, HTML, text) and returns tradelines per bureau. Nothing is saved. */
-export async function scanReport({ buffer, mime }) {
-  let content;
+export async function scanReport({ buffer, mime, client }) {
+  let text;
   if (mime === 'application/pdf') {
-    content = [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }, { type: 'text', text: SCAN_PROMPT }];
+    text = await pdfText(buffer);
+    if (text.replace(/\s+/g, '').length < 100) throw Object.assign(new Error(NO_TEXT), { status: 422, privacyBlock: true });
   } else if (/^image\//.test(mime)) {
-    content = [{ type: 'image', source: { type: 'base64', media_type: mime, data: buffer.toString('base64') } }, { type: 'text', text: SCAN_PROMPT }];
+    throw Object.assign(new Error(IMAGE_BLOCK), { status: 422, privacyBlock: true });
   } else {
     const raw = buffer.toString('utf8');
-    const text = mime === 'text/html' ? htmlToText(raw) : raw;
-    content = `<credit_report>\n${text}\n</credit_report>\n\n${SCAN_PROMPT}`;
+    text = mime === 'text/html' ? htmlToText(raw) : raw;
   }
+  // Identifiers masked; account numbers keep the last 4 so tradelines still match. getClient() redacts and guards again.
+  const content = `<credit_report redacted="true">\n${redact(text, { terms: nameTerms(client) })}\n</credit_report>\n\n${SCAN_PROMPT}`;
   return structured({ content, schema: REPORT_SCHEMA, system: SCAN_SYSTEM });
 }
 
@@ -67,7 +88,7 @@ const PLAN_SCHEMA = {
 };
 
 const PLAN_PROMPT = `Plan this client's next dispute round using the strategy ladder:
-- Letter 1: dispute with the bureau (cra_611), or obsolete_605 for items past the reporting period, block_605b only for documented identity theft, validation_809 to a collector within the validation period.
+- Letter 1: dispute with the bureau (cra_611), or obsolete_605 for items past the reporting period, validation_809 to a collector within the validation period.
 - Letter 2: after a verified result or no response — mov_611a7 to the bureau and furnisher_623 directly to the furnisher, with new evidence.
 - Letter 3: still verified — furnisher_final to the furnisher, and cfpb_complaint (a narrative the client files).
 Rules:

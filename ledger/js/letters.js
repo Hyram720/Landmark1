@@ -61,14 +61,6 @@ ${items.map(itemBlock).join('\n\n')}
 
 Please provide the name of the original creditor, an itemization of the amount claimed, and verification of the debt. Please cease collection of this debt until you mail the requested validation to me.`,
 
-    block_605b: (c, items) => `Re: Request to block information resulting from identity theft — FCRA § 605B
-
-I am a victim of identity theft. The information listed below does not relate to any transaction that I made or authorized.
-
-${items.map(itemBlock).join('\n\n')}
-
-Enclosed are proof of my identity, a copy of my identity theft report (FTC IdentityTheft.gov report and/or police report), and this statement identifying the information. Please block this information from my file within four business days and notify the furnisher(s) as required by law.`,
-
     obsolete_605: (c, items) => `Re: Removal of obsolete information — FCRA § 605
 
 The following item${items.length > 1 ? 's are' : ' is'} beyond the period during which it may be reported:
@@ -95,7 +87,7 @@ I am an authorized representative of ${ctx.business && ctx.business.legalName ? 
 
 ${items.map(itemBlock).join('\n\n')}
 
-Supporting documents are enclosed. Please correct the file and confirm the update in writing.`,
+We understand business credit files are generally not covered by the Fair Credit Reporting Act, and we are asking you to correct them under your published dispute and data-correction process. Supporting documents are enclosed. Please correct the file and confirm the update in writing.`,
 
     furnisher_final: (c, items, ctx) => `Re: Final notice of inaccurate reporting — FCRA § 623
 
@@ -154,7 +146,7 @@ A consumer report may be furnished only for a permissible purpose (15 U.S.C. § 
 
     pii_611: (c, items) => `Re: Correction of personal information — FCRA §§ 607(b) and 611
 
-My file contains personal identifying information that is not mine or is out of date. Inaccurate identifiers can cause other people's information to be mixed into my file.
+My file contains personal identifying information that is not mine or is out of date. Inaccurate identifiers can lead to errors in my file.
 
 ${items.map(itemBlock).join('\n\n')}
 
@@ -202,7 +194,6 @@ Thank you for considering this request.`
 
   function defaultEnclosures(type, items) {
     const e = ['Copy of government-issued photo ID', 'Proof of current address (utility bill or bank statement)'];
-    if (type === 'block_605b') e.push('Identity theft report (IdentityTheft.gov / police report)');
     if (type === 'disclosure_609') return e;
     if (items.some(i => i.evidence)) e.push('Supporting documents referenced above');
     if (['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'inquiry_604', 'pii_611'].includes(type)) e.push('Copy of the credit report page with the disputed items marked');

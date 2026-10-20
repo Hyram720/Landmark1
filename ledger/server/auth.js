@@ -9,11 +9,17 @@ export function hashPassword(pw) {
 
 export function verifyPassword(pw, stored) {
   const [alg, salt, hash] = String(stored || '').split('$');
-  if (alg !== 'scrypt') return false;
+  if (alg !== 'scrypt' || !salt || !hash) return false;
   const expected = Buffer.from(hash, 'base64');
+  if (!expected.length) return false;
   const actual = crypto.scryptSync(String(pw), Buffer.from(salt, 'base64'), expected.length);
   return crypto.timingSafeEqual(expected, actual);
 }
+
+// Hashed once at startup so a login for an unknown email costs the same time as a real one
+// (otherwise response timing reveals which emails have accounts).
+const DUMMY_HASH = hashPassword(crypto.randomBytes(16).toString('hex'));
+export function burnPasswordCheck(pw) { verifyPassword(pw, DUMMY_HASH); return false; }
 
 const b64 = (s) => Buffer.from(s).toString('base64url');
 
@@ -28,8 +34,9 @@ export function verifyToken(token, secret) {
   if (!body || !sig) return null;
   const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
   if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
-  const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-  return payload.exp > Date.now() / 1000 ? payload : null;
+  let payload;
+  try { payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); } catch { return null; }
+  return payload && payload.exp > Date.now() / 1000 ? payload : null;
 }
 
 export function passwordProblem(pw) {
@@ -37,14 +44,24 @@ export function passwordProblem(pw) {
   return null;
 }
 
-/** Fixed-window limiter keyed by IP + bucket. */
+/**
+ * Fixed-window limiter keyed by IP, user or session. Expired windows are swept so the map
+ * can't grow without bound when many different keys (e.g. spoofed IPs) hit it.
+ */
 export function rateLimiter(limit, windowMs) {
   const hits = new Map();
-  return (key) => {
+  let lastSweep = Date.now();
+  const check = (key) => {
     const now = Date.now();
+    if (now - lastSweep > windowMs || hits.size > 50000) {
+      for (const [k, h] of hits) if (now - h.start > windowMs) hits.delete(k);
+      lastSweep = now;
+    }
     const h = hits.get(key);
     if (!h || now - h.start > windowMs) { hits.set(key, { start: now, n: 1 }); return true; }
     h.n += 1;
     return h.n <= limit;
   };
+  check.size = () => hits.size;
+  return check;
 }

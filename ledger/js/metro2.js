@@ -274,6 +274,62 @@
         [FIELDS.limit, FIELDS.highCredit], 'Data quality', 'Verify');
     }
 
+    // ---- added 2026-10-19: rules engine v2 (each rule cites kb/ledger-kb.json ids in `kb`) ----
+    if (PAID_ZERO.includes(status) && past > 0) {
+      add('M2-PAID-PASTDUE', 'high', 'Paid/closed account still shows an amount past due',
+        `Account Status ${status} (${ACCOUNT_STATUS[status]}) is a paid or zero-balance status, but Amount Past Due is ${money(past)}. A paid account cannot be past due.`,
+        [FIELDS.status, FIELDS.pastDue], 'FCRA § 611; § 623(a)(2)', 'Dispute the past-due amount');
+    }
+
+    if (dofd && reported && dofd > reported) {
+      add('M2-DOFD-FUTURE', 'high', 'Date of First Delinquency is after the reporting date',
+        `DOFD (${fmt(dofd)}) is later than the Date of Account Information (${fmt(reported)}). A delinquency cannot start after the data was reported.`,
+        [FIELDS.dofd, FIELDS.reported], 'FCRA § 611; § 623(a)(5)', 'Dispute the DOFD');
+    }
+
+    if (status === '11' && dofd && hist && !/[1-6GHJKL]/.test(hist)) {
+      add('M2-DOFD-ON-CURRENT', 'medium', 'Current account with a delinquency date but no late history',
+        `Status 11 (current) and a clean payment grid, yet a Date of First Delinquency (${fmt(dofd)}) is reported. The CRRG zero-fills the DOFD on accounts that are current and were never delinquent; confirm with the client whether this account was ever late.`,
+        [FIELDS.status, FIELDS.dofd, FIELDS.history], 'FCRA § 611; CRRG DOFD guidance', 'Verify with the client, then dispute if confirmed');
+    }
+
+    // Re-aging inside one report: the payment grid shows the delinquency starting earlier than the DOFD.
+    if (dofd && reported && hist && DEROGATORY.concat(PAID_ZERO).includes(status)) {
+      let i = hist.search(/[1-6GHJKL]/);
+      if (i >= 0) {
+        while (i + 1 < hist.length && /[1-6GHJKL]/.test(hist[i + 1])) i += 1; // oldest month of the most recent delinquent run
+        const gridStart = new Date(reported); gridStart.setMonth(gridStart.getMonth() - i);
+        const lagDays = Math.round((dofd - gridStart) / 86400000);
+        if (lagDays > 62) {
+          add('M2-DOFD-REAGED', 'high', 'DOFD is later than the payment grid shows (possible re-aging)',
+            `The payment history shows the delinquency running back to about ${fmt(gridStart)}, but the reported DOFD is ${fmt(dofd)} — about ${Math.round(lagDays / 30)} months later. A later DOFD extends how long the item can be reported.`,
+            [FIELDS.dofd, FIELDS.history], 'FCRA § 623(a)(5); § 605(c)', 'Dispute the DOFD and ask for the original delinquency date');
+        }
+      }
+    }
+
+    if ((status === '93' || /collect/i.test(String(t.type || '') + ' ' + String(t.accountType || ''))) && !String(t.originalCreditor || '').trim()) {
+      add('M2-COLLECTION-NO-OC', 'medium', 'Collection account without the original creditor',
+        'This collection does not name the original creditor (Metro 2 K1 segment). Without it the consumer cannot tell which debt is being reported or check for duplicates.',
+        ['Original Creditor Name (K1 Segment)'], 'FCRA § 611; § 623(a)(2) — complete and accurate', 'Request the original creditor and verification');
+    }
+
+    const ccc = String(t.complianceCode || '').toUpperCase();
+    if (ccc === 'XB' && (t.disputeResolvedAt || t.disputeStatus === 'closed')) {
+      add('M2-CCC-XB-STALE', 'medium', 'Still flagged “in dispute” after the investigation ended',
+        `Compliance Condition Code XB (dispute under investigation) is still reported${t.disputeResolvedAt ? ' after the dispute was resolved on ' + t.disputeResolvedAt : ''}. After an investigation the furnisher should report XH (investigation complete) or XC (consumer disagrees), or remove the code with XR.`,
+        [FIELDS.ccc], 'FCRA § 623(a)(3); CRRG Compliance Condition Codes', 'Ask the furnisher to update the code');
+    }
+
+    if (!dofd && DEROGATORY.includes(status) && opened && today) {
+      const est = obsolescenceDate(t.opened);
+      if (est && est <= today) {
+        add('FCRA-OBSOLETE-UNKNOWN', 'medium', 'May be past the reporting period (no DOFD to confirm)',
+          `There is no DOFD, and even the date opened (${fmt(opened)}) is more than 7½ years ago. The delinquency could not have started before the account opened, so this item may be obsolete. Ask the bureau for the DOFD it relies on.`,
+          [FIELDS.dofd, FIELDS.opened], 'FCRA § 605(a), (c); § 623(a)(5)', 'Request the DOFD / deletion if obsolete');
+      }
+    }
+
     if (t.issue && String(t.issue).trim()) {
       add('CONSUMER-ASSERTED', 'medium', 'Consumer-reported inaccuracy',
         `${t.issue}${t.evidence ? ' — evidence: ' + t.evidence : ''}`, [], 'FCRA § 611(a)(1)', 'Dispute with supporting evidence');
@@ -333,6 +389,40 @@
     return out;
   }
 
+  /** Two or more collection accounts for the same original creditor, each with a balance. */
+  function duplicateCollections(accounts) {
+    const groups = {};
+    accounts.filter(a => a.originalCreditor && num(a.balance) > 0).forEach(a => { const k = normCreditor(a.originalCreditor); (groups[k] = groups[k] || []).push(a); });
+    return Object.values(groups).filter(g => g.length > 1);
+  }
+
+  /**
+   * Compare the same tradeline on an earlier and a later report from the same bureau.
+   * A DOFD that moves later (re-aging) or a collection that re-appears after deletion are flagged.
+   */
+  function compareOverTime(prev, cur, opts) {
+    const out = [];
+    if (!prev || !cur) return out;
+    const before = {}; (prev.accounts || []).forEach(t => { before[matchKey(t)] = t; });
+    (cur.accounts || []).forEach(t => {
+      const p = before[matchKey(t)];
+      if (!p) return;
+      const d0 = date(p.dofd), d1 = date(t.dofd);
+      if (d0 && d1 && (d1 - d0) / 86400000 > 31) {
+        out.push({ accountId: t.id, creditor: t.creditor, bureau: cur.bureau, reportId: cur.id, code: 'M2-DOFD-MOVED', severity: 'high',
+          title: 'DOFD moved later between reports (re-aging)',
+          detail: `On the ${prev.date || 'earlier'} report the DOFD was ${fmt(d0)}; on the ${cur.date || 'later'} report it is ${fmt(d1)}. The DOFD is fixed once a delinquency starts — it must not change when the debt is sold or a payment is made.`,
+          fields: [FIELDS.dofd], basis: 'FCRA § 623(a)(5); § 605(c)', action: 'Dispute the DOFD with both reports enclosed' });
+      }
+      if (p.deleted && !t.deleted) {
+        out.push({ accountId: t.id, creditor: t.creditor, bureau: cur.bureau, reportId: cur.id, code: 'FCRA-REINSERTED', severity: 'high', title: 'Previously deleted item is back',
+          detail: 'This item was deleted after a dispute and appears again. A bureau must certify the information and notify the consumer in writing within 5 business days of reinsertion.',
+          fields: [], basis: 'FCRA § 611(a)(5)(B)', action: 'Ask for the reinsertion notice and furnisher certification' });
+      }
+    });
+    return out;
+  }
+
   function auditReport(report, opts) {
     const findings = [];
     (report.accounts || []).forEach(t => auditTradeline(t, opts).forEach(x => findings.push(Object.assign({ accountId: t.id, creditor: t.creditor, bureau: report.bureau, reportId: report.id }, x))));
@@ -341,13 +431,19 @@
       code: 'M2-DUPLICATE-DEBT', severity: 'high', title: 'Same debt reported with two balances', detail: d.detail,
       fields: [FIELDS.balance, FIELDS.status], basis: 'FCRA § 611; § 623(a)(2)', action: 'Dispute the duplicate balance'
     }));
+    duplicateCollections(report.accounts || []).forEach(g => g.forEach(a => findings.push({
+      accountId: a.id, creditor: a.creditor, bureau: report.bureau, reportId: report.id,
+      code: 'M2-DUPLICATE-COLLECTION', severity: 'high', title: 'Same original debt reported by more than one collector',
+      detail: `${g.map(x => x.creditor).join(' and ')} each report a balance for a debt from ${a.originalCreditor}. Only the current owner of a debt should report a balance.`,
+      fields: [FIELDS.balance, 'Original Creditor Name (K1 Segment)'], basis: 'FCRA § 611; § 623(a)(2)', action: 'Dispute the duplicate; ask each collector to validate ownership'
+    })));
     return findings;
   }
 
   const api = {
     ACCOUNT_STATUS, PAYMENT_HISTORY, PORTFOLIO_TYPE, ECOA, COMPLIANCE_CONDITION, CONSUMER_INFO_INDICATOR, SPECIAL_COMMENT, FIELDS,
     DELINQUENT, DEROGATORY, PAID_ZERO,
-    auditTradeline, auditReport, compareBureaus, duplicateDebts, obsolescenceDate, matchKey
+    auditTradeline, auditReport, compareBureaus, duplicateDebts, duplicateCollections, compareOverTime, obsolescenceDate, matchKey, normCreditor
   };
   root.Metro2 = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
