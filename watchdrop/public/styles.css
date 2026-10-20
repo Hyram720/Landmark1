@@ -1,0 +1,36 @@
+:root {
+  --bg: #0f0b0c; --card: #1c1416; --line: #33242a; --text: #f5ecee; --muted: #b09ba1;
+  --accent: #e11d48; --accent-2: #fb7185;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, Segoe UI, sans-serif; }
+a { color: var(--accent-2); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+header.top { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; }
+.logo { font-weight: 800; font-size: 20px; color: var(--text); text-decoration: none; letter-spacing: -.02em; }
+.logo span { color: var(--accent); }
+h1 { font-size: clamp(30px, 6vw, 50px); line-height: 1.05; letter-spacing: -.03em; margin: 8px 0 14px; }
+h2 { letter-spacing: -.02em; }
+.lead { color: var(--muted); font-size: 19px; }
+.fine { color: var(--muted); font-size: 13px; }
+.ok { color: #4ade80; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin: 24px 0; }
+label { display: block; font-size: 14px; color: var(--muted); margin: 14px 0 6px; }
+input[type=email], input[type=number] { width: 100%; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--line); background: #140e10; color: var(--text); font: inherit; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 99px; color: var(--text); cursor: pointer; }
+button, .btn { display: inline-block; width: 100%; margin-top: 18px; padding: 14px 18px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; font: 700 17px system-ui, sans-serif; cursor: pointer; text-align: center; text-decoration: none; }
+button:disabled { opacity: .6; cursor: wait; }
+.cta { margin: 24px 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.card h3 { margin: 0 0 4px; font-size: 16px; }
+.card p { margin: 0; color: var(--muted); font-size: 14px; }
+.preview img { width: 100%; border-radius: 8px; display: block; margin-bottom: 8px; }
+/* Issue pages reuse the email markup (inline styles are tuned for light email); adapt it to the dark site. */
+.issue .item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 12px 0; }
+.issue .item.pick { border-color: var(--accent); }
+.issue .item a[style*="color:#111"] { color: var(--text) !important; }
+.issue .item div[style*="color:#374151"] { color: var(--muted) !important; }
+.issue h2 { color: var(--text); }
+footer { color: var(--muted); font-size: 13px; padding: 40px 0; text-align: center; }

@@ -1,0 +1,239 @@
+{
+ "hasMore": false,
+ "shows": {
+  "101": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "101",
+   "imdbId": "tt101",
+   "tmdbId": "movie/101",
+   "title": "The Long Quiet",
+   "overview": "A lighthouse keeper finds a radio that picks up tomorrow. It gets complicated.",
+   "releaseYear": 2025,
+   "originalTitle": "The Long Quiet",
+   "genres": [
+    {
+     "id": "drama",
+     "name": "Drama"
+    },
+    {
+     "id": "mystery",
+     "name": "Mystery"
+    }
+   ],
+   "cast": [],
+   "rating": 88,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/101-360.jpg",
+     "w480": "https://img.example/101-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/101-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "102": {
+   "itemType": "show",
+   "showType": "series",
+   "id": "102",
+   "imdbId": "tt102",
+   "tmdbId": "movie/102",
+   "title": "Midnight Shift",
+   "overview": "Night-shift nurses run a hospital that never sleeps.",
+   "firstAirYear": 2026,
+   "originalTitle": "Midnight Shift",
+   "genres": [
+    {
+     "id": "comedy",
+     "name": "Comedy"
+    }
+   ],
+   "cast": [],
+   "rating": 81,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/102-360.jpg",
+     "w480": "https://img.example/102-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/102-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "103": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "103",
+   "imdbId": "tt103",
+   "tmdbId": "movie/103",
+   "title": "Forgettable Sequel 4",
+   "overview": "More explosions.",
+   "releaseYear": 2026,
+   "originalTitle": "Forgettable Sequel 4",
+   "genres": [
+    {
+     "id": "action",
+     "name": "Action"
+    }
+   ],
+   "cast": [],
+   "rating": 41,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/103-360.jpg",
+     "w480": "https://img.example/103-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/103-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "106": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "106",
+   "imdbId": "tt106",
+   "tmdbId": "movie/106",
+   "title": "Old Classic",
+   "overview": "A classic.",
+   "releaseYear": 1994,
+   "originalTitle": "Old Classic",
+   "genres": [
+    {
+     "id": "crime",
+     "name": "Crime"
+    },
+    {
+     "id": "drama",
+     "name": "Drama"
+    }
+   ],
+   "cast": [],
+   "rating": 90,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/106-360.jpg",
+     "w480": "https://img.example/106-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/106-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  }
+ },
+ "changes": [
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "101",
+   "showType": "movie",
+   "service": {
+    "id": "netflix",
+    "name": "Netflix",
+    "homePage": "https://netflix.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1792195200,
+   "link": "https://netflix.example/title/101"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "101",
+   "showType": "movie",
+   "service": {
+    "id": "hulu",
+    "name": "Hulu",
+    "homePage": "https://hulu.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1792281600,
+   "link": "https://hulu.example/title/101"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "102",
+   "showType": "series",
+   "service": {
+    "id": "hbo",
+    "name": "HBO Max",
+    "homePage": "https://hbo.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1792108800,
+   "link": "https://hbo.example/title/102"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "103",
+   "showType": "movie",
+   "service": {
+    "id": "netflix",
+    "name": "Netflix",
+    "homePage": "https://netflix.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1792022400,
+   "link": "https://netflix.example/title/103"
+  },
+  {
+   "changeType": "updated",
+   "itemType": "season",
+   "showId": "106",
+   "showType": "movie",
+   "service": {
+    "id": "netflix",
+    "name": "Netflix",
+    "homePage": "https://netflix.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1792022400,
+   "link": "https://netflix.example/title/106"
+  }
+ ]
+}

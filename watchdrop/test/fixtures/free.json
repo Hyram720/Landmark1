@@ -1,0 +1,254 @@
+{
+ "hasMore": false,
+ "shows": {
+  "101": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "101",
+   "imdbId": "tt101",
+   "tmdbId": "movie/101",
+   "title": "The Long Quiet",
+   "overview": "A lighthouse keeper finds a radio that picks up tomorrow. It gets complicated.",
+   "releaseYear": 2025,
+   "originalTitle": "The Long Quiet",
+   "genres": [
+    {
+     "id": "drama",
+     "name": "Drama"
+    },
+    {
+     "id": "mystery",
+     "name": "Mystery"
+    }
+   ],
+   "cast": [],
+   "rating": 88,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/101-360.jpg",
+     "w480": "https://img.example/101-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/101-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "106": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "106",
+   "imdbId": "tt106",
+   "tmdbId": "movie/106",
+   "title": "Old Classic",
+   "overview": "A classic.",
+   "releaseYear": 1994,
+   "originalTitle": "Old Classic",
+   "genres": [
+    {
+     "id": "crime",
+     "name": "Crime"
+    },
+    {
+     "id": "drama",
+     "name": "Drama"
+    }
+   ],
+   "cast": [],
+   "rating": 90,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/106-360.jpg",
+     "w480": "https://img.example/106-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/106-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "107": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "107",
+   "imdbId": "tt107",
+   "tmdbId": "movie/107",
+   "title": "Meh Thriller",
+   "overview": "Fine.",
+   "releaseYear": 2020,
+   "originalTitle": "Meh Thriller",
+   "genres": [
+    {
+     "id": "thriller",
+     "name": "Thriller"
+    }
+   ],
+   "cast": [],
+   "rating": 52,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/107-360.jpg",
+     "w480": "https://img.example/107-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/107-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "108": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "108",
+   "imdbId": "tt108",
+   "tmdbId": "movie/108",
+   "title": "Space Cowboys of Tomorrow",
+   "overview": "Retired astronauts, one last job.",
+   "releaseYear": 2017,
+   "originalTitle": "Space Cowboys of Tomorrow",
+   "genres": [
+    {
+     "id": "sci-fi",
+     "name": "Sci-Fi"
+    }
+   ],
+   "cast": [],
+   "rating": 72,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/108-360.jpg",
+     "w480": "https://img.example/108-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/108-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  }
+ },
+ "changes": [
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "106",
+   "showType": "movie",
+   "service": {
+    "id": "tubi",
+    "name": "Tubi",
+    "homePage": "https://tubi.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "free",
+   "timestamp": 1791763200,
+   "link": "https://tubi.example/title/106"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "106",
+   "showType": "movie",
+   "service": {
+    "id": "plutotv",
+    "name": "Pluto TV",
+    "homePage": "https://plutotv.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "free",
+   "timestamp": 1791849600,
+   "link": "https://plutotv.example/title/106"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "108",
+   "showType": "movie",
+   "service": {
+    "id": "tubi",
+    "name": "Tubi",
+    "homePage": "https://tubi.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "free",
+   "timestamp": 1791936000,
+   "link": "https://tubi.example/title/108"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "101",
+   "showType": "movie",
+   "service": {
+    "id": "plutotv",
+    "name": "Pluto TV",
+    "homePage": "https://plutotv.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "free",
+   "timestamp": 1791936000,
+   "link": "https://plutotv.example/title/101"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "107",
+   "showType": "movie",
+   "service": {
+    "id": "tubi",
+    "name": "Tubi",
+    "homePage": "https://tubi.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "free",
+   "timestamp": 1791936000,
+   "link": "https://tubi.example/title/107"
+  },
+  {
+   "changeType": "new",
+   "itemType": "show",
+   "showId": "108",
+   "showType": "movie",
+   "service": {
+    "id": "plutotv",
+    "name": "Pluto TV",
+    "homePage": "https://plutotv.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "free",
+   "timestamp": 1791936000
+  }
+ ]
+}

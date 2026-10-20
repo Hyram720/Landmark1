@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WatchDrop: what's new, leaving and free on your streaming services</title>
+  <meta name="description" content="One email every Thursday: what's new and actually good on the services you pay for, what's leaving before you miss it, and the best free movies on Tubi, Pluto and more. Free.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top"><a class="logo" href="/">Watch<span>Drop</span></a><a href="/issues">Past issues</a></header>
+
+    <h1>Stop scrolling. Start watching.</h1>
+    <p class="lead">Every Thursday, one short email built around the services you already pay for: what's new and actually good, what's leaving before you miss it, and the best stuff that's free. Picked by an AI editor. Free, unsubscribe in one click.</p>
+
+    <form class="panel" id="signup">
+      <label for="email">Your email</label>
+      <input type="email" id="email" name="email" placeholder="you@example.com" required>
+      <label>Services you pay for</label>
+      <div class="chips" id="services"><span class="fine">Loading services…</span></div>
+      <label>Show me</label>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" name="types" value="movie" checked> Movies</label>
+        <label class="chip"><input type="checkbox" name="types" value="series" checked> Series</label>
+      </div>
+      <label class="chip" style="margin-top:14px"><input type="checkbox" name="free" checked> Include free picks (Tubi, Pluto and other free services)</label>
+      <button type="submit" id="go">Send me the picks</button>
+      <p class="fine" id="msg">You'll get a confirm email first.</p>
+    </form>
+
+    <div id="latest"></div>
+
+    <h2>What's in every issue</h2>
+    <div class="grid">
+      <div class="card"><h3>🆕 New and worth it</h3><p>Only titles rated 70+ that landed on your services this week. No filler.</p></div>
+      <div class="card"><h3>⏳ Leaving soon</h3><p>Last chance before titles disappear from your services in the next two weeks.</p></div>
+      <div class="card"><h3>🆓 Free this week</h3><p>The good stuff on free, ad-supported services. No subscription needed.</p></div>
+      <div class="card"><h3>🍿 One line each</h3><p>An AI editor tells you who each pick is for. Services and dates come straight from the catalogs.</p></div>
+    </div>
+
+    <footer>Streaming data via the <a href="https://www.movieofthenight.com/about/api">Streaming Availability API</a></footer>
+  </div>
+  <script>
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const POPULAR = ['netflix', 'prime', 'disney', 'hbo', 'hulu'];
+    fetch('/api/services').then((r) => r.json()).then((list) => {
+      document.getElementById('services').innerHTML = list
+        .map((s) => `<label class="chip"><input type="checkbox" name="services" value="${esc(s.id)}" ${POPULAR.includes(s.id) ? 'checked' : ''}> ${esc(s.name)}</label>`)
+        .join('');
+    });
+    const form = document.getElementById('signup');
+    const msg = document.getElementById('msg');
+    const params = new URLSearchParams(location.search);
+    const checked = (name) => [...form.querySelectorAll(`input[name=${name}]:checked`)].map((i) => i.value);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('go');
+      btn.disabled = true;
+      const data = {
+        email: form.email.value,
+        services: checked('services'),
+        types: checked('types'),
+        free: form.free.checked,
+        source: params.get('ref') || params.get('utm_source') || '',
+      };
+      try {
+        const res = await fetch('/api/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error);
+        form.innerHTML = `<h2 style="margin:0">Almost there</h2><p>${esc(body.message)}</p>`;
+      } catch (err) {
+        msg.textContent = err.message || 'Something went wrong. Try again.';
+        btn.disabled = false;
+      }
+    });
+    fetch('/api/latest').then((r) => r.json()).then((i) => {
+      if (!i) return;
+      const label = { new: 'New on', free: 'Free on', leaving: 'Leaving' };
+      document.getElementById('latest').innerHTML = `
+        <h2>This week: ${esc(i.headline)}</h2>
+        <p class="fine">${esc(i.intro)}</p>
+        <div class="grid preview">${i.top.map((t) => `<div class="card">${t.image ? `<img src="${esc(t.image)}" alt="">` : ''}<h3>${esc(t.title)}</h3><p>${label[t.kind]} ${esc(t.services.join(', '))}${t.year ? ` · ${t.year}` : ''}${t.rating ? ` · ${t.rating}/100` : ''}</p></div>`).join('')}</div>
+        <p><a href="/issues/${esc(i.week)}">See all ${i.newCount} new, ${i.leavingCount} leaving and ${i.freeCount} free picks →</a></p>`;
+    }).catch(() => {});
+  </script>
+</body>
+</html>

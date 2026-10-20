@@ -1,0 +1,167 @@
+{
+ "hasMore": false,
+ "shows": {
+  "104": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "104",
+   "imdbId": "tt104",
+   "tmdbId": "movie/104",
+   "title": "Paper Moons",
+   "overview": "Two pen pals meet for the first time, forty years later.",
+   "releaseYear": 2019,
+   "originalTitle": "Paper Moons",
+   "genres": [
+    {
+     "id": "romance",
+     "name": "Romance"
+    },
+    {
+     "id": "drama",
+     "name": "Drama"
+    }
+   ],
+   "cast": [],
+   "rating": 77,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/104-360.jpg",
+     "w480": "https://img.example/104-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/104-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "105": {
+   "itemType": "show",
+   "showType": "series",
+   "id": "105",
+   "imdbId": "tt105",
+   "tmdbId": "movie/105",
+   "title": "Cold Case Island",
+   "overview": "A detective returns home.",
+   "firstAirYear": 2021,
+   "originalTitle": "Cold Case Island",
+   "genres": [
+    {
+     "id": "crime",
+     "name": "Crime"
+    }
+   ],
+   "cast": [],
+   "rating": 74,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/105-360.jpg",
+     "w480": "https://img.example/105-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/105-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  },
+  "107": {
+   "itemType": "show",
+   "showType": "movie",
+   "id": "107",
+   "imdbId": "tt107",
+   "tmdbId": "movie/107",
+   "title": "Meh Thriller",
+   "overview": "Fine.",
+   "releaseYear": 2020,
+   "originalTitle": "Meh Thriller",
+   "genres": [
+    {
+     "id": "thriller",
+     "name": "Thriller"
+    }
+   ],
+   "cast": [],
+   "rating": 52,
+   "imageSet": {
+    "horizontalPoster": {
+     "w360": "https://img.example/107-360.jpg",
+     "w480": "https://img.example/107-480.jpg",
+     "w720": "",
+     "w1080": "",
+     "w1440": ""
+    },
+    "verticalPoster": {
+     "w240": "",
+     "w360": "https://img.example/107-v.jpg",
+     "w480": "",
+     "w600": "",
+     "w720": ""
+    }
+   },
+   "streamingOptions": {}
+  }
+ },
+ "changes": [
+  {
+   "changeType": "expiring",
+   "itemType": "show",
+   "showId": "105",
+   "showType": "series",
+   "service": {
+    "id": "netflix",
+    "name": "Netflix",
+    "homePage": "https://netflix.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1793404800,
+   "link": "https://netflix.example/title/105"
+  },
+  {
+   "changeType": "expiring",
+   "itemType": "show",
+   "showId": "104",
+   "showType": "movie",
+   "service": {
+    "id": "hulu",
+    "name": "Hulu",
+    "homePage": "https://hulu.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1792886400,
+   "link": "https://hulu.example/title/104"
+  },
+  {
+   "changeType": "expiring",
+   "itemType": "show",
+   "showId": "107",
+   "showType": "movie",
+   "service": {
+    "id": "netflix",
+    "name": "Netflix",
+    "homePage": "https://netflix.example",
+    "themeColorCode": "#000",
+    "imageSet": {}
+   },
+   "streamingOptionType": "subscription",
+   "timestamp": 1792800000,
+   "link": "https://netflix.example/title/107"
+  }
+ ]
+}

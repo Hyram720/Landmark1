@@ -1,0 +1,32 @@
+[
+ {
+  "id": "netflix",
+  "name": "Netflix",
+  "subscription": true,
+  "free": false
+ },
+ {
+  "id": "hulu",
+  "name": "Hulu",
+  "subscription": true,
+  "free": false
+ },
+ {
+  "id": "hbo",
+  "name": "HBO Max",
+  "subscription": true,
+  "free": false
+ },
+ {
+  "id": "tubi",
+  "name": "Tubi",
+  "subscription": false,
+  "free": true
+ },
+ {
+  "id": "plutotv",
+  "name": "Pluto TV",
+  "subscription": false,
+  "free": true
+ }
+]
