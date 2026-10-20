@@ -12,7 +12,8 @@
     "content": "node scripts/content-engine.js 30",
     "test:ledger": "node --test ledger/test/ledger.test.cjs ledger/test/server.test.js",
     "ledger": "node ledger/server/index.js",
-    "ledger:master": "node ledger/build-master.cjs"
+    "ledger:master": "node ledger/build-master.cjs",
+    "ledger:start": "node ledger/server/index.js"
   },
   "repository": {
     "type": "git",

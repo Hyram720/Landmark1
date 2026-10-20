@@ -12,20 +12,53 @@ export function openDb({ dir, encryptionKey }) {
 
   let data = { users: [], invites: [], workspace: null, workspaceVersion: 0, audit: [], secret: null };
   if (fs.existsSync(file)) data = Object.assign(data, decode(fs.readFileSync(file, 'utf8'), key));
-  if (!data.secret) { data.secret = crypto.randomBytes(32).toString('hex'); persist(); }
 
+  // Every write re-encrypts and rewrites the whole document, atomically (write temp file, fsync,
+  // rename). High-frequency, low-value writes (link clicks) use persistSoon(), which batches them.
+  let timer = null, dirty = false;
   function persist() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    dirty = false;
     const tmp = file + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, encode(data, key), { mode: 0o600 });
+    const fd = fs.openSync(tmp, 'w', 0o600);
+    try { fs.writeSync(fd, encode(data, key)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     fs.renameSync(tmp, file);
+    snapshotDaily();
   }
+  function persistSoon(ms = 2000) {
+    dirty = true;
+    if (!timer) { timer = setTimeout(() => { timer = null; if (dirty) persist(); }, ms); if (timer.unref) timer.unref(); }
+  }
+  function flush() { if (dirty || timer) persist(); }
+
+  // One encrypted copy of the database per day under <dir>/backups, newest `keep` kept. These sit
+  // on the same volume, so they protect against bad saves, not against losing the volume.
+  const backupDir = path.join(dir, 'backups');
+  const keep = Math.max(1, Number(process.env.LEDGER_BACKUP_DAYS || 14));
+  let lastSnapshot = '';
+  function snapshotDaily() {
+    const day = new Date().toISOString().slice(0, 10);
+    if (day === lastSnapshot || process.env.LEDGER_BACKUPS === 'off') return;
+    try {
+      fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+      const target = path.join(backupDir, `ledger-db-${day}.json`);
+      if (!fs.existsSync(target)) fs.copyFileSync(file, target);
+      fs.readdirSync(backupDir).filter(f => /^ledger-db-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort().reverse().slice(keep)
+        .forEach(f => fs.rmSync(path.join(backupDir, f), { force: true }));
+      lastSnapshot = day;
+    } catch (e) { console.error('[db] daily backup failed:', e.message); }
+  }
+
+  if (!data.secret) { data.secret = crypto.randomBytes(32).toString('hex'); persist(); }
 
   function audit(entry) {
     data.audit.unshift(Object.assign({ at: new Date().toISOString() }, entry));
     if (data.audit.length > 5000) data.audit.length = 5000;
   }
 
-  return { get data() { return data; }, persist, audit, encrypted: !!key, file };
+  function writable() { try { fs.accessSync(dir, fs.constants.W_OK); return true; } catch { return false; } }
+
+  return { get data() { return data; }, persist, persistSoon, flush, audit, writable, encrypted: !!key, file, backupDir };
 }
 
 function deriveKey(secret) {

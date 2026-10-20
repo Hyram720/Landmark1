@@ -9,7 +9,11 @@ import { commsConfig, sendEmail, sendSms } from './comms.js';
 import { askAssistant, assistantConfigured, setKeyProvider, checkKey } from './assistant.js';
 import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
-import { hashPassword, verifyPassword, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
+import { hashPassword, verifyPassword, burnPasswordCheck, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
+import { mountLedgerAssistant } from './ledger-assistant.js';
+import { mountPartnerLinks } from './partner-links.js';
+import { mountClientAuth } from './client-auth.js';
+import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
 import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
@@ -23,6 +27,7 @@ const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
+const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
 export function createApp({ dataDir, encryptionKey } = {}) {
   const db = openDb({ dir: dataDir, encryptionKey });
@@ -32,10 +37,15 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   const D = () => db.data;
   setKeyProvider(() => (db.data.secrets && db.data.secrets.anthropicKey) || '');
   const app = express();
-  app.set('trust proxy', true);
+  // Railway puts exactly one proxy in front of the app. Trusting only that hop means req.ip is the
+  // address the proxy saw, not whatever a client writes into X-Forwarded-For (which would let
+  // anyone dodge the login and intake rate limits).
+  app.set('trust proxy', Number(process.env.LEDGER_TRUST_PROXY_HOPS || 1));
   app.disable('x-powered-by');
 
   const loginLimit = rateLimiter(10, 15 * 60 * 1000);
+  const loginEmailLimit = rateLimiter(20, 60 * 60 * 1000); // per account, across IPs
+  const inviteLimit = rateLimiter(20, 15 * 60 * 1000);
   const intakeLimit = rateLimiter(5, 60 * 60 * 1000);
 
   app.use((req, res, next) => {
@@ -44,14 +54,31 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       'X-Frame-Options': 'DENY',
       'Referrer-Policy': 'same-origin',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self' https://accept.authorize.net https://test.authorize.net"
     });
+    if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     next();
   });
-  app.use(express.json({ limit: '10mb' }));
+  // Public endpoints get a small body limit; signed-in staff need room for whole-workspace saves.
+  const smallJson = express.json({ limit: '32kb' });
+  const bigJson = express.json({ limit: '10mb' });
+  const PUBLIC_POSTS = new Set(['/api/intake', '/api/login', '/api/setup', '/api/invites/accept', '/api/assistant/public']);
+  app.use((req, res, next) => (PUBLIC_POSTS.has(req.path) || req.path.startsWith('/api/auth/') ? smallJson : bigJson)(req, res, next));
+
+  // ---------- health ----------
+  // Used by Railway's health check. No secrets, no client data; cheap enough to call every few seconds.
+  const startedAt = Date.now();
+  const health = (req, res) => {
+    const writable = db.writable();
+    res.status(writable ? 200 : 503).set('Cache-Control', 'no-store').json({ ok: writable, uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), build: BUILD, encrypted: db.encrypted, storage: writable ? 'writable' : 'NOT writable' });
+  };
+  app.get(['/api/health', '/healthz'], health);
 
   // ---------- helpers ----------
-  const cookies = (req) => Object.fromEntries(String(req.headers.cookie || '').split(';').map(c => c.trim().split('=')).filter(p => p[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]));
+  // A malformed cookie from another site on the same host (bad % escape) must not 500 every request.
+  const safeDecode = v => { try { return decodeURIComponent(v); } catch { return v; } };
+  const cookies = (req) => Object.fromEntries(String(req.headers.cookie || '').split(';').map(c => c.trim().split('=')).filter(p => p[0]).map(([k, ...v]) => [k, safeDecode(v.join('='))]));
   function currentUser(req) {
     const p = verifyToken(cookies(req)[SESSION_COOKIE], D().secret);
     if (!p) return null;
@@ -60,7 +87,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   }
   function startSession(req, res, u) {
     const token = signToken({ uid: u.id, ep: u.sessionEpoch }, D().secret, SESSION_TTL);
-    res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge: SESSION_TTL * 1000, path: '/' });
+    res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: req.secure || process.env.NODE_ENV === 'production', maxAge: SESSION_TTL * 1000, path: '/' });
   }
   const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, clientId: u.clientId || null, referralId: u.referralId || null });
   const need = (...roles) => (req, res, next) => {
@@ -83,6 +110,9 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     workspace().activity.unshift({ id: uid(), at: new Date().toISOString(), text, clientId: clientId || null });
   }
 
+  // Forgot password, magic links, email codes and client notifications (server/client-auth.js).
+  let auth = null;
+
   // ---------- session ----------
   app.get('/api/session', (req, res) => {
     const u = currentUser(req);
@@ -91,6 +121,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
 
   app.post('/api/setup', (req, res) => {
     if (D().users.length) return res.status(409).json({ error: 'Already set up' });
+    if (!loginLimit('setup:' + req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
     const { name, email, password, setupCode } = req.body || {};
     if (process.env.LEDGER_SETUP_CODE && String(setupCode || '').replace(/\s+/g, '').toUpperCase() !== process.env.LEDGER_SETUP_CODE.replace(/\s+/g, '').toUpperCase()) return res.status(403).json({ error: 'That setup code is not correct. Check the LEDGER_SETUP_CODE value in Railway → Variables.' });
     const prob = passwordProblem(password);
@@ -107,8 +138,12 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   app.post('/api/login', (req, res) => {
     if (!loginLimit(req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
     const { email, password } = req.body || {};
-    const u = D().users.find(x => x.email === String(email || '').toLowerCase() && !x.disabled);
-    if (!u || !verifyPassword(password, u.password)) return res.status(401).json({ error: 'Email or password is incorrect' });
+    const addr = String(email || '').toLowerCase().slice(0, 200);
+    if (!loginEmailLimit(addr)) return res.status(429).json({ error: 'Too many attempts for this account. Try again in an hour.' });
+    const u = D().users.find(x => x.email === addr && !x.disabled);
+    if (!u) { burnPasswordCheck(password); return res.status(401).json({ error: 'Email or password is incorrect' }); }
+    if (!verifyPassword(password, u.password)) return res.status(401).json({ error: 'Email or password is incorrect' });
+    if (auth.otpRequired(u)) { db.audit({ actor: u.email, action: 'login.password_ok_otp_sent', detail: req.ip }); return auth.startOtp(req, res, u); }
     db.audit({ actor: u.email, action: 'login', detail: req.ip });
     db.persist();
     startSession(req, res, u);
@@ -127,8 +162,10 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const { baseVersion, data } = req.body || {};
     if (!data || data.version !== 2 || !Array.isArray(data.clients)) return res.status(400).json({ error: 'Invalid workspace' });
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
+    const before = D().workspace;
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
+    try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }
     res.json({ version: D().workspaceVersion });
   });
 
@@ -143,7 +180,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     db.persist();
     res.json({ ok: true });
   });
-  app.post('/api/invites', need('owner', 'staff'), (req, res) => {
+  app.post('/api/invites', need('owner', 'staff'), async (req, res) => {
     const { role, clientId, referralId, name, email } = req.body || {};
     if (role === 'staff' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can invite staff' });
     if (!['staff', 'client', 'partner'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
@@ -161,10 +198,17 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     db.audit({ actor: req.user.email, action: 'invite.create', detail: `${role} ${email || (c && c.name) || (rf && rf.name) || ''}` });
     db.persist();
     const page = role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app';
-    res.json({ url: `${req.protocol}://${req.get('host')}/${page}#invite=${token}`, expiresInDays: 7 });
+    const url = `${req.protocol}://${req.get('host')}/${page}#invite=${token}`;
+    const to = (email || (c && c.email) || (rf && rf.email) || '').toLowerCase();
+    let emailed = false;
+    if ((req.body || {}).sendEmail && mailEnabled() && /^\S+@\S+\.\S+$/.test(to)) {
+      try { emailed = (await sendMail({ to, subject: `You’re invited to ${(company().name || 'your')} portal`, text: `Set up your account here (expires in 7 days):\n${url}` })).sent; } catch (e) { console.error('[mail] invite:', e.message); }
+    }
+    res.json({ url, expiresInDays: 7, emailed });
   });
   app.post('/api/invites/accept', (req, res) => {
     const { token, password, email } = req.body || {};
+    if (!inviteLimit(req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
     const inv = D().invites.find(i => i.hash === sha(token) && !i.usedAt && i.expiresAt > Date.now());
     if (!inv) return res.status(400).json({ error: 'This invitation is invalid or has expired' });
     const prob = passwordProblem(password);
@@ -261,6 +305,9 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const r = (ws.partnerReferrals || []).find(x => x.id === req.params.id);
     const o = r ? ws.offers.find(x => x.id === r.offerId) : ws.offers.find(x => x.id === req.params.id);
     if (!o) return res.status(404).send('Link not found');
+    // A signed-in client can only use their own recommendation links (no cross-client click tracking).
+    const viewer = currentUser(req);
+    if (r && viewer && viewer.role === 'client' && viewer.clientId !== r.clientId) return res.status(404).send('Link not found');
     const dest = o.affiliateUrl || o.url;
     if (!/^https:\/\//.test(dest || '')) return res.status(404).send('Link not configured');
     if (r) {
@@ -268,8 +315,12 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       if (!r.clickedAt) r.clickedAt = new Date().toISOString();
       if (r.status === 'recommended') r.status = 'clicked';
     } else o.clicks = (o.clicks || 0) + 1;
-    commitWorkspace('public', 'referral.click', o.key);
-    res.redirect(302, dest);
+    // Clicks are batched into one save every few seconds instead of rewriting the encrypted
+    // database on every hit of a public URL.
+    D().workspaceVersion += 1;
+    db.audit({ actor: 'public', action: 'referral.click', detail: o.key });
+    db.persistSoon();
+    res.set('Cache-Control', 'no-store').redirect(302, dest);
   });
 
   // ---------- public intake ----------
@@ -279,13 +330,23 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     if (!intakeLimit(req.ip)) return res.status(429).json({ error: 'Too many submissions. Please call us instead.' });
     const kind = ['personal', 'business', 'both'].includes(b.kind) ? b.kind : 'personal';
     const first = String(b.firstName || '').trim().slice(0, 60), last = String(b.lastName || '').trim().slice(0, 60);
-    if (!first || !last || !/^\S+@\S+\.\S+$/.test(b.email || '')) return res.status(400).json({ error: 'Name and a valid email are required' });
+    const email = String(b.email || '').trim();
+    if (!first || !last || email.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return res.status(400).json({ error: 'Name and a valid email are required' });
     if (!b.consent) return res.status(400).json({ error: 'Please agree to be contacted' });
+    const phone = String(b.phone || '').trim();
+    if (phone && !/^[+()\d\s.-]{7,25}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid phone number, or leave it blank' });
+    const st = String(b.state || '').trim().toUpperCase();
+    if (st && !/^[A-Z]{2}$/.test(st)) return res.status(400).json({ error: 'Use the 2-letter state abbreviation, e.g. NJ' });
+    if (b.smsConsent && !phone) return res.status(400).json({ error: 'Add a mobile number if you’d like texts' });
+    // Strip anything that looks like a full SSN out of free text: the form tells people not to enter one.
+    const scrub = v => String(v || '').replace(/\b\d{3}[- ]?\d{2}[- ]?\d{4}\b/g, '[removed]');
     const c = {
-      id: uid(), name: `${first} ${last}`, firstName: first, lastName: last, kind, email: String(b.email).toLowerCase().slice(0, 120), phone: String(b.phone || '').slice(0, 30),
-      address: '', city: '', state: String(b.state || '').slice(0, 2).toUpperCase(), zip: '', dob: '', ssnLast4: '', status: 'lead', createdAt: new Date().toISOString(),
-      notes: [b.goals && `Goals: ${String(b.goals).slice(0, 1000)}`, b.source && `Heard about us: ${String(b.source).slice(0, 100)}`].filter(Boolean).join('\n'),
+      id: uid(), name: `${first} ${last}`, firstName: first, lastName: last, kind, email: email.toLowerCase(), phone: phone.slice(0, 30),
+      address: '', city: '', state: st, zip: '', dob: '', ssnLast4: '', status: 'lead', createdAt: new Date().toISOString(),
+      notes: [b.goals && `Goals: ${scrub(b.goals).slice(0, 1000)}`, b.source && `Heard about us: ${scrub(b.source).slice(0, 100)}`].filter(Boolean).join('\n'),
       referralId: (workspace().referrals || []).some(r => r.id === b.ref) ? b.ref : '', onboarding: {}, smsConsent: !!b.smsConsent,
+      // Evidence of what the person agreed to and when (TCPA / CROA records).
+      consentRecord: { contactAt: new Date().toISOString(), sms: !!b.smsConsent, ip: req.ip, formVersion: 'apply-2026-10-19' },
       business: kind !== 'personal' ? { legalName: String(b.businessName || '').slice(0, 120), entityType: String(b.entityType || '').slice(0, 30), formedOn: '', website: String(b.businessWebsite || '').slice(0, 120) } : undefined
     };
     workspace().clients.push(c);
@@ -560,6 +621,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       const host = req.get('host') || '';
       if (/^(localhost|127\.|0\.0\.0\.0)/.test(host)) return res.status(400).json({ error: 'This letter is too long to send inline, and the server is not reachable from the internet for Lob to fetch it.' });
       const token = crypto.randomBytes(24).toString('base64url');
+      for (const [t, v] of mailDocs) if (v.expires < Date.now()) mailDocs.delete(t);
       mailDocs.set(token, { html, expires: Date.now() + 60 * 60 * 1000 });
       file = `https://${host}/mail-doc/${token}`;
     }
@@ -611,6 +673,11 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const co = company();
     if (!inv || inv.status === 'void') return res.status(404).send(payPage('Invoice not found', '<h1>Invoice not found</h1><p class="muted">This payment link is not valid. Please contact us.</p>'));
     if (inv.status === 'paid') return res.send(payPage('Paid', `<h1>Thank you</h1><p>This invoice was paid${inv.paidAt ? ' on ' + htmlEsc(inv.paidAt) : ''}.</p>`));
+    // CROA § 1679b(b): no payment before the service is fully performed, and nothing inside the
+    // 3-business-day cancellation window. Enforced here too, not just when invoices are created.
+    const payClient = workspace().clients.find(x => x.id === inv.clientId);
+    const payCs = payClient ? Store.croaStatus(payClient) : null;
+    if (!inv.serviceCompletedAt || (payCs && (!payCs.cleared || payCs.cancelled))) return res.status(409).send(payPage('Not payable yet', `<h1>This invoice can’t be paid online yet</h1><p class="muted">We only accept payment after the service has been completed and your cancellation period has ended. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
     const billing = (workspace().settings || {}).billing || {};
     if (billing.provider === 'link' && /^https:\/\//.test(billing.payLink || '')) return res.redirect(302, billing.payLink);
     const a = anet();
@@ -682,10 +749,15 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       commission: { type: r.commissionType || 'none', amount: r.commissionAmount || '', terms: r.commission || '', earned: com.earned, paid: com.paid, owed: com.owed, payouts: r.payouts || [] } });
   });
 
+  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace });
+
+  // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
+  mountLedgerAssistant(app, { need, workspace, db, D, uid });
+  mountPartnerLinks(app, { need, workspace, db, D, currentUser });
+
   // ---------- static ----------
   // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old
   // file with a new one after an update.
-  const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
   const pageCache = {};
   const page = (f) => (req, res) => {
     if (!pageCache[f]) pageCache[f] = fs.readFileSync(path.join(ledgerDir, f), 'utf8').replace(/(src|href)="((?:js|css)\/[\w.-]+\.(?:js|css))"/g, `$1="$2?v=${BUILD}"`);
@@ -695,10 +767,24 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
   app.get('/partner', page('partner.html'));
-  const fresh = { setHeaders: res => res.set('Cache-Control', 'no-cache') };
+  // Pages link assets with ?v=<build>, so a stamped request can be cached for a year; an
+  // unstamped one is revalidated every time.
+  const fresh = { setHeaders: res => res.set('Cache-Control', res.req && res.req.query && res.req.query.v === BUILD ? 'public, max-age=31536000, immutable' : 'no-cache') };
   app.use('/css', express.static(path.join(ledgerDir, 'css'), fresh));
   app.use('/js', express.static(path.join(ledgerDir, 'js'), fresh));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+  app.use((req, res) => res.status(404).type('text/plain').send('Not found'));
 
-  return { app, db };
+  // One error handler for everything: JSON for the API, plain text elsewhere, never a stack trace.
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => {
+    const status = err.type === 'entity.too.large' ? 413 : err.type === 'entity.parse.failed' ? 400 : err.code === 'LIMIT_FILE_SIZE' ? 413 : (err.status >= 400 && err.status < 500 ? err.status : 500);
+    if (status >= 500) console.error(`[error] ${req.method} ${req.path}: ${err.stack || err.message}`);
+    const msg = status === 413 ? 'That upload or request is too large.' : status === 400 ? 'The request could not be read.' : status >= 500 ? 'Something went wrong on our side. Please try again.' : (err.expose ? err.message : 'Request failed');
+    if (res.headersSent) return;
+    if (req.path.startsWith('/api/')) res.status(status).json({ error: msg });
+    else res.status(status).type('text/plain').send(msg);
+  });
+
+  return { app, db, auth, shutdown: () => { auth.stop(); db.flush(); } };
 }
