@@ -52,11 +52,10 @@
   const mdLite = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\s?\[[a-z0-9-]+\]/g, '').replace(/\n/g, '<br>');
   function coachCard(v) {
     if (!v || !v.state) return '';
-    const st = v.state, u = st.utilization;
+    const st = v.state;
     return `<section class="card" id="coach"><div class="card-h"><div><h2>Your business credit plan</h2><p>${st.started ? `${st.done} of ${st.total} steps done` : 'Not started yet'}</p></div></div><div class="card-b stack">
       <div class="small" id="coach-text">${mdLite(v.text)}</div>
       ${st.current && !st.steps.find(s => s.key === st.current.key).clientConfirmed ? `<div class="row"><input id="coach-note" class="grow" maxlength="300" placeholder="Optional note for your advisor" aria-label="Note for your advisor"><button class="btn primary" id="coach-done" data-key="${esc(st.current.key)}">I’ve done this</button></div>` : st.current ? '<p class="small muted">Thanks — your advisor is reviewing this step.</p>' : ''}
-      ${u && u.business.accounts.length ? `<div class="small"><b>Utilization</b> (balance ÷ limit): ${u.business.accounts.map(a => `${esc(a.name)} ${a.pct}%`).join(' · ')} · overall <b>${u.business.pct}%</b>. Keeping balances low relative to limits (many experts suggest under 30%, lower is better) may help; paying vendors before the due date matters most for PAYDEX.</div>` : ''}
       ${(st.vendors || []).length ? `<div class="small"><b>Net-30 accounts:</b> ${st.vendors.map(x => `${esc(x.vendor)} (${esc(x.terms || '')}${x.status ? ', ' + esc(x.status) : ''})`).join(' · ')}</div>` : ''}
       <form class="row" id="coach-ask"><label class="sr-only" for="coach-q">Ask about your plan</label><input id="coach-q" class="grow" maxlength="800" placeholder="Ask about your plan…"><button class="btn">Ask</button></form>
       <p class="small muted">General information about your own plan — not a promise of any score, approval or funding.</p></div></section>`;
