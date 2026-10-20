@@ -64,11 +64,11 @@ export async function tick(now = new Date()) {
     const slot = sendSlot(now);
     let issue = getIssue(week);
     if (now < slot) {
-      if (!issue || now - Date.parse(issue.createdAt) > PREVIEW_MAX_AGE) await buildIssue(week, { force: true });
+      if (!issue || now - Date.parse(issue.createdAt) > PREVIEW_MAX_AGE) await buildIssue(week, { force: true, now });
       return;
     }
     if (!issue || (!issue.sendStartedAt && Date.parse(issue.createdAt) < slot.getTime())) {
-      issue = await buildIssue(week, { force: true });
+      issue = await buildIssue(week, { force: true, now });
     }
     if (!issue.sendStartedAt) saveIssue(Object.assign(issue, { sendStartedAt: now.toISOString() }));
     const result = await sendIssue(issue);

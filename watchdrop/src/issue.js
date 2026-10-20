@@ -15,14 +15,14 @@ export function isoWeek(date = new Date()) {
   return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-export async function buildIssue(week = isoWeek(), { force = false } = {}) {
+export async function buildIssue(week = isoWeek(), { force = false, now = new Date() } = {}) {
   const existing = getIssue(week);
   if (existing && !force) return existing;
   const picks = curate(await fetchAll());
   const copy = await writeCopy(picks);
   return saveIssue({
     week,
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
     ...picks,
     copy,
     sentTo: existing?.sentTo || [],
