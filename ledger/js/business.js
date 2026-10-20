@@ -90,7 +90,57 @@
     return { done: n, total: FOUNDATION.length, pct: Math.round(n / FOUNDATION.length * 100) };
   }
 
-  const api = { SCORE_MODELS, FOUNDATION, STARTER_VENDORS, BUREAU_CONTACTS, FAST_TRACK, fundability, planStatus };
+  const num = v => { const n = Number(String(v == null ? '' : v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : 0; };
+  const band = pct => pct === null ? 'unknown' : pct >= 50 ? 'high' : pct >= 30 ? 'elevated' : pct >= 10 ? 'ok' : 'low';
+
+  /**
+   * Revolving utilization (balance ÷ limit). Business: vendor accounts and credit lines with a
+   * limit. Personal: open revolving tradelines on the latest report per bureau, plus any
+   * owner-guaranteed business account marked as reporting to the owner's personal file.
+   * Guidance only (CFPB: experts advise no more than 30%; lower is better). Not a score promise.
+   */
+  function utilization(c, ws) {
+    const rows = [];
+    (c.vendorAccounts || []).concat(c.creditLines || []).forEach(a => {
+      const limit = num(a.limit), bal = num(a.balance);
+      if (!limit || /closed/i.test(a.status || '')) return;
+      rows.push({ id: a.id, name: a.vendor || a.name || 'Account', kind: a.kind || (a.vendor ? 'vendor' : 'line'), balance: bal, limit, pct: Math.round(bal / limit * 100), guaranteed: !!a.personalGuarantee, reportsToPersonal: !!a.reportsToPersonal, statementDay: a.statementDay || null });
+    });
+    rows.forEach(r => { r.band = band(r.pct); });
+    const tot = rows.reduce((t, r) => ({ b: t.b + r.balance, l: t.l + r.limit }), { b: 0, l: 0 });
+    const business = { accounts: rows, balance: tot.b, limit: tot.l, pct: tot.l ? Math.round(tot.b / tot.l * 100) : null };
+    business.band = band(business.pct);
+    // Personal: latest report per bureau, open revolving accounts.
+    const reps = {};
+    ((ws && ws.reports) || []).filter(r => r.clientId === c.id).forEach(r => { if (!reps[r.bureau] || String(r.date) > String(reps[r.bureau].date)) reps[r.bureau] = r; });
+    const perBureau = Object.values(reps).map(r => {
+      const rev = (r.accounts || []).filter(t => String(t.type || '').toUpperCase() === 'R' && !t.closed && num(t.limit) > 0);
+      const b = rev.reduce((x, t) => x + num(t.balance), 0), l = rev.reduce((x, t) => x + num(t.limit), 0);
+      const g = rows.filter(x => x.guaranteed && x.reportsToPersonal);
+      const gb = g.reduce((x, a) => x + a.balance, 0), gl = g.reduce((x, a) => x + a.limit, 0);
+      const pct = (l + gl) ? Math.round((b + gb) / (l + gl) * 100) : null;
+      return { bureau: r.bureau, balance: b + gb, limit: l + gl, pct, band: band(pct), includesGuaranteed: g.length };
+    });
+    const tips = [];
+    const hi = rows.filter(r => r.pct >= 30);
+    if (hi.length) tips.push(`${hi.map(r => `${r.name} (${r.pct}%)`).join(', ')} ${hi.length === 1 ? 'is' : 'are'} at or above 30% of the limit. Paying before the statement closing date, paying the balance down, asking for a limit increase, or spreading spend across accounts may lower reported utilization [util-30].`);
+    if (business.pct !== null && business.pct >= 30) tips.push(`Overall business utilization is ${business.pct}%. Experian lists utilization among Intelliscore factors [biz-util-intelliscore]; PAYDEX looks only at payment timing, so paying vendors early matters most there [biz-paydex-timing].`);
+    perBureau.filter(p => p.pct !== null && p.pct >= 30).forEach(p => tips.push(`Personal revolving utilization on ${p.bureau} is ${p.pct}%${p.includesGuaranteed ? ' (including owner-guaranteed accounts that report personally)' : ''}. Lower is generally better [util-30][util-guarantee].`));
+    return { business, personal: perBureau, tips };
+  }
+
+  /** The coach's view of the 90-day plan: current step, what's next, overdue and pending confirmations. */
+  function coachState(c, ws, today) {
+    const t = today || new Date().toISOString().slice(0, 10);
+    const ps = planStatus(c, t);
+    const pending = Object.entries((c.creditPlan && c.creditPlan.clientConfirmed) || {}).filter(([k, v]) => v && !v.reviewedAt).map(([key, v]) => ({ key, at: v.at, note: v.note || '' }));
+    if (!ps) return { started: false, pending, utilization: utilization(c, ws), vendors: (c.vendorAccounts || []).length };
+    const current = ps.steps.find(s => !s.complete) || null;
+    const next = current ? ps.steps.slice(ps.steps.indexOf(current) + 1).find(s => !s.complete) || null : null;
+    return { started: true, startedAt: ps.startedAt, done: ps.done, total: ps.total, current, next, overdue: ps.steps.filter(s => s.overdue).map(s => ({ key: s.key, title: s.title, due: s.due })), steps: ps.steps.map(s => ({ key: s.key, title: s.title, due: s.due, complete: s.complete, overdue: s.overdue, clientConfirmed: !!(((c.creditPlan || {}).clientConfirmed || {})[s.key]) })), pending, utilization: utilization(c, ws), vendors: (c.vendorAccounts || []).map(v => ({ vendor: v.vendor, terms: v.terms, limit: v.limit, balance: v.balance, status: v.status, reportsTo: v.reportsTo, opened: v.opened })) };
+  }
+
+  const api = { SCORE_MODELS, FOUNDATION, STARTER_VENDORS, BUREAU_CONTACTS, FAST_TRACK, fundability, planStatus, utilization, coachState };
   root.Business = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

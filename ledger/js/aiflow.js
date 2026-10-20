@@ -92,7 +92,7 @@
         ${plan.doNotDispute.length ? `<h3 style="margin:14px 0 6px">Not disputing (accurate or not worth it)</h3><ul class="small" style="padding-left:18px">${plan.doNotDispute.map(x => `<li><b>${esc(x.creditor)}</b> — ${esc(x.reason)} <span class="muted">Instead: ${esc(x.alternative)}</span></li>`).join('')}</ul>` : ''}
         <h3 style="margin:14px 0 6px">Message for the client</h3><pre class="doc" style="max-height:160px">${esc(plan.clientMessage)}</pre>
         ${cs.cleared ? '' : '<div class="callout warn" style="margin-top:12px"><b>Onboarding not cleared</b>Drafts can be created, but nothing can be approved or mailed until the CROA steps are complete.</div>'}
-        <label class="check" style="margin-top:12px"><input type="checkbox" name="confirmed"> <span>${esc(c.name)} reviewed the selected items and confirmed each one is inaccurate, incomplete or not theirs.</span></label>`,
+        <label class="check" style="margin-top:12px"><input type="checkbox" name="confirmed"> <span>${esc(c.name)} reviewed the selected items and confirmed each one is inaccurate or incomplete.</span></label>`,
       foot: `<button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn" data-msg>Send client message</button><button class="btn primary">Create letters</button>`,
       onOpen: f => { f.querySelector('[data-msg]').onclick = () => { UI.close(); App().messageModal(cid, 'email', { subject: 'Your next dispute round', body: plan.clientMessage }); }; },
       onSubmit: d => {

@@ -71,8 +71,7 @@ test('CROA cancellation deadline skips Sundays and federal holidays', () => {
 
 test('FCRA deadlines', () => {
   assert.strictEqual(Law.responseDue('cra_611', '2026-10-01'), '2026-10-31');
-  // § 605B: 4 business days, skipping weekend and Columbus Day
-  assert.strictEqual(Law.responseDue('block_605b', '2026-10-08'), '2026-10-15');
+  assert.strictEqual(Law.DISPUTE_TYPES.block_605b, undefined, 'identity-theft letters are out of scope');
   assert.strictEqual(Law.responseDue('goodwill', '2026-10-01'), null);
 });
 

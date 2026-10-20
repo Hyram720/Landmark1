@@ -1,5 +1,5 @@
 {
- "version": "2026-10-19.1",
+ "version": "2026-10-19.3",
  "updated": "2026-10-19",
  "note": "Plain-English summaries for staff and the Ledger Assistant. Not legal advice. Each rule cites its official source; re-verify before relying on it.",
  "rules": [
@@ -10,15 +10,6 @@
    "rule": "Most negative items (collections, charge-offs, late payments) may be reported for 7 years. The clock runs from 180 days after the delinquency that led to the collection or charge-off began (the DOFD). Chapter 7 bankruptcies can be reported for 10 years. Paying a debt does not restart the clock.",
    "cite": "FCRA § 605(a), (c); 15 U.S.C. § 1681c",
    "url": "https://www.law.cornell.edu/uscode/text/15/1681c",
-   "verifiedAt": "2026-10-19"
-  },
-  {
-   "id": "fcra-605b",
-   "section": "personal",
-   "title": "Identity-theft blocks",
-   "rule": "A bureau must block information that resulted from identity theft within 4 business days of receiving proof of identity, an identity theft report (e.g. from IdentityTheft.gov) and the consumer's statement of which items are not theirs. Never file an identity-theft claim for debts the consumer actually opened.",
-   "cite": "FCRA § 605B; 15 U.S.C. § 1681c-2",
-   "url": "https://www.law.cornell.edu/uscode/text/15/1681c-2",
    "verifiedAt": "2026-10-19"
   },
   {
@@ -118,6 +109,45 @@
    "rule": "A lender that denies credit must send a notice within 30 days of a completed application that gives the specific principal reasons or says how to request them. If a credit report was used, FCRA § 615 also requires the bureau's name and the right to a free report within 60 days.",
    "cite": "ECOA, 15 U.S.C. § 1691(d); Reg. B, 12 C.F.R. § 1002.9; FCRA § 615",
    "url": "https://www.ecfr.gov/current/title-12/chapter-X/part-1002/section-1002.9",
+   "verifiedAt": "2026-10-19"
+  },
+  {
+   "id": "pii-611",
+   "section": "personal",
+   "title": "Personal information disputes (names, addresses, employers, DOB, SSN variations)",
+   "rule": "Wrong or outdated identifiers can be disputed with each bureau like any other inaccuracy. Bureaus must follow reasonable procedures for maximum possible accuracy. A bureau may keep a current address it can verify, and old addresses or name variants that were really used are not inaccurate. Staff see DOB and SSN variations masked. Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.",
+   "cite": "FCRA §§ 607(b), 611; 15 U.S.C. §§ 1681e(b), 1681i",
+   "url": "https://www.law.cornell.edu/uscode/text/15/1681e",
+   "verifiedAt": "2026-10-19"
+  },
+  {
+   "id": "fcra-604-inquiry",
+   "section": "personal",
+   "title": "Inquiries need a permissible purpose",
+   "rule": "A report may be pulled only for a permissible purpose (e.g. a credit application the consumer made, account review, written authorization). A hard inquiry the consumer does not recognize can be disputed with the bureau. Identity theft disputes are out of scope; refer clients to IdentityTheft.gov. Inquiries the consumer did authorize are accurate and are not disputed.",
+   "cite": "FCRA §§ 604, 611; 15 U.S.C. §§ 1681b, 1681i",
+   "url": "https://www.law.cornell.edu/uscode/text/15/1681b",
+   "verifiedAt": "2026-10-19"
+  },
+  {
+   "id": "inq-2yr",
+   "section": "personal",
+   "title": "How long hard inquiries show",
+   "rule": "Bureaus generally keep hard inquiries on the report for about 2 years (FICO scores count them for 12 months). FCRA § 609(a)(3) requires disclosure of inquiries from the past year (2 years for employment). A hard inquiry still showing after 2 years can be raised with the bureau as outdated under its own retention policy; it is not a statutory violation.",
+   "cite": "Experian consumer education; FCRA § 609(a)(3)",
+   "url": "https://www.experian.com/blogs/ask-experian/how-long-do-hard-inquiries-stay-on-credit-report/",
+   "verifiedAt": "2026-10-19",
+   "extraUrls": [
+    "https://www.law.cornell.edu/uscode/text/15/1681g"
+   ]
+  },
+  {
+   "id": "consumer-asserted",
+   "section": "personal",
+   "title": "Items the consumer says are inaccurate or unverifiable",
+   "rule": "A consumer may dispute any item they believe is inaccurate or incomplete. The dispute must say specifically what is wrong and why (with documents if available). If the bureau cannot verify an item within the reinvestigation period it must delete or modify it. Accurate, timely, verified negative items are not disputed.",
+   "cite": "FCRA § 611(a)(1), (a)(5)(A); Reg. V § 1022.43(d)",
+   "url": "https://www.law.cornell.edu/uscode/text/15/1681i",
    "verifiedAt": "2026-10-19"
   },
   {
@@ -373,6 +403,61 @@
    "title": "Personal guarantees",
    "rule": "Most small-business credit needs a personal guarantee. The lender may pull the owner's personal report (an FCRA-covered hard inquiry). Some business cards report to personal reports, and a default on a guaranteed debt can show up on the owner's personal credit.",
    "cite": "CFPB small business resources",
+   "url": "https://www.consumerfinance.gov/consumer-tools/small-business/",
+   "verifiedAt": "2026-10-19"
+  },
+  {
+   "id": "biz-dispute-letters",
+   "section": "business",
+   "title": "Business bureau correction letters",
+   "rule": "Business files are corrected through each bureau's own process (D&B D-U-N-S Manager / iUpdate, Experian business dispute, Equifax business support), not FCRA § 611. Dispute specific facts: wrong name, address, phone, formation date, SIC/NAICS, tradelines that are not the business's, stale or closed accounts shown open, paid accounts with balances, duplicates, and liens or judgments satisfied but shown open (send the release or satisfaction).",
+   "cite": "Bureau dispute processes; FCRA § 603(d) (scope)",
+   "url": "https://www.dnb.com/en-us/smb/duns/duns-manager.html",
+   "verifiedAt": "2026-10-19",
+   "extraUrls": [
+    "https://www.experian.com/small-business/business-credit-information",
+    "https://www.equifax.com/business/support/"
+   ]
+  },
+  {
+   "id": "biz-util-intelliscore",
+   "section": "business",
+   "title": "Utilization affects Experian Intelliscore",
+   "rule": "Experian lists credit utilization and trends over time, balances outstanding, number of trade experiences and payment habits among the credit factors in Intelliscore Plus, alongside public records and business demographics. Experian does not publish a utilization threshold. Keeping balances low relative to limits may help.",
+   "cite": "Experian: Understanding your business credit score",
+   "url": "https://www.experian.com/small-business/business-credit-score",
+   "verifiedAt": "2026-10-19"
+  },
+  {
+   "id": "biz-paydex-timing",
+   "section": "business",
+   "title": "PAYDEX is about payment timing, not utilization",
+   "rule": "D&B's PAYDEX is a dollar-weighted index of reported payment experiences: 80 means paid on terms, 90 about 20 days early, 100 about 30 days early. Balances and utilization are not part of PAYDEX, so paying vendors before the due date matters most. Only reported experiences count, so confirm vendors report to D&B.",
+   "cite": "D&B PAYDEX fact sheet; D&B Analytics quick reference",
+   "url": "https://www.dnb.com/en-us/smb/resources/credit-scores/what-is-paydex-score.html",
+   "verifiedAt": "2026-10-19",
+   "extraUrls": [
+    "https://www.dnb.com/content/dam/web/data-and-ai/cross/content/paydex-score-factsheet/DnB_Paydex_Score_Factsheet.pdf"
+   ]
+  },
+  {
+   "id": "util-30",
+   "section": "business",
+   "title": "Keeping utilization low (personal and business)",
+   "rule": "Scoring models look at how close balances are to limits. The CFPB says experts advise using no more than 30% of total credit limits, and lower is better; paying in full avoids interest. Lawful ways to lower utilization: pay before the statement closing date, pay down balances, ask for a limit increase, and spread spending across accounts. Results vary by model; no score change is guaranteed.",
+   "cite": "CFPB: How do I get and keep a good credit score?",
+   "url": "https://www.consumerfinance.gov/ask-cfpb/how-do-i-get-and-keep-a-good-credit-score-en-318/",
+   "verifiedAt": "2026-10-19",
+   "extraUrls": [
+    "https://www.fdic.gov/resources/consumers/consumer-assistance-topics/credit-reports.html"
+   ]
+  },
+  {
+   "id": "util-guarantee",
+   "section": "business",
+   "title": "Owner-guaranteed accounts and personal utilization",
+   "rule": "Many small-business cards and lines are personally guaranteed, and some report to the owner's personal credit file. When they do, their balances can count toward the owner's personal utilization. Check each issuer's reporting policy.",
+   "cite": "CFPB small business resources; issuer reporting policies",
    "url": "https://www.consumerfinance.gov/consumer-tools/small-business/",
    "verifiedAt": "2026-10-19"
   },

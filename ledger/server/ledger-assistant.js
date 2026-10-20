@@ -11,7 +11,7 @@
 // emails, phones). The audit log records metadata only (who, which client id, mode, token counts) —
 // never the question or the answer.
 import crypto from 'node:crypto';
-import { Law, Metro2, Store, Letters, KB, DisputeReasons } from './shared.js';
+import { Law, Metro2, Store, Letters, KB, DisputeReasons, FileCheck, Business } from './shared.js';
 import { redact, lastFour } from './redact.js';
 import { rateLimiter } from './auth.js';
 
@@ -44,7 +44,8 @@ const RAILS = `Hard rules — never break them:
 - Never promise or predict results, deletions, score increases or timelines for approval. Say "may", not "will".
 - You are not a lawyer or CPA and do not give legal or tax advice; flag questions that need one.
 - Only treat an item as disputable if the data shows a specific inaccuracy, it is obsolete, or the consumer says it is inaccurate and can explain why. Accurate, current, verifiable information cannot be removed by disputing it.
-- Never suggest CPNs, new identities, using an EIN in place of an SSN, false identity-theft claims, mass/template disputes, or any untrue statement.
+- Never suggest CPNs, new identities, using an EIN in place of an SSN, mass/template disputes, or any untrue statement.
+- Identity theft disputes are out of scope. Do not help with identity-theft claims, fraud blocks, or 'this account isn't mine' disputes; decline and refer the person to IdentityTheft.gov.
 - CROA: no fees before services are fully performed; written contract; 3-business-day cancellation; required rights disclosure.
 - Business credit reports are mostly not covered by the FCRA; use each business bureau's own dispute process.
 - Buying an aged/shelf company: misrepresenting time in business or another company's history to a lender can be fraud; recommend an attorney and CPA; no "instant fundable" claims.
@@ -93,6 +94,7 @@ ${RAILS}`;
 
 // ---------- canned FAQ (used when AI is off, and as grounding when on) ----------
 export const FAQ = [
+  { q: /identity theft|stolen identity|fraud(ulent)? account|someone opened|not my account|isn.?t mine|not mine/i, a: 'We don’t handle identity theft disputes. If you think someone used your identity, please go to IdentityTheft.gov (from the FTC) for a free recovery plan and next steps. A team member can answer other questions about your file.' },
   { q: /cancel|3.?day|three.?day|change my mind/i, a: 'You can cancel your agreement for any reason, without penalty, before midnight of the 3rd business day after you sign. In the portal use “Cancel my agreement”, or contact us. [croa-cancel]' },
   { q: /fee|cost|price|pay|charge|upfront|money/i, a: 'We never charge before a service has been fully performed, and nothing is billed during your 3-day cancellation period. Your written agreement lists every fee before you sign. A team member can go over pricing on your consultation call. [croa-advance-fee]' },
   { q: /guarantee|promise|how many points|delete everything|remove all/i, a: 'No one can promise results. Accurate, current and verifiable information can’t be removed by disputing it. We dispute only information that is inaccurate, incomplete, obsolete or unverifiable. [croa-misrep]' },
@@ -111,10 +113,12 @@ export function faqAnswer(text) {
 
 // Output check: block any answer that promises results.
 const BANNED = /\b(guarantee[ds]?|we will (remove|delete|erase)|100% (removal|deletion)|instant(ly)? fundable|raise your score by \d+|new credit (identity|file)|cpn)\b/i;
+const ID_THEFT_HELP = /\b(605B|identity[- ]theft (block|report|letter|dispute|affidavit)|block (this|the) (information|account)|fraud alert)\b/i;
 function safeText(text, fallback) {
   const lint = (Law.lintText ? Law.lintText(text) : []) || [];
   // Empty output (e.g. a reasoning model that spent its whole token budget thinking) falls back too.
   if (!String(text || '').trim()) return { text: fallback, replaced: true };
+  if (ID_THEFT_HELP.test(text) && !/IdentityTheft\.gov/i.test(text)) return { text: 'Identity theft disputes are out of scope here; please refer the client to IdentityTheft.gov. ' + fallback, replaced: true };
   if (BANNED.test(text) || lint.some(x => /guarantee|promise/i.test(x.phrase || ''))) return { text: fallback, replaced: true };
   return { text, replaced: false };
 }
@@ -189,18 +193,23 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     const items = wanted.map(w => sugg.find(s => s.accountId === w.accountId && s.code === w.code)).filter(Boolean);
     if (!items.length) return res.status(400).json({ error: 'No identified inaccuracy for the selected items. Letters are only drafted for findings the rules engine identified (or the client documented).' });
     if (items.length < wanted.length) return res.status(400).json({ error: `${wanted.length - items.length} selected item(s) have no identified inaccuracy and were refused.` });
-    const letterType = Law.DISPUTE_TYPES[b.letterType] ? b.letterType : items[0].letterType;
+    const isBiz = items.some(i => i.business);
+    if (isBiz && !items.every(i => i.business)) return res.status(400).json({ error: 'Business bureau items and personal items go in separate letters.' });
+    // Business files aren't FCRA § 611 disputes: always use the business correction letter.
+    const letterType = isBiz ? 'business_correction' : (Law.DISPUTE_TYPES[b.letterType] && b.letterType !== 'business_correction' ? b.letterType : items[0].letterType);
+    if ((Law.DISPUTE_TYPES[letterType] || {}).recipient === 'bureau' && items.some(i => i.bureau && i.bureau !== recipient)) return res.status(400).json({ error: 'Each item must be disputed with the bureau that reports it.' });
     // Guardrail 2: near-duplicate repeat disputes are blocked (frivolous-dispute risk).
     const guard = DisputeReasons.checkRepeat({ items, recipient, letterType, priorDisputes: (ws.disputes || []).filter(d => d.clientId === c.id), newEvidence: String(b.newEvidence || '').trim() });
     if (!guard.ok) return res.status(409).json({ error: 'Blocked to avoid a repeat/frivolous dispute', blocked: guard.blocked, warnings: guard.warnings });
-    const bureau = Law.BUREAUS && Law.BUREAUS[recipient];
+    const bureau = (Law.BUREAUS && Law.BUREAUS[recipient]) || (FileCheck.BIZ_BUREAUS && FileCheck.BIZ_BUREAUS[recipient]);
     const built = Letters.build(letterType, {
       client: c, recipient: bureau ? { name: bureau.name, address: bureau.address } : { name: recipient, address: String(b.recipientAddress || '') }, recipientName: recipient,
+      business: c.business || {},
       items: items.map(i => Object.assign({}, i, { evidence: b.newEvidence ? String(b.newEvidence).slice(0, 500) : i.evidence })), today: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     });
     if (!built.ok) return res.status(400).json({ error: built.errors[0] });
     const cited = [...new Set(items.flatMap(i => i.kb))].map(id => KB.byId(id)).filter(Boolean).map(r => ({ id: r.id, cite: r.cite, url: r.url }));
-    const base = { letterType, items, warnings: guard.warnings, citations: cited, lint: built.lint || [], requiresApproval: true };
+    const base = { letterType, items, warnings: guard.warnings, citations: cited, lint: built.lint || [], requiresApproval: true, scopeNote: isBiz ? 'Business credit files are generally not covered by the FCRA; this letter asks the bureau to correct the file under its own process [biz-fcra-scope].' : undefined };
     const cfg = aiConfig();
     if (!cfg.enabled || b.mode === 'template') { meta(req.user.email, 'letter.draft', `${c.id} ${recipient} template n=${items.length}`); return res.json(Object.assign(base, { mode: 'template', text: built.text })); }
     if (!letterLimit(req.user.id)) return res.json(Object.assign(base, { mode: 'template', text: built.text, notice: 'AI hourly safety limit reached — template letter returned.' }));

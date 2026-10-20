@@ -8,7 +8,7 @@
   'use strict';
   const Law = root.Law, Metro2 = root.Metro2;
   const MAIL_BACK = 5;
-  const BUREAU_TYPES = ['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'reinsertion_611', 'block_605b', 'pii_611', 'inquiry_604'];
+  const BUREAU_TYPES = ['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'reinsertion_611', 'pii_611', 'inquiry_604'];
   const FURNISHER_TYPES = ['furnisher_623', 'student_loan_623', 'furnisher_final'];
 
   const STATUS = [['new', 'New'], ['reviewing', 'Reviewing'], ['referred', 'Sent to attorney'], ['accepted', 'Attorney accepted'], ['declined', 'Attorney declined'], ['closed', 'Closed']];

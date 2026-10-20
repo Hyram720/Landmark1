@@ -208,12 +208,12 @@ test('letters/draft: AI mode sends only the redacted body; output is checked', a
     assert.match(r.body.text, /Alice Example/, 'header/signature re-attached locally');
     // A model that promises results is replaced with the template.
     setAiFetch(async () => new Response(JSON.stringify({ choices: [{ message: { content: 'We guarantee this will be deleted.' } }] }), { status: 200 }));
-    const r2 = await owner('POST', '/api/letters/draft', { clientId: 'ca', recipient: 'Equifax', items: [{ accountId: 'ta1', code: 'M2-CURRENT-PASTDUE' }] });
+    const r2 = await owner('POST', '/api/letters/draft', { clientId: 'ca', recipient: 'Experian', items: [{ accountId: 'ta1', code: 'M2-CURRENT-PASTDUE' }] });
     assert.strictEqual(r2.body.mode, 'template');
     assert.doesNotMatch(r2.body.text, /guarantee/i);
     // AI outage falls back to the template.
     setAiFetch(async () => new Response('{}', { status: 500 }));
-    const r3 = await owner('POST', '/api/letters/draft', { clientId: 'ca', recipient: 'TransUnion', items: [{ accountId: 'ta1', code: 'M2-CURRENT-PASTDUE' }] });
+    const r3 = await owner('POST', '/api/letters/draft', { clientId: 'ca', recipient: 'Experian', items: [{ accountId: 'ta1', code: 'M2-CURRENT-PASTDUE' }] });
     assert.strictEqual(r3.body.mode, 'template');
     assert.ok(r3.body.notice);
   } finally { delete process.env.LEDGER_AI_ENABLED; delete process.env.OPENAI_API_KEY; setAiFetch((...a) => fetch(...a)); }

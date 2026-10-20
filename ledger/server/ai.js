@@ -67,7 +67,7 @@ const PLAN_SCHEMA = {
 };
 
 const PLAN_PROMPT = `Plan this client's next dispute round using the strategy ladder:
-- Letter 1: dispute with the bureau (cra_611), or obsolete_605 for items past the reporting period, block_605b only for documented identity theft, validation_809 to a collector within the validation period.
+- Letter 1: dispute with the bureau (cra_611), or obsolete_605 for items past the reporting period, validation_809 to a collector within the validation period.
 - Letter 2: after a verified result or no response — mov_611a7 to the bureau and furnisher_623 directly to the furnisher, with new evidence.
 - Letter 3: still verified — furnisher_final to the furnisher, and cfpb_complaint (a narrative the client files).
 Rules:

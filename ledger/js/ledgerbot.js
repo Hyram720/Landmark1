@@ -41,7 +41,7 @@
         <div class="f small muted" style="margin-left:24px">Fields: ${esc((it.fields || []).join(', '))} · Basis: ${esc(it.basis)} · KB: ${it.kb.map(k => { const r = KB && KB.byId(k); return r ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(k)}</a>` : esc(k); }).join(', ')}</div></div>`).join('')}`).join('')}
       <label class="field" style="margin-top:12px"><span>New evidence for repeat disputes (optional)</span><input name="newEvidence" placeholder="e.g. bank statement dated 2024-03-02 showing the account paid in full"></label>
       ${conf.enabled ? `<label class="check small"><input type="checkbox" name="ai" checked> Polish wording with AI (${esc(conf.model || 'AI')}). Identifiers are redacted before sending, and the facts, citations and [CONFIRM] markers are kept.</label>` : '<p class="small muted">AI is off, so template letters will be used. (The owner can turn AI on with LEDGER_AI_ENABLED and OPENAI_API_KEY on the server.)</p>'}
-      <label class="check small"><input type="checkbox" name="confirmed"> ${esc(c.name)} reviewed each selected item and confirmed it is inaccurate, incomplete or not theirs.</label>`;
+      <label class="check small"><input type="checkbox" name="confirmed"> ${esc(c.name)} reviewed each selected item and confirmed it is inaccurate or incomplete.</label>`;
     modal({ title: `Metro 2 letters — ${c.name}`, wide: true, body, foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Draft letters</button>',
       onSubmit: async d => {
         const picked = [].concat(d.pick || []).map(Number).map(i => items[i]).filter(Boolean);

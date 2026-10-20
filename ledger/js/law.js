@@ -77,8 +77,6 @@
       note: 'After a “verified” result. Bureau must describe the procedure used within 15 days of the request.' },
     validation_809: { label: 'Debt validation request', cite: 'FDCPA § 809(b) (15 U.S.C. § 1692g); Reg F § 1006.34', recipient: 'collector', days: 0,
       note: 'Send within the validation period stated in the collector’s notice. Collection must pause until validation is mailed.' },
-    block_605b: { label: 'Identity-theft block', cite: 'FCRA § 605B (15 U.S.C. § 1681c-2)', recipient: 'bureau', days: 4, businessDays: true,
-      note: 'Bureau must block within 4 business days of receiving proof of identity, an identity theft report, the items, and the consumer’s statement.' },
     obsolete_605: { label: 'Obsolete information', cite: 'FCRA § 605(a), (c)', recipient: 'bureau', days: 30,
       note: 'Items past 7 years from DOFD + 180 days (10 years for bankruptcies).' },
     disclosure_609: { label: 'File disclosure request', cite: 'FCRA § 609 (15 U.S.C. § 1681g)', recipient: 'bureau', days: 15,
@@ -98,7 +96,7 @@
     student_loan_623: { label: 'Student loan dispute to servicer', cite: 'FCRA § 623(a)(8); 12 C.F.R. § 1022.43', recipient: 'furnisher', days: 30,
       note: 'Direct dispute to the loan servicer or guaranty agency with the servicer’s own letters as evidence.' },
     inquiry_604: { label: 'Unauthorized inquiry dispute', cite: 'FCRA §§ 604, 611 (15 U.S.C. §§ 1681b, 1681i)', recipient: 'bureau', days: 30,
-      note: 'For hard inquiries the consumer did not authorize. If the inquiry came from identity theft, use the § 605B block instead.' },
+      note: 'For hard inquiries the consumer did not authorize.' },
     pii_611: { label: 'Personal information correction', cite: 'FCRA §§ 607(b), 611 (15 U.S.C. §§ 1681e(b), 1681i)', recipient: 'bureau', days: 30,
       note: 'Wrong names, addresses, employers, SSN or date-of-birth variations. Attach ID and proof of address.' },
     au_removal: { label: 'Authorized user removal request', cite: 'ECOA / Reg B — authorized users are not liable (12 C.F.R. § 1002.7)', recipient: 'furnisher', days: 0,
@@ -178,7 +176,7 @@ Signed: ______________________   Date: __________`;
     [/(legally )?remove accurate/i, 'Accurate information cannot be removed through a dispute.'],
     [/\bCPN\b|credit privacy number|new credit (file|identity)/i, 'Creating a new credit identity is illegal (CROA § 1679b(a)(2)).'],
     [/(EIN|tax id) instead of (your )?(SSN|social)/i, 'Advising use of an EIN in place of an SSN is a misrepresentation.'],
-    [/not mine|never (had|opened)/i, 'Only use if the consumer confirms the account is not theirs — otherwise this is a false statement.'],
+    [/not mine|never (had|opened)|identity theft/i, '“Not mine” / identity-theft account disputes are out of scope — refer the client to IdentityTheft.gov. Only describe identifiers or records the consumer confirms are wrong.'],
     [/\bsue\b|lawsuit/i, 'Threats of legal action should reflect a real intention and legal review.'],
     [/e-?oscar/i, 'Letters engineered to avoid e-OSCAR do not change bureau duties and can delay results.'],
     [/(boost|raise|increase) (your )?score by \d+/i, 'Specific score promises are deceptive.']
@@ -194,7 +192,7 @@ Signed: ______________________   Date: __________`;
    * says the item is inaccurate and can document it; accurate items leave the ladder.
    */
   const STRATEGY = [
-    { step: 1, title: 'Letter 1 — Dispute with the bureau', types: ['cra_611', 'obsolete_605', 'block_605b', 'validation_809', 'business_correction', 'public_record_611', 'tenant_screening_611', 'student_loan_623', 'inquiry_604', 'pii_611', 'au_removal'], when: 'Start here for every confirmed inaccuracy.' },
+    { step: 1, title: 'Letter 1 — Dispute with the bureau', types: ['cra_611', 'obsolete_605', 'validation_809', 'business_correction', 'public_record_611', 'tenant_screening_611', 'student_loan_623', 'inquiry_604', 'pii_611', 'au_removal'], when: 'Start here for every confirmed inaccuracy.' },
     { step: 2, title: 'Letter 2 — Method of verification + direct dispute', types: ['mov_611a7', 'furnisher_623', 'reinsertion_611'], when: 'The bureau verified, or the 30/45 days passed with no answer.' },
     { step: 3, title: 'Letter 3 — Final notice + CFPB complaint', types: ['furnisher_final', 'cfpb_complaint'], when: 'Still verified despite your evidence.' },
     { step: 4, title: 'Step 4 — Attorney review', types: [], when: 'Documented inaccuracy still reporting after Letter 3. FCRA §§ 616–617 allow actual and statutory damages and attorney fees; many consumer attorneys take these cases at no cost to the consumer.' }
@@ -210,8 +208,13 @@ Signed: ______________________   Date: __________`;
     return { step: 4, type: null, reason: STRATEGY[3].when };
   }
 
+  // Records made with a letter type that has since been retired (e.g. the removed identity-theft
+  // block) still display, but the type can't be chosen or regenerated.
+  const RETIRED = { label: 'Retired letter type', cite: 'No longer offered', recipient: 'bureau', days: 30, retired: true };
+  function typeInfo(t) { return DISPUTE_TYPES[t] || RETIRED; }
+
   const api = {
-    iso, parse, addDays, addBusinessDays, daysBetween, federalHolidays, isBusinessDay, isCroaBusinessDay,
+    typeInfo, iso, parse, addDays, addBusinessDays, daysBetween, federalHolidays, isBusinessDay, isCroaBusinessDay,
     croaCancelDeadline, BUREAUS, DISPUTE_TYPES, STRATEGY, strategyStep, nextStrategy, responseDue, CROA_DISCLOSURE, cancellationNotice, contractTerms, lintText, RISK_PHRASES
   };
   root.Law = api;

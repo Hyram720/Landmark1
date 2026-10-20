@@ -145,7 +145,7 @@
         requested: 'Delete this medical collection.', evidence: v.reason === 'it has been paid' ? 'Proof of payment' : 'Bill or statement showing the amount and dates' }) },
 
     // ---------- Inquiries, personal information, authorized users ----------
-    { id: 'inquiry_unauthorized', cat: 'other', title: 'Hard inquiry I did not authorize', when: 'The client did not apply for credit with this company. If it was identity theft, use the identity-theft block instead.',
+    { id: 'inquiry_unauthorized', cat: 'other', title: 'Hard inquiry I did not authorize', when: 'The client did not apply for credit with this company. Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.',
       to: ['bureaus'], type: 'inquiry_604',
       fields: [F('creditor', 'Company that made the inquiry', { required: true }), F('inquiryDate', 'Inquiry date', { type: 'date', required: true })],
       item: v => ({ creditor: v.creditor, discrepancy: `Hard inquiry by ${v.creditor} dated ${fmt(v.inquiryDate)}. I did not apply for credit with ${v.creditor} or authorize this inquiry.`,

@@ -37,8 +37,6 @@
 
     // ---------- Errors & evidence ----------
     { tab: 'errors', title: 'Common reporting errors and how to prove them', intro: 'Dispute only what the client says is wrong, and attach proof. The right evidence matters more than the wording of the letter.', items: [
-      ['Account is not mine (identity theft)', 'Evidence: FTC report from IdentityTheft.gov (or police report), photo ID, proof of address. Letter: § 605B identity-theft block (bureau must block within 4 business days). Also place a fraud alert or freeze.'],
-      ['Account is not mine (mixed file)', 'Another person with a similar name or SSN. Evidence: ID, SSN card, proof of address history. Letter: § 611 bureau dispute. Ask the bureau to remove the other person’s identifiers too.'],
       ['Wrong balance', 'Evidence: latest statement, payoff letter, or bank record of payment. Letter: § 611 to the bureau, § 623 direct dispute to the furnisher.'],
       ['Late payment that was paid on time', 'Evidence: bank statement or confirmation showing the payment date, autopay records. Letter: § 611 / § 623 naming the exact month in the payment grid.'],
       ['Paid or settled account still shows a balance', 'Evidence: paid-in-full or settlement letter and proof of payment. Status should be 13, 61–65 or carry special comment AU with a 0 balance.'],
@@ -51,8 +49,8 @@
       ['Account shows open/active but was closed', 'Evidence: closure letter. Date Closed and status should reflect the closure.'],
       ['Wrong credit limit or no limit', 'Evidence: statement showing the limit. A missing limit inflates utilization.'],
       ['Student loan reported delinquent during deferment/forbearance', 'Evidence: servicer approval letter for the deferment period. Months in deferment should not show as late.'],
-      ['Unauthorized hard inquiry', 'Evidence: client statement they did not apply. Ask the bureau to verify permissible purpose (§ 604); contact the creditor directly. If fraud, use § 605B.'],
-      ['Wrong personal information', 'Old names, addresses, employers, or wrong SSN variations. Evidence: ID and proof of current address. Ask the bureau to remove inaccurate identifiers — they can cause mixed files.'],
+      ['Unauthorized hard inquiry', 'Evidence: client statement they did not apply. Ask the bureau to verify permissible purpose (§ 604); contact the creditor directly. Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.'],
+      ['Wrong personal information', 'Old names, addresses, employers, or wrong SSN variations. Evidence: ID and proof of current address. Ask the bureau to remove inaccurate identifiers.'],
       ['Collection with no validation', 'Within the validation period (30 days after the validation notice + 5 days for mailing under Reg F), send a § 809(b) validation request. Collection must pause until validated.'],
       ['Medical collection that should not report', 'The bureaus no longer report paid medical collections, medical collections under $500, or medical debt less than a year old (bureau policy since 2022–2023). Evidence: payment proof or dates.'],
       ['Accurate negative item', 'Not an error — do not dispute. Options: goodwill letter, pay-for-delete negotiation with a collector, settle and get AU special comment, rebuild positive credit, and wait for the purge date.']
@@ -62,8 +60,6 @@
     { tab: 'laws', title: 'Fair Credit Reporting Act (FCRA) — plain English', items: [
       ['§ 604 Permissible purpose', 'A report can only be pulled for a legitimate reason (credit application, account review, employment with consent, insurance, etc.). Unauthorized pulls can be challenged.'],
       ['§ 605 Obsolete information', 'Most negative items: 7 years from DOFD + 180 days. Bankruptcies: up to 10 years. Exceptions for large credit or employment decisions.'],
-      ['§ 605A Fraud alerts and freezes', 'Initial fraud alert lasts 1 year, extended alert 7 years (with identity-theft report), active-duty alert 1 year. Security freezes are free at all three bureaus.'],
-      ['§ 605B Identity-theft block', 'With proof of identity, an identity-theft report and the items, the bureau must block them within 4 business days and notify the furnisher.'],
       ['§ 609 File disclosure', 'Consumers can get everything in their file and the sources. No special wording required.'],
       ['§ 611 Reinvestigation', '30 days from receipt (45 if the consumer adds information during the period or disputes after a free annual report). Bureau must notify the furnisher within 5 business days, delete what cannot be verified, and send results within 5 business days of finishing. On request, describe how it verified within 15 days (§ 611(a)(7)). Frivolous notices within 5 business days. Reinserted items require notice within 5 business days.'],
       ['§ 612 Free reports', 'Free weekly online reports from each bureau at AnnualCreditReport.com, plus free reports after adverse action.'],
@@ -116,11 +112,10 @@
       ['FCRA § 623(a)(8) / Reg V § 1022.43 — direct dispute', 'The consumer can dispute directly with the collector. The collector must investigate within 30 days and report the result.'],
       ['FCRA § 623(b) — after a bureau dispute', 'When the bureau forwards a dispute, the collector must review all relevant information provided and correct or delete inaccurate, incomplete or unverifiable information with every bureau it reports to.'],
       ['FCRA § 611(a)(5)(A) — unverifiable', 'If the information cannot be verified, the bureau must delete or modify it.'],
-      ['FCRA § 615(f) and § 605B — identity theft', 'A collector told that a debt resulted from identity theft must notify the creditor and, on request, provide the consumer with the account documents. The bureau must block identity-theft debts within 4 business days of receiving the required documents.'],
       ['FDCPA § 813 — the consumer’s right to sue', 'A consumer can recover actual damages, up to $1,000 in statutory damages, and attorney’s fees. The deadline is 1 year from the violation. Refer clients with possible claims to a consumer attorney.']
     ] },
     { tab: 'collections', title: 'Collections — evidence, letter order and sample wording', intro: 'Use the sample wording only when it is true for this client. Paste it into the dispute’s discrepancy field and adapt it.', items: [
-      ['Evidence checklist', 'Collector’s validation notice (and the envelope or date received), the client’s account statements, proof of payment or settlement letter, original creditor tradeline showing the DOFD, any sale/assignment notice, FTC identity-theft report if fraud, and the report pages showing every place the debt appears.'],
+      ['Evidence checklist', 'Collector’s validation notice (and the envelope or date received), the client’s account statements, proof of payment or settlement letter, original creditor tradeline showing the DOFD, any sale/assignment notice, and the report pages showing every place the debt appears.'],
       ['Letter order', '1. Debt validation request (FDCPA § 809(b)) — within the validation period when possible; it can still be sent later. 2. Bureau dispute (§ 611) naming the specific error. 3. Direct dispute to the collector (§ 623). 4. Method of verification, then final notice to the furnisher and a CFPB complaint. 5. Consumer attorney review.'],
       ['Validation vs. verification', 'Validation is between the consumer and the collector (FDCPA). Verification is the bureau confirming data with the furnisher (FCRA). A bureau saying “verified” does not mean the collector has documents — ask with a method-of-verification letter.'],
       ['Sample: validation request', 'I am disputing this debt and requesting validation under 15 U.S.C. § 1692g(b). Please provide the name and address of the original creditor, an itemization of the amount you claim, and documents showing you own or are authorized to collect this debt. Please stop collection until you have provided this, and report the account as disputed.'],
@@ -249,7 +244,7 @@
     ] },
     { tab: 'contacts', title: 'Government and consumer help', items: [
       ['CFPB complaints', 'consumerfinance.gov/complaint — companies generally respond within 15 days.'],
-      ['FTC identity theft', 'IdentityTheft.gov — creates the identity-theft report needed for § 605B blocks.'],
+      ['Identity theft', 'Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.'],
       ['Prescreened offer opt-out', 'OptOutPrescreen.com or 1-888-5-OPT-OUT — stops prescreened credit offers for 5 years or permanently.'],
       ['State attorney general', 'Consumer protection complaints and credit repair registration rules.'],
       ['Consumer attorneys', 'NACA (consumeradvocates.org) lists attorneys who handle FCRA and FDCPA cases, often at no cost to the consumer.']
@@ -270,7 +265,6 @@
       ['Hard inquiry', 'A credit check for an application. Soft inquiries (account reviews, your own checks) do not affect scores.'],
       ['Metro 2', 'The standard data format furnishers use to report to the bureaus.'],
       ['Method of verification (MOV)', 'The description of how a bureau verified a disputed item (§ 611(a)(7)).'],
-      ['Mixed file', 'A credit file that contains another person’s information.'],
       ['Pay for delete', 'Asking a collector to stop reporting in exchange for payment. Not guaranteed and many furnishers refuse.'],
       ['Reinsertion', 'A deleted item that reappears. The bureau must certify it and notify the consumer within 5 business days.'],
       ['Re-aging', 'Reporting a later DOFD to keep an item on the report longer. Illegal.'],

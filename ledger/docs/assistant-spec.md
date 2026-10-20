@@ -1,6 +1,6 @@
 # Ledger Assistant, Metro 2 letters and knowledge base — spec
 
-Version: KB `2026-10-19.1` · spec written 2026-10-19 · branch `ledger-qa-2026-10-19`
+Version: KB `2026-10-19.3` · spec written 2026-10-19 · branch `ledger-qa-2026-10-19`
 
 This is not legal advice. Items marked **needs lawyer** must be confirmed by counsel before they are relied on in marketing or client-facing copy.
 
@@ -45,7 +45,8 @@ With AI off, every feature still works: letters come from the statutory template
 - Never promise or predict deletions, score changes or approval timelines ("may", not "will").
 - Not a lawyer/CPA; flags questions that need one.
 - Only disputes items with a specific inaccuracy, obsolescence, or a consumer-asserted inaccuracy with an explanation (`[CONFIRM with the client …]` markers stay in the letter until staff confirm).
-- Never suggests CPNs, new identities, EIN-for-SSN, false identity-theft claims, mass/template disputes or untrue statements.
+- Never suggests CPNs, new identities, EIN-for-SSN, mass/template disputes or untrue statements.
+- Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.
 - CROA: no fees before services are fully performed; written contract; 3-business-day cancel; § 1679c disclosure.
 - Business credit is mostly outside the FCRA; uses each business bureau's own dispute path.
 - Buying a company: misrepresenting time in business or another company's history to a lender can be bank fraud (18 U.S.C. §§ 1014, 1344). No "instant fundable" or "aged corp" claims.
@@ -54,7 +55,7 @@ With AI off, every feature still works: letters come from the statutory template
 
 ## 5. Knowledge base (44 rules, each with cite, URL, verifiedAt)
 
-**PERSONAL** — FCRA §§ 605 (obsolescence 7/10 years, DOFD + 180 days), 605B (ID-theft block, 4 business days), 609/612 (file disclosure, free weekly reports), 611 (30 days, 45 with consumer-supplied info during the period; 5-business-day notice to furnisher), 611(a)(3) frivolous, 611(a)(6)-(7) method of verification (15 days), 611(a)(5)(B) reinsertion (5 business days' notice), 623 furnisher duties incl. (a)(5) DOFD; Reg V 12 CFR 1022.43 direct disputes; FDCPA § 809 / Reg F 1006.34 validation; FCBA / Reg Z 1026.13 (60 days); ECOA / Reg B 1002.9 adverse action; Metro 2 CRRG fields (status 17A, payment history 18, CCC 20 incl. XB/XC/XH, DOFD 25); score building (utilization, authorized users, goodwill without false statements).
+**PERSONAL** — FCRA §§ 605 (obsolescence 7/10 years, DOFD + 180 days), 609/612 (file disclosure, free weekly reports), 611 (30 days, 45 with consumer-supplied info during the period; 5-business-day notice to furnisher), 611(a)(3) frivolous, 611(a)(6)-(7) method of verification (15 days), 611(a)(5)(B) reinsertion (5 business days' notice), 623 furnisher duties incl. (a)(5) DOFD; Reg V 12 CFR 1022.43 direct disputes; FDCPA § 809 / Reg F 1006.34 validation; FCBA / Reg Z 1026.13 (60 days); ECOA / Reg B 1002.9 adverse action; Metro 2 CRRG fields (status 17A, payment history 18, CCC 20 incl. XB/XC/XH, DOFD 25); score building (utilization, authorized users, goodwill without false statements).
 
 **COMPLIANCE** — CROA §§ 404(a) misrepresentation, 404(b) advance fees (+ TSR 310.4(a)(2) for phone sales), 405 disclosure, 406 contract (incl. the bold cancel statement next to the signature), 407-408 cancellation and no waiver; FTC Endorsement Guides (affiliate disclosure); TCPA for texts; **NJ** — no stand-alone credit services statute found; NJ DCA points consumers to CROA; N.J.S.A. 17:16G (debt adjustment) and the NJ Consumer Fraud Act may apply depending on the service mix (**needs lawyer**).
 
@@ -63,6 +64,8 @@ With AI off, every feature still works: letters come from the statutory template
 **BUY A CORPORATION** — stock vs. asset purchase (liabilities follow the entity in a stock deal; **needs lawyer**); diligence (good standing, liens/UCC, judgments/PACER, IRS Form 8821 transcripts, existing tradelines); ownership-change filings (IRS 8822-B, D&B update); FinCEN BOI: the 2026 final rule exempts domestic companies and U.S. persons from BOI reporting (31 CFR 1010.380); fraud warning (**needs lawyer**).
 
 Maintenance: edit `kb/ledger-kb.json`, bump `version`, update `verifiedAt` per rule, run `python3 kb/build-kb.py`, commit both files.
+
+Identity theft: Identity theft disputes are out of scope; refer clients to IdentityTheft.gov.
 
 ## 6. Rules engine additions (v2)
 

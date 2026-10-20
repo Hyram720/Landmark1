@@ -64,7 +64,7 @@ On Railway, set the start command to `node ledger/server/index.js` (or `npm run 
 - Open it from **✦ Ledger AI** (bottom right) or **Ask AI** on any client.
 - It reads the open client's reports, Metro 2 findings, cross-bureau differences, disputes, CROA status and business-credit setup.
 - One-click prompts: explain the audit, plan the next round, draft a client update, build a 90-day rebuild plan, write a business credit plan. Also general questions: Metro 2 codes, marketing compliance review, consultation scripts.
-- Guardrails: it separates provable errors from items the client must document and from accurate negatives, and it refuses mass disputes, CPNs, false identity-theft claims and promised results. It also flags CROA problems it notices.
+- Guardrails: it separates provable errors from items the client must document and from accurate negatives, and it refuses mass disputes, CPNs and promised results. Identity theft disputes are out of scope; refer clients to IdentityTheft.gov. It also flags CROA problems it notices.
 - Staff only. Runs on Claude Opus 5.5 with automatic fallback if a request is declined. Rate-limited to 60 questions per staff member per hour. Every question is logged in the audit trail (not the content).
 
 **Uploading credit reports (Upload credit report button on the dashboard, client list and client page):**

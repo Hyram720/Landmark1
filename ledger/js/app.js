@@ -344,7 +344,7 @@
       title: `Create disputes — ${picked.length} finding(s)`,
       body: `${field('Send to', 'mode', 'bureau', { type: 'select', options: [['bureau', 'Credit bureaus (FCRA § 611) — one letter per bureau'], ['furnisher', 'Furnishers directly (§ 623 / Reg V) — one letter per creditor']] })}
         <div class="callout" style="margin:14px 0">Items past the 7-year period are grouped into a separate obsolete-information request. Discrepancy text is pre-filled from the audit and can be edited on each dispute.</div>
-        <label class="check"><input type="checkbox" name="confirmed" required> <span>${esc(c.name)} reviewed each selected item and confirmed it is inaccurate, incomplete or not theirs.</span></label>`,
+        <label class="check"><input type="checkbox" name="confirmed" required> <span>${esc(c.name)} reviewed each selected item and confirmed it is inaccurate or incomplete.</span></label>`,
       foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Create drafts</button>',
       onSubmit: d => {
         if (!d.confirmed) { toast('Client confirmation is required'); return false; }
@@ -388,7 +388,7 @@
         if (d.recipientAddress && !Law.BUREAUS[d.recipient]) root.Furnishers.remember(S(), d.recipient, d.recipientAddress);
         const disp = { id: Store.uid(), clientId: d.clientId, type: d.type, round: nextRound(d.clientId, d.recipient), recipient: d.recipient, recipientAddress: d.recipientAddress, status: 'draft', items: preset.items || [], letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: preset.notes || '' };
         S().disputes.push(disp);
-        Store.log(`Created ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} draft to ${d.recipient}`, d.clientId);
+        Store.log(`Created ${Law.typeInfo(d.type).label.toLowerCase()} draft to ${d.recipient}`, d.clientId);
         Store.save();
         go(`#/disputes/${disp.id}`);
       }
@@ -424,7 +424,7 @@
     let l = d.letterId && Store.get.letter(d.letterId);
     if (!l) { l = { id: Store.uid(), clientId: d.clientId, disputeId: d.id, type: d.type, status: 'draft', createdAt: Store.now(), approvedAt: null }; S().letters.push(l); d.letterId = l.id; }
     l.text = res.text;
-    commit(`Generated ${Law.DISPUTE_TYPES[d.type].label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
+    commit(`Generated ${Law.typeInfo(d.type).label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
   function aqModal(c, d) {
@@ -759,7 +759,7 @@
     modal({
       title: `All letters in this sequence — ${q.title}`, wide: true,
       body: `<p class="small muted" style="margin-top:0">These are the complete letters Ledger will draft at each step if the item is still reported. Dates and the previous mailing date fill in automatically when each one is drafted.</p>` +
-        letters.map(({ r, text }) => `<h3 style="margin:16px 0 6px">Letter ${r.step} · ${esc(Law.DISPUTE_TYPES[r.type].label)} → ${esc(r.recipient)}</h3><textarea class="letter" readonly style="min-height:260px">${esc(text)}</textarea>`).join(''),
+        letters.map(({ r, text }) => `<h3 style="margin:16px 0 6px">Letter ${r.step} · ${esc(Law.typeInfo(r.type).label)} → ${esc(r.recipient)}</h3><textarea class="letter" readonly style="min-height:260px">${esc(text)}</textarea>`).join(''),
       foot: `<button type="button" class="btn" data-print>${icon('print')} Print all</button><button type="button" class="btn primary" data-close>Close</button>`,
       onOpen: f => { f.querySelector('[data-print]').onclick = () => UI.printDocs('Sequence letters — ' + q.title, letters.map(x => x.text)); }
     });
@@ -780,7 +780,7 @@
       onOpen: f => {
         const fill = () => {
           const list = done(f.elements.clientId.value);
-          f.elements.disputeId.innerHTML = '<option value="">Other completed service…</option>' + list.map(d => `<option value="${d.id}">${esc(d.recipient)} · ${esc(Law.DISPUTE_TYPES[d.type].label)} · round ${d.round} · mailed ${d.sentAt}</option>`).join('');
+          f.elements.disputeId.innerHTML = '<option value="">Other completed service…</option>' + list.map(d => `<option value="${d.id}">${esc(d.recipient)} · ${esc(Law.typeInfo(d.type).label)} · round ${d.round} · mailed ${d.sentAt}</option>`).join('');
           if (list[0]) { f.elements.disputeId.value = list[0].id; pick(); }
         };
         const pick = () => {
@@ -887,7 +887,7 @@
       const c = Store.get.client(d.clientId);
       modal({ title: 'Mail this letter online', body: `<p class="small" style="margin-top:0">Lob prints the approved letter and mails it from ${esc(c.name)}’s address to <b>${esc(d.recipient)}</b>. The tracking number and expected delivery date are saved automatically, and the response deadline is calculated from delivery.</p>
         <div class="form-grid">${field('Mail service', 'service', 'certified_return_receipt', { type: 'select', options: [['certified_return_receipt', 'Certified mail, return receipt (recommended)'], ['certified', 'Certified mail'], ['none', 'First-class mail']], cls: 'span2' })}</div>
-        <label class="check small" style="margin-top:10px"><input type="checkbox" name="includeId" ${['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'block_605b', 'pii_611', 'inquiry_604', 'disclosure_609', 'mov_611a7'].includes(d.type) ? 'checked' : ''}> Include the client’s photo ID and proof of address (uploaded images) as extra pages</label>`,
+        <label class="check small" style="margin-top:10px"><input type="checkbox" name="includeId" ${['cra_611', 'obsolete_605', 'public_record_611', 'tenant_screening_611', 'pii_611', 'inquiry_604', 'disclosure_609', 'mov_611a7'].includes(d.type) ? 'checked' : ''}> Include the client’s photo ID and proof of address (uploaded images) as extra pages</label>`,
         foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Mail now</button>',
         onSubmit: x => {
           Remote.flushNow().then(() => api('POST', `/api/disputes/${d.id}/mail`, { service: x.service, includeId: !!x.includeId }))
@@ -909,7 +909,7 @@
         body: `<p class="small" style="margin-top:0">This dispute becomes Letter 1. Ledger drafts Letter 2, Letter 3 and the attorney-review task automatically when each is due.</p><div class="form-grid">${toFurnisher ? '' : field('Furnisher / creditor for the Letter 2 direct dispute (optional)', 'fname', (d.items[0] || {}).creditor || '', { cls: 'span2' }) + field('Furnisher mailing address', 'faddress', '', { type: 'textarea', rows: 2, cls: 'span2', help: 'Leave blank to skip the direct dispute' })}</div>`,
         foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Start sequence</button>',
         onSubmit: x => {
-          const q = { id: Store.uid(), clientId: d.clientId, title: `${Law.DISPUTE_TYPES[d.type].label} — ${(d.items[0] || {}).creditor || d.recipient}`, furnisher: x.fname && x.faddress ? { name: x.fname, address: x.faddress } : null, status: 'active', startedAt: Store.now() };
+          const q = { id: Store.uid(), clientId: d.clientId, title: `${Law.typeInfo(d.type).label} — ${(d.items[0] || {}).creditor || d.recipient}`, furnisher: x.fname && x.faddress ? { name: x.fname, address: x.faddress } : null, status: 'active', startedAt: Store.now() };
           S().sequences.push(q);
           d.seqId = q.id;
           commit(`Started a dispute sequence from round ${d.round} to ${d.recipient}`, d.clientId);
@@ -986,7 +986,7 @@
       const d = Store.get.dispute(el.dataset.id);
       modal({
         title: `Response from ${d.recipient}`,
-        body: `<div class="form-grid">${field('Outcome', 'outcome', '', { type: 'select', options: [['deleted', 'Deleted'], ['corrected', 'Corrected / updated'], ['verified', 'Verified as accurate'], ['frivolous', 'Frivolous / irrelevant notice'], ['no_response', 'No response by deadline'], ['blocked', 'Blocked (identity theft)'], ['validated', 'Debt validated'], ['closed', 'Closed — other']] })}${field('Date of response', 'respondedAt', T(), { type: 'date' })}${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
+        body: `<div class="form-grid">${field('Outcome', 'outcome', '', { type: 'select', options: [['deleted', 'Deleted'], ['corrected', 'Corrected / updated'], ['verified', 'Verified as accurate'], ['frivolous', 'Frivolous / irrelevant notice'], ['no_response', 'No response by deadline'], ['validated', 'Debt validated'], ['closed', 'Closed — other']] })}${field('Date of response', 'respondedAt', T(), { type: 'date' })}${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
         onSubmit: x => { Object.assign(d, { outcome: x.outcome, respondedAt: x.respondedAt, notes: x.notes }); commit(`${d.recipient} response recorded: ${UI.DSTATE[x.outcome][0]}`, d.clientId); }
       });
     },
@@ -995,8 +995,8 @@
       const items = d.items.filter(it => !['deleted', 'corrected'].includes(it.result)).map(it => Object.assign({}, it, { result: undefined, resultAt: undefined }));
       const next = Law.nextStrategy(d.type, d.outcome, (Law.DISPUTE_TYPES[d.type] || {}).recipient);
       if (!next || !next.type) { toast(next ? next.reason : 'Nothing left to escalate'); return; }
-      const toFurnisher = Law.DISPUTE_TYPES[next.type].recipient === 'furnisher';
-      newDisputeModal(d.clientId, { title: `Letter ${next.step} — ${Law.DISPUTE_TYPES[next.type].label}`, type: next.type, recipient: toFurnisher ? (items[0] || {}).creditor || d.recipient : d.recipient, recipientAddress: toFurnisher ? '' : d.recipientAddress, items, notes: `Strategy letter ${next.step}: ${next.reason} Follows round ${d.round} (${d.outcome}).${next.alsoType ? ' Also consider: ' + Law.DISPUTE_TYPES[next.alsoType].label + '.' : ''}` });
+      const toFurnisher = Law.typeInfo(next.type).recipient === 'furnisher';
+      newDisputeModal(d.clientId, { title: `Letter ${next.step} — ${Law.typeInfo(next.type).label}`, type: next.type, recipient: toFurnisher ? (items[0] || {}).creditor || d.recipient : d.recipient, recipientAddress: toFurnisher ? '' : d.recipientAddress, items, notes: `Strategy letter ${next.step}: ${next.reason} Follows round ${d.round} (${d.outcome}).${next.alsoType ? ' Also consider: ' + Law.typeInfo(next.alsoType).label + '.' : ''}` });
     },
     'letter-edit': () => {},
     'new-invoice': el => invoiceModal(el.dataset.client || (S().clients[0] || {}).id),
@@ -1205,7 +1205,7 @@
       const transit = Number(S().settings.mailTransitDays) || 5;
       modal({ title: `Send round — ${ready.length} approved letter(s)`, wide: true,
         body: `<p class="small">Print every approved letter at once, mail them certified, then record the mailing for all of them in one step.</p>
-          <div class="table-wrap"><table><thead><tr><th><input type="checkbox" checked data-all></th><th>Client</th><th>Recipient</th><th>Type</th><th class="num">Round</th><th class="num">Items</th></tr></thead><tbody>${ready.map(d => `<tr><td><input type="checkbox" name="ids[]" value="${d.id}" checked></td><td>${esc((Store.get.client(d.clientId) || {}).name || '')}</td><td>${esc(d.recipient)}</td><td class="small">${esc(Law.DISPUTE_TYPES[d.type].label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td></tr>`).join('')}</tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th><input type="checkbox" checked data-all></th><th>Client</th><th>Recipient</th><th>Type</th><th class="num">Round</th><th class="num">Items</th></tr></thead><tbody>${ready.map(d => `<tr><td><input type="checkbox" name="ids[]" value="${d.id}" checked></td><td>${esc((Store.get.client(d.clientId) || {}).name || '')}</td><td>${esc(d.recipient)}</td><td class="small">${esc(Law.typeInfo(d.type).label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td></tr>`).join('')}</tbody></table></div>
           <div class="form-grid" style="margin-top:12px">${field('Date mailed', 'sentAt', T(), { type: 'date' })}${field('Estimated delivery (days)', 'transit', transit, { type: 'number' })}</div>`,
         foot: '<button type="button" class="btn" data-print>' + icon('print') + ' Print selected</button><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Mark selected mailed</button>',
         onOpen: f => {

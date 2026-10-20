@@ -41,10 +41,31 @@
     'FCRA-OBSOLETE': { kb: ['fcra-605', 'm2-dofd'], letter: 'obsolete_605', ask: 'Delete this item: it is past the reporting period allowed by FCRA § 605.' },
     'FCRA-OBSOLETE-UNKNOWN': { kb: ['fcra-605', 'm2-dofd'], letter: 'obsolete_605', ask: 'Provide the date of first delinquency relied on, and delete the item if it is past the reporting period.' },
     'FCRA-REINSERTED': { kb: ['fcra-611-reinsert'], letter: 'cra_611', ask: 'Provide the reinsertion notice and the furnisher’s certification, or delete the item.' },
-    'CONSUMER-ASSERTED': { kb: ['fcra-611'], letter: 'cra_611', ask: 'Investigate and correct or delete the information.', confirm: 'every statement and attach the evidence' }
+    'CONSUMER-ASSERTED': { kb: ['consumer-asserted', 'fcra-611'], letter: 'cra_611', ask: 'Investigate and correct or delete the information if it cannot be verified as accurate.', confirm: 'every statement and attach the evidence' },
+    // ---- personal information and inquiries (js/filecheck.js). Identity theft disputes are out of scope; refer clients to IdentityTheft.gov. ----
+    'PII-NAME-VARIANT': { kb: ['pii-611'], letter: 'pii_611', plain: true, say: f => `My file lists a name I have never used: ${f.detail.match(/“([^”]+)”/) ? '“' + f.detail.match(/“([^”]+)”/)[1] + '”' : 'a name variant'}.`, ask: 'Remove this name from my file.', confirm: 'that the client never used this name' },
+    'PII-ADDRESS-UNKNOWN': { kb: ['pii-611'], letter: 'pii_611', plain: true, say: f => `My file lists an address where I have never lived or that is out of date: ${f.detail.match(/“([^”]+)”/) ? '“' + f.detail.match(/“([^”]+)”/)[1] + '”' : 'an address'}.`, ask: 'Remove this address from my file. My current address is shown at the top of this letter.', confirm: 'that the client never lived at this address (or that it is outdated)' },
+    'PII-EMPLOYER-UNKNOWN': { kb: ['pii-611'], letter: 'pii_611', plain: true, say: f => `My file lists an employer I have never worked for: ${f.detail.match(/“([^”]+)”/) ? '“' + f.detail.match(/“([^”]+)”/)[1] + '”' : 'an employer'}.`, ask: 'Remove this employer from my file.', confirm: 'that the client never worked there' },
+    'PII-DOB-VARIATION': { kb: ['pii-611'], letter: 'pii_611', plain: true, say: () => 'My file shows an incorrect date of birth. My correct date of birth is shown at the top of this letter.', ask: 'Remove the incorrect date of birth.' },
+    'PII-SSN-VARIATION': { kb: ['pii-611'], letter: 'pii_611', plain: true, say: () => 'My file shows an incorrect Social Security number variation.', ask: 'Remove the incorrect Social Security number variation.' },
+    'INQ-UNRECOGNIZED': { kb: ['fcra-604-inquiry', 'fcra-611'], letter: 'inquiry_604', plain: true, say: f => `${f.detail.replace(/ The client says they did not apply or authorize it\./, '')} I did not apply for credit with this company or authorize it to obtain my report.`, ask: 'Verify the permissible purpose for this inquiry and delete it if it cannot be verified.', confirm: 'that the client did not apply with or authorize this company' },
+    'INQ-OVER-2Y': { kb: ['inq-2yr'], letter: 'cra_611', plain: true, ask: 'Remove this outdated inquiry under your inquiry retention policy.' },
+    // ---- business bureau files (not FCRA § 611 — each bureau’s correction process) ----
+    'BIZ-NAME-MISMATCH': { kb: ['biz-dispute-letters', 'biz-fcra-scope'], letter: 'business_correction', plain: true, ask: 'Correct the business name to match our state filing.' },
+    'BIZ-ADDRESS-MISMATCH': { kb: ['biz-dispute-letters', 'biz-fcra-scope'], letter: 'business_correction', plain: true, ask: 'Correct the business address to match our records.', confirm: 'the current business address and attach proof' },
+    'BIZ-PHONE-MISMATCH': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Correct the business phone number.' },
+    'BIZ-FORMED-MISMATCH': { kb: ['biz-dispute-letters', 'corp-fraud-warning'], letter: 'business_correction', plain: true, ask: 'Correct the date of formation to match the state filing (copy enclosed).' },
+    'BIZ-YEARS-MISMATCH': { kb: ['biz-dispute-letters', 'corp-fraud-warning'], letter: 'business_correction', plain: true, ask: 'Correct the years in business to match the date of formation on the state filing (copy enclosed).' },
+    'BIZ-NAICS-MISMATCH': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Correct the NAICS industry code.' },
+    'BIZ-SIC-MISMATCH': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Correct the SIC industry code.' },
+    'BIZ-TL-CLOSED-OPEN': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Report this account as closed.' },
+    'BIZ-TL-STALE': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Update or remove this stale tradeline.', confirm: 'the current balance or that the account is paid' },
+    'BIZ-TL-PAID-BALANCE': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Report a $0 balance consistent with the paid/closed status.' },
+    'BIZ-TL-DUPLICATE': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Remove the duplicate tradeline.' },
+    'BIZ-PR-SATISFIED-OPEN': { kb: ['biz-dispute-letters'], letter: 'business_correction', plain: true, ask: 'Update this filing to satisfied/released (or terminated). The release document is enclosed.' }
   };
   // Findings that are informational only — they never become dispute items.
-  const NOT_DISPUTABLE = new Set(['FCRA-OBSOLETE-SOON', 'INFO-AU-DEROG', 'M2-STATUS-UNKNOWN', 'M2-INSTALL-LIMIT', 'M2-LASTPAY-AFTER-REPORT']);
+  const NOT_DISPUTABLE = new Set(['FCRA-OBSOLETE-SOON', 'INFO-AU-DEROG', 'M2-STATUS-UNKNOWN', 'M2-INSTALL-LIMIT', 'M2-LASTPAY-AFTER-REPORT', 'CONSUMER-ASSERTED-NEEDS-REASON']);
 
   const OPENERS = [
     s => s,
@@ -60,7 +81,8 @@
     if (!isDisputable(f)) return null;
     const m = MAP[f.code];
     const detail = String(f.detail || '').replace(/\s+/g, ' ').trim();
-    const discrepancy = OPENERS[pick((f.accountId || '') + f.code, OPENERS.length)](detail) + (m.confirm ? ` [CONFIRM with the client: ${m.confirm}]` : '');
+    const said = m.say ? m.say(f) : detail;
+    const discrepancy = (m.plain ? said : OPENERS[pick((f.accountId || '') + f.code, OPENERS.length)](detail)) + (m.confirm ? ` [CONFIRM with the client: ${m.confirm}]` : '');
     return {
       accountId: f.accountId || (t && t.id) || '', creditor: f.creditor || (t && t.creditor) || '',
       accountNumber: t && t.accountNumber ? String(t.accountNumber).replace(/\D/g, '').slice(-4) : '',
@@ -108,8 +130,17 @@
     Object.values(byBureau).forEach(list => {
       const cur = list[list.length - 1], prev = list.length > 1 ? list[list.length - 2] : null;
       const findings = M.auditReport(cur, opts).concat(M.compareOverTime(prev, cur, opts));
-      findings.forEach(f => { const t = (cur.accounts || []).find(a => a.id === f.accountId); const it = toItem(f, t); if (it) out.push(Object.assign(it, { reportId: cur.id, severity: f.severity, title: f.title })); });
+      const client = (ws.clients || []).find(c => c.id === clientId) || {};
+      const more = root.FileCheck ? root.FileCheck.personalChecks(cur, client, opts) : [];
+      findings.concat(more).forEach(f => { const t = (cur.accounts || []).find(a => a.id === f.accountId); const it = toItem(f, t); if (it) out.push(Object.assign(it, { reportId: cur.id, severity: f.severity, title: f.title })); });
     });
+    // Business bureau files (latest per bureau).
+    const c = (ws.clients || []).find(x => x.id === clientId);
+    if (c && root.FileCheck && (c.businessReports || []).length) {
+      const latest = {};
+      c.businessReports.forEach(r => { if (!latest[r.bureau] || String(r.date) > String(latest[r.bureau].date)) latest[r.bureau] = r; });
+      Object.values(latest).forEach(br => root.FileCheck.businessChecks(br, c, opts).forEach(f => { const t = (br.tradelines || []).find(a => a.id === f.accountId); const it = toItem(f, t); if (it) out.push(Object.assign(it, { reportId: br.id, severity: f.severity, title: f.title, business: true })); }));
+    }
     return out;
   }
 
