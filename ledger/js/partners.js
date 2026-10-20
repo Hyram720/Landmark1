@@ -63,6 +63,21 @@
       program: 'Affiliate (IDIQ, FlexOffers)', bonus: 'Up to $21–$100 per enrollment (reported)',
       bonusLow: 21, bonusHigh: 21, cookie: '—', status: 'verify',
       note: 'IDIQ brand.', sources: ['https://www.creator-hero.com/blog/myscoreiq-affiliate-program-in-depth-review-pros-and-cons'] },
+    { key: 'tillful', name: 'Tillful', audience: 'business', category: 'Business credit score & monitoring',
+      url: 'https://www.tillful.com/', joinUrl: 'https://form.typeform.com/to/G81buasO',
+      program: 'Affiliate partner program (application form)', bonus: 'Not published — terms given after approval',
+      bonusLow: 0, bonusHigh: 0, cookie: '—', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: 'Tillful’s own application form confirms an affiliate partner program; commission terms are not public.', sources: ['https://form.typeform.com/to/G81buasO'] },
+    { key: 'crown-net30', name: 'Crown Office Supplies (net-30)', audience: 'business', category: 'Net-30 vendor tradeline',
+      url: 'https://crownofficesupplies.com/net30-application/', joinUrl: 'https://crownofficesupplies.com/affiliates/',
+      program: 'Affiliate (on-site “Get rewarded” program)', bonus: 'Paid only when the referral buys the $99 annual membership; amount not published',
+      bonusLow: 0, bonusHigh: 0, cookie: '—', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: 'Net-30 account that reports to business bureaus; $99 annual membership. Only Net 30 referrals qualify.', sources: ['https://crownofficesupplies.com/affiliates/', 'https://www.nav.com/business-credit/net-30-accounts/'] },
+    { key: 'crc-software', name: 'Credit Repair Cloud (software, B2B)', audience: 'partner', category: 'Software for other credit repair businesses',
+      url: 'https://www.creditrepaircloud.com/', joinUrl: 'https://market.partnerstack.com/page/creditrepaircloud',
+      program: 'Affiliate (PartnerStack)', bonus: '30% recurring on referred accounts paying $179+/mo (listing)',
+      bonusLow: 0, bonusHigh: 0, cookie: '90 days (listing)', status: 'verify', network: 'partnerstack', subIdParam: '',
+      note: 'Only relevant for referring other credit repair businesses, never consumers. It’s a Ledger competitor, so think before promoting it.', sources: ['https://openaffiliate.dev/programs/credit-repair-cloud'] },
     { key: 'experian-boost', name: 'Experian Boost', audience: 'personal', category: 'Free — adds utility/streaming payments',
       url: 'https://www.experian.com/consumer-products/score-boost.html', joinUrl: '', program: 'None (free consumer tool)', bonus: 'No referral bonus',
       bonusLow: 0, bonusHigh: 0, cookie: '—', status: 'free', note: 'Free. Recommend it on merit, not for commission.', sources: [] },
@@ -83,11 +98,25 @@
 
   const DISCLOSURE = 'We may receive a referral fee from some companies we recommend. It does not change the price you pay, and you are never required to sign up for any product to use our services.';
 
-  function seedOffers() {
-    return CATALOG.map(c => Object.assign({ id: 'offer-' + c.key, affiliateUrl: '', enabled: c.status !== 'unconfirmed', verifiedAt: '2026-10-14' }, c));
+  // Sub-ID parameter by affiliate network, so each click can be tied to a client or staff member
+  // without putting their name or id in the URL (a short one-way hash is sent).
+  const SUBID_PARAM = { impact: 'subId1', flexoffers: 'fobs', awin: 'clickref', cj: 'sid', rakuten: 'u1', partnerstack: '', referralrock: '', direct: '' };
+  function networkOf(c) {
+    if (c.network) return c.network;
+    const p = String(c.program || '').toLowerCase();
+    return p.includes('impact') ? 'impact' : p.includes('flexoffers') ? 'flexoffers' : p.includes('awin') ? 'awin' : p.includes('cj') ? 'cj' : p.includes('referral rock') ? 'referralrock' : 'direct';
   }
+  function seedOffers() {
+    return CATALOG.map(c => Object.assign({ id: 'offer-' + c.key, affiliateUrl: '', enabled: c.status !== 'unconfirmed' && c.audience !== 'partner', verifiedAt: '2026-10-19', network: networkOf(c), subIdParam: c.subIdParam !== undefined ? c.subIdParam : SUBID_PARAM[networkOf(c)] || '' }, c));
+  }
+  /** Adds the sub-ID to an affiliate URL when the network supports one. */
+  function withSubId(url, param, sub) {
+    if (!param || !sub) return url;
+    try { const u = new URL(url); if (!u.searchParams.has(param)) u.searchParams.set(param, sub); return u.toString(); } catch { return url; }
+  }
+  const AFFILIATE_NOTE = 'Affiliate link — we may earn a commission if you sign up. It doesn’t change your price, and you never have to use it to work with us.';
 
-  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, seedOffers };
+  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, AFFILIATE_NOTE, SUBID_PARAM, seedOffers, withSubId, networkOf };
   root.Partners = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
