@@ -339,6 +339,23 @@ tr.cmp-changed td { background: var(--med-soft); }
 .field-err { color: var(--high); font-weight: 550; }
 input.invalid, select.invalid, textarea.invalid { border-color: var(--high) !important; box-shadow: 0 0 0 3px var(--high-soft); }
 
+/* Ledger Assistant (staff) and helper (portal/apply) */
+.lb-fab { bottom: max(76px, calc(env(safe-area-inset-bottom, 0px) + 76px)); background: var(--surface); }
+.kb-list li { align-items: flex-start; }
+.helper-fab { position: fixed; right: 20px; bottom: 20px; z-index: 40; border-radius: 99px; height: 44px; padding: 0 18px; box-shadow: var(--shadow-lg); }
+.helper-panel { position: fixed; right: 20px; bottom: 76px; z-index: 41; width: min(380px, calc(100vw - 40px)); max-height: 70vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); }
+.helper-panel[hidden] { display: none; }
+.helper-log { padding: 12px; overflow: auto; flex: 1; font-size: 14px; }
+.helper-log .me { text-align: right; color: var(--ink); margin: 6px 0; }
+.helper-log .bot { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
+.helper-form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--border); }
+.deadline-bar { height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin-top: 6px; }
+.deadline-bar > span { display: block; height: 100%; background: var(--accent); }
+.deadline-bar.late > span { background: var(--high); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+@media print { .lb-fab, .helper-fab, .helper-panel { display: none !important; } }
+
 </style>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='800' font-size='17' text-anchor='middle' fill='white'%3EL%3C/text%3E%3C/svg%3E">
 </head>
@@ -503,7 +520,7 @@ input.invalid, select.invalid, textarea.invalid { border-color: var(--high) !imp
 
   const CROA_DISCLOSURE = `Consumer Credit File Rights Under State and Federal Law
 
-You have a right to dispute inaccurate information in your credit report by contacting the credit bureau directly. However, neither you nor any “credit repair” company or credit repair organization has the right to have accurate, current, and verifiable information removed from your credit report. The credit bureau must remove accurate, negative information from your report only if it is over 7 years old. Bankruptcy information can be reported for 10 years.
+You have a right to dispute inaccurate information in your credit report by contacting the credit bureau directly. However, neither you nor any “credit repair” company or credit repair organization has the right to have accurate, current, and verifiable information removed from your credit report. The credit bureau must remove accurate, negative information from your report only if it is over 7 years old. Bankruptcy information can be reported up to 10 years.
 
 You have a right to obtain a copy of your credit report from a credit bureau. You may be charged a reasonable fee. There is no fee, however, if you have been turned down for credit, employment, insurance, or a rental dwelling because of information in your credit report within the preceding 60 days. The credit bureau must provide someone to help you interpret the information in your credit file. You are entitled to receive a free copy of your credit report if you are unemployed and intend to apply for employment in the next 60 days, if you are a recipient of public welfare assistance, or if you have reason to believe that there is inaccurate information in your credit report due to fraud.
 
@@ -553,6 +570,8 @@ Between ${company.name || '[Company]'} (“we”) and ${client.name} (“you”)
 5. Your rights. You may cancel this contract within 3 business days of signing — see the attached Notice of Cancellation. You have also received the separate statement “Consumer Credit File Rights Under State and Federal Law.” No services will be performed until the cancellation period ends (15 U.S.C. § 1679d(a)(2)).
 
 Company: ${company.name || ''} · ${(company.address || '').replace(/\n/g, ', ')}
+
+YOU MAY CANCEL THIS CONTRACT WITHOUT PENALTY OR OBLIGATION AT ANY TIME BEFORE MIDNIGHT OF THE 3RD BUSINESS DAY AFTER THE DATE ON WHICH YOU SIGNED THE CONTRACT. SEE THE ATTACHED NOTICE OF CANCELLATION FORM FOR AN EXPLANATION OF THIS RIGHT.
 
 Signed: ______________________   Date: __________`;
   }
@@ -671,6 +690,21 @@ Signed: ______________________   Date: __________`;
       program: 'Affiliate (IDIQ, FlexOffers)', bonus: 'Up to $21–$100 per enrollment (reported)',
       bonusLow: 21, bonusHigh: 21, cookie: '—', status: 'verify',
       note: 'IDIQ brand.', sources: ['https://www.creator-hero.com/blog/myscoreiq-affiliate-program-in-depth-review-pros-and-cons'] },
+    { key: 'tillful', name: 'Tillful', audience: 'business', category: 'Business credit score & monitoring',
+      url: 'https://www.tillful.com/', joinUrl: 'https://form.typeform.com/to/G81buasO',
+      program: 'Affiliate partner program (application form)', bonus: 'Not published — terms given after approval',
+      bonusLow: 0, bonusHigh: 0, cookie: '—', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: 'Tillful’s own application form confirms an affiliate partner program; commission terms are not public.', sources: ['https://form.typeform.com/to/G81buasO'] },
+    { key: 'crown-net30', name: 'Crown Office Supplies (net-30)', audience: 'business', category: 'Net-30 vendor tradeline',
+      url: 'https://crownofficesupplies.com/net30-application/', joinUrl: 'https://crownofficesupplies.com/affiliates/',
+      program: 'Affiliate (on-site “Get rewarded” program)', bonus: 'Paid only when the referral buys the $99 annual membership; amount not published',
+      bonusLow: 0, bonusHigh: 0, cookie: '—', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: 'Net-30 account that reports to business bureaus; $99 annual membership. Only Net 30 referrals qualify.', sources: ['https://crownofficesupplies.com/affiliates/', 'https://www.nav.com/business-credit/net-30-accounts/'] },
+    { key: 'crc-software', name: 'Credit Repair Cloud (software, B2B)', audience: 'partner', category: 'Software for other credit repair businesses',
+      url: 'https://www.creditrepaircloud.com/', joinUrl: 'https://market.partnerstack.com/page/creditrepaircloud',
+      program: 'Affiliate (PartnerStack)', bonus: '30% recurring on referred accounts paying $179+/mo (listing)',
+      bonusLow: 0, bonusHigh: 0, cookie: '90 days (listing)', status: 'verify', network: 'partnerstack', subIdParam: '',
+      note: 'Only relevant for referring other credit repair businesses, never consumers. It’s a Ledger competitor, so think before promoting it.', sources: ['https://openaffiliate.dev/programs/credit-repair-cloud'] },
     { key: 'experian-boost', name: 'Experian Boost', audience: 'personal', category: 'Free — adds utility/streaming payments',
       url: 'https://www.experian.com/consumer-products/score-boost.html', joinUrl: '', program: 'None (free consumer tool)', bonus: 'No referral bonus',
       bonusLow: 0, bonusHigh: 0, cookie: '—', status: 'free', note: 'Free. Recommend it on merit, not for commission.', sources: [] },
@@ -691,11 +725,25 @@ Signed: ______________________   Date: __________`;
 
   const DISCLOSURE = 'We may receive a referral fee from some companies we recommend. It does not change the price you pay, and you are never required to sign up for any product to use our services.';
 
-  function seedOffers() {
-    return CATALOG.map(c => Object.assign({ id: 'offer-' + c.key, affiliateUrl: '', enabled: c.status !== 'unconfirmed', verifiedAt: '2026-10-14' }, c));
+  // Sub-ID parameter by affiliate network, so each click can be tied to a client or staff member
+  // without putting their name or id in the URL (a short one-way hash is sent).
+  const SUBID_PARAM = { impact: 'subId1', flexoffers: 'fobs', awin: 'clickref', cj: 'sid', rakuten: 'u1', partnerstack: '', referralrock: '', direct: '' };
+  function networkOf(c) {
+    if (c.network) return c.network;
+    const p = String(c.program || '').toLowerCase();
+    return p.includes('impact') ? 'impact' : p.includes('flexoffers') ? 'flexoffers' : p.includes('awin') ? 'awin' : p.includes('cj') ? 'cj' : p.includes('referral rock') ? 'referralrock' : 'direct';
   }
+  function seedOffers() {
+    return CATALOG.map(c => Object.assign({ id: 'offer-' + c.key, affiliateUrl: '', enabled: c.status !== 'unconfirmed' && c.audience !== 'partner', verifiedAt: '2026-10-19', network: networkOf(c), subIdParam: c.subIdParam !== undefined ? c.subIdParam : SUBID_PARAM[networkOf(c)] || '' }, c));
+  }
+  /** Adds the sub-ID to an affiliate URL when the network supports one. */
+  function withSubId(url, param, sub) {
+    if (!param || !sub) return url;
+    try { const u = new URL(url); if (!u.searchParams.has(param)) u.searchParams.set(param, sub); return u.toString(); } catch { return url; }
+  }
+  const AFFILIATE_NOTE = 'Affiliate link — we may earn a commission if you sign up. It doesn’t change your price, and you never have to use it to work with us.';
 
-  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, seedOffers };
+  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, AFFILIATE_NOTE, SUBID_PARAM, seedOffers, withSubId, networkOf };
   root.Partners = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -1409,6 +1457,62 @@ Signed: ______________________   Date: __________`;
         [FIELDS.limit, FIELDS.highCredit], 'Data quality', 'Verify');
     }
 
+    // ---- added 2026-10-19: rules engine v2 (each rule cites kb/ledger-kb.json ids in `kb`) ----
+    if (PAID_ZERO.includes(status) && past > 0) {
+      add('M2-PAID-PASTDUE', 'high', 'Paid/closed account still shows an amount past due',
+        `Account Status ${status} (${ACCOUNT_STATUS[status]}) is a paid or zero-balance status, but Amount Past Due is ${money(past)}. A paid account cannot be past due.`,
+        [FIELDS.status, FIELDS.pastDue], 'FCRA § 611; § 623(a)(2)', 'Dispute the past-due amount');
+    }
+
+    if (dofd && reported && dofd > reported) {
+      add('M2-DOFD-FUTURE', 'high', 'Date of First Delinquency is after the reporting date',
+        `DOFD (${fmt(dofd)}) is later than the Date of Account Information (${fmt(reported)}). A delinquency cannot start after the data was reported.`,
+        [FIELDS.dofd, FIELDS.reported], 'FCRA § 611; § 623(a)(5)', 'Dispute the DOFD');
+    }
+
+    if (status === '11' && dofd && hist && !/[1-6GHJKL]/.test(hist)) {
+      add('M2-DOFD-ON-CURRENT', 'medium', 'Current account with a delinquency date but no late history',
+        `Status 11 (current) and a clean payment grid, yet a Date of First Delinquency (${fmt(dofd)}) is reported. The CRRG zero-fills the DOFD on accounts that are current and were never delinquent; confirm with the client whether this account was ever late.`,
+        [FIELDS.status, FIELDS.dofd, FIELDS.history], 'FCRA § 611; CRRG DOFD guidance', 'Verify with the client, then dispute if confirmed');
+    }
+
+    // Re-aging inside one report: the payment grid shows the delinquency starting earlier than the DOFD.
+    if (dofd && reported && hist && DEROGATORY.concat(PAID_ZERO).includes(status)) {
+      let i = hist.search(/[1-6GHJKL]/);
+      if (i >= 0) {
+        while (i + 1 < hist.length && /[1-6GHJKL]/.test(hist[i + 1])) i += 1; // oldest month of the most recent delinquent run
+        const gridStart = new Date(reported); gridStart.setMonth(gridStart.getMonth() - i);
+        const lagDays = Math.round((dofd - gridStart) / 86400000);
+        if (lagDays > 62) {
+          add('M2-DOFD-REAGED', 'high', 'DOFD is later than the payment grid shows (possible re-aging)',
+            `The payment history shows the delinquency running back to about ${fmt(gridStart)}, but the reported DOFD is ${fmt(dofd)} — about ${Math.round(lagDays / 30)} months later. A later DOFD extends how long the item can be reported.`,
+            [FIELDS.dofd, FIELDS.history], 'FCRA § 623(a)(5); § 605(c)', 'Dispute the DOFD and ask for the original delinquency date');
+        }
+      }
+    }
+
+    if ((status === '93' || /collect/i.test(String(t.type || '') + ' ' + String(t.accountType || ''))) && !String(t.originalCreditor || '').trim()) {
+      add('M2-COLLECTION-NO-OC', 'medium', 'Collection account without the original creditor',
+        'This collection does not name the original creditor (Metro 2 K1 segment). Without it the consumer cannot tell which debt is being reported or check for duplicates.',
+        ['Original Creditor Name (K1 Segment)'], 'FCRA § 611; § 623(a)(2) — complete and accurate', 'Request the original creditor and verification');
+    }
+
+    const ccc = String(t.complianceCode || '').toUpperCase();
+    if (ccc === 'XB' && (t.disputeResolvedAt || t.disputeStatus === 'closed')) {
+      add('M2-CCC-XB-STALE', 'medium', 'Still flagged “in dispute” after the investigation ended',
+        `Compliance Condition Code XB (dispute under investigation) is still reported${t.disputeResolvedAt ? ' after the dispute was resolved on ' + t.disputeResolvedAt : ''}. After an investigation the furnisher should report XH (investigation complete) or XC (consumer disagrees), or remove the code with XR.`,
+        [FIELDS.ccc], 'FCRA § 623(a)(3); CRRG Compliance Condition Codes', 'Ask the furnisher to update the code');
+    }
+
+    if (!dofd && DEROGATORY.includes(status) && opened && today) {
+      const est = obsolescenceDate(t.opened);
+      if (est && est <= today) {
+        add('FCRA-OBSOLETE-UNKNOWN', 'medium', 'May be past the reporting period (no DOFD to confirm)',
+          `There is no DOFD, and even the date opened (${fmt(opened)}) is more than 7½ years ago. The delinquency could not have started before the account opened, so this item may be obsolete. Ask the bureau for the DOFD it relies on.`,
+          [FIELDS.dofd, FIELDS.opened], 'FCRA § 605(a), (c); § 623(a)(5)', 'Request the DOFD / deletion if obsolete');
+      }
+    }
+
     if (t.issue && String(t.issue).trim()) {
       add('CONSUMER-ASSERTED', 'medium', 'Consumer-reported inaccuracy',
         `${t.issue}${t.evidence ? ' — evidence: ' + t.evidence : ''}`, [], 'FCRA § 611(a)(1)', 'Dispute with supporting evidence');
@@ -1468,6 +1572,40 @@ Signed: ______________________   Date: __________`;
     return out;
   }
 
+  /** Two or more collection accounts for the same original creditor, each with a balance. */
+  function duplicateCollections(accounts) {
+    const groups = {};
+    accounts.filter(a => a.originalCreditor && num(a.balance) > 0).forEach(a => { const k = normCreditor(a.originalCreditor); (groups[k] = groups[k] || []).push(a); });
+    return Object.values(groups).filter(g => g.length > 1);
+  }
+
+  /**
+   * Compare the same tradeline on an earlier and a later report from the same bureau.
+   * A DOFD that moves later (re-aging) or a collection that re-appears after deletion are flagged.
+   */
+  function compareOverTime(prev, cur, opts) {
+    const out = [];
+    if (!prev || !cur) return out;
+    const before = {}; (prev.accounts || []).forEach(t => { before[matchKey(t)] = t; });
+    (cur.accounts || []).forEach(t => {
+      const p = before[matchKey(t)];
+      if (!p) return;
+      const d0 = date(p.dofd), d1 = date(t.dofd);
+      if (d0 && d1 && (d1 - d0) / 86400000 > 31) {
+        out.push({ accountId: t.id, creditor: t.creditor, bureau: cur.bureau, reportId: cur.id, code: 'M2-DOFD-MOVED', severity: 'high',
+          title: 'DOFD moved later between reports (re-aging)',
+          detail: `On the ${prev.date || 'earlier'} report the DOFD was ${fmt(d0)}; on the ${cur.date || 'later'} report it is ${fmt(d1)}. The DOFD is fixed once a delinquency starts — it must not change when the debt is sold or a payment is made.`,
+          fields: [FIELDS.dofd], basis: 'FCRA § 623(a)(5); § 605(c)', action: 'Dispute the DOFD with both reports enclosed' });
+      }
+      if (p.deleted && !t.deleted) {
+        out.push({ accountId: t.id, creditor: t.creditor, bureau: cur.bureau, reportId: cur.id, code: 'FCRA-REINSERTED', severity: 'high', title: 'Previously deleted item is back',
+          detail: 'This item was deleted after a dispute and appears again. A bureau must certify the information and notify the consumer in writing within 5 business days of reinsertion.',
+          fields: [], basis: 'FCRA § 611(a)(5)(B)', action: 'Ask for the reinsertion notice and furnisher certification' });
+      }
+    });
+    return out;
+  }
+
   function auditReport(report, opts) {
     const findings = [];
     (report.accounts || []).forEach(t => auditTradeline(t, opts).forEach(x => findings.push(Object.assign({ accountId: t.id, creditor: t.creditor, bureau: report.bureau, reportId: report.id }, x))));
@@ -1476,13 +1614,19 @@ Signed: ______________________   Date: __________`;
       code: 'M2-DUPLICATE-DEBT', severity: 'high', title: 'Same debt reported with two balances', detail: d.detail,
       fields: [FIELDS.balance, FIELDS.status], basis: 'FCRA § 611; § 623(a)(2)', action: 'Dispute the duplicate balance'
     }));
+    duplicateCollections(report.accounts || []).forEach(g => g.forEach(a => findings.push({
+      accountId: a.id, creditor: a.creditor, bureau: report.bureau, reportId: report.id,
+      code: 'M2-DUPLICATE-COLLECTION', severity: 'high', title: 'Same original debt reported by more than one collector',
+      detail: `${g.map(x => x.creditor).join(' and ')} each report a balance for a debt from ${a.originalCreditor}. Only the current owner of a debt should report a balance.`,
+      fields: [FIELDS.balance, 'Original Creditor Name (K1 Segment)'], basis: 'FCRA § 611; § 623(a)(2)', action: 'Dispute the duplicate; ask each collector to validate ownership'
+    })));
     return findings;
   }
 
   const api = {
     ACCOUNT_STATUS, PAYMENT_HISTORY, PORTFOLIO_TYPE, ECOA, COMPLIANCE_CONDITION, CONSUMER_INFO_INDICATOR, SPECIAL_COMMENT, FIELDS,
     DELINQUENT, DEROGATORY, PAID_ZERO,
-    auditTradeline, auditReport, compareBureaus, duplicateDebts, obsolescenceDate, matchKey
+    auditTradeline, auditReport, compareBureaus, duplicateDebts, duplicateCollections, compareOverTime, obsolescenceDate, matchKey, normCreditor
   };
   root.Metro2 = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -3459,6 +3603,14 @@ Thank you for considering this request.`
       if (merged[key]) { merged[key].targets.push(target); merged[key].bureau += ' / ' + r.bureau; }
       else merged[key] = Object.assign({}, f, { targets: [target] });
     }));
+    // Rules engine v2: compare each bureau's latest report with the one before it (re-aging, reinsertion).
+    reports.forEach(r => {
+      const prev = S().reports.filter(x => x.clientId === cid && x.bureau === r.bureau && x.id !== r.id && String(x.date) <= String(r.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+      if (prev && Metro2.compareOverTime) Metro2.compareOverTime(prev, r).forEach(f => {
+        const t = r.accounts.find(a => a.id === f.accountId) || {};
+        merged[f.code + '|' + Metro2.matchKey(t) + '|' + r.bureau] = Object.assign({}, f, { targets: [{ bureau: r.bureau, reportId: r.id, accountId: f.accountId, accountNumber: t.accountNumber || '', evidence: t.evidence || '', issue: t.issue || '', detail: f.detail }] });
+      });
+    });
     const out = Object.values(merged);
     Metro2.compareBureaus(reports).filter(g => g.differences.length).forEach(g => {
       const detail = g.differences.map(d => `${d.label}: ` + Object.entries(d.values).map(([b, v]) => `${b} ${v === '' ? '—' : MONEY_FIELDS.includes(d.field) ? money(v) : v}`).join(', ')).join('; ') + '. The same account cannot be accurate with different values at each bureau.';
@@ -3681,7 +3833,7 @@ Thank you for considering this request.`
       <div class="small muted" style="margin:2px 0 0 24px">${esc(f.creditor)} · ${esc(f.bureau)} · <span class="mono">${esc(f.code)}</span></div>
       <div class="d" style="margin-left:24px">${esc(f.detail)}</div>
       <div class="f" style="margin-left:24px">${f.fields && f.fields.length ? 'Fields: ' + esc(f.fields.join(', ')) + ' · ' : ''}Basis: ${esc(f.basis)} · Next step: ${esc(f.action)}</div></div>`).join('')}</div>` : `<div class="callout good"><b>No inconsistencies found</b>The reported data is internally consistent. If the consumer believes something is inaccurate, add it as an issue on the tradeline with their evidence.</div>`,
-      { sub: 'Select the items the consumer confirms are inaccurate', actions: fs.length ? `<button class="btn primary" data-act="disputes-from-audit" data-id="${c.id}">${icon('mail')} Create disputes</button>` : '' })}</div>
+      { sub: 'Select the items the consumer confirms are inaccurate', actions: fs.length ? `<button class="btn" data-act="m2-letters" data-id="${c.id}">✦ Metro 2 letters</button><button class="btn primary" data-act="disputes-from-audit" data-id="${c.id}">${icon('mail')} Create disputes</button>` : '' })}</div>
     <div>${card('Cross-bureau comparison', `<div class="table-wrap"><table><thead><tr><th>Tradeline</th>${['Equifax', 'Experian', 'TransUnion'].map(b => `<th>${b}</th>`).join('')}</tr></thead><tbody>${cmp.map(g => `<tr><td><b>${esc(g.creditor)}</b>${g.differences.length ? `<div class="small" style="color:var(--med)">${g.differences.length} difference(s)</div>` : ''}</td>${['Equifax', 'Experian', 'TransUnion'].map(b => { const t = g.byBureau[b]; if (!t) return '<td class="muted small">Not reported</td>'; const diffs = g.differences.map(d => d.field); return `<td class="small ${diffs.length ? 'diff' : ''}">${esc(t.status)} · ${money(t.balance)}${t.dofd ? '<br>DOFD ' + esc(t.dofd) : ''}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div>`, { flush: true, sub: 'Latest report from each bureau' })}</div></div>`;
   }
 
@@ -3691,7 +3843,7 @@ Thank you for considering this request.`
       ${list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(d => `<tr class="click" data-href="#/disputes/${d.id}">${showClient ? `<td>${clientName(d.clientId)}</td>` : ''}<td><b>${esc(d.recipient)}</b></td><td class="small">${esc(Law.DISPUTE_TYPES[d.type].label)}</td><td class="num">${d.round}</td><td class="num">${d.items.length}</td><td>${dBadge(Store.disputeState(d))}</td><td class="small nowrap">${date(d.sentAt)}</td><td class="small nowrap">${date(d.dueAt)}</td></tr>`).join('')}</tbody></table></div>`;
   }
   function clientDisputes(c) {
-    return clientViolationsCard(c) + (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
+    return clientViolationsCard(c) + (S().sequences || []).filter(q => q.clientId === c.id).map(q => seqCard(q, false)).join('') + card('Disputes', disputeTable(Store.get.disputesFor(c.id), false), { flush: true, actions: `<button class="btn sm primary" data-act="m2-letters" data-id="${c.id}">✦ Metro 2 letters</button><button class="btn sm" data-act="ai-plan" data-id="${c.id}">✦ AI plan next round</button><button class="btn sm primary" data-act="templates" data-client="${c.id}">Letter templates</button><button class="btn sm" data-act="new-dispute" data-client="${c.id}">${icon('plus')} Blank dispute</button><a class="btn sm primary" href="#/clients/${c.id}/audit">From audit</a>` });
   }
 
   function invoiceTable(list, showClient) {
@@ -4049,7 +4201,16 @@ Thank you for considering this request.`
   const KIND = { personal: ['Personal', 'b-low'], business: ['Business', 'b-info'], both: ['Personal + business', 'b-accent'] };
   const kindBadge = k => { const [l, c] = KIND[k] || KIND.personal; return `<span class="badge ${c} plain">${l}</span>`; };
 
-  function clientBusiness(c) {
+  // Knowledge-base card: the rules behind a section, each with its official source (kb/ledger-kb.json).
+  function kbCard(section, title, sub) {
+    const KB = root.KB;
+    if (!KB) return '';
+    return card(title, `<ul class="list kb-list">${KB.section(section).map(r => `<li><div class="grow"><b>${esc(r.title)}</b><div class="small" style="margin-top:2px">${esc(r.rule)}</div><div class="small muted" style="margin-top:4px"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.cite)} ↗</a>${r.needsLawyer ? ' · <span class="badge b-med">Confirm with an attorney</span>' : ''}</div></div></li>`).join('')}</ul>`, { flush: true, sub: sub || `Knowledge base v${esc(KB.version)} · not legal advice` });
+  }
+  function clientBusiness(c, ...rest) {
+    return clientBusinessBase(c, ...rest) + '<div style="margin-top:16px">' + kbCard('business', 'Business credit rules & dispute paths') + '</div>';
+  }
+  function clientBusinessBase(c) {
     const B = root.Business;
     const b = c.business || {};
     const fz = B.fundability(c);
@@ -4087,6 +4248,9 @@ Thank you for considering this request.`
 
   // ---------- Buy a business (acquisition due diligence) ----------
   function shelfCard() {
+    return `<div class="callout bad" style="margin-bottom:16px"><b>Read before buying an aged or shelf company</b>A company’s formation date is not your operating history. Telling a lender the business has operated for years, or presenting the prior owner’s credit, revenue or tradelines as yours, can be fraud. Lenders and bureaus check ownership changes, officer history, bank statements and tax returns. An aged shell with no tradelines or revenue adds little, and no company is “instantly fundable.” Always disclose the purchase date and true ownership history, and use an attorney and CPA for the purchase.</div>` + shelfCardBase() + '<div style="margin-top:16px">' + kbCard('corp', 'Buying a corporation: what it involves', 'Stock vs. asset purchase, due diligence, filings, BOI status · not legal or tax advice') + '</div>';
+  }
+  function shelfCardBase() {
     const Aq = root.Acquisition;
     const w = Aq.ageWindow(T());
     const step = (n, title, body) => `<li><span class="tick">${n}</span><div class="grow"><b style="font-weight:550">${title}</b><div class="small" style="margin-top:4px">${body}</div></div></li>`;
@@ -4189,13 +4353,14 @@ Thank you for considering this request.`
     const earned = refs.filter(r => ['approved', 'paid'].includes(r.status)).reduce((a, r) => a + Number(r.payout || 0), 0);
     const paid = refs.filter(r => r.status === 'paid').reduce((a, r) => a + Number(r.payout || 0), 0);
     const clicks = refs.reduce((a, r) => a + (r.clicks || 0), 0) + s.offers.reduce((a, o) => a + (o.clicks || 0), 0);
-    return head('Partner offers', 'Credit-builder, monitoring and business-credit programs you can refer clients to', `<button class="btn" data-act="new-offer">${icon('plus')} Custom offer</button><button class="btn primary" data-act="new-ref">${icon('plus')} Recommend to client</button>`) +
+    return head('Partner offers', 'Credit-builder, monitoring and business-credit programs you can refer clients to', `<button class="btn" data-act="partner-clicks">Click report</button><button class="btn" data-act="new-offer">${icon('plus')} Custom offer</button><button class="btn primary" data-act="new-ref">${icon('plus')} Recommend to client</button>`) +
       `<div class="grid g4" style="margin-bottom:16px">${kpi('Recommendations', refs.length, `${refs.filter(r => r.status === 'signed_up' || r.status === 'approved' || r.status === 'paid').length} signed up`)}${kpi('Link clicks', clicks)}${kpi('Commissions earned', money(earned), 'approved + paid')}${kpi('Paid out', money(paid))}</div>
       <div class="callout warn" style="margin-bottom:16px"><b>Check terms before promoting</b>Affiliate payouts change often and third-party listings disagree. Each offer shows how well its terms were confirmed as of the research date. Paste your own affiliate link from each program's dashboard. Tracked links (<span class="mono">/go/…</span>) count clicks, then redirect.</div>
       <div class="grid g2">${s.offers.map(o => card(`${esc(o.name)} ${kindBadge(o.audience === 'business' ? 'business' : 'personal')}`, `
         <div class="row between small" style="margin-bottom:6px"><span class="muted">${esc(o.category)}</span>${offerStatus(o.status)}</div>
         <div class="grid g2 small" style="gap:6px 16px;margin-bottom:10px"><div><span class="muted">Program</span><br>${esc(o.program)}</div><div><span class="muted">Referral bonus</span><br><b>${esc(o.bonus)}</b></div><div><span class="muted">Cookie</span><br>${esc(o.cookie)}</div><div><span class="muted">Clicks</span><br>${(o.clicks || 0) + refs.filter(r => r.offerId === o.id).reduce((a, r) => a + (r.clicks || 0), 0)}</div></div>
         <p class="small">${esc(o.note || '')}</p>
+        <div class="small muted">Tracked link: <span class="mono">/go/partner/${esc(o.key)}</span>${o.subIdParam ? ` · sub-ID sent as <span class="mono">${esc(o.subIdParam)}</span>` : ' · no sub-ID for this network'}</div>
         <form data-form="offer" data-id="${o.id}" class="row" style="margin-top:8px;flex-wrap:nowrap"><input name="affiliateUrl" value="${esc(o.affiliateUrl || '')}" placeholder="Paste your affiliate / referral link (https://…)" class="small"><button class="btn sm">Save</button></form>
         <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
       <div style="margin-top:16px">${card('Referral pipeline', referralRows(refs.slice().sort((a, b) => String(b.recommendedAt).localeCompare(String(a.recommendedAt))), true), { flush: true })}</div>
@@ -4238,6 +4403,7 @@ Thank you for considering this request.`
       ${Store.remote ? card('Print & mail', '<div id="mail-settings"><p class="small muted">Loading…</p></div>', { sub: 'Mail letters (first-class or certified) from Ledger through Lob' }) : ''}
       ${Store.remote ? card('Online payments', '<div id="pay-settings"><p class="small muted">Loading…</p></div>', { sub: 'Clients pay invoices on Authorize.net’s secure page' }) : ''}
       ${Store.remote ? card('AI settings', '<div id="ai-settings"><p class="small muted">Loading…</p></div>', { sub: 'Anthropic API key for Ledger AI, report scanning and round planning' }) : ''}
+      ${Store.remote ? card('Sign-in & email', '<p class="small muted">Password reset links, optional magic-link sign-in, optional emailed sign-in codes and client email updates.</p><div class="row" style="margin-top:10px"><button class="btn" data-act="auth-settings">Open sign-in settings</button></div>', { sub: 'Outbound email is set on the server with LEDGER_MAIL_MODE' }) : ''}
       ${Store.remote ? '' : card('AI in this browser', `<p class="small">${root.AIDirect && root.AIDirect.getKey() ? '<span class="badge b-ok">On</span> AI scanning works in this file using your Anthropic API key.' : 'Add your own Anthropic API key to scan credit reports with AI right here — no server needed. The key stays in this browser and is never included in backups.'}</p><div class="row" style="margin-top:10px"><button class="btn primary" data-act="ai-key">${root.AIDirect && root.AIDirect.getKey() ? 'Change key' : 'Add API key'}</button><a class="btn ghost" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key ↗</a></div>`)}
       ${card('Demo & reset', `<div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn danger" data-act="reset">Erase workspace</button></div>`)}
     </div></div>`;
@@ -4353,15 +4519,16 @@ Thank you for considering this request.`
 
   function authScreen(session) {
     const invite = (location.hash.match(/invite=([\w-]+)/) || [])[1];
-    const mode = invite ? 'invite' : session.setupRequired ? 'setup' : 'login';
-    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger' }[mode];
+    const reset = (location.hash.match(/reset=([\w-]+)/) || [])[1];
+    const mode = reset ? 'reset' : invite ? 'invite' : session.setupRequired ? 'setup' : 'login';
+    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger', reset: 'Choose a new password' }[mode];
     document.body.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:24px 16px">
       <form class="card" id="auth" style="width:100%;max-width:400px"><div class="card-b stack">
         <div class="brand" style="padding:0;color:var(--ink)"><div class="brand-mark">L</div><div><b>Ledger</b><small style="color:var(--muted)">Credit workspace</small></div></div>
         <h1>${title}</h1>
         ${mode === 'setup' ? field('Your name', 'name', '', { required: true }) : ''}
         ${mode === 'setup' && session.setupCodeRequired ? field('Setup code', 'setupCode', '', { required: true, help: 'The LEDGER_SETUP_CODE value from your server settings' }) : ''}
-        ${mode !== 'invite' ? field('Email', 'email', '', { type: 'email', required: true }) : ''}
+        ${mode !== 'invite' && mode !== 'reset' ? field('Email', 'email', '', { type: 'email', required: true }) : ''}
         ${field('Password', 'password', '', { type: 'password', required: true, help: mode === 'login' ? '' : 'At least 10 characters' })}
         <div id="auth-err" class="small" style="color:var(--high)"></div>
         <button class="btn primary" style="width:100%">${mode === 'login' ? 'Sign in' : 'Continue'}</button>
@@ -4373,7 +4540,12 @@ Thank you for considering this request.`
       try {
         if (mode === 'setup') await api('POST', '/api/setup', d);
         else if (mode === 'invite') await api('POST', '/api/invites/accept', { token: invite, password: d.password });
-        else await api('POST', '/api/login', d);
+        else if (mode === 'reset') await api('POST', '/api/auth/reset', { token: reset, password: d.password });
+        else {
+          const r = await api('POST', '/api/login', d);
+          // Optional emailed sign-in code (Settings → sign-in security).
+          if (r && r.otpRequired) { const code = window.prompt((r.message || 'We emailed you a code.') + ' Enter the 6-digit code:'); if (!code) return; await api('POST', '/api/auth/otp', { code: code.trim() }); }
+        }
         location.hash = '';
         location.reload();
       } catch (err) { document.getElementById('auth-err').textContent = err.message; }
@@ -6151,6 +6323,291 @@ function htmlToText(html) {
     'ai-plan': el => (Store.remote ? planRound(el.dataset.id) : toast('AI round planning runs on the Ledger server with ANTHROPIC_API_KEY set'))
   });
   root.AIFlow = { afterImport, showWins, scanDoc, planRound, uploadHub, scanFiles, scanText, reviewScan };
+})(window);
+
+</script>
+  <script>
+/* Generated from ledger/kb/build-kb.py — do not edit by hand. */
+(function (root) { 'use strict'; const KB = {"version": "2026-10-19.1", "updated": "2026-10-19", "note": "Plain-English summaries for staff and the Ledger Assistant. Not legal advice. Each rule cites its official source; re-verify before relying on it.", "rules": [{"id": "fcra-605", "section": "personal", "title": "Reporting time limits (obsolescence)", "rule": "Most negative items (collections, charge-offs, late payments) may be reported for 7 years. The clock runs from 180 days after the delinquency that led to the collection or charge-off began (the DOFD). Chapter 7 bankruptcies can be reported for 10 years. Paying a debt does not restart the clock.", "cite": "FCRA § 605(a), (c); 15 U.S.C. § 1681c", "url": "https://www.law.cornell.edu/uscode/text/15/1681c", "verifiedAt": "2026-10-19"}, {"id": "fcra-605b", "section": "personal", "title": "Identity-theft blocks", "rule": "A bureau must block information that resulted from identity theft within 4 business days of receiving proof of identity, an identity theft report (e.g. from IdentityTheft.gov) and the consumer's statement of which items are not theirs. Never file an identity-theft claim for debts the consumer actually opened.", "cite": "FCRA § 605B; 15 U.S.C. § 1681c-2", "url": "https://www.law.cornell.edu/uscode/text/15/1681c-2", "verifiedAt": "2026-10-19"}, {"id": "fcra-609", "section": "personal", "title": "File disclosure", "rule": "Consumers can get everything in their file from each nationwide bureau. Free reports are available weekly at AnnualCreditReport.com.", "cite": "FCRA § 609, § 612; 15 U.S.C. §§ 1681g, 1681j", "url": "https://www.law.cornell.edu/uscode/text/15/1681g", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.annualcreditreport.com/"]}, {"id": "fcra-611", "section": "personal", "title": "Bureau reinvestigation: 30 days (up to 45)", "rule": "After a dispute, the bureau must finish a reasonable reinvestigation within 30 days of receipt, extendable to 45 days if the consumer sends more information during the 30 days, or if the dispute follows a free annual report. It must forward the dispute to the furnisher within 5 business days and send results within 5 business days of finishing.", "cite": "FCRA § 611(a)(1), (a)(2), (a)(6); 15 U.S.C. § 1681i", "url": "https://www.law.cornell.edu/uscode/text/15/1681i", "verifiedAt": "2026-10-19"}, {"id": "fcra-611-frivolous", "section": "personal", "title": "Frivolous or irrelevant disputes", "rule": "A bureau may refuse a dispute it reasonably finds frivolous or irrelevant, including one with no new information or one that does not give enough detail. It must tell the consumer within 5 business days. Repeat, template or mass disputes risk this.", "cite": "FCRA § 611(a)(3); 15 U.S.C. § 1681i(a)(3)", "url": "https://www.law.cornell.edu/uscode/text/15/1681i", "verifiedAt": "2026-10-19"}, {"id": "fcra-611-mov", "section": "personal", "title": "Method of verification", "rule": "After a reinvestigation the consumer may ask for a description of how it was done, including the furnisher's name, address and phone number if reasonably available. The bureau must answer within 15 days.", "cite": "FCRA § 611(a)(6)(B)(iii), (a)(7)", "url": "https://www.law.cornell.edu/uscode/text/15/1681i", "verifiedAt": "2026-10-19"}, {"id": "fcra-611-reinsert", "section": "personal", "title": "Reinsertion of deleted items", "rule": "A deleted item can only come back if the furnisher certifies it is complete and accurate. The bureau must notify the consumer in writing within 5 business days.", "cite": "FCRA § 611(a)(5)(B)", "url": "https://www.law.cornell.edu/uscode/text/15/1681i", "verifiedAt": "2026-10-19"}, {"id": "fcra-623", "section": "personal", "title": "Furnisher accuracy duties", "rule": "Furnishers must not report information they know is inaccurate, must correct and update it, must report an account as disputed when the consumer disputes it with them, and must report the date of delinquency for accounts placed in collection or charged off.", "cite": "FCRA § 623(a)(1)-(3), (a)(5); 15 U.S.C. § 1681s-2", "url": "https://www.law.cornell.edu/uscode/text/15/1681s-2", "verifiedAt": "2026-10-19"}, {"id": "regv-1022-43", "section": "personal", "title": "Direct disputes to the furnisher", "rule": "Consumers can dispute directly with the furnisher about account terms, liability, payment history and similar items. The dispute must identify the account, say what is wrong and why, and include supporting documents. The furnisher has the same time limits as a bureau (generally 30 days). Furnishers may treat disputes as frivolous, for example when they come from a credit repair organization's form letter.", "cite": "Reg. V, 12 C.F.R. § 1022.43", "url": "https://www.ecfr.gov/current/title-12/chapter-X/part-1022/subpart-E/section-1022.43", "verifiedAt": "2026-10-19"}, {"id": "fdcpa-809", "section": "personal", "title": "Debt validation", "rule": "A debt collector must send a validation notice. If the consumer disputes in writing within the 30-day validation period, the collector must stop collecting until it mails verification. Under Reg F the validation period ends 30 days after the consumer receives the notice (assumed 5 business days after it is sent).", "cite": "FDCPA § 809, 15 U.S.C. § 1692g; Reg. F, 12 C.F.R. § 1006.34", "url": "https://www.law.cornell.edu/uscode/text/15/1692g", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.ecfr.gov/current/title-12/chapter-X/part-1006/subpart-B/section-1006.34"]}, {"id": "fcba", "section": "personal", "title": "Billing errors on credit cards", "rule": "For open-end credit (credit cards), a billing error must be disputed in writing to the card issuer within 60 days of the statement. The issuer must acknowledge within 30 days and resolve within two billing cycles (no more than 90 days), and it may not report the disputed amount as delinquent while it investigates.", "cite": "FCBA, 15 U.S.C. § 1666; Reg. Z, 12 C.F.R. § 1026.13", "url": "https://www.law.cornell.edu/uscode/text/15/1666", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.ecfr.gov/current/title-12/chapter-X/part-1026/subpart-B/section-1026.13"]}, {"id": "ecoa-adverse", "section": "personal", "title": "Adverse action notices", "rule": "A lender that denies credit must send a notice within 30 days of a completed application that gives the specific principal reasons or says how to request them. If a credit report was used, FCRA § 615 also requires the bureau's name and the right to a free report within 60 days.", "cite": "ECOA, 15 U.S.C. § 1691(d); Reg. B, 12 C.F.R. § 1002.9; FCRA § 615", "url": "https://www.ecfr.gov/current/title-12/chapter-X/part-1002/section-1002.9", "verifiedAt": "2026-10-19"}, {"id": "croa-advance-fee", "section": "compliance", "title": "No fees before services are fully performed", "rule": "A credit repair organization may not charge or receive any money for a service before that service is fully performed. The Telemarketing Sales Rule adds that, when sold by phone, payment can only be requested after the promised results are shown in a consumer report issued more than 6 months after the results were achieved.", "cite": "CROA § 404(b), 15 U.S.C. § 1679b(b); TSR, 16 C.F.R. § 310.4(a)(2)", "url": "https://www.law.cornell.edu/uscode/text/15/1679b", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.ecfr.gov/current/title-16/chapter-I/subchapter-C/part-310/section-310.4"]}, {"id": "croa-misrep", "section": "compliance", "title": "No untrue or misleading statements", "rule": "No one may advise a consumer to make untrue or misleading statements to a bureau or creditor, to alter identity to hide accurate information (e.g. CPNs or EINs used as an SSN), or misrepresent the services. Never promise results, deletions or score increases.", "cite": "CROA § 404(a), 15 U.S.C. § 1679b(a)", "url": "https://www.law.cornell.edu/uscode/text/15/1679b", "verifiedAt": "2026-10-19"}, {"id": "croa-disclosure", "section": "compliance", "title": "Required written disclosure", "rule": "Before any contract is signed, the consumer must receive the 'Consumer Credit File Rights Under State and Federal Law' statement, in the statutory wording, as a separate document. The organization must keep a signed copy for 2 years.", "cite": "CROA § 405, 15 U.S.C. § 1679c", "url": "https://www.law.cornell.edu/uscode/text/15/1679c", "verifiedAt": "2026-10-19"}, {"id": "croa-contract", "section": "compliance", "title": "Written contract", "rule": "The contract must be in writing, signed by the consumer, and list the terms and conditions of payment including the total amount, a full description of the services, the estimated time to perform them, the organization's name and principal business address, and a conspicuous cancellation notice.", "cite": "CROA § 406, 15 U.S.C. § 1679d", "url": "https://www.law.cornell.edu/uscode/text/15/1679d", "verifiedAt": "2026-10-19"}, {"id": "croa-cancel", "section": "compliance", "title": "3-business-day cancellation", "rule": "The consumer can cancel without penalty or obligation before midnight of the 3rd business day after signing. The organization must give a separate cancellation form. A contract that does not comply with CROA is void.", "cite": "CROA §§ 407-408, 15 U.S.C. §§ 1679e-1679f", "url": "https://www.law.cornell.edu/uscode/text/15/1679e", "verifiedAt": "2026-10-19"}, {"id": "croa-waiver", "section": "compliance", "title": "No waivers", "rule": "Any waiver of CROA rights is void and cannot be enforced.", "cite": "CROA § 408, 15 U.S.C. § 1679f", "url": "https://www.law.cornell.edu/uscode/text/15/1679f", "verifiedAt": "2026-10-19"}, {"id": "ftc-affiliate", "section": "compliance", "title": "Affiliate and referral disclosures", "rule": "If we earn money when someone signs up through our link, we must say so clearly and conspicuously, near the link, every time we recommend it.", "cite": "FTC Endorsement Guides, 16 C.F.R. Part 255", "url": "https://www.ecfr.gov/current/title-16/chapter-I/subchapter-B/part-255", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.ftc.gov/business-guidance/resources/ftcs-endorsement-guides-what-people-are-asking"]}, {"id": "nj-credit-repair", "section": "compliance", "title": "New Jersey", "rule": "New Jersey has no stand-alone credit services organization statute. The NJ Division of Consumer Affairs points consumers to the federal CROA protections: no payment before services are completed, written rights disclosure, written contract, and 3 days to cancel. Separately, N.J.S.A. 17:16G (Debt Adjustment and Credit Counseling) licenses debt adjusters and caps their fees. Offering to negotiate or settle debts for NJ consumers can fall under it, so have a NJ attorney confirm the business model. The NJ Consumer Fraud Act (N.J.S.A. 56:8) also applies to advertising.", "cite": "NJ Div. of Consumer Affairs brief (rev. 06/13/23); N.J.S.A. 17:16G; N.J.S.A. 56:8", "url": "https://www.njconsumeraffairs.gov/News/Consumer%20Briefs/credit-reports-and-credit-repair.pdf", "verifiedAt": "2026-10-19", "needsLawyer": true}, {"id": "tcpa-sms", "section": "compliance", "title": "Texts and calls", "rule": "Texting a client requires their prior express consent, and marketing texts require prior express written consent. Keep the consent record and honor STOP.", "cite": "TCPA, 47 U.S.C. § 227; 47 C.F.R. § 64.1200", "url": "https://www.ecfr.gov/current/title-47/chapter-I/subchapter-B/part-64/subpart-L/section-64.1200", "verifiedAt": "2026-10-19"}, {"id": "m2-overview", "section": "metro2", "title": "Metro 2 format", "rule": "Metro 2 is the standard format furnishers use to report to the bureaus. The Credit Reporting Resource Guide (CRRG) from the CDIA defines each field. The fields must be consistent with one another: Account Status, Payment Rating, the 24-month Payment History Profile, Current Balance, Amount Past Due, DOFD and the Compliance Condition Code.", "cite": "CDIA Credit Reporting Resource Guide", "url": "https://www.cdiaonline.org/resources/furnishers-of-data-overview/metro2-information/", "verifiedAt": "2026-10-19"}, {"id": "m2-dofd", "section": "metro2", "title": "Date of First Delinquency (DOFD)", "rule": "The DOFD is the date the account first became delinquent and was never brought current afterward. It controls the 7-year reporting period. It must not change when the debt is sold, transferred or paid. A DOFD that moves later is called re-aging.", "cite": "CRRG Base Segment field 25; FCRA § 623(a)(5)", "url": "https://www.cdiaonline.org/resources/furnishers-of-data-overview/metro2-information/", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.law.cornell.edu/uscode/text/15/1681s-2"]}, {"id": "m2-status", "section": "metro2", "title": "Account Status codes", "rule": "Examples: 11 current, 13 paid/closed zero balance, 71-84 increasingly past due, 93 collection, 97 charge-off, 62/64 paid collection/charge-off, 05 transferred. A paid or transferred status must show a zero balance and no amount past due.", "cite": "CRRG Base Segment field 17A", "url": "https://www.cdiaonline.org/resources/furnishers-of-data-overview/metro2-information/", "verifiedAt": "2026-10-19"}, {"id": "m2-ccc", "section": "metro2", "title": "Compliance Condition Codes", "rule": "XB = disputed, investigation under way; XC = investigation completed, consumer disagrees; XH = previously in dispute, investigation completed; XR = removes the most recent code. After an investigation, XB should be replaced.", "cite": "CRRG Base Segment field 20; FCRA § 623(a)(3)", "url": "https://www.cdiaonline.org/resources/furnishers-of-data-overview/metro2-information/", "verifiedAt": "2026-10-19"}, {"id": "m2-history", "section": "metro2", "title": "Payment History Profile", "rule": "This is 24 months of history, newest month first. 0 = current, 1-6 = 30 to 180+ days late, G = collection, L = charge-off, B = no history before this month, D = no data for the month. The latest month must match the Account Status.", "cite": "CRRG Base Segment field 18", "url": "https://www.cdiaonline.org/resources/furnishers-of-data-overview/metro2-information/", "verifiedAt": "2026-10-19"}, {"id": "score-factors", "section": "personal", "title": "What moves FICO scores", "rule": "Payment history (about 35%), amounts owed and utilization (30%), length of history (15%), new credit (10%), credit mix (10%). Keep card utilization low (under 30%, lower is better), pay on time, avoid closing old cards, and space out applications.", "cite": "myFICO: What's in your credit score", "url": "https://www.myfico.com/credit-education/whats-in-your-credit-score", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.consumerfinance.gov/ask-cfpb/how-do-i-get-and-keep-a-good-credit-score-en-318/"]}, {"id": "score-au", "section": "personal", "title": "Authorized users", "rule": "Being added as an authorized user on a well-managed card can help a thin file. The primary holder's late payments can hurt it, and an AU can ask to be removed. Never buy 'tradeline' seats to misrepresent history to a lender.", "cite": "CFPB consumer guidance", "url": "https://www.consumerfinance.gov/ask-cfpb/how-do-i-get-and-keep-a-good-credit-score-en-318/", "verifiedAt": "2026-10-19"}, {"id": "score-goodwill", "section": "personal", "title": "Goodwill and pay-for-update requests", "rule": "Accurate negatives cannot be disputed away. A consumer can ask a creditor, as a courtesy, to update a paid late payment ('goodwill letter'). Creditors don't have to agree, and the letter must not claim the item is inaccurate.", "cite": "FCRA § 623(a)(1) (accuracy); CROA § 404(a)", "url": "https://www.law.cornell.edu/uscode/text/15/1681s-2", "verifiedAt": "2026-10-19"}, {"id": "biz-fcra-scope", "section": "business", "title": "Business credit reports are mostly NOT covered by the FCRA", "rule": "The FCRA covers reports about consumers (individuals). Commercial credit reports on a business (D&B, Experian Business, Equifax Business) are generally outside it. So there is no federal 30-day reinvestigation duty: disputes go through each bureau's own process and to the furnisher. A personal report pulled for a personal guarantee IS covered by the FCRA.", "cite": "FCRA § 603(c)-(d), 15 U.S.C. § 1681a", "url": "https://www.law.cornell.edu/uscode/text/15/1681a", "verifiedAt": "2026-10-19"}, {"id": "biz-dnb", "section": "business", "title": "Dun & Bradstreet disputes and updates", "rule": "Owners, directors or officers can verify through the free D-U-N-S Profile Manager to update company information and dispute payment experiences. D&B reviews requests and may not accept them. A D-U-N-S Number is free, and paying to expedite it is optional.", "cite": "D&B D-U-N-S Profile Manager", "url": "https://www.dnb.com/en-us/smb/duns/duns-manager.html", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.dnb.com/duns/get-a-duns.html"]}, {"id": "biz-experian", "section": "business", "title": "Experian Business disputes", "rule": "Use 'Submit Data Dispute' on the Experian business report, or email the marked-up report to BusinessDisputes@Experian.com. Investigations generally finish within 30 days. Officers can update profile facts at businesscreditfacts.com.", "cite": "Experian Small Business", "url": "https://www.experian.com/small-business/business-credit-information", "verifiedAt": "2026-10-19"}, {"id": "biz-equifax", "section": "business", "title": "Equifax Business", "rule": "Business support portal; 1-888-407-0359. Equifax Commercial Solutions, PO Box 740249, Atlanta, GA 30374-0249.", "cite": "Equifax Business support", "url": "https://www.equifax.com/business/support/", "verifiedAt": "2026-10-19"}, {"id": "biz-sbfe", "section": "business", "title": "SBFE", "rule": "The Small Business Financial Exchange is a lender-owned data exchange, not a credit bureau. Member lenders report payment data that partner bureaus use in some products. Dispute with the bureau that issued the report and with the lender.", "cite": "SBFE FAQ", "url": "https://www.sbfe.org/small-business-faqs", "verifiedAt": "2026-10-19"}, {"id": "biz-reg-b", "section": "business", "title": "ECOA / Reg B for business credit", "rule": "ECOA applies to business credit too: no discrimination on a prohibited basis, and businesses get adverse action notices (with simplified rules for businesses with gross revenues of $1 million or less).", "cite": "Reg. B, 12 C.F.R. § 1002.9(a)(3)", "url": "https://www.ecfr.gov/current/title-12/chapter-X/part-1002/section-1002.9", "verifiedAt": "2026-10-19"}, {"id": "biz-1071", "section": "business", "title": "CFPB Section 1071 (small business lending data)", "rule": "On May 1, 2026, the CFPB issued a revised 1071 rule (effective June 30, 2026). Covered lenders, those with at least 1,000 small-business originations in each of 2026 and 2027, must start collecting data on January 1, 2028, and 2028 is a grace year. 'Small business' now means $1 million or less in gross annual revenue. This is a lender data-collection rule. It doesn't change how business credit is scored or disputed.", "cite": "Reg. B subpart B (12 C.F.R. 1002.101 et seq.), CFPB final rule May 1, 2026", "url": "https://www.consumerfinance.gov/rules-policy/final-rules/small-business-lending-under-the-equal-credit-opportunity-act-regulation-b-2026/", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.consumerfinance.gov/1071-rule/"]}, {"id": "biz-building", "section": "business", "title": "Building business credit", "rule": "Foundation: a registered entity in good standing, an EIN, a business bank account, a consistent legal name, address and phone everywhere, a D-U-N-S Number, and an accurate NAICS code. Then open net-30 vendor accounts that report to business bureaus, pay early, and add reporting cards or credit-builder accounts. Keep personal and business spending separate.", "cite": "SBA guidance; Nav net-30 list", "url": "https://www.sba.gov/business-guide/manage-your-business/manage-your-finances", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.nav.com/business-credit/net-30-accounts/"]}, {"id": "biz-pg", "section": "business", "title": "Personal guarantees", "rule": "Most small-business credit needs a personal guarantee. The lender may pull the owner's personal report (an FCRA-covered hard inquiry). Some business cards report to personal reports, and a default on a guaranteed debt can show up on the owner's personal credit.", "cite": "CFPB small business resources", "url": "https://www.consumerfinance.gov/consumer-tools/small-business/", "verifiedAt": "2026-10-19"}, {"id": "corp-structure", "section": "corp", "title": "Stock purchase vs. asset purchase", "rule": "In a stock (or membership-interest) purchase you buy the entity itself, including all its liabilities, known and unknown. In an asset purchase you buy selected assets, and liabilities generally stay with the seller. The choice affects taxes, contracts, licenses and liability. Use an attorney and a CPA.", "cite": "SBA: Buy an existing business", "url": "https://www.sba.gov/business-guide/plan-your-business/buy-existing-business-or-franchise", "verifiedAt": "2026-10-19", "needsLawyer": true}, {"id": "corp-diligence", "section": "corp", "title": "Due diligence checklist", "rule": "Check the Secretary of State good standing and filing history, UCC lien searches, judgments and court records (state courts and PACER), federal and state tax status (IRS Form 8821 transcript, state tax clearance), the registered agent, the officers and members of record, contracts, licenses, bank statements and tax returns showing real operations.", "cite": "SBA; IRS Form 8821; PACER", "url": "https://www.irs.gov/forms-pubs/about-form-8821", "verifiedAt": "2026-10-19", "extraUrls": ["https://pacer.uscourts.gov/", "https://www.sba.gov/business-guide/plan-your-business/buy-existing-business-or-franchise"]}, {"id": "corp-changes", "section": "corp", "title": "After closing", "rule": "File officer, member and registered-agent changes with the state. Update the IRS responsible party (Form 8822-B within 60 days). Update D&B and bank signers. Tell lenders and vendors about the ownership change.", "cite": "IRS Form 8822-B", "url": "https://www.irs.gov/forms-pubs/about-form-8822-b", "verifiedAt": "2026-10-19"}, {"id": "corp-boi", "section": "corp", "title": "Beneficial ownership (BOI) reporting status", "rule": "FinCEN's final rule effective August 14, 2026 permanently exempts U.S.-created companies and U.S. persons from BOI reporting under the Corporate Transparency Act. Only certain foreign companies registered in the U.S. still report, and only for foreign beneficial owners. A purchase of a domestic company needs no FinCEN BOI filing. Check state-level ownership filings.", "cite": "31 C.F.R. § 1010.380; FinCEN final rule, 91 FR 52508 (Aug. 14, 2026)", "url": "https://www.federalregister.gov/documents/2026/08/14/2026-16576/beneficial-ownership-information-reporting-requirement-revision", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.fincen.gov/boi/beneficial-ownership-information-frequently-asked-questions"]}, {"id": "corp-fraud-warning", "section": "corp", "title": "Misrepresenting an aged or shelf company is fraud risk", "rule": "A bought company's formation date isn't your operating history. Telling a lender the business has operated for X years, or presenting the prior owner's credit history or revenue as yours, can be bank fraud or false statements on a loan application (18 U.S.C. §§ 1014, 1344). Lenders and bureaus look at ownership changes, the D-U-N-S and SOS officer history, bank statements and tax returns. An aged shell with no tradelines, revenue or filings adds little. No company is 'instantly fundable'. Always disclose the purchase date and the true ownership history.", "cite": "18 U.S.C. § 1014; 18 U.S.C. § 1344", "url": "https://www.law.cornell.edu/uscode/text/18/1014", "verifiedAt": "2026-10-19", "extraUrls": ["https://www.law.cornell.edu/uscode/text/18/1344"], "needsLawyer": true}, {"id": "corp-credit-link", "section": "corp", "title": "How a purchase does and doesn't tie to business credit", "rule": "A real operating business keeps its D-U-N-S file, vendor tradelines and payment history after a stock purchase, but lenders reunderwrite on the new owners, their personal guarantees and their credit. Many vendor and bank accounts must be reopened or re-approved after a change of control. Formation age alone doesn't create tradelines.", "cite": "D&B update guidance (ownership change)", "url": "https://www.dnb.com/en-us/smb/duns/duns-manager.html", "verifiedAt": "2026-10-19"}]};
+ KB.byId = id => KB.rules.find(r => r.id === id);
+ KB.section = s => KB.rules.filter(r => r.section === s);
+ root.KB = KB; if (typeof module !== 'undefined' && module.exports) module.exports = KB; })(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * Dispute reasons: turns rules-engine findings (Metro2.auditReport / compareOverTime) into
+ * specific, factual dispute items that Letters.build() accepts, and checks a planned letter for
+ * frivolous-dispute risk before staff send it.
+ *
+ * Principles (see kb/ledger-kb.json):
+ *  - Only findings that show an actual inconsistency or obsolescence become dispute items.
+ *    Informational findings (e.g. "aging off soon", "authorized user") never do.
+ *  - Each item names the field, the reported value and why it is wrong, and cites the rule.
+ *  - Wording varies per account so a round doesn't read like a mass template, but it is never
+ *    padded: one or two plain sentences in the consumer's voice. No "guaranteed deletion" language.
+ *  - Anything the consumer must confirm is marked [CONFIRM ...] for staff to resolve.
+ */
+(function (root) {
+  'use strict';
+
+  // code → { kb: [knowledge base ids], letter: default letter type, ask: correction requested, confirm }
+  const MAP = {
+    'M2-CURRENT-PASTDUE': { kb: ['m2-status', 'fcra-611', 'fcra-623'], letter: 'cra_611', ask: 'Correct the amount past due to $0, or correct the account status if it is actually delinquent.' },
+    'M2-PAID-BALANCE': { kb: ['m2-status', 'fcra-611', 'fcra-623'], letter: 'cra_611', ask: 'Report a $0 balance consistent with the paid/closed status.' },
+    'M2-PAID-PASTDUE': { kb: ['m2-status', 'fcra-611', 'fcra-623'], letter: 'cra_611', ask: 'Report $0 past due consistent with the paid/closed status.' },
+    'M2-PASTDUE-GT-BAL': { kb: ['m2-status', 'fcra-611'], letter: 'cra_611', ask: 'Correct the amount past due so it does not exceed the balance.' },
+    'M2-DOFD-MISSING': { kb: ['m2-dofd', 'fcra-623', 'fcra-605'], letter: 'cra_611', ask: 'Report the correct date of first delinquency, or delete the item if it cannot be verified.' },
+    'M2-DOFD-BEFORE-OPEN': { kb: ['m2-dofd', 'fcra-611'], letter: 'cra_611', ask: 'Correct the date of first delinquency and date opened.' },
+    'M2-DOFD-FUTURE': { kb: ['m2-dofd', 'fcra-611'], letter: 'cra_611', ask: 'Correct the date of first delinquency.' },
+    'M2-DOFD-ON-CURRENT': { kb: ['m2-dofd', 'fcra-611'], letter: 'cra_611', ask: 'Remove the delinquency date from this current account.', confirm: 'that this account was never late' },
+    'M2-DOFD-REAGED': { kb: ['m2-dofd', 'fcra-623', 'fcra-605'], letter: 'cra_611', ask: 'Report the original date of first delinquency shown by the payment history, and apply the reporting period from that date.' },
+    'M2-DOFD-MOVED': { kb: ['m2-dofd', 'fcra-623', 'fcra-605'], letter: 'cra_611', ask: 'Restore the original date of first delinquency reported earlier and apply the reporting period from it.' },
+    'M2-CLOSE-BEFORE-OPEN': { kb: ['fcra-611'], letter: 'cra_611', ask: 'Correct the date opened and date closed.' },
+    'M2-CO-GROWING': { kb: ['fcra-611'], letter: 'cra_611', ask: 'Verify the amount past due and correct any amount not permitted by the agreement.' },
+    'M2-TRANSFER-BALANCE': { kb: ['m2-status', 'fcra-611', 'fcra-623'], letter: 'cra_611', ask: 'Report a $0 balance on the transferred account so the debt is not counted twice.' },
+    'M2-BK-BALANCE': { kb: ['fcra-611', 'fcra-623'], letter: 'cra_611', ask: 'Report a $0 balance consistent with the bankruptcy discharge.', confirm: 'the discharge date and that this debt was included' },
+    'M2-HISTORY-MISMATCH': { kb: ['m2-history', 'fcra-611'], letter: 'cra_611', ask: 'Correct the most recent payment history month so it matches the account status.' },
+    'M2-HISTORY-NO-DOFD': { kb: ['m2-dofd', 'fcra-623'], letter: 'cra_611', ask: 'Report the date of first delinquency for the late months shown.' },
+    'M2-DUPLICATE-DEBT': { kb: ['fcra-611', 'fcra-623'], letter: 'cra_611', ask: 'Report a $0 balance on the account that no longer owns the debt.' },
+    'M2-DUPLICATE-COLLECTION': { kb: ['fcra-611', 'fcra-623', 'fdcpa-809'], letter: 'cra_611', ask: 'Delete the duplicate collection, or report a balance only for the collector that owns the debt.' },
+    'M2-COLLECTION-NO-OC': { kb: ['fcra-611', 'fcra-623'], letter: 'cra_611', ask: 'Report the original creditor name, or delete the item if it cannot be verified.' },
+    'M2-CCC-MISSING': { kb: ['m2-ccc', 'fcra-623'], letter: 'furnisher_623', ask: 'Report this account as disputed by the consumer (Compliance Condition Code XB) while the dispute is open.' },
+    'M2-CCC-XB-STALE': { kb: ['m2-ccc', 'fcra-623'], letter: 'furnisher_623', ask: 'Update the compliance condition code to reflect that the investigation is complete.' },
+    'M2-CO-AMOUNT-MISSING': { kb: ['fcra-623'], letter: 'cra_611', ask: 'Complete the record with the original charge-off amount.' },
+    'FCRA-OBSOLETE': { kb: ['fcra-605', 'm2-dofd'], letter: 'obsolete_605', ask: 'Delete this item: it is past the reporting period allowed by FCRA § 605.' },
+    'FCRA-OBSOLETE-UNKNOWN': { kb: ['fcra-605', 'm2-dofd'], letter: 'obsolete_605', ask: 'Provide the date of first delinquency relied on, and delete the item if it is past the reporting period.' },
+    'FCRA-REINSERTED': { kb: ['fcra-611-reinsert'], letter: 'cra_611', ask: 'Provide the reinsertion notice and the furnisher’s certification, or delete the item.' },
+    'CONSUMER-ASSERTED': { kb: ['fcra-611'], letter: 'cra_611', ask: 'Investigate and correct or delete the information.', confirm: 'every statement and attach the evidence' }
+  };
+  // Findings that are informational only — they never become dispute items.
+  const NOT_DISPUTABLE = new Set(['FCRA-OBSOLETE-SOON', 'INFO-AU-DEROG', 'M2-STATUS-UNKNOWN', 'M2-INSTALL-LIMIT', 'M2-LASTPAY-AFTER-REPORT']);
+
+  const OPENERS = [
+    s => s,
+    s => 'The information reported is internally inconsistent: ' + s.charAt(0).toLowerCase() + s.slice(1),
+    s => 'I have reviewed this account and it is reported inaccurately. ' + s
+  ];
+  function pick(seed, n) { let h = 0; String(seed).split('').forEach(c => { h = (h * 31 + c.charCodeAt(0)) >>> 0; }); return h % n; }
+
+  function isDisputable(f) { return !!f && !NOT_DISPUTABLE.has(f.code) && !!MAP[f.code]; }
+
+  /** Finding (+ tradeline) → Letters item. Returns null for findings that must not be disputed. */
+  function toItem(f, t) {
+    if (!isDisputable(f)) return null;
+    const m = MAP[f.code];
+    const detail = String(f.detail || '').replace(/\s+/g, ' ').trim();
+    const discrepancy = OPENERS[pick((f.accountId || '') + f.code, OPENERS.length)](detail) + (m.confirm ? ` [CONFIRM with the client: ${m.confirm}]` : '');
+    return {
+      accountId: f.accountId || (t && t.id) || '', creditor: f.creditor || (t && t.creditor) || '',
+      accountNumber: t && t.accountNumber ? String(t.accountNumber).replace(/\D/g, '').slice(-4) : '',
+      bureau: f.bureau || '', discrepancy, requested: m.ask, fields: f.fields || [], basis: f.basis || '',
+      code: f.code, kb: m.kb, letterType: m.letter, needsClientConfirmation: !!m.confirm || f.code === 'CONSUMER-ASSERTED'
+    };
+  }
+
+  const words = s => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 3));
+  function similarity(a, b) { const A = words(a), B = words(b); if (!A.size || !B.size) return 0; let n = 0; A.forEach(w => { if (B.has(w)) n += 1; }); return n / (A.size + B.size - n); }
+
+  /**
+   * Frivolous-dispute guard (FCRA § 611(a)(3); Reg V § 1022.43(f)).
+   * Blocks an item when the same recipient already has it pending, or already verified it for a
+   * near-identical reason and nothing new is offered. Returns { ok, blocked: [...], warnings: [...] }.
+   */
+  function checkRepeat({ items, recipient, letterType, priorDisputes, newEvidence }) {
+    const blocked = [], warnings = [];
+    const escalation = ['mov_611a7', 'furnisher_623', 'furnisher_final', 'cfpb_complaint'].includes(letterType);
+    (items || []).forEach(it => {
+      (priorDisputes || []).filter(d => d.recipient === recipient).forEach(d => {
+        (d.items || []).forEach(p => {
+          const same = (p.accountId && p.accountId === it.accountId) || String(p.creditor || '').toLowerCase() === String(it.creditor || '').toLowerCase();
+          if (!same) return;
+          const sim = similarity(p.discrepancy, it.discrepancy);
+          if (!d.outcome && d.sentAt) blocked.push({ creditor: it.creditor, why: `Already disputed with ${recipient} (round ${d.round}, mailed ${d.sentAt}) and still awaiting a response.` });
+          else if (['deleted', 'corrected'].includes(p.result)) blocked.push({ creditor: it.creditor, why: `${recipient} already ${p.result} this item.` });
+          else if ((d.outcome === 'verified' || p.result === 'verified') && sim >= 0.5 && !escalation && !newEvidence) blocked.push({ creditor: it.creditor, why: `${recipient} verified a near-identical dispute (round ${d.round}). Re-sending the same reason risks a frivolous finding — add new evidence or move to a method-of-verification / direct furnisher letter.` });
+          else if (sim >= 0.8) warnings.push({ creditor: it.creditor, why: `Wording is very close to round ${d.round}. Make sure something new is included.` });
+        });
+      });
+    });
+    const uniq = arr => arr.filter((x, i) => arr.findIndex(y => y.creditor === x.creditor && y.why === x.why) === i);
+    if ((items || []).length > 6) warnings.push({ creditor: '', why: `${items.length} items in one letter. Bureaus are more likely to treat long lists as template disputes — split by issue or keep to the strongest items.` });
+    return { ok: !uniq(blocked).length, blocked: uniq(blocked), warnings: uniq(warnings) };
+  }
+
+  /** All dispute-ready items for a client from their latest report per bureau (+ over-time checks). */
+  function suggestionsFor(ws, clientId, opts) {
+    const M = root.Metro2;
+    const reports = (ws.reports || []).filter(r => r.clientId === clientId).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const byBureau = {};
+    reports.forEach(r => { (byBureau[r.bureau] = byBureau[r.bureau] || []).push(r); });
+    const out = [];
+    Object.values(byBureau).forEach(list => {
+      const cur = list[list.length - 1], prev = list.length > 1 ? list[list.length - 2] : null;
+      const findings = M.auditReport(cur, opts).concat(M.compareOverTime(prev, cur, opts));
+      findings.forEach(f => { const t = (cur.accounts || []).find(a => a.id === f.accountId); const it = toItem(f, t); if (it) out.push(Object.assign(it, { reportId: cur.id, severity: f.severity, title: f.title })); });
+    });
+    return out;
+  }
+
+  const api = { MAP, NOT_DISPUTABLE, isDisputable, toItem, checkRepeat, similarity, suggestionsFor };
+  root.DisputeReasons = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+  <script>
+/*
+ * Staff side of the Ledger Assistant:
+ *  - "✦ Metro 2 letters": unlimited dispute letters built from the rules engine's findings
+ *    (template always; AI polish when the server has LEDGER_AI_ENABLED + OPENAI_API_KEY).
+ *  - "Ledger Assistant" chat: explains findings, drafts/improves letters, next steps and
+ *    deadlines for the selected client — grounded in the knowledge base. Falls back to a
+ *    rules-engine summary when AI is off.
+ *  - Partner click report.
+ * Every letter is saved as a DRAFT; mailing (Lob) still requires staff approval.
+ */
+(function (root) {
+  'use strict';
+  const { Store, UI, Law, Letters, DisputeReasons, KB } = root;
+  const { esc, modal, toast } = UI;
+  const S = () => Store.state;
+  const App = () => root.App;
+  let cfg = null;
+  async function config() {
+    if (cfg) return cfg;
+    if (!Store.remote) return (cfg = { enabled: false });
+    try { cfg = await App().api('GET', '/api/assistant/config'); } catch { cfg = { enabled: false }; }
+    return cfg;
+  }
+  const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
+  const sevBadge = s => `<span class="badge ${s === 'high' ? 'b-high' : s === 'medium' ? 'b-med' : 'b-low'}">${esc(s)}</span>`;
+
+  async function lettersModal(cid) {
+    const c = Store.get.client(cid);
+    const items = DisputeReasons.suggestionsFor(S(), cid);
+    const conf = await config();
+    const cs = Store.croaStatus(c);
+    if (!items.length) {
+      return modal({ title: 'Metro 2 letters', body: `<div class="callout good"><b>No dispute-ready inaccuracies</b>The rules engine didn’t find a Metro 2 or FCRA inconsistency in ${esc(c.name)}’s latest reports. Letters are only drafted for identified inaccuracies. If the client says something is wrong, add it as an issue on the tradeline (with evidence) and it will appear here.</div>`, foot: '<button type="button" class="btn" data-close>Close</button>' });
+    }
+    const groups = {};
+    items.forEach((it, i) => { (groups[it.bureau] = groups[it.bureau] || []).push(Object.assign({ i }, it)); });
+    const body = `${cs.cleared ? '' : '<div class="callout warn" style="margin-bottom:12px"><b>Not cleared under CROA yet</b>You can draft letters now, but nothing can be mailed until the disclosure and contract are signed and the 3-business-day cancellation period has ended.</div>'}
+      <p class="small">Each item below is a specific inconsistency the rules engine found, with the Metro 2 field and the FCRA section behind it. Tick what the client has confirmed. One letter is drafted per bureau. There are no letter limits: draft as many as you need. Repeat disputes that were already verified are blocked unless you add new evidence or move to the next strategy letter.</p>
+      ${Object.entries(groups).map(([b, list]) => `<h3 style="margin:14px 0 6px">${esc(b)}</h3>${list.map(it => `<div class="finding ${it.severity}"><label class="check"><input type="checkbox" name="pick" value="${it.i}" ${it.severity === 'high' && !it.needsClientConfirmation ? 'checked' : ''}><span class="t">${esc(it.creditor)} — ${esc(it.title)}</span></label> ${sevBadge(it.severity)}
+        <div class="d small" style="margin-left:24px">${esc(it.discrepancy)}</div>
+        <div class="f small muted" style="margin-left:24px">Fields: ${esc((it.fields || []).join(', '))} · Basis: ${esc(it.basis)} · KB: ${it.kb.map(k => { const r = KB && KB.byId(k); return r ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(k)}</a>` : esc(k); }).join(', ')}</div></div>`).join('')}`).join('')}
+      <label class="field" style="margin-top:12px"><span>New evidence for repeat disputes (optional)</span><input name="newEvidence" placeholder="e.g. bank statement dated 2024-03-02 showing the account paid in full"></label>
+      ${conf.enabled ? `<label class="check small"><input type="checkbox" name="ai" checked> Polish wording with AI (${esc(conf.model || 'AI')}). Identifiers are redacted before sending, and the facts, citations and [CONFIRM] markers are kept.</label>` : '<p class="small muted">AI is off, so template letters will be used. (The owner can turn AI on with LEDGER_AI_ENABLED and OPENAI_API_KEY on the server.)</p>'}
+      <label class="check small"><input type="checkbox" name="confirmed"> ${esc(c.name)} reviewed each selected item and confirmed it is inaccurate, incomplete or not theirs.</label>`;
+    modal({ title: `Metro 2 letters — ${c.name}`, wide: true, body, foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Draft letters</button>',
+      onSubmit: async d => {
+        const picked = [].concat(d.pick || []).map(Number).map(i => items[i]).filter(Boolean);
+        if (!picked.length) { toast('Select at least one item'); return false; }
+        if (!d.confirmed) { toast('Client confirmation is required'); return false; }
+        const by = {};
+        picked.forEach(it => { const k = it.bureau + '|' + it.letterType; (by[k] = by[k] || []).push(it); });
+        let made = 0; const problems = [];
+        for (const list of Object.values(by)) {
+          const recipient = list[0].bureau, letterType = list[0].letterType;
+          let text = null, warnings = [];
+          if (Store.remote) {
+            try {
+              const out = await App().api('POST', '/api/letters/draft', { clientId: cid, recipient, letterType, items: list.map(i => ({ accountId: i.accountId, code: i.code })), newEvidence: d.newEvidence, mode: d.ai ? 'ai' : 'template' });
+              text = out.text; warnings = out.warnings || [];
+            } catch (e) { problems.push(`${recipient}: ${e.message}`); continue; }
+          } else {
+            const g = DisputeReasons.checkRepeat({ items: list, recipient, letterType, priorDisputes: S().disputes.filter(x => x.clientId === cid), newEvidence: d.newEvidence });
+            if (!g.ok) { problems.push(`${recipient}: ${g.blocked.map(b => b.why).join(' ')}`); continue; }
+          }
+          const disp = { id: Store.uid(), clientId: cid, type: letterType, round: App().nextRound(cid, recipient), recipient, recipientAddress: '', status: 'draft',
+            items: list.map(i => ({ reportId: i.reportId, accountId: i.accountId, creditor: i.creditor, accountNumber: i.accountNumber, bureau: i.bureau, discrepancy: i.discrepancy, requested: i.requested, evidence: d.newEvidence || '', fields: i.fields, code: i.code })),
+            letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: `Metro 2 rules engine: ${list.map(i => i.code).join(', ')}${warnings.length ? ' · ' + warnings.map(w => w.why).join(' ') : ''}` };
+          S().disputes.push(disp);
+          App().generateLetter(disp); // template letter (also validates specificity)
+          if (text) { const l = Store.get.letter(disp.letterId); if (l) { l.text = text; l.status = 'draft'; } }
+          made += 1;
+        }
+        if (made) App().commit(`Drafted ${made} Metro 2 letter(s) — review and approve before mailing`, cid);
+        if (problems.length) toast(problems.join(' · '));
+        else toast(`${made} draft letter(s) created. Review, edit and approve each one before mailing.`);
+        App().go(`#/clients/${cid}/disputes`);
+      } });
+  }
+
+  // ---------- chat ----------
+  const chat = { clientId: '', history: [] };
+  function md(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[([a-z0-9-]+)\]/g, (m, id) => { const r = KB && KB.byId(id); return r ? `<a href="${esc(r.url)}" target="_blank" rel="noopener" title="${esc(r.cite)}">[${id}]</a>` : m; }).replace(/\n/g, '<br>'); }
+  async function assistantModal(cid) {
+    if (cid !== undefined) { if (cid !== chat.clientId) chat.history = []; chat.clientId = cid || ''; }
+    const conf = await config();
+    const clients = S().clients;
+    const quick = ['Explain the Metro 2 findings in plain English', 'What are the next steps and deadlines?', 'Draft an improved dispute letter for the strongest item', 'Which repair opportunities am I missing?', 'Business credit: what should this client do next?'];
+    modal({ title: 'Ledger Assistant', wide: true,
+      body: `<div class="row" style="gap:8px;margin-bottom:8px"><label class="small muted" for="lb-client">Client</label><select id="lb-client" name="client"><option value="">General question</option>${clients.map(c => `<option value="${c.id}" ${c.id === chat.clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><span class="badge ${conf.enabled ? 'b-ok' : 'b-low'}">${conf.enabled ? 'AI on' : 'AI off · rules engine only'}</span></div>
+        <div id="lb-log" class="ai-log" style="max-height:48vh;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px" aria-live="polite">${chat.history.map(m => `<div class="ai-msg ${m.role}"><p>${m.role === 'assistant' ? md(m.content) : esc(m.content)}</p></div>`).join('') || '<p class="small muted">Ask about the selected client’s file. Sensitive numbers are redacted before anything is sent to AI.</p>'}</div>
+        <div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">${quick.map(q => `<button type="button" class="btn sm ghost" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+        <label class="field"><span>Your question</span><textarea name="q" rows="2"></textarea></label>
+        <p class="small muted">Suggestions need human review. Not legal advice. Never promise results.</p>`,
+      foot: '<button type="button" class="btn" data-close>Close</button><button class="btn primary">Ask</button>',
+      onOpen: f => {
+        f.querySelector('#lb-client').onchange = e => { chat.clientId = e.target.value; chat.history = []; UI.close(); assistantModal(); };
+        f.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { f.elements.q.value = b.dataset.q; f.requestSubmit(); });
+      },
+      onSubmit: async d => {
+        const q = String(d.q || '').trim(); if (!q) return false;
+        chat.history.push({ role: 'user', content: q });
+        if (!Store.remote) { chat.history.push({ role: 'assistant', content: 'The assistant runs on the Ledger server.' }); assistantModal(); return; }
+        try { const out = await App().api('POST', '/api/assistant/staff', { clientId: chat.clientId || null, history: chat.history }); chat.history.push({ role: 'assistant', content: (out.error ? out.error + '\n\n' : '') + out.text }); }
+        catch (e) { chat.history.push({ role: 'assistant', content: e.message }); }
+        assistantModal();
+      } });
+  }
+
+  async function clicksModal() {
+    if (!Store.remote) return toast('Click tracking runs on the Ledger server');
+    let out; try { out = await App().api('GET', '/api/partners/clicks'); } catch (e) { return toast(e.message); }
+    modal({ title: 'Partner link clicks', wide: true, foot: '<button type="button" class="btn" data-close>Close</button>',
+      body: `<p class="small">Clicks on <span class="mono">/go/partner/…</span> links. Only the time, partner, viewer role and a hashed sub-ID are stored. No names, emails or IPs.</p>
+        <div class="table-wrap"><table><thead><tr><th>Partner</th><th>Link</th><th class="right">7 days</th><th class="right">30 days</th><th class="right">All</th><th>Last click</th></tr></thead><tbody>${out.offers.map(o => `<tr><td><b>${esc(o.name)}</b><div class="small muted">${esc(o.audience)} · ${esc(o.network)}${o.subIdParam ? ' · sub-ID ' + esc(o.subIdParam) : ''}</div></td><td>${o.linkSet ? '<span class="badge b-ok">Set</span>' : `<span class="badge b-med">Paste your link</span>${o.joinUrl ? ` <a class="small" href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join ↗</a>` : ''}`}</td><td class="right">${o.last7}</td><td class="right">${o.last30}</td><td class="right">${o.total}</td><td class="small">${o.lastAt ? esc(String(o.lastAt).slice(0, 10)) : '—'}</td></tr>`).join('')}</tbody></table></div>
+        <p class="small muted">${esc(out.disclosure)}</p>` });
+  }
+
+  async function authSettingsModal() {
+    let st; try { st = await App().api('GET', '/api/settings/auth'); } catch (e) { return toast(e.message); }
+    let users = []; try { users = await App().api('GET', '/api/users'); } catch { /* none */ }
+    modal({ title: 'Sign-in & email', foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>',
+      body: `<p class="small">Outbound email: <b>${st.mailEnabled ? esc(st.mailMode) : 'off'}</b>${st.mailEnabled ? '' : ' — set LEDGER_MAIL_MODE (resend or smtp) and LEDGER_EMAIL_FROM on the server to send reset links, codes and updates. Until then, use “Copy reset link” on the Team page.'}</p>
+        <label class="check small"><input type="checkbox" name="magicLink" ${st.magicLink ? 'checked' : ''} ${st.mailEnabled ? '' : 'disabled'}> Let clients sign in with an emailed link (expires in 15 minutes)</label>
+        <label class="check small"><input type="checkbox" name="emailOtp" ${st.emailOtp ? 'checked' : ''} ${st.mailEnabled ? '' : 'disabled'}> Require an emailed 6-digit code after the password (everyone)</label>
+        <label class="check small"><input type="checkbox" name="notifications" ${st.notifications !== false ? 'checked' : ''}> Email clients when a bureau responds, an item is removed or corrected, or a deadline is near (clients can opt out)</label>
+        <div class="field" style="margin-top:10px"><label>Make a password reset link for a user</label><div class="row"><select id="rl-user">${users.filter(u => !u.disabled).map(u => `<option value="${esc(u.id)}">${esc(u.email)} (${esc(u.role)})</option>`).join('')}</select><button type="button" class="btn sm" id="rl-go">Create link</button></div><div class="small mono" id="rl-out" style="word-break:break-all"></div></div>`,
+      onOpen: m => { const go = m.querySelector('#rl-go'); if (go) go.onclick = async () => { const id = m.querySelector('#rl-user').value; if (!id) return; try { const r = await App().api('POST', '/api/users/' + encodeURIComponent(id) + '/reset-link'); m.querySelector('#rl-out').textContent = r.url + ' (works once, ' + r.expiresInMinutes + ' min)'; } catch (e) { toast(e.message); } }; },
+      onSubmit: async d => { try { await App().api('PUT', '/api/settings/auth', { magicLink: !!d.magicLink, emailOtp: !!d.emailOtp, notifications: !!d.notifications }); toast('Saved'); } catch (e) { toast(e.message); return false; } } });
+  }
+
+  function fab() {
+    if (document.getElementById('lb-fab')) return;
+    const b = document.createElement('button');
+    b.id = 'lb-fab'; b.className = 'btn ai-fab lb-fab'; b.type = 'button'; b.textContent = 'Ledger Assistant';
+    b.setAttribute('aria-label', 'Open Ledger Assistant');
+    b.onclick = () => { const m = location.hash.match(/^#\/clients\/([^/?]+)/); assistantModal(m ? m[1] : ''); };
+    document.body.appendChild(b);
+  }
+
+  function boot() {
+    if (!root.App || !root.App.A) return setTimeout(boot, 50);
+    Object.assign(root.App.A, {
+      'm2-letters': el => lettersModal(el.dataset.id),
+      'ledger-assistant': el => assistantModal(el.dataset.id || ''),
+      'partner-clicks': () => clicksModal(),
+      'auth-settings': () => authSettingsModal()
+    });
+    fab();
+  }
+  boot();
+  root.LedgerBot = { lettersModal, assistantModal, clicksModal };
 })(window);
 
 </script>
