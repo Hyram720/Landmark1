@@ -1,6 +1,9 @@
-// Card and bank (eCheck) payments through Authorize.net Accept Hosted: the client pays on
-// Authorize.net's own secure page, so card numbers never touch this server (PCI scope stays small).
+// Card payments through Authorize.net Accept Hosted: the client pays on Authorize.net's own secure
+// page, so card numbers never touch this server (PCI scope stays small). Cards only: bank-account
+// (eCheck) payments are switched off, as the approved merchant plan for credit repair requires.
 const ENDPOINT = { live: 'https://api.authorize.net/xml/v1/request.api', sandbox: 'https://apitest.authorize.net/xml/v1/request.api' };
+/** Payment methods shown on the hosted payment page: cards only, no eCheck / bank account. */
+export const PAYMENT_OPTIONS = Object.freeze({ cardCodeRequired: true, showCreditCard: true, showBankAccount: false });
 export const PAY_PAGE = { live: 'https://accept.authorize.net/payment/payment', sandbox: 'https://test.authorize.net/payment/payment' };
 
 async function call(cfg, name, payload) {
@@ -41,7 +44,7 @@ export async function hostedPaymentToken(cfg, { invoice, client, returnUrl, canc
         { settingName: 'hostedPaymentReturnOptions', settingValue: JSON.stringify({ showReceipt: true, url: returnUrl, urlText: 'Back to ' + (companyName || 'our site').slice(0, 40), cancelUrl, cancelUrlText: 'Cancel' }) },
         { settingName: 'hostedPaymentButtonOptions', settingValue: JSON.stringify({ text: 'Pay ' + '$' + Number(invoice.amount).toFixed(2) }) },
         { settingName: 'hostedPaymentOrderOptions', settingValue: JSON.stringify({ show: true, merchantName: (companyName || '').slice(0, 60) }) },
-        { settingName: 'hostedPaymentPaymentOptions', settingValue: JSON.stringify({ cardCodeRequired: true, showCreditCard: true, showBankAccount: true }) }
+        { settingName: 'hostedPaymentPaymentOptions', settingValue: JSON.stringify(PAYMENT_OPTIONS) }
       ]
     }
   });

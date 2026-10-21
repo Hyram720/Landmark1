@@ -297,6 +297,10 @@ test('invoice pay link uses Authorize.net hosted page and confirms payment', asy
     assert.strictEqual(s.status, 200); assert.strictEqual(s.body.sandbox, true);
     const page = await anon('GET', '/pay/paytokentest123');
     assert.match(page.body, /test\.authorize\.net\/payment\/payment/); assert.match(page.body, /FORMTOKEN/);
+    const hpp = JSON.parse(calls.filter(c => c.u.includes('authorize.net') && String((c.opts || {}).body || '').includes('getHostedPaymentPageRequest')).pop().opts.body).getHostedPaymentPageRequest;
+    const payOpts = JSON.parse(hpp.hostedPaymentSettings.setting.find(s => s.settingName === 'hostedPaymentPaymentOptions').settingValue);
+    assert.strictEqual(payOpts.showBankAccount, false, 'eCheck / bank account is off');
+    assert.strictEqual(payOpts.showCreditCard, true, 'cards stay on');
     const done = await anon('GET', '/pay/paytokentest123/done');
     assert.match(done.body, /Thank you/);
     const inv = (await owner('GET', '/api/workspace')).body.data.invoices.find(i => i.id === 'inv9abc');
