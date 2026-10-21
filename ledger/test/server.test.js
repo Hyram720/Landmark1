@@ -249,7 +249,7 @@ test('online mailing through Lob is gated, then mails an approved letter and tra
     const k = await owner('PUT', '/api/settings/mail', { lobKey: 'test_' + 'a'.repeat(30) });
     assert.strictEqual(k.status, 200); assert.strictEqual(k.body.mode, 'test');
     assert.ok(!fs.readFileSync(db.file, 'utf8').includes('test_' + 'a'.repeat(30)), 'Lob key encrypted at rest');
-    const m = await owner('POST', '/api/disputes/d9/mail', { service: 'certified_return_receipt' });
+    const m = await owner('POST', '/api/disputes/d9/mail', {}); // no option sent: bureau letters fall back to certified + return receipt
     assert.strictEqual(m.status, 200, JSON.stringify(m.body));
     const sent = calls.filter(c => c.opts.method === 'POST' && c.u.endsWith('/letters')).pop();
     const body = JSON.parse(sent.opts.body);
