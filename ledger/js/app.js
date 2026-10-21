@@ -90,6 +90,11 @@
         if (e.status === 409) {
           Store.adopt(e.body.data); this.version = e.body.version; this.pending = false; setSync('conflict');
           toast('Someone else updated the workspace — loaded the latest version. Please redo your last change.'); render();
+        } else if (e.status === 422) {
+          // The server refused an invoice over the agreement's 12-month term / total cap: drop the change.
+          this.pending = false; setSync('saved');
+          toast((e.body.error || 'Change refused by the server') + ' Reloaded the last saved version.');
+          await this.reload();
         } else if (e.status === 401) location.reload();
         else { setSync('offline'); this.timer = setTimeout(() => this.flush(), 5000); }
       }
@@ -509,7 +514,9 @@
       const today = T();
       let n = 0;
       // 1. Automatic invoices (work already performed only).
-      const bills = root.Billing.due(S(), today);
+      const capBlocked = [];
+      const bills = root.Billing.due(S(), today, capBlocked);
+      if (capBlocked.length && manual) setTimeout(() => toast(`${capBlocked.length} invoice${capBlocked.length > 1 ? 's' : ''} not issued: ${capBlocked[0].client}: ${capBlocked[0].reason}`), 900);
       bills.forEach(i => { S().invoices.push(i); Store.log(`Invoice issued automatically: ${UI.money(i.amount)} — ${i.description}`, i.clientId); });
       n += bills.length;
       // 2. Automation rules.
@@ -799,6 +806,8 @@
         if (d.serviceCompletedAt > T()) { toast('Blocked: you cannot bill for a service not yet performed (§ 1679b(b))'); return false; }
         if (cs.deadline && d.serviceCompletedAt <= cs.deadline) { toast('Blocked: service date falls inside the cancellation period'); return false; }
         if (!(Number(d.amount) > 0) || !d.description) { toast('Add a description and amount'); return false; }
+        const cap = root.Billing.capCheck(S(), c, Number(d.amount), d.serviceCompletedAt);
+        if (!cap.ok) { toast(`Blocked: ${cap.reason}`); return false; }
         const inv = { id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), dueAt: d.dueAt || null, notes: d.notes || '', paidAt: null, payToken: root.Billing.payToken() };
         inv.number = root.Invoices.number(inv);
         S().invoices.push(inv);

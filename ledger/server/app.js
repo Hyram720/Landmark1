@@ -15,7 +15,7 @@ import { mountCoach } from './coach.js';
 import { mountPartnerLinks } from './partner-links.js';
 import { mountClientAuth } from './client-auth.js';
 import { sendMail, mailEnabled } from './mailer.js';
-import { Law, Partners, Store, Sales, Invoices } from './shared.js';
+import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
 import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
 
@@ -204,6 +204,13 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     if (!data || data.version !== 2 || !Array.isArray(data.clients)) return res.status(400).json({ error: 'Invalid workspace' });
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
     const before = D().workspace;
+    // 12-month term / total cap per client agreement (Billing.capCheck): reject any new or increased
+    // invoice that would push a client's total for the term over the cap, or bill after the term ends.
+    const over = Billing.capViolations(before, data);
+    if (over.length) {
+      db.audit({ actor: req.user.email, action: 'invoice.cap_blocked', detail: over.map(v => v.invoice.id).join(',').slice(0, 200) });
+      return res.status(422).json({ error: `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`, violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })) });
+    }
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
     try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }

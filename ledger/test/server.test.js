@@ -141,6 +141,26 @@ test('public business pages are served as drafts (noindex) and linked from the p
   }
 });
 
+test('the server refuses invoices over the 12-month term / $1,188 cap', async () => {
+  const g = await owner('GET', '/api/workspace');
+  const w = g.body.data;
+  const signed = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+  const day = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10);
+  w.clients.push({ id: 'capc', name: 'Casey Cap', firstName: 'Casey', lastName: 'Cap', kind: 'personal', email: 'cap@example.test', status: 'active', onboarding: { disclosureSignedAt: signed, contractSignedAt: signed } });
+  w.invoices.push({ id: 'capi1', clientId: 'capc', description: 'Service', amount: 1100, status: 'issued', issuedAt: day, serviceCompletedAt: day });
+  const ok = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w });
+  assert.strictEqual(ok.status, 200);
+  w.invoices.push({ id: 'capi2', clientId: 'capc', description: 'More service', amount: 100, status: 'issued', issuedAt: day, serviceCompletedAt: day });
+  const no = await owner('PUT', '/api/workspace', { baseVersion: ok.body.version, data: w });
+  assert.strictEqual(no.status, 422);
+  assert.match(no.body.error, /Casey Cap/); assert.strictEqual(no.body.violations[0].invoiceId, 'capi2');
+  const saved = (await owner('GET', '/api/workspace')).body;
+  assert.ok(!saved.data.invoices.some(i => i.id === 'capi2'), 'nothing saved');
+  w.invoices.pop();
+  w.invoices.push({ id: 'capi3', clientId: 'capc', description: 'Last bit', amount: 88, status: 'issued', issuedAt: day, serviceCompletedAt: day });
+  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: saved.version, data: w })).status, 200, 'exactly $1,188 is allowed');
+});
+
 test('messaging is disabled until a provider is configured', async () => {
   const cfg = await owner('GET', '/api/config');
   assert.strictEqual(cfg.body.email, false);

@@ -274,6 +274,44 @@ test('billing creates invoices only for performed work after the cancellation pe
   assert.ok(del.length >= 1 && del.every(i => i.amount === 75 && i.itemKey));
 });
 
+test('billing enforces the 12-month agreement term and the $1,188 total cap', () => {
+  assert.strictEqual(Billing.DEFAULTS.termMonths, 12);
+  assert.strictEqual(Billing.DEFAULTS.termCap, 1188);
+  assert.strictEqual(Billing.addMonths('2026-01-31', 1), '2026-02-28');
+  assert.strictEqual(Billing.addMonths('2026-10-21', 12), '2027-10-21');
+  const c = { id: 'cap1', name: 'Cap Client', kind: 'personal', status: 'active', onboarding: { disclosureSignedAt: '2026-01-05', contractSignedAt: '2026-01-05' } };
+  const ws = { settings: {}, clients: [c], disputes: [], invoices: [] };
+  const t = Billing.term(ws, c);
+  assert.strictEqual([t.start, t.end, t.cap].join(' '), '2026-01-05 2027-01-05 1188');
+  for (let k = 0; k < 11; k++) ws.invoices.push({ id: 'm' + k, clientId: c.id, amount: 99, status: 'paid', serviceCompletedAt: Billing.addMonths('2026-01-20', k) });
+  assert.strictEqual(Billing.termTotal(ws, c, t), 1089);
+  assert.ok(Billing.capCheck(ws, c, 99, '2026-12-20').ok, 'the 12th $99 month exactly reaches the cap');
+  const over = Billing.capCheck(ws, c, 100, '2026-12-20');
+  assert.ok(!over.ok && /over the \$1188\.00 cap/.test(over.reason) && over.remaining === 99);
+  const late = Billing.capCheck(ws, c, 10, '2027-01-05');
+  assert.ok(!late.ok && /ended 2027-01-05/.test(late.reason), 'no billing after the term ends');
+  ws.invoices.push({ id: 'v1', clientId: c.id, amount: 500, status: 'void', serviceCompletedAt: '2026-06-01' });
+  assert.strictEqual(Billing.termTotal(ws, c, t), 1089, 'void invoices do not count');
+  // capViolations: only new / increased invoices are judged; unchanged ones are accepted as-is.
+  const prev = JSON.parse(JSON.stringify(ws));
+  const next = JSON.parse(JSON.stringify(ws));
+  next.invoices.push({ id: 'n1', clientId: c.id, amount: 99, status: 'issued', serviceCompletedAt: '2026-12-20' });
+  assert.strictEqual(Billing.capViolations(prev, next).length, 0);
+  next.invoices.push({ id: 'n2', clientId: c.id, amount: 49, status: 'issued', serviceCompletedAt: '2026-12-21' });
+  const v = Billing.capViolations(prev, next);
+  assert.strictEqual(v.map(x => x.invoice.id).join(','), 'n2');
+  const bumped = JSON.parse(JSON.stringify(ws)); bumped.invoices[0].amount = 300;
+  assert.strictEqual(Billing.capViolations(prev, bumped).map(x => x.invoice.id).join(','), 'm0', 'raising an amount is re-checked');
+  // Automatic billing stops at the cap and reports what it held back.
+  const ws2 = { settings: { billing: { model: 'per_letter', perLetter: 400 } }, clients: [Object.assign({}, c, { id: 'cap2' })], disputes: [], invoices: [] };
+  for (let k = 0; k < 4; k++) ws2.disputes.push({ id: 'dl' + k, clientId: 'cap2', type: 'cra_611', recipient: 'Experian', round: k + 1, items: [], sentAt: Billing.addMonths('2026-02-01', k) });
+  const blocked = [];
+  const due = Billing.due(ws2, '2026-10-21', blocked);
+  assert.strictEqual(due.length, 2, '2 x $400 fit, the 3rd would pass $1,188');
+  assert.strictEqual(blocked.length, 2);
+  assert.ok(due.reduce((n, i) => n + i.amount, 0) <= 1188);
+});
+
 test('automations fire once, only after being turned on, and fill templates', () => {
   const ws = Sample.build();
   const today = Store.today();
