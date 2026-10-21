@@ -817,7 +817,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   app.get('/apply', page('apply.html'));
   app.get('/partner', page('partner.html'));
   // Public business pages (pricing, policies, enrollment). Still DRAFT: each page carries a DRAFT
-  // banner and noindex until the owner approves publishing; (856) 655-7855 / [Effective date] are placeholders.
+  // banner and noindex until the owner approves publishing. Phone, contact email and effective date are filled in.
   const SITE_PAGES = { '/pricing': 'pricing.html', '/refund-policy': 'refund-policy.html', '/terms': 'terms.html', '/privacy': 'privacy.html', '/checkout': 'checkout.html' };
   for (const [route, file] of Object.entries(SITE_PAGES)) {
     const serve = page(path.join('site', file));
