@@ -120,6 +120,27 @@ test('login rejects wrong password and static pages are served', async () => {
   assert.strictEqual((await anon('GET', '/test/server.test.js')).status, 404);
 });
 
+test('public business pages are served as drafts (noindex) and linked from the public pages', async () => {
+  for (const p of ['/pricing', '/refund-policy', '/terms', '/privacy', '/checkout']) {
+    const r = await anon('GET', p);
+    assert.strictEqual(r.status, 200, p);
+    assert.match(r.headers.get('x-robots-tag') || '', /noindex/, p);
+    assert.ok(r.body.includes('name="robots" content="noindex"'), p + ' meta noindex');
+    assert.ok(r.body.includes('class="draft"'), p + ' draft banner');
+    assert.ok(r.body.includes('2435 Patton St, Camden, NJ 08104'), p + ' business address');
+    assert.ok(!/href="[a-z-]+\.html"/.test(r.body), p + ' links use routes, not .html files');
+  }
+  const co = await anon('GET', '/checkout');
+  assert.ok(co.body.includes('$0.00 due today'));
+  assert.ok(co.body.includes('/api/intake'), 'checkout submits to the existing intake');
+  assert.ok(co.body.includes('Consumer Credit File Rights Under State and Federal Law'));
+  assert.ok(!co.body.includes('id="sig"'), 'no unrecorded e-signature on the checkout page');
+  for (const p of ['/apply', '/portal', '/partner']) {
+    const r = await anon('GET', p);
+    for (const l of ['/pricing', '/terms', '/refund-policy', '/privacy']) assert.ok(r.body.includes(`href="${l}"`), `${p} links ${l}`);
+  }
+});
+
 test('messaging is disabled until a provider is configured', async () => {
   const cfg = await owner('GET', '/api/config');
   assert.strictEqual(cfg.body.email, false);

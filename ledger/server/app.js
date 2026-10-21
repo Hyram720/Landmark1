@@ -809,6 +809,13 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
   app.get('/partner', page('partner.html'));
+  // Public business pages (pricing, policies, enrollment). Still DRAFT: each page carries a DRAFT
+  // banner and noindex until the owner approves publishing; [Business phone] / [Effective date] are placeholders.
+  const SITE_PAGES = { '/pricing': 'pricing.html', '/refund-policy': 'refund-policy.html', '/terms': 'terms.html', '/privacy': 'privacy.html', '/checkout': 'checkout.html' };
+  for (const [route, file] of Object.entries(SITE_PAGES)) {
+    const serve = page(path.join('site', file));
+    app.get(route, (req, res) => { res.set('X-Robots-Tag', 'noindex, nofollow'); serve(req, res); });
+  }
   // Pages link assets with ?v=<build>, so a stamped request can be cached for a year; an
   // unstamped one is revalidated every time.
   const fresh = { setHeaders: res => res.set('Cache-Control', res.req && res.req.query && res.req.query.v === BUILD ? 'public, max-age=31536000, immutable' : 'no-cache') };
