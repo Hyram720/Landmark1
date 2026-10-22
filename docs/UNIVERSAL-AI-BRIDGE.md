@@ -64,7 +64,13 @@ Configured on project `recall`, service `recall`, environment `production`:
 - Health check `/health`, restart on failure
 - Public HTTPS domain: `https://recall-production-b649.up.railway.app`
 
-**Not live yet.** Railway has an ongoing major outage after its 2026-10-21 security incident: builds run only for Pro and Enterprise; Hobby, Free and Trial builds are still disabled (status.railway.com). The first build failed on a fixable Dockerfile issue (`VOLUME` is not allowed; fixed). The next ones are stuck in BUILDING with "failed to fetch snapshot". The newest deployment is queued and will build when Railway enables builds for this workspace's plan. Railway asks users not to re-trigger deployments.
+**Live.** Deployment `1930a948` (commit `ee51071`) reached SUCCESS on 2026-10-22 20:50 UTC, in us-east4, during Railway's ongoing outage (status.railway.com still lists Hobby builds as limited). Verified:
+
+- Deploy log: volume mounted, `Recall server listening on http://0.0.0.0:8787`, `Assistant keys: claude, claude-code, chatgpt, grok`
+- External HTTPS check: `GET /health` → 200 `{"ok":true}`
+- External HTTPS check: `GET /mcp` without a key → 401 `{"error":"unauthorized"}`
+
+Earlier attempts: the first build failed because Railway rejects the Dockerfile `VOLUME` instruction (fixed in `50cfad5`); the second was stuck by the outage ("failed to fetch snapshot") and was replaced.
 
 ## 5. Connecting each assistant
 
@@ -82,14 +88,17 @@ Opening line for any chat: "Check the Recall board first: call project_brief (an
 
 | Test | Local run, same commit (HTTP, separate keys, each platform's auth style) | Live on Railway |
 |---|---|---|
-| Health | PASS | Not run: not deployed (outage) |
-| All three connect (initialize, tools/list) | PASS | Not run |
-| TEST 1: Claude updates project record, ChatGPT retrieves it | PASS | Not run |
-| TEST 2: Grok updates a task, Claude retrieves it (stale write refused) | PASS | Not run |
-| TEST 3: ChatGPT retrieves development history | PASS | Not run |
-| TEST 4: all three see identical status, version and board | PASS | Not run |
-| A key can't sign as another assistant | PASS | Not run |
+| Health | PASS | **PASS** (external HTTPS, 200 `{"ok":true}`) |
+| Unauthenticated request refused | PASS | **PASS** (external HTTPS, 401) |
+| All three connect (initialize, tools/list) | PASS | Not run* |
+| TEST 1: Claude updates project record, ChatGPT retrieves it | PASS | Not run* |
+| TEST 2: Grok updates a task, Claude retrieves it (stale write refused) | PASS | Not run* |
+| TEST 3: ChatGPT retrieves development history | PASS | Not run* |
+| TEST 4: all three see identical status, version and board | PASS | Not run* |
+| A key can't sign as another assistant | PASS | Not run* |
 | Unit/integration suite (`npm test`) | 21/21 PASS | n/a |
+
+\* Authenticated calls to the live server couldn't be sent from the build environment: its network policy blocks `*.up.railway.app`, and sending keys through a third-party fetcher would leak them. Run the script below from your machine, or allow the domain in the cloud environment's network settings and ask Claude to run it.
 
 The local runs exercise the server exactly as deployed, through HTTP with per-assistant keys, but the "ChatGPT", "Grok" and "Claude" callers are scripted clients using those assistants' keys, not the real apps. Proof that the real apps connect comes when you add the connectors (section 5).
 
@@ -103,7 +112,7 @@ node plugins/recall/scripts/verify-deployment.mjs
 
 ## 7. What still needs you
 
-1. **Railway outage / plan:** wait for Railway to enable Hobby builds (the queued deploy then runs on its own), or upgrade the workspace to Pro now. Builds for Pro are running.
+1. **Run the live test** (section 6), or allow `recall-production-b649.up.railway.app` in this cloud environment's network settings so Claude can run it. Railway is still in an outage, so later redeploys may be slow until it is resolved.
 2. **Railway security incident:** Railway recommends rotating every secret stored in Railway variables (Stripe, OpenAI, Anthropic, Resend, Printful, database URLs, …) on your other services, and checking those providers for unexpected usage. See blog.railway.com/p/security-disclosure-wednesday-october-21st. Not done here (credential rotation needs your approval).
 3. **Add the connectors** in Claude, ChatGPT and Grok (section 5). Those steps need your logins.
 4. **Merge this branch** into `main` if you want the Claude Code plugin install to work from the marketplace. Railway currently deploys from the branch.
