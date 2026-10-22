@@ -199,6 +199,45 @@
   footer li a:hover { color: #fff; }
   .foot-bottom { margin-top: 50px; padding-top: 24px; border-top: 1px solid var(--line-dark); display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; font-size: 13px; color: var(--muted-dark); }
 
+  /* Wholesale */
+  .ws-perks { display: flex; flex-wrap: wrap; gap: 10px; margin: -24px 0 36px; }
+  .ws-perks span { background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; }
+  .ws-layout { display: grid; grid-template-columns: 1fr 320px; gap: 24px; align-items: start; }
+  .ws-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .ws-card { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .ws-img { aspect-ratio: 4 / 3; border-radius: 12px; position: relative; }
+  .ws-img span { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; padding: 4px 9px; border-radius: 999px; }
+  .ws-card h3 { margin: 0; font-size: 17px; }
+  .ws-meta { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: -6px; }
+  .ws-tiers { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ws-tiers td { padding: 6px 8px; border-top: 1px solid var(--line); }
+  .ws-tiers td:last-child { text-align: right; font-weight: 600; }
+  .ws-tiers tr.on td { background: rgba(54,210,122,.12); color: var(--brand); }
+  .ws-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: auto; }
+  .qty { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .qty button { background: var(--surface-2); border: 0; color: var(--text); width: 36px; height: 36px; font-size: 18px; cursor: pointer; }
+  .qty input { width: 56px; text-align: center; background: transparent; border: 0; color: var(--text); font: inherit; -moz-appearance: textfield; }
+  .qty input::-webkit-outer-spin-button, .qty input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .ws-line { font-size: 13px; text-align: right; color: var(--muted); }
+  .ws-line b { display: block; font-size: 16px; color: var(--text); }
+  .ws-warn { font-size: 12px; color: #ffb703; min-height: 16px; margin: -4px 0 0; }
+  .ws-summary { position: sticky; top: 84px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 22px; }
+  .ws-summary h3 { margin: 0 0 14px; font-size: 20px; }
+  .ws-summary dl { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 0 0 18px; font-size: 15px; }
+  .ws-summary dt { color: var(--muted); white-space: nowrap; }
+  .ws-summary dd { margin: 0; text-align: right; font-weight: 600; }
+  .ws-summary .save { color: var(--brand); }
+  .ws-summary .total { font-size: 20px; }
+  .ws-summary .btn { width: 100%; }
+  .ws-clear { background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; margin-top: 10px; width: 100%; }
+  .ws-note { font-size: 13px; color: var(--muted); margin: 12px 0 0; min-height: 20px; }
+  @media (max-width: 960px) {
+    .ws-layout { grid-template-columns: 1fr; }
+    .ws-grid { grid-template-columns: repeat(2, 1fr); }
+    .ws-summary { position: static; }
+  }
+  @media (max-width: 560px) { .ws-grid { grid-template-columns: 1fr; } }
+
   /* Modal */
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 80; padding: 16px; }
   .modal.show { display: flex; }
@@ -290,10 +329,11 @@
         <button aria-expanded="false">Products ▾</button>
         <div class="mega">
           <div><h4>Build</h4><a href="#build">Website builder</a><a href="#build">Themes</a><a href="#build">Domains</a><a href="#assistant">AI assistant</a></div>
-          <div><h4>Sell anywhere</h4><a href="#ai">AI chats</a><a href="#build">Online store</a><a href="#build">Point of sale</a><a href="#build">Social &amp; marketplaces</a><a href="#build">Global selling</a></div>
+          <div><h4>Sell anywhere</h4><a href="#ai">AI chats</a><a href="#build">Online store</a><a href="#build">Point of sale</a><a href="#build">Social &amp; marketplaces</a><a href="#build">Global selling</a><a href="#wholesale">Wholesale (B2B)</a></div>
           <div><h4>Run &amp; get paid</h4><a href="#checkout">Checkout</a><a href="#checkout">Payments</a><a href="#build">Shipping</a><a href="#capital">Funding</a><a href="#build">Analytics</a></div>
         </div>
       </li>
+      <li><a href="#wholesale">Wholesale</a></li>
       <li><a href="#developers">Developers</a></li>
       <li><a href="#pricing" data-open-modal>Pricing</a></li>
     </ul>
@@ -308,6 +348,7 @@
   <nav class="mobile-panel" aria-label="Mobile">
     <a href="#ai">AI channels</a>
     <a href="#build">Products</a>
+    <a href="#wholesale">Wholesale</a>
     <a href="#stories">Customer stories</a>
     <a href="#developers">Developers</a>
     <a href="#" data-open-modal>Log in</a>
@@ -387,6 +428,33 @@
           <div><h3>Sell across borders</h3><p>Local currencies, languages, duties and shipping rates, handled for you in 150+ markets.</p></div>
           <div class="viz viz-global"><div><b>$</b>USD</div><div><b>€</b>EUR</div><div><b>£</b>GBP</div><div><b>¥</b>JPY</div></div>
         </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- Wholesale -->
+  <section class="block dark" id="wholesale">
+    <div class="wrap">
+      <p class="eyebrow">Wholesale</p>
+      <h2 class="h2">Sell wholesale from the same store</h2>
+      <p class="sub">Give retail buyers volume pricing, minimum order quantities and payment terms, all from your one catalog.</p>
+      <div class="ws-perks"><span>Tiered volume pricing</span><span>Case-pack minimums</span><span>Net 30 terms</span><span>Free freight over $1,500</span></div>
+      <div class="ws-layout">
+        <div class="ws-grid" id="wsGrid"></div>
+        <aside class="ws-summary" aria-live="polite">
+          <h3>Wholesale order</h3>
+          <dl>
+            <dt>Products</dt><dd id="wsLines">0</dd>
+            <dt>Units</dt><dd id="wsUnits">0</dd>
+            <dt>Retail value</dt><dd id="wsRetail">$0.00</dd>
+            <dt>You save</dt><dd class="save" id="wsSave">$0.00</dd>
+            <dt>Freight</dt><dd id="wsFreight">n/a</dd>
+            <dt class="total">Total</dt><dd class="total" id="wsTotal">$0.00</dd>
+          </dl>
+          <button class="btn btn-primary" id="wsQuote" type="button">Request wholesale quote</button>
+          <button class="ws-clear" id="wsClear" type="button">Clear order</button>
+          <p class="ws-note" id="wsNote"></p>
+        </aside>
       </div>
     </div>
   </section>
@@ -587,6 +655,80 @@
   const palette = ["#ff006e","#3a86ff","#8338ec","#fb5607","#ffbe0b","#06d6a0","#118ab2","#ef476f","#073b4c","#2a9d8f","#e9c46a","#f4a261","#264653","#e76f51","#6d597a","#b5838d"];
   document.getElementById("channels").innerHTML = palette.slice(0, 6).map(c => `<i style="background:${c}"></i>`).join("");
   document.getElementById("apps").innerHTML = palette.map((c, i) => `<i style="background:linear-gradient(135deg,${c},${palette[(i + 5) % palette.length]})"></i>`).join("");
+
+  // Wholesale catalog (example products). tiers: [minimum units, unit price]; the first tier is the case pack and minimum order.
+  const wholesale = [
+    { name: "Organic Cotton Tee", sku: "TEE-ORG-01", retail: 28, colors: ["#e9edc9", "#606c38"], tiers: [[12, 14], [48, 12], [144, 10]] },
+    { name: "Ceramic Pour-Over Set", sku: "CER-POS-02", retail: 48, colors: ["#c08552", "#5e3023"], tiers: [[6, 26], [24, 23], [72, 20]] },
+    { name: "Soy Candle, 8 oz", sku: "CND-SOY-08", retail: 24, colors: ["#ffe8d6", "#cb997e"], tiers: [[24, 11], [96, 9.5], [288, 8]] },
+    { name: "Canvas Tote Bag", sku: "BAG-CNV-03", retail: 22, colors: ["#d6ccc2", "#3d405b"], tiers: [[24, 9], [96, 7.5], [288, 6]] },
+    { name: "Single-Origin Coffee, 12 oz", sku: "COF-SO-12", retail: 19, colors: ["#e6ccb2", "#7f5539"], tiers: [[12, 10.5], [48, 9.25], [144, 8]] },
+    { name: "Insulated Steel Bottle", sku: "BTL-STL-20", retail: 34, colors: ["#adb5bd", "#212529"], tiers: [[12, 17], [48, 15], [144, 13]] }
+  ];
+  const FREE_FREIGHT = 1500, FREIGHT = 45;
+  const money = n => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const qtys = wholesale.map(() => 0);
+  const unitPrice = (p, q) => p.tiers.reduce((u, [min, price]) => q >= min ? price : u, null);
+
+  document.getElementById("wsGrid").innerHTML = wholesale.map((p, i) => `
+    <article class="ws-card">
+      <div class="ws-img" style="background:linear-gradient(135deg,${p.colors[0]},${p.colors[1]})"><span>Packs of ${p.tiers[0][0]}</span></div>
+      <h3>${p.name}</h3>
+      <div class="ws-meta"><span>${p.sku}</span><span>Retail ${money(p.retail)}</span></div>
+      <table class="ws-tiers"><tbody>${p.tiers.map(([min, price], t) =>
+        `<tr data-tier="${t}"><td>${min}+ units</td><td>${money(price)} ea</td></tr>`).join("")}</tbody></table>
+      <p class="ws-warn" data-warn></p>
+      <div class="ws-row">
+        <div class="qty">
+          <button type="button" data-step="-1" aria-label="Fewer ${p.name}">−</button>
+          <input type="number" min="0" step="${p.tiers[0][0]}" value="0" inputmode="numeric" aria-label="${p.name} quantity" data-i="${i}">
+          <button type="button" data-step="1" aria-label="More ${p.name}">+</button>
+        </div>
+        <div class="ws-line" data-line>Line total<b>$0.00</b></div>
+      </div>
+    </article>`).join("");
+
+  function updateWholesale() {
+    let lines = 0, units = 0, retail = 0, subtotal = 0;
+    document.querySelectorAll(".ws-card").forEach((card, i) => {
+      const p = wholesale[i], q = qtys[i], u = unitPrice(p, q), moq = p.tiers[0][0];
+      card.querySelector("input").value = q;
+      card.querySelectorAll("tr").forEach((tr, t) => tr.classList.toggle("on", u !== null && p.tiers[t][1] === u));
+      card.querySelector("[data-warn]").textContent = q > 0 && u === null ? `Minimum order is ${moq} units` : "";
+      card.querySelector("[data-line] b").textContent = money(u ? u * q : 0);
+      if (u) { lines++; units += q; retail += p.retail * q; subtotal += u * q; }
+    });
+    const freight = subtotal === 0 ? 0 : subtotal >= FREE_FREIGHT ? 0 : FREIGHT;
+    document.getElementById("wsLines").textContent = lines;
+    document.getElementById("wsUnits").textContent = units.toLocaleString("en-US");
+    document.getElementById("wsRetail").textContent = money(retail);
+    document.getElementById("wsSave").textContent = money(retail - subtotal);
+    document.getElementById("wsFreight").textContent = subtotal === 0 ? "n/a" : freight === 0 ? "Free" : money(freight);
+    document.getElementById("wsTotal").textContent = money(subtotal + freight);
+    document.getElementById("wsNote").textContent = freight ? `Add ${money(FREE_FREIGHT - subtotal)} more for free freight.` : "";
+    return subtotal + freight;
+  }
+
+  document.getElementById("wsGrid").addEventListener("click", e => {
+    const b = e.target.closest("[data-step]");
+    if (!b) return;
+    const i = +b.closest(".ws-card").querySelector("input").dataset.i, pack = wholesale[i].tiers[0][0];
+    qtys[i] = Math.max(0, qtys[i] + pack * +b.dataset.step);
+    updateWholesale();
+  });
+  document.getElementById("wsGrid").addEventListener("change", e => {
+    if (!e.target.matches("input")) return;
+    qtys[+e.target.dataset.i] = Math.max(0, Math.floor(+e.target.value || 0));
+    updateWholesale();
+  });
+  document.getElementById("wsClear").addEventListener("click", () => { qtys.fill(0); updateWholesale(); });
+  document.getElementById("wsQuote").addEventListener("click", () => {
+    const total = updateWholesale();
+    document.getElementById("wsNote").textContent = total === 0
+      ? "Add at least the minimum quantity of one product."
+      : `Quote request for ${money(total)} is ready. This is a demo, so nothing was sent.`;
+  });
+  updateWholesale();
 
   // Count-up numbers when visible
   const io = new IntersectionObserver(entries => entries.forEach(e => {
