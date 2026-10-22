@@ -126,6 +126,15 @@ test('the dashboard is for the owner key only', async () => {
   assert.equal((await fetch(`${BASE}/not-a-key-0123456789abcdefghij/mcp`, { method: 'POST', body: '{}' })).status, 401);
 });
 
+test('OAuth discovery answers 404, so clients connect without a sign-in flow', async () => {
+  for (const u of [`${BASE}/.well-known/oauth-protected-resource`, `${BASE}/.well-known/oauth-authorization-server`,
+    `${BASE}/.well-known/oauth-protected-resource/${KEYS.chatgpt}/mcp`, `${BASE}/${KEYS.chatgpt}/.well-known/oauth-authorization-server`]) {
+    const r = await fetch(u);
+    assert.equal(r.status, 404, u);
+    assert.equal(r.headers.get('www-authenticate'), null);
+  }
+});
+
 test('health check and access log', async () => {
   const health = await fetch(`${BASE}/health`);
   assert.deepEqual(await health.json(), { ok: true });

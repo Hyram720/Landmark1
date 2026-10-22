@@ -116,6 +116,13 @@ export function createServer({ token, agentTokens = '', store = new Store(), ai 
       }
     }
 
+    // OAuth discovery: Recall uses keys, not OAuth. Answer 404 so clients (ChatGPT, Claude)
+    // connect without trying to start a sign-in flow.
+    if (url.pathname.startsWith('/.well-known/') || url.pathname.includes('/.well-known/')) {
+      shownRoute = '/.well-known/…'; // the rest of the path can carry a key
+      return send(res, 404, { error: 'not found' });
+    }
+
     shownRoute = '/<redacted>';
     const auth = authorize(req, url, keys);
     if (!auth) return send(res, 401, { error: 'unauthorized' }, { 'www-authenticate': 'Bearer' });
