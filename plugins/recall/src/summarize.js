@@ -27,7 +27,7 @@ function changedFiles(observations) {
   return [...new Set(observations.filter(o => o.kind === 'change').flatMap(o => o.files.split('\n')).filter(Boolean))];
 }
 
-export function heuristicSummary(store, sessionId, transcriptPath) {
+export function heuristicSummary(store, sessionId) {
   const session = store.session(sessionId);
   if (!session) return null;
   const prompts = store.promptsFor(sessionId);
@@ -45,7 +45,7 @@ export function heuristicSummary(store, sessionId, transcriptPath) {
     session_id: sessionId,
     project: session.project,
     request: truncate(first, 400) + more,
-    completed: redact(truncate(lastAssistantText(transcriptPath), 800)),
+    completed: redact(truncate(session.last_text, 800)),
     learned: failures.length ? `Commands that hit errors: ${failures.slice(-5).join('; ')}` : '',
     next_steps: pending.join('\n'),
     files: changedFiles(observations),
@@ -65,12 +65,12 @@ const SUMMARY_SCHEMA = {
   additionalProperties: false,
 };
 
-function transcriptDigest(store, sessionId, transcriptPath) {
+function transcriptDigest(store, sessionId) {
   const prompts = store.promptsFor(sessionId).map(p => `USER: ${truncate(p.text, 1500)}`);
   const obs = store.observationsFor(sessionId)
     .filter(o => o.kind !== 'read')
     .map(o => `#${o.id} [${o.kind}] ${o.title}${o.detail ? `\n    ${truncate(o.detail, 400).replace(/\n/g, '\n    ')}` : ''}`);
-  const final = lastAssistantText(transcriptPath);
+  const final = store.session(sessionId)?.last_text ?? '';
   return [
     '## User prompts', ...prompts,
     '', '## Tool activity (chronological)', ...obs.slice(-300),
@@ -79,7 +79,7 @@ function transcriptDigest(store, sessionId, transcriptPath) {
 }
 
 // Returns true when an AI summary was stored.
-export async function aiSummary(store, sessionId, transcriptPath) {
+export async function aiSummary(store, sessionId) {
   if (process.env.RECALL_AI === 'off') return false;
   let Anthropic;
   try {
@@ -90,7 +90,7 @@ export async function aiSummary(store, sessionId, transcriptPath) {
   }
   const session = store.session(sessionId);
   if (!session) return false;
-  const base = heuristicSummary(store, sessionId, transcriptPath);
+  const base = heuristicSummary(store, sessionId);
   if (!base) return false;
 
   const client = new Anthropic();
@@ -107,7 +107,7 @@ export async function aiSummary(store, sessionId, transcriptPath) {
         format: { type: 'json_schema', schema: SUMMARY_SCHEMA },
       },
       system: 'You write the memory notes a coding assistant reads at the start of its next session on the same project. Be concrete: name files, commands, decisions and outcomes. Leave out pleasantries and anything the code itself makes obvious.',
-      messages: [{ role: 'user', content: `Summarize this coding session on project "${session.project}".\n\n${redact(transcriptDigest(store, sessionId, transcriptPath))}` }],
+      messages: [{ role: 'user', content: `Summarize this coding session on project "${session.project}".\n\n${redact(transcriptDigest(store, sessionId))}` }],
     });
   } catch (err) {
     if (err instanceof Anthropic.AuthenticationError) log('AI summary skipped: no valid Anthropic credentials');

@@ -5,7 +5,7 @@
     {
       "name": "recall",
       "source": "./plugins/recall",
-      "description": "Long-term memory for Claude Code sessions (hooks + SQLite + MCP search)."
+      "description": "Shared memory and task board for Claude, ChatGPT and Grok (MCP server + Claude Code hooks)."
     }
   ]
 }

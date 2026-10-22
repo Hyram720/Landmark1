@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   cwd TEXT,
   started_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  ended_at INTEGER
+  ended_at INTEGER,
+  last_text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project, updated_at);
 
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS observations (
   id INTEGER PRIMARY KEY,
   session_id TEXT NOT NULL,
   project TEXT NOT NULL,
+  agent TEXT NOT NULL DEFAULT 'claude-code',
   tool TEXT NOT NULL,
   kind TEXT NOT NULL,
   title TEXT NOT NULL,
@@ -58,6 +60,26 @@ CREATE TABLE IF NOT EXISTS summaries (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS summaries_project ON summaries(project, updated_at);
+
+CREATE TABLE IF NOT EXISTS projects (
+  name TEXT PRIMARY KEY,
+  goal TEXT NOT NULL DEFAULT '',
+  updated_by TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY,
+  project TEXT NOT NULL,
+  title TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  lead TEXT,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project, status);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
   title, detail, files, content='observations', content_rowid='id', tokenize='porter unicode61'
@@ -110,7 +132,19 @@ export class Store {
   constructor(file = path.join(dataDir(), 'recall.db')) {
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+    this.migrate();
     this.db.exec(SCHEMA);
+  }
+
+  // Columns added after the first release; CREATE TABLE IF NOT EXISTS won't add them.
+  migrate() {
+    const columns = table => this.db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+    const add = (table, column, ddl) => {
+      const cols = columns(table);
+      if (cols.length && !cols.includes(column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+    };
+    add('sessions', 'last_text', "last_text TEXT NOT NULL DEFAULT ''");
+    add('observations', 'agent', "agent TEXT NOT NULL DEFAULT 'claude-code'");
   }
 
   close() {
@@ -124,6 +158,10 @@ export class Store {
     `).run(id, project, cwd ?? null, now, now);
   }
 
+  setLastText(id, text) {
+    this.db.prepare('UPDATE sessions SET last_text = ? WHERE id = ?').run(text ?? '', id);
+  }
+
   endSession(id, now = Date.now()) {
     this.db.prepare('UPDATE sessions SET ended_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
   }
@@ -135,9 +173,9 @@ export class Store {
 
   addObservation(o, now = Date.now()) {
     return Number(this.db.prepare(`
-      INSERT INTO observations (session_id, project, tool, kind, title, detail, files, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(o.session_id, o.project, o.tool, o.kind, o.title, o.detail ?? '', (o.files ?? []).join('\n'), now).lastInsertRowid);
+      INSERT INTO observations (session_id, project, agent, tool, kind, title, detail, files, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(o.session_id, o.project, o.agent ?? 'claude-code', o.tool, o.kind, o.title, o.detail ?? '', (o.files ?? []).join('\n'), now).lastInsertRowid);
   }
 
   // A summary written by the AI summarizer is never overwritten by a heuristic one.
@@ -210,7 +248,7 @@ export class Store {
     const q = ftsQuery(text);
     if (!q) return [];
     const obs = this.db.prepare(`
-      SELECT o.id, o.session_id, o.project, o.kind, o.title, o.created_at, bm25(observations_fts) AS rank
+      SELECT o.id, o.session_id, o.project, o.agent, o.kind, o.title, o.created_at, bm25(observations_fts) AS rank
       FROM observations_fts JOIN observations o ON o.id = observations_fts.rowid
       WHERE observations_fts MATCH ? AND (? IS NULL OR o.project = ?) AND (? IS NULL OR o.kind = ?)
       ORDER BY rank LIMIT ?
@@ -255,7 +293,67 @@ export class Store {
       prompts: count('prompts'),
       observations: count('observations'),
       summaries: count('summaries'),
+      tasks: count('tasks'),
     };
+  }
+
+  // Everything any agent recorded after observation #sinceId, oldest first.
+  feed({ project = null, sinceId = 0, agent = null, excludeKinds = ['read', 'search'], limit = 50 } = {}) {
+    const kinds = excludeKinds.length ? `AND kind NOT IN (${excludeKinds.map(() => '?').join(',')})` : '';
+    return plain(this.db.prepare(`
+      SELECT * FROM observations
+      WHERE id > ? AND (? IS NULL OR project = ?) AND (? IS NULL OR agent = ?) ${kinds}
+      ORDER BY id DESC LIMIT ?
+    `).all(sinceId, project, project, agent, agent, ...excludeKinds, limit)).reverse();
+  }
+
+  lastActiveProject() {
+    return this.db.prepare(`
+      SELECT project FROM (
+        SELECT project, updated_at AS t FROM sessions
+        UNION ALL SELECT name, updated_at FROM projects
+        UNION ALL SELECT project, updated_at FROM tasks
+      ) ORDER BY t DESC LIMIT 1
+    `).get()?.project ?? null;
+  }
+
+  goal(project) {
+    const row = this.db.prepare('SELECT * FROM projects WHERE name = ?').get(project);
+    return row ? { ...row } : null;
+  }
+
+  setGoal(project, goal, agent, now = Date.now()) {
+    this.db.prepare(`
+      INSERT INTO projects (name, goal, updated_by, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET goal = excluded.goal, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+    `).run(project, goal, agent, now);
+  }
+
+  createTask({ project, title, details = '', lead = null, created_by }, now = Date.now()) {
+    return Number(this.db.prepare(`
+      INSERT INTO tasks (project, title, details, status, lead, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(project, title, details, lead ? 'in_progress' : 'open', lead, created_by, now, now).lastInsertRowid);
+  }
+
+  task(id) {
+    const row = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    return row ? { ...row } : null;
+  }
+
+  updateTask(id, { status, lead, details }, now = Date.now()) {
+    const t = this.task(id);
+    if (!t) return null;
+    this.db.prepare('UPDATE tasks SET status = ?, lead = ?, details = ?, updated_at = ? WHERE id = ?')
+      .run(status ?? t.status, lead === undefined ? t.lead : lead, details ?? t.details, now, id);
+    return this.task(id);
+  }
+
+  tasks(project = null, { includeDone = false } = {}) {
+    return plain(this.db.prepare(`
+      SELECT * FROM tasks WHERE (? IS NULL OR project = ?) AND (? OR status != 'done')
+      ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'open' THEN 2 ELSE 3 END, updated_at DESC
+    `).all(project, project, includeDone ? 1 : 0));
   }
 
   forget({ session = null, project = null, all = false } = {}) {
@@ -270,6 +368,10 @@ export class Store {
       }
       const sessionWhere = all ? '1 = 1' : session ? 'id = ?' : 'project = ?';
       removed += Number(this.db.prepare(`DELETE FROM sessions WHERE ${sessionWhere}`).run(...args).changes);
+      if (!session) {
+        removed += Number(this.db.prepare(`DELETE FROM tasks WHERE ${all ? '1 = 1' : 'project = ?'}`).run(...args).changes);
+        removed += Number(this.db.prepare(`DELETE FROM projects WHERE ${all ? '1 = 1' : 'name = ?'}`).run(...args).changes);
+      }
       this.db.exec('COMMIT');
       return removed;
     } catch (err) {

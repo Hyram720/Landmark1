@@ -1,7 +1,7 @@
 {
   "name": "recall",
-  "version": "1.0.0",
-  "description": "Long-term memory for Claude Code: records what happens in each session, summarizes it, and brings the relevant history into the next session.",
+  "version": "2.0.0",
+  "description": "Shared memory and task board so Claude, ChatGPT and Grok can see each other's work and coordinate who leads what.",
   "author": { "name": "Hyram720" },
   "license": "MIT",
   "keywords": ["memory", "context", "sqlite", "hooks", "mcp"]

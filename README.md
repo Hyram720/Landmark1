@@ -107,6 +107,6 @@ marketing/          generated CSVs (re-run with your real BASE_URL)
 docs/MARKETING.md   customer acquisition playbook
 ```
 
-## Recall (Claude Code memory plugin)
+## Recall (shared AI memory and task board)
 
-[`plugins/recall`](plugins/recall/README.md) is a Claude Code plugin that gives Claude long-term memory across sessions. It's my own version of Claude Mem. Install it with `/plugin marketplace add Hyram720/Landmark1` and then `/plugin install recall@landmark`.
+[`plugins/recall`](plugins/recall/README.md) is a shared memory and task board, so Claude, ChatGPT and Grok can see each other's work, agree on a goal, and decide who leads which task. It runs as a small server that each assistant connects to over MCP. Claude Code also records its own work there automatically.

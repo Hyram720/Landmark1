@@ -109,7 +109,7 @@ test('MCP server lists tools and searches', () => {
 test('CLI search, stats, context and forget', () => {
   assert.match(cli('search', 'npm'), /Ran: npm test/);
   assert.match(cli('stats'), /observations: \d+/);
-  assert.match(cli('context'), /Recall: memory/);
+  assert.match(cli('context'), /Recall: shared memory/);
   const id = cli('search', 'server').match(/#(\d+)/)[1];
   assert.match(cli('timeline', id), /Edited src\/server\.js/);
   assert.match(cli('forget', '--session', 'aaaaaaaa-1111'), /Removed \d+ rows/);

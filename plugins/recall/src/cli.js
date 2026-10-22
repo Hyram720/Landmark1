@@ -16,9 +16,10 @@ Usage:
   recall context [dir]                         preview what a new session receives
   recall projects                              projects with memory
   recall stats                                 database counts and location
-  recall summarize <session-id> [transcript]   (re)run the AI summary now
+  recall summarize <session-id>                (re)run the AI summary now
   recall forget --session ID | --project P | --everything
-  recall web [port]                            browse memory at http://127.0.0.1:37778
+  recall web [port]                            dashboard at http://127.0.0.1:37778
+  recall token                                 print a new random secret for the shared server
 `;
 
 function parse(argv) {
@@ -36,6 +37,12 @@ function parse(argv) {
 const [command, ...args] = process.argv.slice(2);
 const { flags, rest } = parse(args);
 const project = flags.all ? null : flags.project || projectName(process.cwd());
+
+if (command === 'token') {
+  const { randomBytes } = await import('node:crypto');
+  process.stdout.write(`${randomBytes(24).toString('base64url')}\n`);
+  process.exit(0);
+}
 
 if (!command || command === 'help' || command === '--help') {
   process.stdout.write(HELP);
@@ -75,7 +82,7 @@ try {
       break;
     case 'summarize': {
       const { aiSummary } = await import('./summarize.js');
-      out = (await aiSummary(store, rest[0], rest[1] || null))
+      out = (await aiSummary(store, rest[0]))
         ? 'AI summary stored.'
         : `No AI summary stored; see ${dataDir()}/recall.log`;
       break;

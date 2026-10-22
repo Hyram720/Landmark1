@@ -5,7 +5,7 @@ export function formatSearchResults(results) {
   if (!results.length) return 'No matches.';
   return results.map(r => {
     const when = formatTime(r.created_at);
-    if (r.type === 'observation') return `#${r.id} ${when} [${r.kind}] ${truncate(r.title, 160)} (${r.project})`;
+    if (r.type === 'observation') return `#${r.id} ${when} ${r.agent} [${r.kind}] ${truncate(r.title, 160)} (${r.project})`;
     if (r.type === 'session') return `session ${r.session_id.slice(0, 8)} ${when} summary: ${truncate(r.title, 160)} (${r.project})`;
     return `prompt ${when} session ${r.session_id.slice(0, 8)}: ${truncate(r.title, 160)} (${r.project})`;
   }).join('\n');
@@ -15,7 +15,7 @@ export function formatObservations(rows) {
   if (!rows.length) return 'No observations.';
   return rows.map(o => [
     `#${o.id} ${formatTime(o.created_at)} [${o.kind}] ${o.title}`,
-    `  project: ${o.project} · session: ${o.session_id.slice(0, 8)} · tool: ${o.tool}`,
+    `  by: ${o.agent} · project: ${o.project} · session: ${o.session_id.slice(0, 8)} · tool: ${o.tool}`,
     o.files ? `  files: ${o.files.split('\n').join(', ')}` : '',
     o.detail ? o.detail.split('\n').map(l => `  | ${l}`).join('\n') : '',
   ].filter(Boolean).join('\n')).join('\n\n');
@@ -39,4 +39,18 @@ export function formatSummary(s) {
     s.next_steps ? `Next: ${s.next_steps}` : '',
     s.files ? `Files: ${s.files.split('\n').join(', ')}` : '',
   ].filter(Boolean).join('\n');
+}
+
+export function formatFeed(rows) {
+  if (!rows.length) return 'Nothing new.';
+  return rows.map(o => {
+    const extra = o.kind !== 'command' && o.detail && o.detail !== o.title && !o.title.endsWith(o.detail)
+      ? `\n    ${truncate(o.detail, 300).replace(/\n/g, '\n    ')}` : '';
+    return `#${o.id} ${formatTime(o.created_at)} ${o.agent} [${o.kind}] ${truncate(o.title, 200)}${extra}`;
+  }).join('\n');
+}
+
+export function formatTasks(rows) {
+  if (!rows.length) return 'No open tasks.';
+  return rows.map(t => `task #${t.id} · ${t.status} · lead: ${t.lead ?? 'nobody yet'} · ${t.project}: ${t.title} (created by ${t.created_by}, updated ${formatTime(t.updated_at)})`).join('\n');
 }
