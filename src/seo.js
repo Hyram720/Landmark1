@@ -57,8 +57,15 @@ export const BREEDS = BREED_DATA.map(([name, kind, hook, style]) => ({
 export const OCCASIONS = [
   {
     slug: 'christmas-gift', title: 'Custom Pet Portrait Christmas Gift', style: 'holiday',
-    h1: 'The Christmas gift every pet parent secretly wants',
-    intro: 'Turn their dog or cat into a one-of-a-kind holiday masterpiece. Order digital for instant delivery, or a gallery canvas shipped to their door.',
+    h1: 'Hard to shop for a pet lover? Give them their best friend, as a portrait.',
+    intro: 'Send one phone photo of their dog or cat. We create 4 museum-style portraits in minutes, and you can add a gallery canvas shipped to their door.',
+    // Real 2026 order-by dates only (Printful US standard cutoff is Dec 11; we use Dec 10 to leave time to pick).
+    extra: () => christmasSeason() ? `<section><h2>Holiday order-by dates</h2>
+<table class="dates"><thead><tr><th>Gift</th><th>Order by</th><th>Arrives</th></tr></thead><tbody>
+<tr><td>Canvas, US, for Christmas</td><td>Thu Dec 10 (order and pick your favorite)</td><td>Before Dec 25 on Printful's standard schedule</td></tr>
+<tr><td>Digital portrait</td><td>Any time</td><td>Usually within minutes</td></tr></tbody></table>
+<p class="fine left">Delivery dates are carrier estimates, not guarantees.</p></section>
+<section><h2>Getting a photo without spoiling the surprise</h2><p>Most people already have one: check the pet parent's social posts, a group chat, or a holiday card from last year. Any clear, well-lit photo where the eyes are visible works.</p></section>` : '',
   },
   {
     slug: 'pet-memorial', title: 'Pet Memorial Portrait', style: 'watercolor',
@@ -95,7 +102,7 @@ export const OCCASIONS = [
 const priceList = () =>
   Object.values(PRODUCTS).map((p) => `<li>${esc(p.name)} — <strong>${usd(p.price)}</strong></li>`).join('');
 
-function layout({ title, description, path, body, jsonLd }) {
+function layout({ title, description, path, body, jsonLd, ogImage = 'bella-golden' }) {
   const url = `${config.baseUrl}${path}`;
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -104,6 +111,8 @@ function layout({ title, description, path, body, jsonLd }) {
 <link rel="canonical" href="${url}">
 <meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${url}"><meta property="og:type" content="website">
+<meta property="og:image" content="${config.baseUrl}/showcase/${ogImage}.webp?w=900"><meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 ${jsonLd.map((j) => `<script type="application/ld+json">${JSON.stringify(j)}</script>`).join('\n')}
 </head><body>
@@ -119,14 +128,25 @@ function seoFooterLinks() {
   return `<nav class="seo-links"><p>${occ}</p><p>${breeds}</p></nav>`;
 }
 
+// Oct 1 through Dec 10: show the canvas Christmas cutoff (Printful's US standard-shipping cutoff is Dec 11).
+const christmasSeason = (d = new Date()) => d.getMonth() >= 9 && d <= new Date(d.getFullYear(), 11, 10, 23, 59);
+
 function faq(subject) {
   return [
     ['How does it work?', `Upload a clear photo of your ${subject}, pick a style, and check out. Our studio paints ${config.image.variants} versions and emails you a private gallery link.`],
     ['How fast will I get it?', 'Digital portraits are usually delivered within minutes. Canvas prints ship in about 3–5 business days after you choose your favorite.'],
     ['What photo works best?', 'A well-lit, front-facing photo where the eyes are clearly visible. Phone photos are perfect.'],
+    ...(christmasSeason() ? [['Is there a Christmas deadline?', 'For a canvas delivered in the US before Christmas, order by December 10 and choose your favorite portrait the same day. Digital portraits usually arrive within minutes.']] : []),
     ['What if I don\'t love it?', 'You get 4 versions to choose from. If none feel right, use your one free repaint from your gallery within 7 days (before printing) for 4 new versions.'],
-    ['Can I fix the name on the nameplate?', 'Yes. The name is engraved exactly as you type it, and you can correct the spelling on your gallery page at any time before your canvas is printed.'],
+    ['Can I fix the name on the nameplate?', 'Yes. The nameplate shows the name exactly as you type it, and you can correct the spelling on your gallery page at any time before your canvas is printed.'],
   ];
+}
+
+function breadcrumbLd(trail) {
+  return {
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: trail.map(([name, p], i) => ({ '@type': 'ListItem', position: i + 1, name, item: `${config.baseUrl}${p}` })),
+  };
 }
 
 function faqLd(items) {
@@ -139,7 +159,8 @@ function faqLd(items) {
 function productLd(name, description) {
   const prices = Object.values(PRODUCTS).map((p) => p.price / 100);
   return {
-    '@context': 'https://schema.org', '@type': 'Product', name, description, brand: config.brandName,
+    '@context': 'https://schema.org', '@type': 'Product', name, description, brand: { '@type': 'Brand', name: config.brandName },
+    image: `${config.baseUrl}/showcase/bella-golden.webp?w=900`,
     offers: {
       '@type': 'AggregateOffer', priceCurrency: 'USD',
       lowPrice: Math.min(...prices), highPrice: Math.max(...prices), availability: 'https://schema.org/InStock',
@@ -168,7 +189,7 @@ export function breedPage(slug) {
 <section><h2>Pricing</h2><ul>${priceList()}</ul><p>Every order includes ${config.image.variants} unique versions so you can pick your favorite.</p></section>
 ${faqHtml(items)}
 <section class="cta"><a class="btn" href="/?style=${b.style}&breed=${b.slug}#order">Start my ${esc(b.name)} portrait</a></section>`;
-  return layout({ title, description, path: `/portraits/${b.slug}`, body, jsonLd: [productLd(title, description), faqLd(items)] });
+  return layout({ title, description, path: `/portraits/${b.slug}`, body, jsonLd: [productLd(title, description), faqLd(items), breadcrumbLd([['Home', '/'], [`${b.name} portraits`, `/portraits/${b.slug}`]])] });
 }
 
 export function occasionPage(slug) {
@@ -179,21 +200,28 @@ export function occasionPage(slug) {
   const body = `
 <section class="hero-seo"><h1>${esc(o.h1)}</h1><p class="lead">${esc(o.intro)}</p>
 <a class="btn" href="/?style=${o.style}#order">Create the portrait →</a></section>
-<section><h2>How it works</h2><ol><li>Upload a photo of the pet.</li><li>Choose a style (we suggest <strong>${esc(STYLES[o.style].name)}</strong>).</li><li>Get ${config.image.variants} hi-res versions by email — add a canvas print if you like.</li></ol></section>
+${o.extra ? o.extra() : ''}
+<section><h2>How it works</h2><ol><li>Upload a photo of the pet.</li><li>Choose a style (we suggest <strong>${esc(STYLES[o.style].name)}</strong>).</li><li>Get ${config.image.variants} portraits by email, usually in minutes. For canvas, pick your favorite in your private gallery and we print and ship that one.</li></ol></section>
 <section><h2>Pricing</h2><ul>${priceList()}</ul></section>
 ${faqHtml(items)}
 <section class="cta"><a class="btn" href="/?style=${o.style}#order">Order now</a></section>`;
-  return layout({ title: o.title, description, path: `/gifts/${o.slug}`, body, jsonLd: [productLd(o.title, description), faqLd(items)] });
+  return layout({ title: o.title, description, path: `/gifts/${o.slug}`, body, jsonLd: [productLd(o.title, description), faqLd(items), breadcrumbLd([['Home', '/'], [o.title, `/gifts/${o.slug}`]])] });
 }
 
 export const sitePaths = () => ['/', '/offer', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
 
+// Real last-edit dates (not the request date, which teaches Google to ignore lastmod).
+// Bump the matching entry whenever a page's content changes.
+const CONTENT_UPDATED = { '/': '2026-10-22', '/offer': '2026-10-22', '/gifts/christmas-gift': '2026-10-22' };
+const TEMPLATE_UPDATED = '2026-10-22'; // breed and gift template (FAQ, og:image, breadcrumbs)
+const lastmod = (u) => CONTENT_UPDATED[u] || TEMPLATE_UPDATED;
+
 export function sitemap() {
   const urls = sitePaths();
-  const today = new Date().toISOString().slice(0, 10);
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((u) => `<url><loc>${config.baseUrl}${u}</loc><lastmod>${today}</lastmod></url>`).join('\n')}
+${urls.map((u) => `<url><loc>${config.baseUrl}${u}</loc><lastmod>${lastmod(u)}</lastmod></url>`).join('\n')}
 </urlset>`;
 }
 
