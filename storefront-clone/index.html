@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartwell: The All-in-One Commerce Platform</title>
+<meta name="description" content="Start, run and grow your business with one commerce platform. Online store, checkout, point of sale, and AI tools in one place.">
+<style>
+  :root {
+    --ink: #0b0b0b;
+    --ink-2: #1a1a1a;
+    --paper: #ffffff;
+    --paper-2: #f4f4f1;
+    --muted: #6b6b6b;
+    --muted-dark: #a3a3a3;
+    --line: #e5e5e0;
+    --line-dark: #2a2a2a;
+    --brand: #36d27a;
+    --brand-ink: #062b14;
+    --accent: #7c5cff;
+    --radius: 18px;
+    --max: 1200px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: var(--font); color: var(--ink); background: var(--paper); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: none; }
+  img, svg { display: block; max-width: 100%; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+  .skip { position: absolute; left: -999px; top: 0; background: var(--brand); color: var(--brand-ink); padding: 8px 14px; z-index: 100; }
+  .skip:focus { left: 8px; top: 8px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 24px; border-radius: 999px; font-weight: 600; font-size: 16px; border: 1px solid transparent; cursor: pointer; transition: transform .15s, background .15s; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--paper); color: var(--ink); }
+  .btn-dark { background: var(--ink); color: var(--paper); }
+  .btn-ghost { border-color: currentColor; background: transparent; }
+  .btn-sm { padding: 9px 16px; font-size: 14px; }
+
+  /* Header */
+  header.site { position: sticky; top: 0; z-index: 50; background: rgba(11,11,11,.92); backdrop-filter: blur(10px); color: var(--paper); border-bottom: 1px solid var(--line-dark); }
+  .nav { display: flex; align-items: center; height: 64px; gap: 28px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: -.02em; }
+  .logo-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--brand); display: grid; place-items: center; color: var(--brand-ink); font-size: 17px; }
+  .menu { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
+  .menu > li { position: relative; }
+  .menu > li > a, .menu > li > button { display: block; padding: 8px 12px; border-radius: 8px; font-size: 15px; color: #e6e6e6; background: none; border: 0; font: inherit; cursor: pointer; }
+  .menu > li > a:hover, .menu > li > button:hover, .menu > li.open > button { background: #222; color: #fff; }
+  .mega { display: none; position: absolute; top: calc(100% + 10px); left: 0; background: var(--paper); color: var(--ink); border-radius: 16px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,.35); width: min(760px, 90vw); }
+  .menu > li.open .mega { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .mega h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .mega a { display: block; padding: 6px 0; font-size: 15px; }
+  .mega a:hover { color: #1f8f50; }
+  .mega a small { display: block; color: var(--muted); font-size: 13px; }
+  .nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .nav-right .login { font-size: 15px; color: #e6e6e6; }
+  .hamburger { display: none; margin-left: auto; background: none; border: 0; color: #fff; padding: 8px; cursor: pointer; }
+  .mobile-panel { display: none; }
+
+  /* Hero */
+  .hero { background: radial-gradient(1200px 600px at 70% 10%, #1d3b2a 0%, transparent 60%), radial-gradient(900px 500px at 10% 90%, #2a1f4d 0%, transparent 60%), var(--ink); color: var(--paper); padding: 110px 0 120px; overflow: hidden; }
+  .hero h1 { font-size: clamp(44px, 7.5vw, 104px); line-height: .98; letter-spacing: -.04em; margin: 0 0 28px; font-weight: 700; max-width: 14ch; }
+  .rotator { display: inline-block; color: var(--brand); min-height: 1em; transition: opacity .35s, transform .35s; }
+  .rotator.out { opacity: 0; transform: translateY(14px); }
+  .hero p.lead { font-size: clamp(18px, 2vw, 22px); color: #cfcfcf; max-width: 46ch; margin: 0 0 36px; }
+  .hero-ctas { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .agent-box { margin-top: 44px; max-width: 640px; background: #151515; border: 1px solid var(--line-dark); border-radius: 14px; padding: 14px 14px 14px 18px; display: flex; gap: 12px; align-items: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: #bdbdbd; }
+  .agent-box code { flex: 1; overflow-x: auto; white-space: nowrap; }
+  .agent-box button { flex-shrink: 0; }
+
+  /* Store showcase marquee */
+  .showcase { background: var(--ink); padding: 0 0 90px; color: var(--paper); }
+  .showcase h2 { text-align: center; font-size: clamp(26px, 3.4vw, 40px); margin: 0 0 8px; letter-spacing: -.02em; }
+  .showcase p { text-align: center; color: var(--muted-dark); margin: 0 0 40px; }
+  .marquee { overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
+  .track { display: flex; gap: 18px; width: max-content; animation: scroll 50s linear infinite; }
+  .marquee:hover .track { animation-play-state: paused; }
+  @keyframes scroll { to { transform: translateX(-50%); } }
+  .store-card { width: 260px; height: 330px; border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; }
+  .store-card.wide { width: 420px; }
+  .store-card .bar { display: flex; gap: 6px; }
+  .store-card .bar i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.55); }
+  .store-card .name { font-weight: 700; font-size: 22px; letter-spacing: -.02em; }
+  .store-card .url { font-size: 13px; opacity: .8; }
+  .store-card .prod { position: absolute; right: -30px; bottom: 60px; width: 180px; height: 180px; border-radius: 40%; opacity: .55; }
+
+  /* Sections */
+  section.block { padding: 110px 0; }
+  .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #1f8f50; margin: 0 0 14px; }
+  .h2 { font-size: clamp(34px, 5vw, 64px); line-height: 1.02; letter-spacing: -.035em; margin: 0 0 20px; font-weight: 700; max-width: 18ch; }
+  .sub { font-size: 19px; color: var(--muted); max-width: 56ch; margin: 0 0 48px; }
+  .dark { background: var(--ink); color: var(--paper); }
+  .dark .sub { color: var(--muted-dark); }
+  .dark .eyebrow { color: var(--brand); }
+  .tint { background: var(--paper-2); }
+
+  /* AI channels */
+  .ai-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 56px; align-items: center; }
+  .chat { background: #141414; border: 1px solid var(--line-dark); border-radius: 22px; padding: 22px; box-shadow: 0 30px 80px rgba(0,0,0,.4); }
+  .chat-top { display: flex; gap: 8px; margin-bottom: 18px; }
+  .chip { font-size: 12px; padding: 5px 10px; border-radius: 999px; background: #222; color: #cfcfcf; }
+  .msg { padding: 12px 16px; border-radius: 16px; max-width: 85%; margin-bottom: 12px; font-size: 15px; }
+  .msg.user { background: #2b2b2b; margin-left: auto; border-bottom-right-radius: 4px; }
+  .msg.bot { background: #1b2a21; border-bottom-left-radius: 4px; }
+  .product-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 6px 0 14px; }
+  .p-tile { background: #1f1f1f; border-radius: 12px; padding: 10px; font-size: 13px; }
+  .p-img { aspect-ratio: 1; border-radius: 8px; margin-bottom: 8px; }
+  .p-tile b { display: block; color: #fff; }
+  .p-tile span { color: var(--muted-dark); }
+  .buy { width: 100%; background: var(--brand); color: var(--brand-ink); border: 0; border-radius: 12px; padding: 12px; font-weight: 700; font-size: 15px; cursor: pointer; }
+
+  /* Features */
+  .features { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  .feature { background: var(--paper); border: 1px solid var(--line); border-radius: 24px; padding: 32px; min-height: 340px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
+  .feature h3 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 10px; }
+  .feature p { color: var(--muted); margin: 0; }
+  .feature a.inline { text-decoration: underline; text-underline-offset: 3px; }
+  .viz { margin-top: 28px; height: 150px; border-radius: 14px; position: relative; }
+  .viz-store { background: linear-gradient(135deg, #e9f7ef, #dfe9ff); display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; padding: 14px; }
+  .viz-store div { background: #fff; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.06); }
+  .viz-hub { background: #0f0f0f; display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; align-content: center; justify-content: center; }
+  .viz-hub span { background: #222; color: #ddd; padding: 7px 12px; border-radius: 999px; font-size: 13px; }
+  .viz-hub span.on { background: var(--brand); color: var(--brand-ink); font-weight: 700; }
+  .viz-channels { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; padding: 18px; background: var(--paper-2); }
+  .viz-channels i { aspect-ratio: 1; border-radius: 12px; }
+  .viz-global { background: linear-gradient(160deg, #0d1b2a, #1b263b); color: #fff; display: flex; align-items: center; justify-content: space-around; font-size: 13px; }
+  .viz-global div { text-align: center; }
+  .viz-global b { display: block; font-size: 22px; }
+
+  /* Stories */
+  .stories { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .story { border-radius: 24px; overflow: hidden; background: var(--paper); border: 1px solid var(--line); }
+  .story .art { height: 220px; }
+  .story .body { padding: 24px; }
+  .story h3 { margin: 0 0 8px; font-size: 22px; }
+  .story p { margin: 0; color: var(--muted); }
+  .center-cta { text-align: center; margin-top: 44px; }
+
+  /* Assistant */
+  .assist { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+  .assist-card { background: linear-gradient(160deg, #1d1440, #0b0b0b); border-radius: 24px; padding: 28px; border: 1px solid #2d2350; }
+  .assist-card .q { color: #cfcfcf; font-size: 15px; margin-bottom: 14px; }
+  .assist-card .a { background: rgba(255,255,255,.06); border-radius: 14px; padding: 16px; font-size: 15px; }
+  .assist-card .a ul { margin: 8px 0 0; padding-left: 18px; color: #d8d8d8; }
+  .bars { display: flex; align-items: flex-end; gap: 8px; height: 90px; margin-top: 16px; }
+  .bars i { flex: 1; background: var(--accent); border-radius: 6px 6px 0 0; opacity: .85; }
+
+  /* Apps */
+  .apps { display: grid; grid-template-columns: repeat(8, 1fr); gap: 14px; margin-top: 10px; }
+  .apps i { aspect-ratio: 1; border-radius: 18px; }
+
+  /* Dev */
+  .dev-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .dev-card { background: #141414; border: 1px solid var(--line-dark); border-radius: 22px; padding: 26px; min-height: 230px; display: flex; flex-direction: column; justify-content: space-between; }
+  .dev-card pre { margin: 0; font-size: 12.5px; color: #9fe3b8; white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .dev-card h3 { margin: 18px 0 0; font-size: 20px; }
+
+  /* Checkout stats */
+  .checkout { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+  .big-stats { display: flex; gap: 48px; margin: 0 0 24px; }
+  .big-stats b { display: block; font-size: clamp(48px, 6vw, 80px); letter-spacing: -.04em; line-height: 1; }
+  .big-stats span { color: var(--muted); }
+  .fine { font-size: 13px; color: var(--muted); }
+  .phone { width: 280px; margin: 0 auto; background: #0b0b0b; border-radius: 40px; padding: 14px; box-shadow: 0 30px 80px rgba(0,0,0,.25); }
+  .screen { background: #fff; border-radius: 28px; padding: 22px 18px; }
+  .screen .line { height: 12px; background: var(--paper-2); border-radius: 6px; margin-bottom: 10px; }
+  .screen .pay { background: var(--accent); color: #fff; border-radius: 12px; text-align: center; padding: 12px; font-weight: 700; margin: 18px 0 10px; }
+  .screen .total { display: flex; justify-content: space-between; font-weight: 700; margin-top: 14px; }
+
+  /* Numbers */
+  .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px; }
+  .num { border-top: 1px solid var(--line-dark); padding-top: 22px; }
+  .num b { display: block; font-size: clamp(26px, 3vw, 38px); letter-spacing: -.03em; margin-bottom: 6px; }
+  .num span { color: var(--muted-dark); font-size: 15px; }
+
+  /* Capital */
+  .capital { display: grid; grid-template-columns: 1fr 1.2fr; gap: 56px; align-items: center; }
+  blockquote { margin: 0; font-size: clamp(22px, 2.6vw, 30px); line-height: 1.25; letter-spacing: -.02em; }
+  cite { display: block; margin-top: 18px; font-style: normal; color: var(--muted); }
+  .cap-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 28px; }
+  .cap-stats div { background: var(--paper); border-radius: 16px; padding: 20px; }
+  .cap-stats b { display: block; font-size: 26px; }
+  .cap-stats span { color: var(--muted); font-size: 14px; }
+
+  /* Steps */
+  .final { text-align: center; }
+  .final .h2 { margin-left: auto; margin-right: auto; }
+  .steps { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin: 36px 0 44px; }
+  .step { background: #1a1a1a; border: 1px solid var(--line-dark); border-radius: 999px; padding: 12px 22px; color: #e6e6e6; }
+  .step b { color: var(--brand); margin-right: 8px; }
+
+  /* Footer */
+  footer { background: var(--ink); color: #cfcfcf; padding: 70px 0 40px; border-top: 1px solid var(--line-dark); }
+  .foot-grid { display: grid; grid-template-columns: 1.3fr repeat(4, 1fr); gap: 30px; }
+  footer h4 { color: #fff; margin: 0 0 14px; font-size: 15px; }
+  footer ul { list-style: none; margin: 0; padding: 0; }
+  footer li { margin-bottom: 9px; font-size: 14px; }
+  footer li a:hover { color: #fff; }
+  .foot-bottom { margin-top: 50px; padding-top: 24px; border-top: 1px solid var(--line-dark); display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; font-size: 13px; color: var(--muted-dark); }
+
+  /* Modal */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 80; padding: 16px; }
+  .modal.show { display: flex; }
+  .modal-box { background: var(--paper); border-radius: 22px; padding: 32px; width: min(440px, 100%); }
+  .modal-box h3 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.02em; }
+  .modal-box p { margin: 0 0 20px; color: var(--muted); }
+  .modal-box label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0 6px; }
+  .modal-box input { width: 100%; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; font: inherit; }
+  .modal-box .btn { width: 100%; margin-top: 20px; }
+  .modal-box .close { float: right; background: none; border: 0; font-size: 24px; cursor: pointer; line-height: 1; }
+  .ok { display: none; text-align: center; padding: 20px 0; }
+
+  /* Responsive */
+  @media (max-width: 960px) {
+    .menu, .nav-right { display: none; }
+    .hamburger { display: block; }
+    .mobile-panel.show { display: block; background: var(--ink); border-top: 1px solid var(--line-dark); padding: 12px 20px 22px; }
+    .mobile-panel a { display: block; padding: 12px 0; border-bottom: 1px solid var(--line-dark); color: #e6e6e6; }
+    .mobile-panel .btn { margin-top: 16px; width: 100%; }
+    .ai-grid, .assist, .checkout, .capital { grid-template-columns: 1fr; gap: 40px; }
+    .features, .stories, .dev-grid { grid-template-columns: 1fr; }
+    .numbers { grid-template-columns: repeat(2, 1fr); }
+    .apps { grid-template-columns: repeat(4, 1fr); }
+    .foot-grid { grid-template-columns: repeat(2, 1fr); }
+    .big-stats { gap: 28px; }
+    section.block { padding: 80px 0; }
+    .hero { padding: 80px 0 90px; }
+  }
+  @media (max-width: 520px) {
+    .cap-stats { grid-template-columns: 1fr; }
+    .store-card.wide { width: 300px; }
+    .agent-box { flex-direction: column; align-items: stretch; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .track { animation: none; }
+    .rotator { transition: none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap nav">
+    <a class="logo" href="#top"><span class="logo-mark">◆</span><span data-brand>Cartwell</span></a>
+    <ul class="menu">
+      <li>
+        <button aria-expanded="false">Why <span data-brand>Cartwell</span> ▾</button>
+        <div class="mega">
+          <div><h4>Start</h4><a href="#start">Get started fast<small>You could be selling by tomorrow.</small></a></div>
+          <div><h4>Grow</h4><a href="#stories">Switch platforms<small>Move your store in a weekend.</small></a></div>
+          <div><h4>Scale</h4><a href="#stories">Enterprise<small>Built for complex, global brands.</small></a></div>
+        </div>
+      </li>
+      <li>
+        <button aria-expanded="false">Products ▾</button>
+        <div class="mega">
+          <div><h4>Build</h4><a href="#build">Website builder</a><a href="#build">Themes</a><a href="#build">Domains</a><a href="#assistant">AI assistant</a></div>
+          <div><h4>Sell anywhere</h4><a href="#ai">AI chats</a><a href="#build">Online store</a><a href="#build">Point of sale</a><a href="#build">Social &amp; marketplaces</a><a href="#build">Global selling</a></div>
+          <div><h4>Run &amp; get paid</h4><a href="#checkout">Checkout</a><a href="#checkout">Payments</a><a href="#build">Shipping</a><a href="#capital">Funding</a><a href="#build">Analytics</a></div>
+        </div>
+      </li>
+      <li><a href="#developers">Developers</a></li>
+      <li><a href="#pricing" data-open-modal>Pricing</a></li>
+    </ul>
+    <div class="nav-right">
+      <a class="login" href="#" data-open-modal>Log in</a>
+      <a class="btn btn-primary btn-sm" href="#" data-open-modal>Start for free</a>
+    </div>
+    <button class="hamburger" aria-label="Open menu" aria-expanded="false">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
+  </div>
+  <nav class="mobile-panel" aria-label="Mobile">
+    <a href="#ai">AI channels</a>
+    <a href="#build">Products</a>
+    <a href="#stories">Customer stories</a>
+    <a href="#developers">Developers</a>
+    <a href="#" data-open-modal>Log in</a>
+    <a class="btn btn-primary" href="#" data-open-modal>Start for free</a>
+  </nav>
+</header>
+
+<main id="main">
+  <!-- Hero -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <h1>Be the next <span class="rotator" id="rotator">big thing</span></h1>
+      <p class="lead">Dream big and build fast on <span data-brand>Cartwell</span>, the commerce platform that grows with you from first sale to global brand.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="#" data-open-modal>Start for free</a>
+        <a class="btn btn-ghost" href="#build">See how it works</a>
+      </div>
+      <div class="agent-box">
+        <code id="agentCmd">Set up a new store for me on Cartwell and add my first three products.</code>
+        <button class="btn btn-primary btn-sm" id="copyBtn">Copy prompt</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Showcase -->
+  <section class="showcase" aria-label="Stores built on the platform">
+    <div class="wrap">
+      <h2>Sell everywhere people shop</h2>
+      <p>Online and in person. Across AI and on social. Locally and globally.</p>
+    </div>
+    <div class="marquee"><div class="track" id="track"></div></div>
+  </section>
+
+  <!-- AI channels -->
+  <section class="block dark" id="ai">
+    <div class="wrap ai-grid">
+      <div>
+        <p class="eyebrow">AI channels</p>
+        <h2 class="h2">Your brand just entered the chat</h2>
+        <p class="sub">Get discovered in AI assistants. Shoppers ask, compare and check out right in the conversation, and the order lands in your admin like any other.</p>
+        <a class="btn btn-primary" href="#" data-open-modal>Turn on AI channels</a>
+      </div>
+      <div class="chat" aria-hidden="true">
+        <div class="chat-top"><span class="chip">AI assistant</span><span class="chip">Shopping</span></div>
+        <div class="msg user">I need a gift for a coffee lover, under $60.</div>
+        <div class="msg bot">Here are three picks from independent shops:</div>
+        <div class="product-row">
+          <div class="p-tile"><div class="p-img" style="background:linear-gradient(135deg,#c08552,#5e3023)"></div><b>Pour-over set</b><span>$48</span></div>
+          <div class="p-tile"><div class="p-img" style="background:linear-gradient(135deg,#e6ccb2,#7f5539)"></div><b>Single-origin</b><span>$22</span></div>
+          <div class="p-tile"><div class="p-img" style="background:linear-gradient(135deg,#adb5bd,#343a40)"></div><b>Steel mug</b><span>$34</span></div>
+        </div>
+        <button class="buy" type="button" tabindex="-1">Buy Pour-over set: $48</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="block tint" id="build">
+    <div class="wrap">
+      <p class="eyebrow">One platform</p>
+      <h2 class="h2">Show up everywhere. Without going anywhere.</h2>
+      <p class="sub">Everything you need to build, sell and run your business, already connected.</p>
+      <div class="features">
+        <article class="feature">
+          <div><h3>Get a store that's built to sell</h3><p>Describe your business and AI builds your online store in minutes. Or start from a professional theme.</p></div>
+          <div class="viz viz-store"><div></div><div></div><div></div></div>
+        </article>
+        <article class="feature">
+          <div><h3>Control everything in one place</h3><p>Payments, fulfillment and retail, all run from one central command center.</p></div>
+          <div class="viz viz-hub"><span class="on">Payments</span><span>Shipping</span><span>Customers</span><span>Retail</span><span>Inventory</span><span>Catalog</span></div>
+        </article>
+        <article class="feature">
+          <div><h3>Sell on every channel</h3><p>Put your products where shoppers scroll, search and shop: social, marketplaces, AI chats and in person.</p></div>
+          <div class="viz viz-channels" id="channels"></div>
+        </article>
+        <article class="feature">
+          <div><h3>Sell across borders</h3><p>Local currencies, languages, duties and shipping rates, handled for you in 150+ markets.</p></div>
+          <div class="viz viz-global"><div><b>$</b>USD</div><div><b>€</b>EUR</div><div><b>£</b>GBP</div><div><b>¥</b>JPY</div></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stories -->
+  <section class="block" id="stories">
+    <div class="wrap">
+      <p class="eyebrow">For everyone</p>
+      <h2 class="h2">From side hustle to global empire</h2>
+      <p class="sub">Example stories. Replace them with your own customers.</p>
+      <div class="stories">
+        <article class="story" id="start"><div class="art" style="background:linear-gradient(135deg,#b7e4c7,#40916c)"></div><div class="body"><h3>Get started fast</h3><p>A kitchen-table candle brand launched in a weekend and passed its first 1,000 orders in six months.</p></div></article>
+        <article class="story"><div class="art" style="background:linear-gradient(135deg,#ffd6a5,#e76f51)"></div><div class="body"><h3>Grow as big as you want</h3><p>A one-product cookware shop grew into a full home line sold in 30 countries.</p></div></article>
+        <article class="story"><div class="art" style="background:linear-gradient(135deg,#cdb4db,#5a189a)"></div><div class="body"><h3>Raise the bar</h3><p>A heritage toy company moved its global storefronts to one platform and cut launch time in half.</p></div></article>
+      </div>
+      <div class="center-cta"><a class="btn btn-dark" href="#" data-open-modal>Pick a plan that fits</a></div>
+    </div>
+  </section>
+
+  <!-- Assistant -->
+  <section class="block dark" id="assistant">
+    <div class="wrap assist">
+      <div>
+        <p class="eyebrow">Built-in AI</p>
+        <h2 class="h2">Meet your commerce co-pilot</h2>
+        <p class="sub">Spot growth opportunities, write product copy and automate busywork, right inside your admin.</p>
+      </div>
+      <div class="assist-card" aria-hidden="true">
+        <div class="q">“Why were sales down last week?”</div>
+        <div class="a">Sales dipped 12%, mostly on mobile. Three things changed:
+          <ul><li>Your best seller went out of stock on Tuesday</li><li>Shipping rates rose for the West Coast</li><li>The weekend email was skipped</li></ul>
+          <div class="bars"><i style="height:70%"></i><i style="height:82%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:60%"></i><i style="height:88%"></i><i style="height:95%"></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Apps -->
+  <section class="block">
+    <div class="wrap">
+      <p class="eyebrow">App marketplace</p>
+      <h2 class="h2">Customize everything with apps</h2>
+      <p class="sub">Thousands of apps for reviews, subscriptions, loyalty, email and whatever else your business needs.</p>
+      <div class="apps" id="apps"></div>
+    </div>
+  </section>
+
+  <!-- Developers -->
+  <section class="block dark" id="developers">
+    <div class="wrap">
+      <p class="eyebrow">For developers</p>
+      <h2 class="h2">Commerce to the core. Built for AI.</h2>
+      <p class="sub">APIs, SDKs and agent tools to build custom storefronts, apps and AI shopping experiences.</p>
+      <div class="dev-grid">
+        <div class="dev-card"><pre>query {
+  products(first: 3) {
+    title
+    price
+  }
+}</pre><h3>Build custom storefronts</h3></div>
+        <div class="dev-card"><pre>agent.checkout({
+  cart: "c_8f2a",
+  pay: "wallet"
+})</pre><h3>Build for AI agents</h3></div>
+        <div class="dev-card"><pre>$ cartwell app init
+✓ App created
+✓ Dev store ready</pre><h3>Build apps</h3></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Checkout -->
+  <section class="block tint" id="checkout">
+    <div class="wrap checkout">
+      <div>
+        <p class="eyebrow">Checkout</p>
+        <h2 class="h2">A checkout that converts</h2>
+        <div class="big-stats"><div><b>1-tap</b><span>saved wallet</span></div><div><b>30s</b><span>average checkout</span></div></div>
+        <p class="sub" style="margin-bottom:12px">Fast, saved-details checkout on every device, with fraud protection and every major payment method built in.</p>
+        <p class="fine">Placeholder figures. Swap in your own verified numbers.</p>
+      </div>
+      <div class="phone" aria-hidden="true"><div class="screen">
+        <div class="line" style="width:60%"></div><div class="line"></div><div class="line" style="width:80%"></div>
+        <div class="pay">Pay with Wallet</div>
+        <div class="line"></div><div class="line" style="width:70%"></div>
+        <div class="total"><span>Total</span><span>$125.00</span></div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- Numbers -->
+  <section class="block dark">
+    <div class="wrap">
+      <h2 class="h2">There's no better place to build</h2>
+      <p class="sub">Rock steady and blazing fast, even during your biggest product drop. (Example numbers. Replace with your own.)</p>
+      <div class="numbers">
+        <div class="num"><b data-count="30" data-suffix="s">0</b><span>between first sales on the platform</span></div>
+        <div class="num"><b data-count="150" data-suffix="+">0</b><span>countries with merchants</span></div>
+        <div class="num"><b data-count="10" data-suffix="K+">0</b><span>merchants</span></div>
+        <div class="num"><b data-count="99.99" data-suffix="%" data-dec="2">0</b><span>uptime</span></div>
+        <div class="num"><b data-count="24" data-suffix="/7">0</b><span>support</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Capital -->
+  <section class="block tint" id="capital">
+    <div class="wrap capital">
+      <blockquote>“Funding through the platform let us stock up before the holidays and double our sales.”<cite>Founder, example apparel brand</cite></blockquote>
+      <div>
+        <p class="eyebrow">Funding</p>
+        <h2 class="h2" style="font-size:clamp(30px,4vw,48px)">We've got your back</h2>
+        <p class="sub" style="margin-bottom:0">Get funding based on your sales history, and repay as you sell.</p>
+        <div class="cap-stats"><div><b>Fast</b><span>Offers in your admin</span></div><div><b>Flexible</b><span>Repay as a % of sales</span></div><div><b>0%</b><span>Equity taken</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="block dark final" id="pricing">
+    <div class="wrap">
+      <h2 class="h2">Build fast on <span data-brand>Cartwell</span></h2>
+      <div class="steps"><div class="step"><b>01</b>Add your first product</div><div class="step"><b>02</b>Customize your store</div><div class="step"><b>03</b>Set up payments</div></div>
+      <a class="btn btn-primary" href="#" data-open-modal>Take your shot</a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div><a class="logo" href="#top"><span class="logo-mark">◆</span><span data-brand>Cartwell</span></a><p style="margin-top:14px;font-size:14px;max-width:28ch">The commerce platform for builders of every size.</p></div>
+      <div><h4>Company</h4><ul><li><a href="#">About</a></li><li><a href="#">Careers</a></li><li><a href="#">Investors</a></li><li><a href="#">Newsroom</a></li></ul></div>
+      <div><h4>Ecosystem</h4><ul><li><a href="#developers">Developer docs</a></li><li><a href="#">Theme store</a></li><li><a href="#">App store</a></li><li><a href="#">Partners</a></li></ul></div>
+      <div><h4>Resources</h4><ul><li><a href="#">Blog</a></li><li><a href="#">Guides</a></li><li><a href="#">Free tools</a></li><li><a href="#">Changelog</a></li></ul></div>
+      <div><h4>Support</h4><ul><li><a href="#">Help center</a></li><li><a href="#">Community</a></li><li><a href="#">Hire a partner</a></li><li><a href="#">Status</a></li></ul></div>
+    </div>
+    <div class="foot-bottom"><span>© <span id="year"></span> <span data-brand>Cartwell</span>. All rights reserved.</span><span><a href="#">Terms</a> · <a href="#">Privacy</a> · <a href="#">Sitemap</a></span></div>
+  </div>
+</footer>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal-box">
+    <button class="close" aria-label="Close" data-close>×</button>
+    <form id="signup">
+      <h3 id="modalTitle">Start for free</h3>
+      <p>Try it free, no credit card required.</p>
+      <label for="email">Email</label>
+      <input id="email" type="email" required placeholder="you@example.com">
+      <label for="store">Store name</label>
+      <input id="store" type="text" required placeholder="My awesome store">
+      <button class="btn btn-dark" type="submit">Create store</button>
+    </form>
+    <div class="ok" id="ok"><h3>You're in! 🎉</h3><p>This is a demo page, so nothing was sent anywhere.</p><button class="btn btn-dark" data-close>Close</button></div>
+  </div>
+</div>
+
+<script>
+  // Change the brand name everywhere on the page by editing this one line.
+  const BRAND = "Cartwell";
+  document.querySelectorAll("[data-brand]").forEach(el => el.textContent = BRAND);
+  document.title = BRAND + ": The All-in-One Commerce Platform";
+  document.getElementById("agentCmd").textContent = "Set up a new store for me on " + BRAND + " and add my first three products.";
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  // Rotating hero word
+  const words = ["big thing", "household name", "solo-preneur", "category creator", "global empire", "AI all-star"];
+  const rot = document.getElementById("rotator");
+  let wi = 0;
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    setInterval(() => {
+      rot.classList.add("out");
+      setTimeout(() => { wi = (wi + 1) % words.length; rot.textContent = words[wi]; rot.classList.remove("out"); }, 350);
+    }, 2400);
+  }
+
+  // Showcase cards (fictional stores), duplicated for a seamless loop
+  const stores = [
+    ["Northpeak Outfitters", "northpeak.example", "#2d6a4f", "#95d5b2", 1],
+    ["Bloom & Barrel", "bloombarrel.example", "#9d4edd", "#e0aaff", 0],
+    ["Saltwater Studio", "saltwater.example", "#0077b6", "#90e0ef", 1],
+    ["Ember Ceramics", "emberceramics.example", "#bc6c25", "#fefae0", 0],
+    ["Velvet Bean", "velvetbean.example", "#432818", "#ddb892", 1],
+    ["Kite & Comet", "kitecomet.example", "#e63946", "#f1faee", 0],
+    ["Juniper Skin", "juniperskin.example", "#588157", "#dad7cd", 1],
+    ["Grit Skate Co.", "gritskate.example", "#212529", "#ffd60a", 0]
+  ];
+  const track = document.getElementById("track");
+  const cardHTML = ([n, u, c1, c2, wide]) =>
+    `<div class="store-card${wide ? " wide" : ""}" style="background:linear-gradient(150deg,${c1},${c1}cc);color:#fff">
+       <div class="bar"><i></i><i></i><i></i></div>
+       <div class="prod" style="background:${c2}"></div>
+       <div><div class="name">${n}</div><div class="url">${u}</div></div>
+     </div>`;
+  track.innerHTML = stores.map(cardHTML).join("") + stores.map(cardHTML).join("");
+
+  // Channel and app tiles
+  const palette = ["#ff006e","#3a86ff","#8338ec","#fb5607","#ffbe0b","#06d6a0","#118ab2","#ef476f","#073b4c","#2a9d8f","#e9c46a","#f4a261","#264653","#e76f51","#6d597a","#b5838d"];
+  document.getElementById("channels").innerHTML = palette.slice(0, 6).map(c => `<i style="background:${c}"></i>`).join("");
+  document.getElementById("apps").innerHTML = palette.map((c, i) => `<i style="background:linear-gradient(135deg,${c},${palette[(i + 5) % palette.length]})"></i>`).join("");
+
+  // Count-up numbers when visible
+  const io = new IntersectionObserver(entries => entries.forEach(e => {
+    if (!e.isIntersecting) return;
+    const el = e.target, target = parseFloat(el.dataset.count), dec = +(el.dataset.dec || 0), suf = el.dataset.suffix || "";
+    const start = performance.now();
+    const tick = t => {
+      const p = Math.min((t - start) / 1200, 1);
+      el.textContent = (target * (1 - Math.pow(1 - p, 3))).toFixed(dec) + suf;
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    io.unobserve(el);
+  }), { threshold: .5 });
+  document.querySelectorAll("[data-count]").forEach(el => io.observe(el));
+
+  // Desktop dropdowns
+  document.querySelectorAll(".menu > li > button").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const li = btn.parentElement, open = li.classList.contains("open");
+      document.querySelectorAll(".menu > li.open").forEach(x => { x.classList.remove("open"); x.firstElementChild.setAttribute("aria-expanded", "false"); });
+      if (!open) { li.classList.add("open"); btn.setAttribute("aria-expanded", "true"); }
+    });
+  });
+  document.addEventListener("click", () => document.querySelectorAll(".menu > li.open").forEach(x => x.classList.remove("open")));
+
+  // Mobile menu
+  const ham = document.querySelector(".hamburger"), panel = document.querySelector(".mobile-panel");
+  ham.addEventListener("click", () => { const s = panel.classList.toggle("show"); ham.setAttribute("aria-expanded", s); });
+  panel.querySelectorAll("a").forEach(a => a.addEventListener("click", () => panel.classList.remove("show")));
+
+  // Copy prompt
+  document.getElementById("copyBtn").addEventListener("click", async e => {
+    try { await navigator.clipboard.writeText(document.getElementById("agentCmd").textContent); e.target.textContent = "Copied!"; }
+    catch { e.target.textContent = "Select & copy"; }
+    setTimeout(() => e.target.textContent = "Copy prompt", 1600);
+  });
+
+  // Sign-up modal (demo only, nothing is sent)
+  const modal = document.getElementById("modal");
+  document.querySelectorAll("[data-open-modal]").forEach(a => a.addEventListener("click", e => {
+    e.preventDefault();
+    document.getElementById("signup").style.display = "";
+    document.getElementById("ok").style.display = "none";
+    modal.classList.add("show");
+    document.getElementById("email").focus();
+  }));
+  modal.addEventListener("click", e => { if (e.target === modal || e.target.hasAttribute("data-close")) modal.classList.remove("show"); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") modal.classList.remove("show"); });
+  document.getElementById("signup").addEventListener("submit", e => {
+    e.preventDefault();
+    e.target.style.display = "none";
+    document.getElementById("ok").style.display = "block";
+  });
+</script>
+</body>
+</html>
