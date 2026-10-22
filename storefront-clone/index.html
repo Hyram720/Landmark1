@@ -238,6 +238,54 @@
   }
   @media (max-width: 560px) { .ws-grid { grid-template-columns: 1fr; } }
 
+  /* Cart */
+  .cart-btn { position: relative; background: none; border: 0; color: #fff; padding: 8px; cursor: pointer; margin-left: 4px; }
+  .cart-count { position: absolute; top: 0; right: -4px; background: var(--brand); color: var(--brand-ink); font-size: 11px; font-weight: 800; min-width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; padding: 0 4px; }
+  .cart-count[hidden] { display: none; }
+  .bump { animation: bump .4s; }
+  @keyframes bump { 50% { transform: scale(1.4); } }
+  .ws-add { white-space: nowrap; }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; transform: none; }
+  .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 70; }
+  .drawer-backdrop.show { opacity: 1; pointer-events: auto; }
+  .drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(420px, 100%); background: var(--surface); color: var(--text); border-left: 1px solid var(--line); z-index: 75; display: flex; flex-direction: column; transform: translateX(100%); visibility: hidden; transition: transform .3s, visibility 0s .3s; }
+  .drawer.show { transform: none; visibility: visible; transition: transform .3s; }
+  .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+  .drawer-head h3 { margin: 0; font-size: 20px; }
+  .drawer-close { background: none; border: 0; color: var(--text); font-size: 28px; line-height: 1; cursor: pointer; }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 4px 20px 20px; }
+  .drawer-foot { border-top: 1px solid var(--line); padding: 18px 20px; }
+  .drawer dl { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 0 0 14px; font-size: 15px; }
+  .drawer dt { color: var(--muted); white-space: nowrap; }
+  .drawer dd { margin: 0; text-align: right; font-weight: 600; }
+  .drawer .save { color: var(--brand); }
+  .drawer .total { font-size: 20px; }
+  .drawer .btn { width: 100%; }
+  .cart-items { list-style: none; margin: 0; padding: 0; }
+  .ci { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .ci-img { width: 64px; height: 64px; border-radius: 12px; }
+  .ci-info b { display: block; font-size: 15px; }
+  .ci-info > span { display: block; font-size: 13px; color: var(--muted); }
+  .ci-info .ws-warn { margin: 4px 0 0; min-height: 0; }
+  .ci-info .qty { margin-top: 8px; width: max-content; }
+  .ci-info .qty button { width: 30px; height: 30px; }
+  .ci-info .qty input { width: 48px; }
+  .ci-remove { display: block; background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; padding: 0; margin-top: 8px; }
+  .ci-total { font-weight: 700; }
+  .cart-empty { text-align: center; padding: 60px 10px; color: var(--muted); }
+  .co-form label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
+  .co-form input, .co-form select { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); color: var(--text); font: inherit; }
+  .co-form .btn { margin-top: 20px; }
+  .co-recap { display: flex; justify-content: space-between; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 18px; font-weight: 700; }
+  .link-btn { background: none; border: 0; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; margin-top: 10px; width: 100%; }
+  .done { text-align: center; padding: 50px 6px; }
+  .done .check { width: 64px; height: 64px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; font-size: 32px; margin: 0 auto 18px; }
+  .done p { color: var(--muted); }
+  @media (max-width: 960px) {
+    .cart-btn { margin-left: auto; }
+    .hamburger { margin-left: 0; }
+  }
+
   /* Modal */
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 80; padding: 16px; }
   .modal.show { display: flex; }
@@ -341,6 +389,10 @@
       <a class="login" href="#" data-open-modal>Log in</a>
       <a class="btn btn-primary btn-sm" href="#" data-open-modal>Start for free</a>
     </div>
+    <button class="cart-btn" id="cartOpen" aria-label="Open cart">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6h15l-1.5 9h-12z"/><path d="M6 6 5 3H2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/></svg>
+      <span class="cart-count" id="cartCount" hidden>0</span>
+    </button>
     <button class="hamburger" aria-label="Open menu" aria-expanded="false">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
     </button>
@@ -442,7 +494,7 @@
       <div class="ws-layout">
         <div class="ws-grid" id="wsGrid"></div>
         <aside class="ws-summary" aria-live="polite">
-          <h3>Wholesale order</h3>
+          <h3>Cart summary</h3>
           <dl>
             <dt>Products</dt><dd id="wsLines">0</dd>
             <dt>Units</dt><dd id="wsUnits">0</dd>
@@ -451,8 +503,8 @@
             <dt>Freight</dt><dd id="wsFreight">n/a</dd>
             <dt class="total">Total</dt><dd class="total" id="wsTotal">$0.00</dd>
           </dl>
-          <button class="btn btn-primary" id="wsQuote" type="button">Request wholesale quote</button>
-          <button class="ws-clear" id="wsClear" type="button">Clear order</button>
+          <button class="btn btn-primary" id="wsCheckout" type="button">View cart &amp; checkout</button>
+          <button class="ws-clear" id="wsClear" type="button">Clear cart</button>
           <p class="ws-note" id="wsNote"></p>
         </aside>
       </div>
@@ -596,6 +648,41 @@
   </div>
 </footer>
 
+<div class="drawer-backdrop" id="cartBackdrop"></div>
+<aside class="drawer" id="cartDrawer" role="dialog" aria-modal="true" aria-labelledby="cartTitle">
+  <div class="drawer-head"><h3 id="cartTitle">Your cart</h3><button class="drawer-close" id="cartClose" aria-label="Close cart">×</button></div>
+  <div class="drawer-body">
+    <div data-view="cart">
+      <ul class="cart-items" id="cartItems"></ul>
+      <div class="cart-empty" id="cartEmpty">Your cart is empty.<br><a class="btn btn-primary btn-sm" href="#wholesale" data-close-cart style="margin-top:16px;width:auto">Browse wholesale products</a></div>
+    </div>
+    <form class="co-form" data-view="checkout" id="checkoutForm" hidden>
+      <label for="coName">Full name</label><input id="coName" required autocomplete="name">
+      <label for="coBiz">Business name</label><input id="coBiz" required autocomplete="organization">
+      <label for="coEmail">Email</label><input id="coEmail" type="email" required autocomplete="email">
+      <label for="coTerms">Payment terms</label>
+      <select id="coTerms"><option>Pay now by card</option><option>Net 30 invoice</option></select>
+      <div class="co-recap"><span>Order total</span><span id="coTotal">$0.00</span></div>
+      <button class="btn btn-primary" type="submit">Place order</button>
+      <button class="link-btn" type="button" data-go="cart">Back to cart</button>
+    </form>
+    <div class="done" data-view="done" hidden>
+      <div class="check">✓</div><h3>Order placed</h3><p id="doneMsg"></p>
+      <button class="btn btn-primary" type="button" data-close-cart>Keep shopping</button>
+    </div>
+  </div>
+  <div class="drawer-foot" id="cartFoot">
+    <dl>
+      <dt>Subtotal</dt><dd id="cSub">$0.00</dd>
+      <dt>You save</dt><dd class="save" id="cSave">$0.00</dd>
+      <dt>Freight</dt><dd id="cFreight">n/a</dd>
+      <dt class="total">Total</dt><dd class="total" id="cTotal">$0.00</dd>
+    </dl>
+    <p class="ws-note" id="cNote" style="margin:0 0 12px"></p>
+    <button class="btn btn-primary" id="cartCheckout" type="button">Checkout</button>
+  </div>
+</aside>
+
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
   <div class="modal-box">
     <button class="close" aria-label="Close" data-close>×</button>
@@ -667,68 +754,172 @@
   ];
   const FREE_FREIGHT = 1500, FREIGHT = 45;
   const money = n => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const qtys = wholesale.map(() => 0);
+  // Cart: quantity per wholesale product, remembered in this browser only.
+  const CART_KEY = "cartwell-cart";
+  let qtys = wholesale.map(() => 0);
+  try {
+    const saved = JSON.parse(localStorage.getItem(CART_KEY));
+    if (Array.isArray(saved) && saved.length === wholesale.length) qtys = saved.map(n => Math.max(0, Math.floor(+n || 0)));
+  } catch {}
+  const saveCart = () => { try { localStorage.setItem(CART_KEY, JSON.stringify(qtys)); } catch {} };
   const unitPrice = (p, q) => p.tiers.reduce((u, [min, price]) => q >= min ? price : u, null);
+  const swatch = p => `background:linear-gradient(135deg,${p.colors[0]},${p.colors[1]})`;
+  const stepper = (p, i, q) => `<div class="qty">
+      <button type="button" data-step="-1" data-i="${i}" aria-label="Fewer ${p.name}">−</button>
+      <input type="number" min="0" step="${p.tiers[0][0]}" value="${q}" inputmode="numeric" aria-label="${p.name} quantity" data-i="${i}">
+      <button type="button" data-step="1" data-i="${i}" aria-label="More ${p.name}">+</button>
+    </div>`;
+  const $ = id => document.getElementById(id);
 
-  document.getElementById("wsGrid").innerHTML = wholesale.map((p, i) => `
+  $("wsGrid").innerHTML = wholesale.map((p, i) => `
     <article class="ws-card">
-      <div class="ws-img" style="background:linear-gradient(135deg,${p.colors[0]},${p.colors[1]})"><span>Packs of ${p.tiers[0][0]}</span></div>
+      <div class="ws-img" style="${swatch(p)}"><span>Packs of ${p.tiers[0][0]}</span></div>
       <h3>${p.name}</h3>
       <div class="ws-meta"><span>${p.sku}</span><span>Retail ${money(p.retail)}</span></div>
-      <table class="ws-tiers"><tbody>${p.tiers.map(([min, price], t) =>
-        `<tr data-tier="${t}"><td>${min}+ units</td><td>${money(price)} ea</td></tr>`).join("")}</tbody></table>
+      <table class="ws-tiers"><tbody>${p.tiers.map(([min, price]) =>
+        `<tr><td>${min}+ units</td><td>${money(price)} ea</td></tr>`).join("")}</tbody></table>
       <p class="ws-warn" data-warn></p>
-      <div class="ws-row">
-        <div class="qty">
-          <button type="button" data-step="-1" aria-label="Fewer ${p.name}">−</button>
-          <input type="number" min="0" step="${p.tiers[0][0]}" value="0" inputmode="numeric" aria-label="${p.name} quantity" data-i="${i}">
-          <button type="button" data-step="1" aria-label="More ${p.name}">+</button>
-        </div>
-        <div class="ws-line" data-line>Line total<b>$0.00</b></div>
-      </div>
+      <div class="ws-row"><div data-control></div><div class="ws-line" data-line>Line total<b>$0.00</b></div></div>
     </article>`).join("");
 
-  function updateWholesale() {
-    let lines = 0, units = 0, retail = 0, subtotal = 0;
-    document.querySelectorAll(".ws-card").forEach((card, i) => {
-      const p = wholesale[i], q = qtys[i], u = unitPrice(p, q), moq = p.tiers[0][0];
-      card.querySelector("input").value = q;
-      card.querySelectorAll("tr").forEach((tr, t) => tr.classList.toggle("on", u !== null && p.tiers[t][1] === u));
-      card.querySelector("[data-warn]").textContent = q > 0 && u === null ? `Minimum order is ${moq} units` : "";
-      card.querySelector("[data-line] b").textContent = money(u ? u * q : 0);
-      if (u) { lines++; units += q; retail += p.retail * q; subtotal += u * q; }
+  function totals() {
+    let lines = 0, units = 0, retail = 0, subtotal = 0, invalid = 0;
+    wholesale.forEach((p, i) => {
+      const q = qtys[i], u = unitPrice(p, q);
+      if (q > 0) lines++;
+      if (q > 0 && u === null) invalid++;
+      if (u) { units += q; retail += p.retail * q; subtotal += u * q; }
     });
-    const freight = subtotal === 0 ? 0 : subtotal >= FREE_FREIGHT ? 0 : FREIGHT;
-    document.getElementById("wsLines").textContent = lines;
-    document.getElementById("wsUnits").textContent = units.toLocaleString("en-US");
-    document.getElementById("wsRetail").textContent = money(retail);
-    document.getElementById("wsSave").textContent = money(retail - subtotal);
-    document.getElementById("wsFreight").textContent = subtotal === 0 ? "n/a" : freight === 0 ? "Free" : money(freight);
-    document.getElementById("wsTotal").textContent = money(subtotal + freight);
-    document.getElementById("wsNote").textContent = freight ? `Add ${money(FREE_FREIGHT - subtotal)} more for free freight.` : "";
-    return subtotal + freight;
+    const freight = subtotal === 0 || subtotal >= FREE_FREIGHT ? 0 : FREIGHT;
+    return { lines, units, retail, subtotal, freight, total: subtotal + freight, invalid };
   }
 
-  document.getElementById("wsGrid").addEventListener("click", e => {
-    const b = e.target.closest("[data-step]");
-    if (!b) return;
-    const i = +b.closest(".ws-card").querySelector("input").dataset.i, pack = wholesale[i].tiers[0][0];
-    qtys[i] = Math.max(0, qtys[i] + pack * +b.dataset.step);
-    updateWholesale();
+  function render() {
+    const t = totals();
+    const minMsg = p => `Minimum order is ${p.tiers[0][0]} units`;
+
+    // Product cards
+    document.querySelectorAll(".ws-card").forEach((card, i) => {
+      const p = wholesale[i], q = qtys[i], u = unitPrice(p, q), ctl = card.querySelector("[data-control]");
+      if (q > 0) {
+        const input = ctl.querySelector("input");
+        if (input) input.value = q; else ctl.innerHTML = stepper(p, i, q);
+      } else {
+        ctl.innerHTML = `<button class="btn btn-primary btn-sm ws-add" type="button" data-add="${i}">Add to cart</button>`;
+      }
+      card.querySelectorAll("tr").forEach((tr, k) => tr.classList.toggle("on", u !== null && p.tiers[k][1] === u));
+      card.querySelector("[data-warn]").textContent = q > 0 && u === null ? minMsg(p) : "";
+      card.querySelector("[data-line] b").textContent = money(u ? u * q : 0);
+    });
+
+    // Summary panel beside the catalog
+    $("wsLines").textContent = t.lines;
+    $("wsUnits").textContent = t.units.toLocaleString("en-US");
+    $("wsRetail").textContent = money(t.retail);
+    $("wsSave").textContent = money(t.retail - t.subtotal);
+    $("wsFreight").textContent = t.subtotal === 0 ? "n/a" : t.freight === 0 ? "Free" : money(t.freight);
+    $("wsTotal").textContent = money(t.total);
+    const freightHint = t.freight ? `Add ${money(FREE_FREIGHT - t.subtotal)} more for free freight.` : "";
+    $("wsNote").textContent = t.invalid ? "Some items are below their minimum order." : freightHint;
+
+    // Header badge: number of different products in the cart
+    const badge = $("cartCount");
+    badge.hidden = t.lines === 0;
+    badge.textContent = t.lines;
+
+    // Drawer
+    $("cartItems").innerHTML = wholesale.map((p, i) => {
+      const q = qtys[i];
+      if (!q) return "";
+      const u = unitPrice(p, q);
+      return `<li class="ci">
+        <div class="ci-img" style="${swatch(p)}"></div>
+        <div class="ci-info"><b>${p.name}</b><span>${p.sku} · ${u ? money(u) + " ea" : "below minimum"}</span>
+          ${u ? "" : `<p class="ws-warn">${minMsg(p)}</p>`}
+          ${stepper(p, i, q)}
+          <button class="ci-remove" type="button" data-remove="${i}">Remove</button></div>
+        <div class="ci-total">${money(u ? u * q : 0)}</div>
+      </li>`;
+    }).join("");
+    $("cartEmpty").hidden = t.lines > 0;
+    $("cartTitle").textContent = t.lines ? `Your cart (${t.lines})` : "Your cart";
+    $("cSub").textContent = money(t.subtotal);
+    $("cSave").textContent = money(t.retail - t.subtotal);
+    $("cFreight").textContent = t.subtotal === 0 ? "n/a" : t.freight === 0 ? "Free" : money(t.freight);
+    $("cTotal").textContent = money(t.total);
+    $("coTotal").textContent = money(t.total);
+    $("cNote").textContent = t.invalid ? "Raise items below their minimum to check out." : freightHint;
+    $("cartCheckout").disabled = t.subtotal === 0 || t.invalid > 0;
+    if (currentView === "cart") $("cartFoot").hidden = t.lines === 0;
+
+    saveCart();
+    return t;
+  }
+
+  function setQty(i, q) {
+    const before = qtys[i];
+    qtys[i] = Math.max(0, Math.floor(q || 0));
+    render();
+    if (qtys[i] > before) { const b = $("cartCount"); b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump"); }
+  }
+
+  // One set of handlers covers both the product cards and the drawer.
+  document.addEventListener("click", e => {
+    const add = e.target.closest("[data-add]"), step = e.target.closest("[data-step]"), rm = e.target.closest("[data-remove]");
+    if (add) { const i = +add.dataset.add; setQty(i, wholesale[i].tiers[0][0]); $("wsGrid").querySelectorAll("[data-control]")[i].querySelector("input")?.focus(); }
+    else if (step) { const i = +step.dataset.i; setQty(i, qtys[i] + wholesale[i].tiers[0][0] * +step.dataset.step); }
+    else if (rm) setQty(+rm.dataset.remove, 0);
   });
-  document.getElementById("wsGrid").addEventListener("change", e => {
-    if (!e.target.matches("input")) return;
-    qtys[+e.target.dataset.i] = Math.max(0, Math.floor(+e.target.value || 0));
-    updateWholesale();
+  document.addEventListener("change", e => {
+    if (e.target.matches(".qty input[data-i]")) setQty(+e.target.dataset.i, +e.target.value);
   });
-  document.getElementById("wsClear").addEventListener("click", () => { qtys.fill(0); updateWholesale(); });
-  document.getElementById("wsQuote").addEventListener("click", () => {
-    const total = updateWholesale();
-    document.getElementById("wsNote").textContent = total === 0
-      ? "Add at least the minimum quantity of one product."
-      : `Quote request for ${money(total)} is ready. This is a demo, so nothing was sent.`;
+
+  // Drawer views: cart -> checkout -> done
+  const drawer = $("cartDrawer"), backdrop = $("cartBackdrop");
+  let currentView = "cart";
+  function showView(v) {
+    currentView = v;
+    drawer.querySelectorAll("[data-view]").forEach(el => el.hidden = el.dataset.view !== v);
+    $("cartFoot").hidden = v !== "cart" || totals().lines === 0;
+    if (v === "checkout") $("cartTitle").textContent = "Checkout";
+    if (v === "done") $("cartTitle").textContent = "Thank you";
+    if (v === "cart") render();
+  }
+  function openCart(view = "cart") {
+    showView(view);
+    drawer.classList.add("show"); backdrop.classList.add("show");
+    $("cartClose").focus();
+  }
+  function closeCart() {
+    drawer.classList.remove("show"); backdrop.classList.remove("show");
+    if (currentView === "done") showView("cart");
+  }
+  $("cartOpen").addEventListener("click", () => openCart());
+  $("cartClose").addEventListener("click", closeCart);
+  backdrop.addEventListener("click", closeCart);
+  drawer.addEventListener("click", e => {
+    if (e.target.closest("[data-close-cart]")) closeCart();
+    const go = e.target.closest("[data-go]");
+    if (go) showView(go.dataset.go);
   });
-  updateWholesale();
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && drawer.classList.contains("show")) closeCart(); });
+  $("cartCheckout").addEventListener("click", () => showView("checkout"));
+  $("wsCheckout").addEventListener("click", () => {
+    const t = totals();
+    openCart(t.subtotal > 0 && !t.invalid ? "checkout" : "cart");
+  });
+  $("wsClear").addEventListener("click", () => { qtys.fill(0); render(); });
+  $("checkoutForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const t = totals();
+    const order = "CW-" + Math.floor(10000 + Math.random() * 90000);
+    $("doneMsg").textContent = `Order ${order} for ${money(t.total)} (${t.units.toLocaleString("en-US")} units, ${$("coTerms").value}). This is a demo, so nothing was charged or sent.`;
+    qtys.fill(0);
+    e.target.reset();
+    render();
+    showView("done");
+  });
+  render();
 
   // Count-up numbers when visible
   const io = new IntersectionObserver(entries => entries.forEach(e => {
