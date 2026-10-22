@@ -3,9 +3,15 @@
 //
 //   RECALL_TOKEN=<long random secret> PORT=8787 node src/server.js
 //
-// Every route except /health needs the token, either as the first path segment
-// (https://host/<token>/mcp — for apps that can't send headers) or as
-// "Authorization: Bearer <token>".
+// Every route except /health needs a key, either as the first path segment
+// (https://host/<key>/mcp — for apps that can't send headers) or as
+// "Authorization: Bearer <key>".
+//   RECALL_TOKEN         the owner key: everything, including the dashboard.
+//   RECALL_AGENT_TOKENS  optional per-assistant keys, comma separated:
+//                        "claude=<key>,chatgpt=<key>,grok:read=<key>". A request with an
+//                        assistant key is signed as that assistant whatever it claims, and
+//                        ":read" keys can only call reading tools. Assistant keys reach /mcp
+//                        (and /hook unless read-only), never the dashboard.
 //   POST /mcp    MCP Streamable HTTP endpoint (JSON responses)
 //   POST /hook   records from Claude Code hooks (see hook.js)
 //   GET  /       dashboard (open https://host/<token>/ in a browser)
@@ -44,20 +50,42 @@ function readBody(req) {
   });
 }
 
-// Splits the token off the path and checks it. Returns the route, or null when unauthorized.
-export function authorize(req, url, token) {
+// "claude=<key>,grok:read=<key>" → [{ agent, readOnly, key }]
+export function parseAgentTokens(spec = '') {
+  return String(spec).split(',').map(s => s.trim()).filter(Boolean).map(entry => {
+    const eq = entry.indexOf('=');
+    if (eq < 1) throw new Error('RECALL_AGENT_TOKENS entries look like name=key or name:read=key.');
+    const [name, mode] = entry.slice(0, eq).trim().toLowerCase().split(':');
+    const key = entry.slice(eq + 1).trim();
+    if (!/^[a-z0-9._-]{1,40}$/.test(name)) throw new Error(`Bad assistant name in RECALL_AGENT_TOKENS: ${name}`);
+    if (key.length < 24) throw new Error(`The key for ${name} in RECALL_AGENT_TOKENS must be at least 24 characters.`);
+    return { agent: name, readOnly: mode === 'read', key };
+  });
+}
+
+// Finds which key a request carries. Returns { route, viaPath, owner, agent, readOnly }, or null.
+export function authorize(req, url, keys) {
+  const match = secret => keys.find(k => sameSecret(secret, k.key));
   const parts = url.pathname.split('/');
-  if (parts[1] && sameSecret(decodeURIComponent(parts[1]), token)) {
-    return { route: `/${parts.slice(2).join('/')}`, viaPath: true };
+  let first = '';
+  try {
+    first = decodeURIComponent(parts[1] ?? '');
+  } catch {
+    // Not a key.
   }
+  const inPath = first && match(first);
+  if (inPath) return { ...inPath, route: `/${parts.slice(2).join('/')}`, viaPath: true };
   const header = req.headers.authorization ?? '';
   const bearer = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
-  if (bearer && sameSecret(bearer, token)) return { route: url.pathname, viaPath: false };
+  const viaHeader = bearer && match(bearer);
+  if (viaHeader) return { ...viaHeader, route: url.pathname, viaPath: false };
   return null;
 }
 
-export function createServer({ token, store = new Store(), ai = process.env.RECALL_AI !== 'off' } = {}) {
+export function createServer({ token, agentTokens = '', store = new Store(), ai = process.env.RECALL_AI !== 'off' } = {}) {
   if (!token || token.length < 24) throw new Error('Set RECALL_TOKEN to a random secret of at least 24 characters.');
+  const keys = [{ owner: true, agent: null, readOnly: false, key: token }, ...parseAgentTokens(agentTokens).map(k => ({ owner: false, ...k }))];
+  if (new Set(keys.map(k => k.key)).size !== keys.length) throw new Error('Every Recall key must be different.');
 
   const send = (res, status, body, headers = {}) => {
     const isJson = typeof body !== 'string';
@@ -67,15 +95,34 @@ export function createServer({ token, store = new Store(), ai = process.env.RECA
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    const started = Date.now();
+    let who = 'anonymous';
+    let shownRoute = url.pathname;
+    // One access line per request on stdout (Railway's log). Never includes a key.
+    res.on('finish', () => {
+      if (url.pathname !== '/health') console.log(`${req.method} ${shownRoute} ${res.statusCode} ${who} ${Date.now() - started}ms`);
+    });
     res.setHeader('access-control-allow-origin', '*');
     res.setHeader('access-control-allow-headers', 'authorization, content-type, mcp-session-id, mcp-protocol-version, accept');
     res.setHeader('access-control-expose-headers', 'mcp-session-id');
     if (req.method === 'OPTIONS') return send(res, 204, '');
-    if (url.pathname === '/health') return send(res, 200, { ok: true });
+    if (url.pathname === '/health') {
+      try {
+        store.stats();
+        return send(res, 200, { ok: true });
+      } catch (err) {
+        log('health check failed', err);
+        return send(res, 503, { ok: false, error: 'database unavailable' });
+      }
+    }
 
-    const auth = authorize(req, url, token);
+    shownRoute = '/<redacted>';
+    const auth = authorize(req, url, keys);
     if (!auth) return send(res, 401, { error: 'unauthorized' }, { 'www-authenticate': 'Bearer' });
     const { route } = auth;
+    shownRoute = route;
+    who = auth.owner ? 'owner' : `${auth.agent}${auth.readOnly ? ':read' : ''}`;
+    const forbidden = () => send(res, 403, { error: 'this key cannot use this route' });
 
     try {
       if (route === '/mcp') {
@@ -90,13 +137,15 @@ export function createServer({ token, store = new Store(), ai = process.env.RECA
           return send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
         }
         const messages = Array.isArray(payload) ? payload : [payload];
-        const replies = messages.map(m => handle(store, m)).filter(Boolean);
+        const ctx = { agent: auth.agent, readOnly: auth.readOnly, audit: true };
+        const replies = messages.map(m => handle(store, m, ctx)).filter(Boolean);
         const headers = messages.some(m => m?.method === 'initialize') ? { 'mcp-session-id': randomUUID() } : {};
         if (!replies.length) return send(res, 202, '', headers);
         return send(res, 200, Array.isArray(payload) ? replies : replies[0], headers);
       }
 
       if (route === '/hook' && req.method === 'POST') {
+        if (auth.readOnly) return forbidden();
         const record = JSON.parse(await readBody(req));
         const output = processRecord(store, record, {
           onSessionEnd: sessionId => {
@@ -106,6 +155,8 @@ export function createServer({ token, store = new Store(), ai = process.env.RECA
         return send(res, 200, { output });
       }
 
+      // The dashboard and its API are for the owner only.
+      if (!auth.owner) return forbidden();
       if (req.method === 'POST' && viewerPost(store, route, req, await readBody(req), res)) return;
 
       if (req.method === 'GET') {
@@ -129,10 +180,15 @@ if (isMain) {
   const port = Number(process.env.PORT) || 8787;
   const host = process.env.HOST || '0.0.0.0';
   try {
-    createServer({ token: process.env.RECALL_TOKEN }).listen(port, host, () => {
+    const agentTokens = process.env.RECALL_AGENT_TOKENS ?? '';
+    const server = createServer({ token: process.env.RECALL_TOKEN, agentTokens });
+    server.listen(port, host, () => {
+      const names = parseAgentTokens(agentTokens).map(k => `${k.agent}${k.readOnly ? ' (read-only)' : ''}`);
       console.log(`Recall server listening on http://${host}:${port}`);
-      console.log('MCP endpoint: <your-url>/<RECALL_TOKEN>/mcp · dashboard: <your-url>/<RECALL_TOKEN>/');
+      console.log(`Assistant keys: ${names.length ? names.join(', ') : 'none (owner key only)'}`);
+      console.log('MCP endpoint: <your-url>/<key>/mcp · dashboard: <your-url>/<RECALL_TOKEN>/');
     });
+    process.on('SIGTERM', () => server.close(() => process.exit(0)));
   } catch (err) {
     console.error(err.message);
     process.exit(1);

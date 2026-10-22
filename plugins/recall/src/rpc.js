@@ -1,5 +1,6 @@
 // MCP tool definitions and the JSON-RPC handler shared by the stdio and HTTP servers.
 import { formatFeed, formatObservations, formatSearchResults, formatSessions, formatSummary, formatTasks } from './format.js';
+import { PROJECT_FIELDS } from './db.js';
 import { formatTime, redact, truncate } from './util.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
@@ -8,6 +9,10 @@ const STATUSES = ['open', 'in_progress', 'waiting_on_user', 'blocked', 'review',
 const agentParam = {
   type: 'string',
   description: 'Who you are, in lowercase: "claude", "chatgpt", "grok", or another short name. Every write is signed with it so the others know who did what.',
+};
+const versionParam = {
+  type: 'integer',
+  description: 'The version you last read. If someone changed it since, the write is refused with a conflict instead of overwriting their work.',
 };
 const projectParam = {
   type: 'string',
@@ -54,8 +59,52 @@ export const TOOLS = [
     description: 'Set or replace the shared goal everyone is working toward on this project.',
     inputSchema: {
       type: 'object',
-      properties: { agent: agentParam, goal: { type: 'string' }, project: projectParam },
+      properties: { agent: agentParam, goal: { type: 'string' }, project: projectParam, expected_version: versionParam },
       required: ['agent', 'goal'],
+    },
+  },
+  {
+    name: 'get_project',
+    description: 'The project registry record: description, repository, tech stack, status, docs, goal and version, plus outstanding and completed tasks and recent decisions.',
+    inputSchema: { type: 'object', properties: { project: projectParam } },
+  },
+  {
+    name: 'update_project',
+    description: 'Change registry fields of a project (description, repo, stack, status, docs, goal). Only the fields you pass change. Pass expected_version from get_project so you never overwrite another assistant\'s edit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent: agentParam,
+        project: projectParam,
+        expected_version: versionParam,
+        description: { type: 'string' },
+        repo: { type: 'string', description: 'Repository, e.g. "Hyram720/Landmark1" or a URL.' },
+        stack: { type: 'string', description: 'Technology stack.' },
+        status: { type: 'string', description: 'Current development status, in a sentence or two.' },
+        docs: { type: 'string', description: 'Links to or notes about the relevant documentation.' },
+        goal: { type: 'string' },
+      },
+      required: ['agent'],
+    },
+  },
+  {
+    name: 'project_history',
+    description: 'Development history of a project, newest first: decisions, registry and goal changes, task changes, handoffs and code changes, each signed by who made it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: projectParam,
+        include_code: { type: 'boolean', default: true, description: 'Include Claude Code edits and commands.' },
+        limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
+      },
+    },
+  },
+  {
+    name: 'audit_log',
+    description: 'Recent tool calls on the shared server: which assistant called which tool, when, and whether it succeeded.',
+    inputSchema: {
+      type: 'object',
+      properties: { agent: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 } },
     },
   },
   {
@@ -90,6 +139,7 @@ export const TOOLS = [
         agent: agentParam,
         task_id: { type: 'integer' },
         reason: { type: 'string', description: 'Why you should lead it (required when it already has a different lead).' },
+        expected_version: versionParam,
       },
       required: ['agent', 'task_id'],
     },
@@ -105,6 +155,7 @@ export const TOOLS = [
         status: { type: 'string', enum: STATUSES },
         lead: { type: 'string', description: 'New lead; use "none" to release it.' },
         note: { type: 'string' },
+        expected_version: versionParam,
       },
       required: ['agent', 'task_id'],
     },
@@ -175,7 +226,7 @@ export const TOOLS = [
 ];
 
 // Hints MCP clients use to tell reading tools from writing tools (ChatGPT Pro only enables read-only ones).
-const READ_ONLY = new Set(['project_brief', 'whats_new', 'list_tasks', 'search', 'fetch', 'get_observations', 'timeline', 'recent_sessions', 'list_projects']);
+export const READ_ONLY = new Set(['project_brief', 'get_project', 'project_history', 'audit_log', 'whats_new', 'list_tasks', 'search', 'fetch', 'get_observations', 'timeline', 'recent_sessions', 'list_projects']);
 for (const tool of TOOLS) {
   tool.annotations = READ_ONLY.has(tool.name)
     ? { readOnlyHint: true, openWorldHint: false }
@@ -196,7 +247,13 @@ function note(store, { agent, project, kind, title, detail = '' }) {
   return store.addObservation({ session_id: sessionId, project, agent, tool: agent, kind, title: truncate(title, 300), detail, files: [] });
 }
 
+// ctx.agent is the identity proven by the caller's token; when set it wins over the "agent" argument,
+// so one assistant can't sign as another. ctx.readOnly blocks every writing tool.
 export function callTool(store, name, args = {}, ctx = {}) {
+  if (ctx.readOnly && !READ_ONLY.has(name) && TOOLS.some(t => t.name === name)) {
+    throw new Error(`${ctx.agent ?? 'This key'} has read-only access, so ${name} is not allowed.`);
+  }
+  const who = a => ctx.agent ?? cleanAgent(a);
   const fallback = ctx.defaultProject ?? store.lastActiveProject() ?? 'default';
   const readProject = p => (p === '*' ? null : p || fallback);
   const writeProject = p => (p && p !== '*' ? p : fallback);
@@ -231,7 +288,7 @@ export function callTool(store, name, args = {}, ctx = {}) {
     case 'whats_new':
       return formatFeed(store.feed({ project: readProject(args.project), sinceId: args.since_id ?? 0, agent: args.agent ? cleanAgent(args.agent) : null, limit: args.limit ?? 50 }));
     case 'post_update': {
-      const agent = cleanAgent(args.agent);
+      const agent = who(args.agent);
       const kind = ['update', 'question', 'proposal', 'decision', 'handoff'].includes(args.kind) ? args.kind : 'update';
       const text = required(args.text, 'text');
       const to = args.to ? cleanAgent(args.to) : null;
@@ -241,17 +298,59 @@ export function callTool(store, name, args = {}, ctx = {}) {
       return `Posted #${id} to ${project}.`;
     }
     case 'set_goal': {
-      const agent = cleanAgent(args.agent);
+      const agent = who(args.agent);
       const project = writeProject(args.project);
       const goal = required(args.goal, 'goal');
-      store.setGoal(project, goal, agent);
+      store.updateProject(project, { goal }, agent, args.expected_version);
       note(store, { agent, project, kind: 'decision', title: `Set the goal: ${goal.split('\n')[0]}`, detail: goal });
       return `Goal for ${project} saved.`;
+    }
+    case 'get_project': {
+      const project = readProject(args.project);
+      if (!project) return formatProjects(store);
+      const p = store.goal(project) ?? { version: 0 };
+      const all = store.tasks(project, { includeDone: true });
+      const decisions = store.history({ project, kinds: ['decision'], limit: 10 });
+      return [
+        `# ${project} (version ${p.version}${p.updated_by ? `, last changed by ${p.updated_by} ${formatTime(p.updated_at)}` : ', no registry record yet'})`,
+        `Description: ${p.description || '-'}`,
+        `Repository: ${p.repo || '-'}`,
+        `Stack: ${p.stack || '-'}`,
+        `Status: ${p.status || '-'}`,
+        `Goal: ${p.goal || '-'}`,
+        `Docs: ${p.docs || '-'}`,
+        '', '## Outstanding tasks', formatTasks(all.filter(t => t.status !== 'done')),
+        '', '## Completed tasks', all.some(t => t.status === 'done') ? formatTasks(all.filter(t => t.status === 'done')) : 'None yet.',
+        '', '## Important decisions', decisions.length ? formatFeed(decisions) : 'None recorded.',
+        '', `To change this record call update_project with expected_version ${p.version}.`,
+      ].join('\n');
+    }
+    case 'update_project': {
+      const agent = who(args.agent);
+      const project = writeProject(args.project);
+      const fields = {};
+      for (const f of [...PROJECT_FIELDS, 'goal']) if (typeof args[f] === 'string') fields[f] = redact(args[f]).trim();
+      if (!Object.keys(fields).length) throw new Error(`Pass at least one of ${[...PROJECT_FIELDS, 'goal'].join(', ')}.`);
+      const p = store.updateProject(project, fields, agent, args.expected_version);
+      const summary = Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join('\n');
+      note(store, { agent, project, kind: 'registry', title: `Updated project ${Object.keys(fields).join(', ')} (now version ${p.version})`, detail: summary });
+      return `Project ${project} is now at version ${p.version}.`;
+    }
+    case 'project_history': {
+      const kinds = ['decision', 'registry', 'task', 'handoff', 'update', 'proposal', 'question', 'note'];
+      if (args.include_code !== false) kinds.push('change', 'command');
+      return formatFeed(store.history({ project: readProject(args.project), kinds, limit: args.limit ?? 50 }).reverse());
+    }
+    case 'audit_log': {
+      const rows = store.auditLog({ agent: args.agent ? cleanAgent(args.agent) : null, limit: args.limit ?? 50 });
+      return rows.length
+        ? rows.map(r => `${formatTime(r.at)} ${r.agent} ${r.tool}${r.project ? ` (${r.project})` : ''} ${r.ok ? 'ok' : 'FAILED'}${r.detail ? `: ${r.detail}` : ''}`).join('\n')
+        : 'No calls recorded yet.';
     }
     case 'list_tasks':
       return formatTasks(store.tasks(readProject(args.project), { includeDone: !!args.include_done }));
     case 'create_task': {
-      const agent = cleanAgent(args.agent);
+      const agent = who(args.agent);
       const project = writeProject(args.project);
       const title = required(args.title, 'title');
       const lead = args.lead ? cleanAgent(args.lead) : null;
@@ -260,32 +359,32 @@ export function callTool(store, name, args = {}, ctx = {}) {
       return `Created task #${id} in ${project}${lead ? `, led by ${lead}` : ''}.`;
     }
     case 'claim_task': {
-      const agent = cleanAgent(args.agent);
+      const agent = who(args.agent);
       const task = store.task(args.task_id);
       if (!task) throw new Error(`No task #${args.task_id}`);
       if (task.lead === agent) return `You already lead task #${task.id}.`;
       if (task.lead && !String(args.reason ?? '').trim()) {
         return `Task #${task.id} is led by ${task.lead}. To take over, call claim_task again with a reason, or post_update to ${task.lead} to agree first.`;
       }
-      store.updateTask(task.id, { lead: agent, status: task.status === 'open' ? 'in_progress' : task.status });
+      store.updateTask(task.id, { lead: agent, status: task.status === 'open' ? 'in_progress' : task.status, expectedVersion: args.expected_version });
       const reason = redact(args.reason ?? '');
       note(store, { agent, project: task.project, kind: 'task', title: `${task.lead ? `Took over task #${task.id} from ${task.lead}` : `Took the lead on task #${task.id}`}: ${task.title}`, detail: reason });
       return `You now lead task #${task.id}: ${task.title}.`;
     }
     case 'update_task': {
-      const agent = cleanAgent(args.agent);
+      const agent = who(args.agent);
       const task = store.task(args.task_id);
       if (!task) throw new Error(`No task #${args.task_id}`);
       if (args.status && !STATUSES.includes(args.status)) throw new Error(`status must be one of ${STATUSES.join(', ')}`);
       const lead = args.lead === undefined ? undefined : args.lead === 'none' ? null : cleanAgent(args.lead);
-      const updated = store.updateTask(task.id, { status: args.status, lead });
+      const updated = store.updateTask(task.id, { status: args.status, lead, expectedVersion: args.expected_version });
       const changes = [
         args.status && args.status !== task.status ? `${task.status} → ${args.status}` : '',
         lead !== undefined && lead !== task.lead ? `lead ${task.lead ?? 'none'} → ${lead ?? 'none'}` : '',
       ].filter(Boolean).join(', ');
       const text = redact(args.note ?? '');
       note(store, { agent, project: task.project, kind: 'task', title: `Task #${task.id}${changes ? ` (${changes})` : ''}: ${text ? text.split('\n')[0] : task.title}`, detail: text });
-      return `Task #${updated.id} is ${updated.status}, lead: ${updated.lead ?? 'none'}.`;
+      return `Task #${updated.id} is ${updated.status}, lead: ${updated.lead ?? 'none'}, version ${updated.version}.`;
     }
     case 'search':
       return formatSearchResults(store.search(args.query, { project: readProject(args.project), kind: args.kind ?? null, limit: args.limit ?? 20 }));
@@ -316,7 +415,7 @@ export function callTool(store, name, args = {}, ctx = {}) {
       return summary ? formatSummary(summary) : 'No summary for that session.';
     }
     case 'remember': {
-      const agent = cleanAgent(args.agent ?? 'claude');
+      const agent = ctx.agent ?? cleanAgent(args.agent ?? 'claude');
       const text = required(args.note, 'note');
       const id = note(store, { agent, project: writeProject(args.project), kind: 'note', title: text.split('\n')[0], detail: text });
       return `Saved as #${id}.`;
@@ -355,19 +454,30 @@ export function handle(store, msg, ctx = {}) {
         protocolVersion: params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: 'recall', version: '2.0.0' },
-        instructions: 'Shared memory and task board for several AI assistants (Claude, ChatGPT, Grok) working on the same projects. Start with project_brief, sign every write with your agent name, claim tasks before working on them, and post_update when you finish something or hand it off.',
+        instructions: 'Shared memory and task board for several AI assistants (Claude, ChatGPT, Grok) working on the same projects. Start with project_brief, sign every write with your agent name, claim tasks before working on them, and post_update when you finish something or hand it off. When changing a project record or task, pass the expected_version you read so you never overwrite another assistant\'s work; on a conflict, read again and retry.',
       });
     case 'ping':
       return reply({});
     case 'tools/list':
       return reply({ tools: TOOLS });
-    case 'tools/call':
+    case 'tools/call': {
+      const name = params?.name;
+      const args = params?.arguments ?? {};
+      // The shared server records every call; the local stdio server doesn't.
+      const audit = (ok, detail = '') => ctx.audit && store.addAudit({
+        agent: ctx.agent ?? cleanAgent(args.agent ?? 'owner'), tool: String(name), project: typeof args.project === 'string' ? args.project : null,
+        ok, detail: truncate(redact(detail), 300),
+      });
       try {
-        return reply({ content: [{ type: 'text', text: callTool(store, params?.name, params?.arguments ?? {}, ctx) }] });
+        const text = callTool(store, name, args, ctx);
+        audit(true);
+        return reply({ content: [{ type: 'text', text }] });
       } catch (err) {
+        audit(false, err.message);
         if (err.code === -32602) return { jsonrpc: '2.0', id, error: { code: -32602, message: err.message } };
         return reply({ content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true });
       }
+    }
     default:
       if (id === undefined) return null; // notification
       return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };

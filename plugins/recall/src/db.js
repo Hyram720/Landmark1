@@ -64,6 +64,12 @@ CREATE INDEX IF NOT EXISTS summaries_project ON summaries(project, updated_at);
 CREATE TABLE IF NOT EXISTS projects (
   name TEXT PRIMARY KEY,
   goal TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  repo TEXT NOT NULL DEFAULT '',
+  stack TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  docs TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 0,
   updated_by TEXT NOT NULL DEFAULT '',
   updated_at INTEGER NOT NULL
 );
@@ -76,10 +82,22 @@ CREATE TABLE IF NOT EXISTS tasks (
   status TEXT NOT NULL DEFAULT 'open',
   lead TEXT,
   created_by TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project, status);
+
+-- One row per MCP tool call on the shared server: who called what, and whether it worked.
+CREATE TABLE IF NOT EXISTS audit (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  project TEXT,
+  ok INTEGER NOT NULL,
+  detail TEXT NOT NULL DEFAULT ''
+);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
   title, detail, files, content='observations', content_rowid='id', tokenize='porter unicode61'
@@ -126,6 +144,21 @@ export function ftsQuery(text) {
   return words.map(w => `"${w}"*`).join(' ');
 }
 
+// Registry fields any assistant can edit with update_project.
+export const PROJECT_FIELDS = ['description', 'repo', 'stack', 'status', 'docs'];
+
+// Thrown when a write names an expected_version that is no longer current.
+export class ConflictError extends Error {
+  constructor(what, expected, current) {
+    super(`Conflict: ${what} is at version ${current}, not ${expected}. Someone else changed it since you read it; read it again, merge your change, and retry with expected_version ${current}.`);
+    this.conflict = true;
+  }
+}
+
+const checkVersion = (what, expected, current) => {
+  if (expected !== undefined && expected !== null && Number(expected) !== current) throw new ConflictError(what, expected, current);
+};
+
 const plain = rows => rows.map(r => ({ ...r }));
 
 export class Store {
@@ -145,6 +178,9 @@ export class Store {
     };
     add('sessions', 'last_text', "last_text TEXT NOT NULL DEFAULT ''");
     add('observations', 'agent', "agent TEXT NOT NULL DEFAULT 'claude-code'");
+    for (const f of PROJECT_FIELDS) add('projects', f, `${f} TEXT NOT NULL DEFAULT ''`);
+    add('projects', 'version', 'version INTEGER NOT NULL DEFAULT 0');
+    add('tasks', 'version', 'version INTEGER NOT NULL DEFAULT 1');
   }
 
   close() {
@@ -323,10 +359,26 @@ export class Store {
   }
 
   setGoal(project, goal, agent, now = Date.now()) {
-    this.db.prepare(`
-      INSERT INTO projects (name, goal, updated_by, updated_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT(name) DO UPDATE SET goal = excluded.goal, updated_by = excluded.updated_by, updated_at = excluded.updated_at
-    `).run(project, goal, agent, now);
+    return this.updateProject(project, { goal }, agent, undefined, now);
+  }
+
+  // Changes registry fields; with expectedVersion, refuses if someone else wrote first.
+  updateProject(project, fields, agent, expectedVersion, now = Date.now()) {
+    const keys = Object.keys(fields).filter(k => k === 'goal' || PROJECT_FIELDS.includes(k));
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.goal(project);
+      checkVersion(`project ${project}`, expectedVersion, current?.version ?? 0);
+      if (!current) this.db.prepare('INSERT INTO projects (name, updated_by, updated_at) VALUES (?, ?, ?)').run(project, agent, now);
+      const sets = keys.map(k => `${k} = ?`).join(', ');
+      this.db.prepare(`UPDATE projects SET ${sets ? `${sets}, ` : ''}version = version + 1, updated_by = ?, updated_at = ? WHERE name = ?`)
+        .run(...keys.map(k => String(fields[k] ?? '')), agent, now, project);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    return this.goal(project);
   }
 
   createTask({ project, title, details = '', lead = null, created_by }, now = Date.now()) {
@@ -341,12 +393,32 @@ export class Store {
     return row ? { ...row } : null;
   }
 
-  updateTask(id, { status, lead, details }, now = Date.now()) {
+  // With expectedVersion, refuses the write if the task changed since the caller read it.
+  updateTask(id, { status, lead, details, expectedVersion }, now = Date.now()) {
     const t = this.task(id);
     if (!t) return null;
-    this.db.prepare('UPDATE tasks SET status = ?, lead = ?, details = ?, updated_at = ? WHERE id = ?')
-      .run(status ?? t.status, lead === undefined ? t.lead : lead, details ?? t.details, now, id);
+    checkVersion(`task #${id}`, expectedVersion, t.version);
+    const r = this.db.prepare('UPDATE tasks SET status = ?, lead = ?, details = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?')
+      .run(status ?? t.status, lead === undefined ? t.lead : lead, details ?? t.details, now, id, t.version);
+    if (!Number(r.changes)) throw new ConflictError(`task #${id}`, t.version, this.task(id).version);
     return this.task(id);
+  }
+
+  addAudit({ agent, tool, project = null, ok, detail = '' }, now = Date.now()) {
+    this.db.prepare('INSERT INTO audit (at, agent, tool, project, ok, detail) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(now, agent, tool, project, ok ? 1 : 0, detail);
+  }
+
+  auditLog({ agent = null, limit = 50 } = {}) {
+    return plain(this.db.prepare('SELECT * FROM audit WHERE (? IS NULL OR agent = ?) ORDER BY id DESC LIMIT ?').all(agent, agent, limit));
+  }
+
+  // Observations of the given kinds, newest first: a project's change history.
+  history({ project = null, kinds, limit = 50 }) {
+    return plain(this.db.prepare(`
+      SELECT * FROM observations WHERE (? IS NULL OR project = ?) AND kind IN (${kinds.map(() => '?').join(',')})
+      ORDER BY id DESC LIMIT ?
+    `).all(project, project, ...kinds, limit));
   }
 
   tasks(project = null, { includeDone = false } = {}) {

@@ -52,5 +52,5 @@ export function formatFeed(rows) {
 
 export function formatTasks(rows) {
   if (!rows.length) return 'No open tasks.';
-  return rows.map(t => `task #${t.id} · ${t.status} · lead: ${t.lead ?? 'nobody yet'} · ${t.project}: ${t.title} (created by ${t.created_by}, updated ${formatTime(t.updated_at)})`).join('\n');
+  return rows.map(t => `task #${t.id} · ${t.status} · lead: ${t.lead ?? 'nobody yet'} · ${t.project}: ${t.title} (created by ${t.created_by}, updated ${formatTime(t.updated_at)}, v${t.version ?? 1})`).join('\n');
 }
