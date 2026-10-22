@@ -7,6 +7,7 @@ import { newOrderId, getOrder, saveOrder, updateOrder, listOrders, uploadsDir, o
 import { createCheckoutSession, verifyWebhook } from './stripe.js';
 import { enqueue, selectForPrint, requestRepaint, repaintStatus, resumePending, startRetryScheduler, enhanceExistingOrders, renameOrder } from './pipeline.js';
 import { cleanName } from './nameplate.js';
+import { renderStatic } from './render.js';
 import { breedPage, occasionPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
@@ -105,21 +106,47 @@ app.use((req, res, next) => {
   next();
 });
 
+// Trailing-slash duplicates (/gifts/christmas-gift/ was a 200, /offer/ a 404): 301 to the no-slash URL.
+app.use((req, res, next) => {
+  if (['GET', 'HEAD'].includes(req.method) && req.path.length > 1 && req.path.endsWith('/') && !req.path.startsWith('/api/')) {
+    const q = req.originalUrl.slice(req.path.length);
+    return res.redirect(301, `${req.path.replace(/\/+$/, '') || '/'}${q}`);
+  }
+  next();
+});
+// Clean URLs only: /index.html and /offer.html were served as duplicate 200 pages next to / and /offer.
+app.get(['/index.html', '/offer.html', '/order.html'], (req, res) => {
+  const q = req.originalUrl.slice(req.path.length);
+  const to = req.path === '/index.html' ? '/' : req.path === '/offer.html' ? '/offer' : '/';
+  res.redirect(301, `${to}${q}`);
+});
+
 app.use(express.json());
-app.use(express.static(publicDir, { extensions: ['html'] }));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-app.get('/api/catalog', (req, res) => {
-  res.json({
+const catalogJson = () => ({
     brand: config.brandName,
     supportEmail: config.supportEmail,
     launch: launchOffer(),
     promoVideo: PROMO_VIDEO_SOURCE ? '/media/infomercial.mp4' : null,
     styles: Object.fromEntries(Object.entries(STYLES).map(([k, s]) => [k, s.name])),
     products: Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, { name: p.name, price: p.price }])),
-  });
 });
+app.get('/api/catalog', (req, res) => res.json(catalogJson()));
+
+// Homepage and /offer with prices, gallery, banner dates and links in the HTML (src/render.js).
+const renderOr500 = (file) => (req, res, next) => {
+  try {
+    res.type('html').set('Cache-Control', 'no-cache').send(renderStatic(publicDir, file, { catalog: catalogJson(), showcase: listShowcase() }));
+  } catch (err) {
+    console.error('render', file, err.message);
+    next(); // fall back to the plain static file
+  }
+};
+app.get('/', renderOr500('index.html'));
+app.get('/offer', renderOr500('offer.html'));
+app.use(express.static(publicDir, { extensions: ['html'], index: 'index.html' }));
 
 app.post('/api/orders', upload.single('photo'), async (req, res) => {
   // Don't take money until Stripe can also tell us about it (webhook secret in place).

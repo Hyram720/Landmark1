@@ -48,6 +48,7 @@ export function listShowcase() {
     styleName: STYLES[s.style]?.name,
     name: s.name || getOrder(process.env.SAMPLE_ORDER_ID || '')?.petName || '',
     before: fs.existsSync(fileOf(s.key, '-before')),
+    real: s.from === 'order', // a real customer's pet (shown with consent) vs an AI-generated demo pet
   }));
 }
 
