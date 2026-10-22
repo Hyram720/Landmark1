@@ -1,0 +1,15 @@
+{
+  "name": "recall-memory",
+  "version": "1.0.0",
+  "description": "Long-term memory plugin for Claude Code",
+  "type": "module",
+  "private": true,
+  "bin": { "recall": "src/cli.js" },
+  "scripts": {
+    "test": "node --no-warnings --test test/*.test.js",
+    "web": "node --no-warnings src/cli.js web"
+  },
+  "engines": { "node": ">=22.13" },
+  "optionalDependencies": { "@anthropic-ai/sdk": "^1.1.0" },
+  "license": "MIT"
+}

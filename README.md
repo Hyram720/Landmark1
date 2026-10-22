@@ -106,3 +106,7 @@ scripts/content-engine.js   generates social calendar, Pinterest pins, Meta ad c
 marketing/          generated CSVs (re-run with your real BASE_URL)
 docs/MARKETING.md   customer acquisition playbook
 ```
+
+## Recall (Claude Code memory plugin)
+
+[`plugins/recall`](plugins/recall/README.md) is a Claude Code plugin that gives Claude long-term memory across sessions. It's my own version of Claude Mem. Install it with `/plugin marketplace add Hyram720/Landmark1` and then `/plugin install recall@landmark`.

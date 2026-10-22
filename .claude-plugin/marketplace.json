@@ -1,0 +1,11 @@
+{
+  "name": "landmark",
+  "owner": { "name": "Hyram720" },
+  "plugins": [
+    {
+      "name": "recall",
+      "source": "./plugins/recall",
+      "description": "Long-term memory for Claude Code sessions (hooks + SQLite + MCP search)."
+    }
+  ]
+}

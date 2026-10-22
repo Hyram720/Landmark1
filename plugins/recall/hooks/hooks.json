@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/src/hook.js\" session-start", "timeout": 15 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/src/hook.js\" user-prompt", "timeout": 10 }] }],
+    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/src/hook.js\" post-tool", "timeout": 10 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/src/hook.js\" stop", "timeout": 15 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/src/hook.js\" session-end", "timeout": 15 }] }]
+  }
+}
