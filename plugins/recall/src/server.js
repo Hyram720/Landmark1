@@ -18,7 +18,7 @@ import { Store } from './db.js';
 import { handle } from './rpc.js';
 import { aiSummary } from './summarize.js';
 import { log } from './util.js';
-import { viewerRoute } from './viewer.js';
+import { viewerPost, viewerRoute } from './viewer.js';
 
 const MAX_BODY = 2 * 1024 * 1024;
 
@@ -105,6 +105,8 @@ export function createServer({ token, store = new Store(), ai = process.env.RECA
         });
         return send(res, 200, { output });
       }
+
+      if (req.method === 'POST' && viewerPost(store, route, req, await readBody(req), res)) return;
 
       if (req.method === 'GET') {
         // The dashboard uses relative links, so it must be opened at "/<token>/".

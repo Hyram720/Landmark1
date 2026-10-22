@@ -142,6 +142,18 @@ test('dashboard is served behind the token', async () => {
   assert.ok(board.tasks.length >= 2);
 });
 
+test('dashboard posts updates for read-only assistants', async () => {
+  const post = body => fetch(`${BASE}/${TOKEN}/api/post`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const ok = await post({ agent: 'chatgpt', kind: 'proposal', text: 'Lead with the memorial portrait angle', project: 'Landmark1' });
+  assert.equal(ok.status, 200);
+  assert.match((await ok.json()).message, /Posted #\d+/);
+  assert.match(await call('whats_new', { project: 'Landmark1', agent: 'chatgpt' }), /chatgpt \[proposal\] Lead with the memorial portrait angle/);
+  assert.equal((await post({ agent: 'chatgpt', text: '' })).status, 400);
+  const form = await fetch(`${BASE}/${TOKEN}/api/post`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
+  assert.equal(form.status, 415);
+  assert.equal((await fetch(`${BASE}/api/post`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401);
+});
+
 test('old databases are upgraded in place', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recall-old-'));
   const script = `

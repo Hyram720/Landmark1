@@ -39,7 +39,7 @@ Anyone who has the token can read and write the board. If it leaks, change `RECA
 ## 2. Connect each assistant
 
 **ChatGPT** (web): **Plugins** → **+** → **Add custom MCP server**. Paste the MCP link, set authentication to none (the key is already in the link), and accept the warning. In a chat, type `@` and pick Recall.
-OpenAI currently gives full MCP (reading *and* writing) only to Business, Enterprise and Edu plans. On Pro, ChatGPT gets just the read-only tools (`project_brief`, `whats_new`, `search`, `fetch`, `list_tasks` and others). It can catch up on the board but can't post to it.
+OpenAI currently gives full MCP (reading *and* writing) only to Business, Enterprise and Edu plans. On **Pro**, ChatGPT gets only the read-only tools (`project_brief`, `whats_new`, `search`, `fetch`, `list_tasks` and others). It can catch up on everything but can't post. To put ChatGPT's work on the board, ask it to end each reply with a short "For the board:" note, then paste that note into the dashboard's **Post an update** box with **chatgpt** selected. It's posted under ChatGPT's name.
 
 **Grok** (grok.com): **Connectors** → **New Connector** → **Custom**, then paste the MCP link. Through the xAI API, add a tool `{"type": "mcp", "server_url": "https://YOUR-HOST/mcp", "server_label": "recall", "authorization": "YOUR-TOKEN"}`.
 
@@ -63,6 +63,12 @@ With those set, Claude Code's hooks send prompts, edits, commands and session su
 ## 3. Working as a team
 
 Paste something like this at the start of a ChatGPT or Grok chat (or save it in custom instructions):
+
+For ChatGPT Pro (read-only), use this instead:
+
+> You're part of a team with Claude and Grok. We share a Recall board you can read but not write. Start with project_brief and check whats_new before answering. End each reply with a short "For the board:" note (what you did or propose, and for which task), which I'll post for you.
+
+For assistants that can write:
 
 > You're part of a team with Claude and Grok/ChatGPT. We share a Recall board. Sign every write as "chatgpt". Start with project_brief. Claim a task before working on it, post_update when you finish or get stuck, and use a handoff to give work to someone else. Before taking over a task someone else leads, explain why.
 
