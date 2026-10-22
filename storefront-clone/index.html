@@ -236,6 +236,39 @@
     .track { animation: none; }
     .rotator { transition: none; }
   }
+
+  /* Dark palette: every section dark, alternating two near-black tones.
+     Delete this block to go back to the light/dark mix. */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0b;
+    --bg-alt: #111114;
+    --surface: #17171b;
+    --surface-2: #202026;
+    --text: #f2f2f4;
+    --muted: #9b9ba6;
+    --line: #2a2a31;
+  }
+  body { background: var(--bg); color: var(--text); }
+  .dark { background: var(--bg); }
+  .tint, section.block:not(.dark) { background: var(--bg-alt); }
+  .sub, .feature p, .story p, cite, .fine, .big-stats span, .cap-stats span { color: var(--muted); }
+  .eyebrow { color: var(--brand); }
+  .btn-primary, .btn-dark { background: var(--brand); color: var(--brand-ink); }
+  .btn-ghost { color: var(--text); }
+  .mega { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); }
+  .mega a:hover { color: var(--brand); }
+  .feature, .story, .cap-stats div { background: var(--surface); border: 1px solid var(--line); }
+  .viz-store { background: linear-gradient(135deg, #14251b, #191d30); }
+  .viz-store div { background: var(--surface-2); box-shadow: none; }
+  .viz-channels { background: var(--surface-2); }
+  .phone { background: #000; border: 1px solid var(--line); }
+  .screen { background: var(--surface-2); color: var(--text); }
+  .screen .line { background: #2e2e36; }
+  .modal-box { background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+  .modal-box input { background: var(--surface-2); color: var(--text); border-color: var(--line); }
+  .modal-box .close { color: var(--text); }
+  .num { border-top-color: var(--line); }
 </style>
 </head>
 <body>
