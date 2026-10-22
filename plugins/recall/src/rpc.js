@@ -3,7 +3,7 @@ import { formatFeed, formatObservations, formatSearchResults, formatSessions, fo
 import { formatTime, redact, truncate } from './util.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
-const STATUSES = ['open', 'in_progress', 'blocked', 'review', 'done'];
+const STATUSES = ['open', 'in_progress', 'waiting_on_user', 'blocked', 'review', 'done'];
 
 const agentParam = {
   type: 'string',
@@ -96,7 +96,7 @@ export const TOOLS = [
   },
   {
     name: 'update_task',
-    description: 'Change a task\'s status, hand its lead to another assistant, and/or add a progress note.',
+    description: 'Change a task\'s status, hand its lead to another assistant, and/or add a progress note. Leave a checkpoint note whenever you stop (what is done, the exact next step, and any file, link or decision needed) so another assistant can pick up exactly where you left off. Use status "waiting_on_user" when the user must do or decide something, and say what in the note.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,13 +207,25 @@ export function callTool(store, name, args = {}, ctx = {}) {
       if (!project) return formatProjects(store);
       const goal = store.goal(project);
       const feed = store.feed({ project, limit: 25 });
+      const tasks = store.tasks(project);
+      const notes = latestTaskNotes(store, project);
+      const withNote = t => {
+        const n = notes.get(t.id);
+        return `${formatTasks([t])}${n ? `\n    last note (${n.agent}, ${formatTime(n.created_at)}): ${truncate(n.detail || n.title, 400).replace(/\n/g, '\n    ')}` : ''}`;
+      };
+      const section = (title, rows, empty) => ['', `## ${title}`, rows.length ? rows.map(withNote).join('\n') : empty];
+      const done = store.tasks(project, { includeDone: true }).filter(t => t.status === 'done').slice(0, 5);
       return [
         `# ${project}`,
         `Goal: ${goal?.goal ? `${goal.goal} (set by ${goal.updated_by}, ${formatTime(goal.updated_at)})` : 'not set yet. Use set_goal.'}`,
-        '', '## Tasks', formatTasks(store.tasks(project)),
-        '', '## Recent sessions', store.recentSummaries(project, 3).map(formatSummary).join('\n\n') || 'None yet.',
+        ...section('Waiting on the user', tasks.filter(t => t.status === 'waiting_on_user'), 'Nothing.'),
+        ...section('In progress (with where each one left off)', tasks.filter(t => ['in_progress', 'review', 'blocked'].includes(t.status)), 'Nothing.'),
+        ...section('Not started', tasks.filter(t => t.status === 'open'), 'Nothing.'),
+        ...section('Recently done', done, 'Nothing yet.'),
+        '', '## Recent Claude Code sessions', store.recentSummaries(project, 3).map(formatSummary).join('\n\n') || 'None yet.',
         '', '## Latest activity', formatFeed(feed),
-        '', feed.length ? `Call whats_new with since_id ${feed.at(-1).id} next time to see only newer items.` : '',
+        '', 'To pick up another assistant\'s task: fetch task-<id> for its full history, claim_task with a reason, then continue from its last note.',
+        feed.length ? `Call whats_new with since_id ${feed.at(-1).id} next time to see only newer items.` : '',
       ].join('\n');
     }
     case 'whats_new':
@@ -314,6 +326,19 @@ export function callTool(store, name, args = {}, ctx = {}) {
     default:
       throw Object.assign(new Error(`Unknown tool: ${name}`), { code: -32602 });
   }
+}
+
+// Most recent note per task id, read from the activity that mentions "#<id>".
+function latestTaskNotes(store, project) {
+  const notes = new Map();
+  for (const o of store.feed({ project, limit: 1000 }).reverse()) {
+    if (!['task', 'update', 'handoff', 'question', 'proposal', 'decision'].includes(o.kind)) continue;
+    for (const m of o.title.matchAll(/#(\d+)\b/g)) {
+      const id = Number(m[1]);
+      if (!notes.has(id)) notes.set(id, o);
+    }
+  }
+  return notes;
 }
 
 function formatProjects(store) {

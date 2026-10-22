@@ -90,6 +90,20 @@ test('three assistants coordinate on one project', async () => {
   assert.match(await call('list_tasks', { project: '*' }), /task #1/);
 });
 
+test('another assistant can pick up exactly where one left off', async () => {
+  const p = 'Handoff';
+  await call('create_task', { agent: 'grok', title: 'Draft launch email', lead: 'grok', project: p });
+  await call('create_task', { agent: 'grok', title: 'Pick a launch date', lead: 'grok', project: p });
+  await call('update_task', { agent: 'grok', task_id: 3, note: 'Subject and intro done. Next: write the offer section using the $29 digital price.' });
+  assert.match(await call('update_task', { agent: 'grok', task_id: 4, status: 'waiting_on_user', note: 'Need Hyram to choose Nov 20 or Nov 24.' }), /waiting_on_user/);
+  const brief = await call('project_brief', { project: p });
+  assert.match(brief, /## Waiting on the user\ntask #4 .*\n    last note \(grok, .*\): Need Hyram to choose Nov 20 or Nov 24/);
+  assert.match(brief, /## In progress[^\n]*\ntask #3 .*\n    last note \(grok, .*\): Subject and intro done\. Next: write the offer section/);
+  // Grok runs out of credits; Claude takes over with a reason.
+  assert.match(await call('claim_task', { agent: 'claude', task_id: 3, reason: 'Grok is out of credits' }), /You now lead task #3/);
+  assert.match(await call('fetch', { id: 'task-3' }), /Subject and intro done/);
+});
+
 test('Claude Code hooks and MCP relay to the shared server', async () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'Landmark1-'));
   fs.mkdirSync(path.join(project, '.git'));

@@ -352,7 +352,7 @@ export class Store {
   tasks(project = null, { includeDone = false } = {}) {
     return plain(this.db.prepare(`
       SELECT * FROM tasks WHERE (? IS NULL OR project = ?) AND (? OR status != 'done')
-      ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'open' THEN 2 ELSE 3 END, updated_at DESC
+      ORDER BY CASE status WHEN 'waiting_on_user' THEN 0 WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'review' THEN 3 WHEN 'open' THEN 4 ELSE 5 END, updated_at DESC
     `).all(project, project, includeDone ? 1 : 0));
   }
 
