@@ -116,7 +116,7 @@ ${jsonLd.map((j) => `<script type="application/ld+json">${JSON.stringify(j)}</sc
 function seoFooterLinks() {
   const breeds = BREEDS.map((b) => `<a href="/portraits/${b.slug}">${esc(b.name)} portraits</a>`).join(' · ');
   const occ = OCCASIONS.map((o) => `<a href="/gifts/${o.slug}">${esc(o.title)}</a>`).join(' · ');
-  return `<nav class="seo-links"><p>${occ}</p><p>${breeds}</p></nav>`;
+  return `<nav class="seo-links"><p><a href="/royal">Royal pet portraits &amp; canvas</a> · ${occ}</p><p>${breeds}</p></nav>`;
 }
 
 function faq(subject) {
@@ -186,7 +186,7 @@ ${faqHtml(items)}
   return layout({ title: o.title, description, path: `/gifts/${o.slug}`, body, jsonLd: [productLd(o.title, description), faqLd(items)] });
 }
 
-export const sitePaths = () => ['/', '/offer', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
+export const sitePaths = () => ['/', '/offer', '/royal', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
 
 export function sitemap() {
   const urls = sitePaths();

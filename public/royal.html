@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Royal Pet Portraits on Canvas | Custom Pet Portrait Studio</title>
+  <meta name="description" content="Your dog or cat painted as royalty: crown, ermine robe and velvet throne. Get 4 hi-res royal portraits from one photo, add a gallery canvas, or find the royal pet phone case in our Etsy shop.">
+  <meta property="og:title" content="Royal pet portraits on canvas 👑">
+  <meta property="og:description" content="Your pet in a crown and ermine robe, painted from one phone photo.">
+  <meta property="og:image" content="https://www.custompetportraitstudio.com/showcase/bella-golden.webp?w=900">
+  <link rel="canonical" href="https://www.custompetportraitstudio.com/royal">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="banner" id="banner">👑 Royal pet portraits: digital in minutes, gallery canvas shipped to your door</div>
+  <header class="nav"><a href="/" class="logo">🎨 Custom Pet Portrait Studio</a><a href="/?style=royal#order" class="btn small">Create yours</a></header>
+
+  <section class="hero2">
+    <div class="hero-copy">
+      <p class="eyebrow">The Royal collection</p>
+      <h1>Royal pet portraits, made for the wall.</h1>
+      <p>Send one phone photo and we paint your dog or cat as royalty: a jeweled crown, an ermine-trimmed robe and a red velvet throne. You get <strong>4 museum-style versions</strong> to choose from, and your favorite can go on a gallery canvas.</p>
+      <a href="/?style=royal#order" class="btn">Paint my pet as royalty →</a>
+      <div class="trust"><span>🖼️ 4 versions, 300 DPI</span><span>✍️ Name engraved exactly as you spell it</span><span>🔁 One free repaint</span></div>
+    </div>
+    <div class="hero-frame" id="heroFrame" hidden><img id="heroImg" alt=""></div>
+  </section>
+
+  <section class="block" id="royalGallerySection" hidden>
+    <h2 class="center">The Royal style</h2>
+    <p class="center sub">Every portrait is painted fresh from your own photo, keeping your pet's markings.</p>
+    <div id="royalGallery" class="royal-grid"></div>
+  </section>
+
+  <section class="block" id="canvas">
+    <h2 class="center">Royal portrait canvases</h2>
+    <p class="center sub">Gallery-wrapped canvas, ready to hang. Every canvas order also includes the digital portraits.</p>
+    <div id="royalPricing" class="pricing"></div>
+    <p class="fine" id="launchNote" hidden></p>
+  </section>
+
+  <section class="block" id="phone-case">
+    <div class="case-wrap">
+      <div class="case-mock" id="caseMock" hidden><div class="case-body"><img id="caseImg" alt=""><span class="case-cam"></span></div></div>
+      <div>
+        <p class="eyebrow">Coming soon</p>
+        <h2>Royal pet phone case</h2>
+        <p>Your pet's royal portrait on a phone case. It's on its way to our Etsy shop, where you'll find the price and the phone models it fits.</p>
+        <a class="btn" id="caseCta" href="https://www.etsy.com/shop/SunCustomDesigns" target="_blank" rel="noopener">Shop on Etsy →</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="block guarantee" id="etsy">
+    <h2>Prefer to shop on Etsy?</h2>
+    <p>Royal pet portraits are also available in our Etsy shop, SunCustomDesigns.</p>
+    <ul class="etsy-list" id="etsyList"></ul>
+    <a class="btn" id="etsyShop" href="https://www.etsy.com/shop/SunCustomDesigns" target="_blank" rel="noopener">Shop on Etsy →</a>
+  </section>
+
+  <section class="block">
+    <h2>Questions</h2>
+    <details><summary>What does the Royal style look like?</summary><p>Your pet is painted as a Renaissance-style oil portrait: a jeweled gold crown, an ermine-trimmed royal robe, a medallion and a red velvet throne, in warm golden light.</p></details>
+    <details><summary>How fast will I get my portrait?</summary><p>Digital portraits usually arrive within minutes of checkout. Canvas prints ship in 3–5 business days after you pick your favorite.</p></details>
+    <details><summary>What resolution are the files?</summary><p>Every portrait is 2400×3600 pixels at 300 DPI (8×12 inches). Canvas prints are produced at the exact canvas size at 300 DPI.</p></details>
+    <details><summary>What if I don't love it?</summary><p>You get 4 versions to choose from. If none feel right, use your one free repaint from your gallery within 7 days (before printing) and we'll paint 4 new ones.</p></details>
+    <details><summary>When is the phone case available?</summary><p>It's coming soon to our Etsy shop. The price and the phone models it fits will be shown on the Etsy listing.</p></details>
+  </section>
+
+  <p id="support" class="center support"></p>
+  <footer id="footer"></footer>
+
+  <script type="module">
+    // ---- Etsy links: paste each listing URL here when it's live. Empty = falls back to the shop page. ----
+    const ETSY = {
+      shop: 'https://www.etsy.com/shop/SunCustomDesigns',
+      royalDigital: '',      // e.g. 'https://www.etsy.com/listing/…'
+      royalCanvas12x18: '',
+      royalCanvas16x24: '',
+      royalPhoneCase: '',
+      // Etsy prices are shown only when SHOW_ETSY_PRICES is true (they differ from this site's checkout prices).
+      SHOW_ETSY_PRICES: false,
+      prices: { royalDigital: '$14.99', royalCanvas12x18: '$69', royalCanvas16x24: '$99', royalPhoneCase: '' },
+    };
+    const etsyUrl = (k) => ETSY[k] || ETSY.shop;
+    // -------------------------------------------------------------------------------------------------------
+
+    import { loadSite } from '/site.js';
+    const $ = (id) => document.getElementById(id);
+    const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const img = (key, w = 900) => `/showcase/${key}.webp?w=${w}`;
+
+    const { catalog, showcase, launch, discounted, money } = await loadSite();
+
+    // Royal images from the site's own showcase (hidden if none are available).
+    const royal = showcase.filter((s) => s.style === 'royal');
+    const hero = royal.find((s) => s.key === 'khabba-royal') || royal[0];
+    if (hero) {
+      $('heroImg').src = img(hero.key); $('heroImg').alt = `${hero.name} painted as The Royal`; $('heroFrame').hidden = false;
+      const caseShot = royal.find((s) => s.key === 'bella-golden') || hero;
+      $('caseImg').src = img(caseShot.key, 480); $('caseImg').alt = `${caseShot.name} royal portrait on a phone case (preview)`; $('caseMock').hidden = false;
+    }
+    if (royal.length) {
+      $('royalGallery').innerHTML = royal.map((s) => `<a class="tile" href="/?style=royal#order">
+        <img src="${img(s.key, 480)}" alt="${esc(s.name)} as The Royal" loading="lazy"><span>${esc(s.name)}</span></a>`).join('');
+      $('royalGallerySection').hidden = false;
+    }
+
+    // Canvas cards use the site's existing products, prices and order flow (Royal style pre-selected).
+    $('royalPricing').innerHTML = Object.entries(catalog.products).map(([k, p], i) => `<div class="price-card${i === 1 ? ' featured' : ''}">
+        <h3>${esc(p.name)}</h3>
+        <div class="price">${launch ? `<s>${money(p.price)}</s> ` : ''}<strong>${money(discounted(p.price))}</strong></div>
+        <a class="btn" href="/?style=royal&product=${k}#order">Choose</a></div>`).join('');
+    if (launch) { $('launchNote').hidden = false; $('launchNote').textContent = `${launch.percent}% launch discount applied automatically at checkout.`; }
+
+    // Etsy links
+    $('caseCta').href = etsyUrl('royalPhoneCase');
+    $('etsyShop').href = ETSY.shop;
+    const items = [['royalDigital', 'Royal portrait digital file'], ['royalCanvas12x18', '12x18" royal canvas + digital'], ['royalCanvas16x24', '16x24" royal canvas + digital'], ['royalPhoneCase', 'Royal pet phone case']];
+    const listed = items.filter(([k]) => ETSY[k]);
+    $('etsyList').innerHTML = listed.map(([k, label]) => `<li><a href="${esc(ETSY[k])}" target="_blank" rel="noopener">${label}</a>${ETSY.SHOW_ETSY_PRICES && ETSY.prices[k] ? ` · ${ETSY.prices[k]}, free US shipping` : ''}</li>`).join('');
+    $('etsyList').hidden = !listed.length;
+
+    $('footer').innerHTML = `<nav class="seo-links"><p>
+      <a href="/">Home</a> · <a href="/offer">Launch offer</a> · <a href="/gifts/christmas-gift">Christmas pet portraits</a> ·
+      <a href="/gifts/gifts-for-dog-lovers">Gifts for dog lovers</a> · <a href="/gifts/gifts-for-cat-lovers">Gifts for cat lovers</a></p></nav>
+      <p>© ${new Date().getFullYear()} Custom Pet Portrait Studio</p>`;
+  </script>
+</body>
+</html>
