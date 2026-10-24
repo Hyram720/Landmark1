@@ -938,6 +938,7 @@ TOOLS = [
         'aspect_ratio': field('Output aspect ratio', enum=['9:16', '1:1', '16:9', '4:5']),
         'ken_burns_on_images': {'type': 'boolean', 'description': 'Give still images with a static camera_motion a slow push_in instead'},
         'execute_render': {'type': 'boolean', 'description': 'When True, run ffmpeg to render the final assembled MP4 on disk (auto-synthesizing placeholder clips/images if paths are omitted; the result reports placeholder_clip_count)'},
+        'full_resolution': {'type': 'boolean', 'description': 'Render at the full aspect-ratio size (e.g. 1920x1080) instead of the fast one-third preview size; much slower'},
         'srt_caption_path': field('Optional local .srt file burned into the rendered MP4 as on-screen captions', maxLength=1000),
         'burn_in_captions': {'type': 'boolean', 'description': 'Burn srt_caption_path into the picture (default True); False only records it in the manifest'}},
         ('project_id', 'clips')),
@@ -1327,6 +1328,7 @@ class Studio:
         aspect = a.get('aspect_ratio', '9:16')
         ken_burns = bool(a.get('ken_burns_on_images', False))
         execute_render = bool(a.get('execute_render', False))
+        full_resolution = bool(a.get('full_resolution', False))
 
         dims = {
             '9:16': (1080, 1920),
@@ -1335,7 +1337,7 @@ class Studio:
             '4:5': (1080, 1350),
         }.get(aspect, (1080, 1920))
         width, height = dims
-        if execute_render:
+        if execute_render and not full_resolution:
             # Use fast 360p/480p proportional canvas when synthesizing/rendering local assemblies so multi-clip tests run in <1.5s
             scale_factor = 3
             width = max(320, (width // scale_factor // 2) * 2)
@@ -1534,7 +1536,7 @@ class Studio:
                 shutil.copyfile(srt_source, asm_dir / f"{asm_id}.srt")
                 filter_parts.append(
                     f"{final_v_label}subtitles={asm_id}.srt:force_style="
-                    f"'FontName=DejaVu Sans,FontSize=16,Outline=1.5,Shadow=0,MarginV=24'[vsub]"
+                    f"'FontName=DejaVu Sans,FontSize=16,BorderStyle=3,Outline=6,OutlineColour=&H66000000,Shadow=0,MarginV=24'[vsub]"
                 )
                 final_v_label = '[vsub]'
                 captions_burned_in = True
@@ -1555,8 +1557,8 @@ class Studio:
         rendered = False
         output_bytes = 0
         if execute_render and shutil.which('ffmpeg'):
-            proc = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=90, check=False,
-                                  cwd=str(asm_dir))
+            proc = subprocess.run(ffmpeg_cmd, capture_output=True, text=True,
+                                  timeout=1800 if full_resolution else 90, check=False, cwd=str(asm_dir))
             if proc.returncode != 0:
                 raise ValueError(f"FFmpeg multi-clip assembly failed: {proc.stderr[-600:]}")
             rendered = output_mp4.exists()

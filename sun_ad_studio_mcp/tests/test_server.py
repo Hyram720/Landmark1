@@ -991,5 +991,19 @@ class StudioTests(unittest.TestCase):
         self.assertGreaterEqual(sp_short_text_long_runtime['estimated_screenplay_pages'], 1.0)
 
 
+    def test_v041_full_resolution_render(self):
+        p = self.project('video')
+        clip = self.lavfi_file('short.mp4', 'testsrc2=s=640x360:r=24:d=1', '-pix_fmt', 'yuv420p')
+        sizes = {}
+        for full in (False, True):
+            out = self.studio.call('assemble_video_clips', dict(
+                project_id=p['id'], aspect_ratio='16:9', execute_render=True, full_resolution=full,
+                clips=[{'path': str(clip), 'camera_motion': 'push_in'}],
+            ))['output_mp4_path']
+            sizes[full] = subprocess.run(
+                ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height',
+                 '-of', 'csv=p=0', out], capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(sizes, {False: '640,360', True: '1920,1080'})
+
 if __name__ == '__main__':
     unittest.main()
