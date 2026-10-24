@@ -125,7 +125,7 @@ ${jsonLd.map((j) => `<script type="application/ld+json">${JSON.stringify(j)}</sc
 function seoFooterLinks() {
   const breeds = BREEDS.map((b) => `<a href="/portraits/${b.slug}">${esc(b.name)} portraits</a>`).join(' · ');
   const occ = OCCASIONS.map((o) => `<a href="/gifts/${o.slug}">${esc(o.title)}</a>`).join(' · ');
-  return `<nav class="seo-links"><p>${occ}</p><p>${breeds}</p></nav>`;
+  return `<nav class="seo-links"><p><a href="/royal">Royal pet portraits &amp; canvas</a> · ${occ}</p><p>${breeds}</p></nav>`;
 }
 
 // Oct 1 through Dec 10: show the canvas Christmas cutoff (Printful's US standard-shipping cutoff is Dec 11).
@@ -208,11 +208,11 @@ ${faqHtml(items)}
   return layout({ title: o.title, description, path: `/gifts/${o.slug}`, body, jsonLd: [productLd(o.title, description), faqLd(items), breadcrumbLd([['Home', '/'], [o.title, `/gifts/${o.slug}`]])] });
 }
 
-export const sitePaths = () => ['/', '/offer', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
+export const sitePaths = () => ['/', '/offer', '/royal', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
 
 // Real last-edit dates (not the request date, which teaches Google to ignore lastmod).
 // Bump the matching entry whenever a page's content changes.
-const CONTENT_UPDATED = { '/': '2026-10-22', '/offer': '2026-10-22', '/gifts/christmas-gift': '2026-10-22' };
+const CONTENT_UPDATED = { '/': '2026-10-24', '/offer': '2026-10-24', '/gifts/christmas-gift': '2026-10-22', '/royal': '2026-10-23' };
 const TEMPLATE_UPDATED = '2026-10-22'; // breed and gift template (FAQ, og:image, breadcrumbs)
 const lastmod = (u) => CONTENT_UPDATED[u] || TEMPLATE_UPDATED;
 

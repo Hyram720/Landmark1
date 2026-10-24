@@ -82,7 +82,7 @@ export const supportHtml = (email) =>
 // Internal links to SEO pages help them get crawled and ranked.
 export const footerHtml = (year = new Date().getFullYear()) => `<nav class="seo-links"><p>
       <a href="/#how">How it works</a> · <a href="/#pricing-section">Pricing</a> · <a href="/#faq">FAQ</a> · <a href="/offer">Launch offer</a></p><p>
-      <a href="/gifts/christmas-gift">Christmas pet portraits</a> · <a href="/gifts/pet-memorial">Pet memorial portraits</a> ·
+      <a href="/royal">Royal pet portraits &amp; canvas</a> · <a href="/gifts/christmas-gift">Christmas pet portraits</a> · <a href="/gifts/pet-memorial">Pet memorial portraits</a> ·
       <a href="/gifts/gifts-for-dog-lovers">Gifts for dog lovers</a> · <a href="/gifts/gifts-for-cat-lovers">Gifts for cat lovers</a> ·
       <a href="/portraits/golden-retriever">Golden Retriever</a> · <a href="/portraits/french-bulldog">French Bulldog</a> ·
       <a href="/portraits/german-shepherd">German Shepherd</a> · <a href="/portraits/maine-coon">Maine Coon</a></p></nav>
