@@ -2901,10 +2901,17 @@ class Studio:
                 a.get('resolution'),
                 a.get('duration_seconds'),
             )
+            prior_quoted_usd = round(sum(
+                float(h['cost']) for h in b['handoffs']
+                if h.get('cost') is not None and h.get('status') not in ('cancelled', 'canceled', 'rejected')
+            ), 6)
             total_cost = round(single_quote['cost'] * len(tags), 6)
-            if total_cost > float(a['max_spend_usd']):
+            cumulative_quoted_usd = round(prior_quoted_usd + total_cost, 6)
+            if cumulative_quoted_usd > float(a['max_spend_usd']):
                 raise ValueError(
-                    f"Batch quoted cost ${total_cost:.4f} USD exceeds max_spend_usd cap of ${float(a['max_spend_usd']):.4f} USD"
+                    f"Cumulative project quoted cost ${cumulative_quoted_usd:.4f} USD "
+                    f"(prior ${prior_quoted_usd:.4f} + batch ${total_cost:.4f}) "
+                    f"exceeds max_spend_usd cap of ${float(a['max_spend_usd']):.4f} USD"
                 )
             created = []
             for tag in tags:
@@ -2922,7 +2929,10 @@ class Studio:
                 'project_id': a['project_id'],
                 'count': len(created),
                 'unit_cost_usd': single_quote['cost'],
+                'prior_quoted_usd': prior_quoted_usd,
                 'total_quoted_usd': total_cost,
+                'cumulative_quoted_usd': cumulative_quoted_usd,
+                'remaining_budget_usd': round(float(a['max_spend_usd']) - cumulative_quoted_usd, 6),
                 'max_spend_usd': float(a['max_spend_usd']),
                 'handoffs': created,
             }

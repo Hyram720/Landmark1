@@ -286,6 +286,22 @@ class StudioTests(unittest.TestCase):
         ))
         self.assertEqual(batch['count'], 3)
         self.assertAlmostEqual(batch['total_quoted_usd'], 0.765, places=4)
+        self.assertAlmostEqual(batch['cumulative_quoted_usd'], 0.765, places=4)
+
+        # Second batch of $0.51 alone is under $1.00, but cumulative ($0.765 + $0.51 = $1.275) exceeds $1.00 cap
+        with self.assertRaisesRegex(ValueError, 'exceeds max_spend_usd cap'):
+            self.studio.call('queue_batch_handoffs', dict(
+                project_id=p['id'],
+                provider='higgsfield',
+                model='pixverse/v6/image-to-video',
+                resolution='720p',
+                duration_seconds=5,
+                variant_tags='hook_d,hook_e',
+                hook_id=hook['id'],
+                remix_style='16bit_arcade_boss',
+                max_spend_usd=1.00,
+                request_key='batch-cumulative-exceeded',
+            ))
 
         fb = self.studio.call('record_winner_feedback', dict(
             project_id=p['id'],
