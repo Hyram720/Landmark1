@@ -1,4 +1,4 @@
-# Sun Ad Studio MCP (`v0.4.0`)
+# Sun Ad Studio MCP (`v0.4.1`)
 
 A dependency-free Python Model Context Protocol (MCP) server for **Sun Marketing Enterprises LLC** (`SunCustomDesigns`, `LegacyReady Family`, `Hustle Vault`, `Credit Ledger`, and `Landmark Agency Group`).
 
@@ -22,7 +22,7 @@ A dependency-free Python Model Context Protocol (MCP) server for **Sun Marketing
 ## Running Tests
 
 ```bash
-python3 -m unittest discover -s /workspace/sun_ad_studio_mcp/tests -p "test_*.py" -v
+python3 -m unittest discover -s sun_ad_studio_mcp/tests -p "test_*.py" -v
 ```
 
-All **16/16 unit tests** pass offline with `$0.00` paid API spend.
+Run from the repository root. All **20/20 unit tests** pass offline with `$0.00` paid API spend (requires `ffmpeg` with libass on `PATH`).

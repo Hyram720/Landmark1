@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sun Ad Studio: single-workspace MCP server v0.4.0, Python 3.11+, no dependencies."""
+"""Sun Ad Studio: single-workspace MCP server v0.4.1, Python 3.11+, no dependencies."""
 import argparse
 import base64
 from contextlib import contextmanager
@@ -413,152 +413,240 @@ PROFESSIONAL_CAMERA_MOTIONS = {
     'dolly_zoom': {
         'label': 'Dolly Zoom (Vertigo / Zolly Effect)',
         'cinematography_cue': 'Camera tracks backward on dolly while lens focal length zooms inward (Vertigo zolly), keeping subject size constant while background perspective warps dramatically.',
-        'ffmpeg_filter': 'crop=iw*0.92:ih*0.92:(iw-ow)/2:(ih-oh)/2,vignette=PI/6',
     },
     'tracking_shot': {
         'label': 'Lateral / Following Tracking Shot',
         'cinematography_cue': 'Fluid dolly track moving laterally or in lockstep beside the subject with crisp foreground/background motion parallax.',
-        'ffmpeg_filter': 'crop=iw*0.94:ih*0.94:(iw-ow)/3:(ih-oh)/2,eq=contrast=1.04:saturation=1.05',
     },
     'crane_reveal': {
         'label': 'Sweeping Crane / Jib Reveal',
         'cinematography_cue': 'High-elevation crane sweep rising from intimate foreground detail to unveil a vast cinematic vista.',
-        'ffmpeg_filter': 'crop=iw*0.95:ih*0.95:(iw-ow)/2:(ih-oh)/4,eq=brightness=0.02:contrast=1.05',
     },
     'handheld_tension': {
         'label': 'Handheld Cinema-Verite Tension',
         'cinematography_cue': 'Organic shoulder-rig micro-movement and visceral breathing camera energy heightening urgency and dramatic stakes.',
-        'ffmpeg_filter': 'crop=iw*0.93:ih*0.93:(iw-ow)/2:(ih-oh)/2,eq=contrast=1.08:saturation=0.95',
     },
     'locked_off_static': {
         'label': 'Locked-Off Symmetrical Static Frame',
         'cinematography_cue': 'Tripod-locked deadpan architectural symmetry with razor-sharp composition across the frame.',
-        'ffmpeg_filter': 'eq=contrast=1.03:saturation=1.02',
     },
     'whip_pan': {
         'label': 'High-Velocity Whip Pan',
         'cinematography_cue': 'Rapid horizontal camera rotation creating kinetic directional blur between dramatic focal points.',
-        'ffmpeg_filter': 'crop=iw*0.92:ih*0.92:(iw-ow)*2/3:(ih-oh)/2,eq=contrast=1.06:saturation=1.08',
     },
     'steadicam_oner': {
         'label': 'Continuous Steadicam Long-Take (Oner)',
         'cinematography_cue': 'Weightless floating Steadicam gliding seamlessly through rooms and doorways in an unbroken continuous take.',
-        'ffmpeg_filter': 'crop=iw*0.95:ih*0.95:(iw-ow)/2:(ih-oh)/2,eq=saturation=1.04',
     },
     'rack_focus': {
         'label': 'Shallow-DOF Rack Focus Shift',
         'cinematography_cue': 'Anamorphic shallow depth-of-field shifting critical sharpness from foreground silhouette to background character eyes.',
-        'ffmpeg_filter': 'unsharp=5:5:0.8:5:5:0.0,vignette=PI/7',
     },
     'push_in': {
         'label': 'Slow Dramatic Dolly Push-In',
         'cinematography_cue': 'Measured creeping dolly push-in tightening on the protagonist face at the exact beat of emotional realization.',
-        'ffmpeg_filter': 'crop=iw*0.88:ih*0.88:(iw-ow)/2:(ih-oh)/2,vignette=PI/6',
     },
     'pull_back': {
         'label': 'Slow Wide Dolly Pull-Back Reveal',
         'cinematography_cue': 'Slow receding dolly pull-back expanding the frame to reveal the scale of the world surrounding the character.',
-        'ffmpeg_filter': 'crop=iw*0.96:ih*0.96:(iw-ow)/2:(ih-oh)/2,eq=contrast=1.04',
     },
     'orbit_shot': {
         'label': '360-Degree Hero Orbit Shot',
         'cinematography_cue': 'Circular 360-degree camera arc orbiting around the central characters as background light and geometry revolve.',
-        'ffmpeg_filter': 'crop=iw*0.92:ih*0.92:(iw-ow)/2:(ih-oh)/2,eq=contrast=1.06:saturation=1.06',
     },
     'parallax_glide': {
         'label': 'Multi-Plane Parallax Glide',
         'cinematography_cue': 'Deep-focus lateral glide with foreground architectural columns and mid-ground subjects moving at distinct planes.',
-        'ffmpeg_filter': 'crop=iw*0.94:ih*0.94:(iw-ow)/4:(ih-oh)/2,unsharp=3:3:0.5',
     },
     'dutch_angle': {
         'label': 'Canted Dutch Angle Tilt',
         'cinematography_cue': '15-degree canted horizon tilt signaling psychological disorientation, moral conflict, or sudden world disruption.',
-        'ffmpeg_filter': 'crop=iw*0.90:ih*0.90:(iw-ow)/2:(ih-oh)/2,eq=contrast=1.09:saturation=0.94',
     },
     'over_the_shoulder': {
         'label': 'Over-The-Shoulder (OTS) Dialogue Frame',
         'cinematography_cue': 'Classic cinema over-the-shoulder framing with soft foreground shoulder/head anchor and sharp focus on the speaking character.',
-        'ffmpeg_filter': 'crop=iw*0.94:ih*0.94:(iw-ow)/3:(ih-oh)/2,vignette=PI/8',
     },
     'point_of_view': {
         'label': 'Subjective Point-of-View (POV)',
         'cinematography_cue': 'First-person subjective camera seeing directly through the character eyes as hands and environment interact.',
-        'ffmpeg_filter': 'crop=iw*0.93:ih*0.93:(iw-ow)/2:(ih-oh)/2,vignette=PI/5',
     },
     'aerial_drone': {
         'label': 'Sweeping Aerial Cinema Drone',
         'cinematography_cue': 'High-altitude sweeping aerial cinematography gliding over cityscape or landscape into the scene location.',
-        'ffmpeg_filter': 'eq=contrast=1.05:saturation=1.07',
     },
     'time_lapse': {
         'label': 'Accelerated Cinema Time-Lapse',
         'cinematography_cue': 'Long-exposure time-lapse compressing hours of moving shadows, clouds, and city light trails into seconds.',
-        'ffmpeg_filter': 'eq=contrast=1.07:saturation=1.10',
     },
     'slow_motion': {
         'label': 'Over-Cranked 120fps Slow Motion',
         'cinematography_cue': 'High-frame-rate 120fps slow motion suspending droplets, fabric movement, and micro-expressions in time.',
-        'ffmpeg_filter': 'crop=iw*0.94:ih*0.94:(iw-ow)/2:(ih-oh)/2,eq=contrast=1.04:brightness=0.01',
     },
     'speed_ramp': {
         'label': 'Kinetic Speed Ramp (Fast-to-Slow Impact)',
         'cinematography_cue': 'Dynamic velocity speed ramp accelerating into the action beat then snapping into ultra-slow-motion at peak impact.',
-        'ffmpeg_filter': 'crop=iw*0.91:ih*0.91:(iw-ow)/2:(ih-oh)/2,eq=contrast=1.08:saturation=1.08',
     },
     # Backwards-compatible aliases from v0.3.0
     'static_lock': {
         'label': 'Static Lock (Alias for Locked-Off Static)',
         'cinematography_cue': 'Tripod-locked static composition with clean framing.',
-        'ffmpeg_filter': 'eq=contrast=1.02',
     },
     'dolly_in': {
         'label': 'Dolly In (Alias for Push-In)',
         'cinematography_cue': 'Smooth dolly push-in toward the focal subject.',
-        'ffmpeg_filter': 'crop=iw*0.90:ih*0.90:(iw-ow)/2:(ih-oh)/2',
     },
     'dolly_out': {
         'label': 'Dolly Out (Alias for Pull-Back)',
         'cinematography_cue': 'Smooth dolly pull-back revealing the environment.',
-        'ffmpeg_filter': 'crop=iw*0.95:ih*0.95:(iw-ow)/2:(ih-oh)/2',
     },
     'crash_zoom': {
         'label': 'Crash Zoom',
         'cinematography_cue': 'Rapid snap zoom punching directly into the subject expression or hero product.',
-        'ffmpeg_filter': 'crop=iw*0.86:ih*0.86:(iw-ow)/2:(ih-oh)/2,eq=contrast=1.06',
     },
     'orbit_360': {
         'label': 'Orbit 360 (Alias for Orbit Shot)',
         'cinematography_cue': '360-degree orbital camera sweep around the subject.',
-        'ffmpeg_filter': 'crop=iw*0.92:ih*0.92:(iw-ow)/2:(ih-oh)/2',
     },
     'crane_up': {
         'label': 'Crane Up (Alias for Crane Reveal)',
         'cinematography_cue': 'Vertical crane elevation rising above the scene.',
-        'ffmpeg_filter': 'crop=iw*0.95:ih*0.95:(iw-ow)/2:(ih-oh)/4',
     },
     'crane_down': {
         'label': 'Crane Down',
         'cinematography_cue': 'Vertical crane descent settling into eye-level intimacy.',
-        'ffmpeg_filter': 'crop=iw*0.95:ih*0.95:(iw-ow)/2:(ih-oh)*3/4',
     },
     'handheld_ugc': {
         'label': 'Handheld UGC (Alias for Handheld Tension)',
         'cinematography_cue': 'Natural handheld camera cadence.',
-        'ffmpeg_filter': 'crop=iw*0.94:ih*0.94:(iw-ow)/2:(ih-oh)/2',
     },
     'fpv_drone': {
         'label': 'FPV Drone (Alias for Aerial Drone)',
         'cinematography_cue': 'Agile FPV aerial trajectory sweeping through the environment.',
-        'ffmpeg_filter': 'eq=contrast=1.05:saturation=1.06',
     },
     'tracking_side': {
         'label': 'Tracking Side (Alias for Tracking Shot)',
         'cinematography_cue': 'Lateral side-tracking dolly movement.',
-        'ffmpeg_filter': 'crop=iw*0.94:ih*0.94:(iw-ow)/3:(ih-oh)/2',
     },
 }
 
 CAMERA_MOTIONS = tuple(PROFESSIONAL_CAMERA_MOTIONS.keys())
+
+# Legacy v0.2/v0.3 move names that render with the same motion as a professional move.
+CAMERA_MOTION_ALIASES = {
+    'static_lock': 'locked_off_static',
+    'dolly_in': 'push_in',
+    'dolly_out': 'pull_back',
+    'orbit_360': 'orbit_shot',
+    'crane_up': 'crane_reveal',
+    'handheld_ugc': 'handheld_tension',
+    'fpv_drone': 'aerial_drone',
+    'tracking_side': 'tracking_shot',
+}
+
+
+def camera_motion_filter(name, width, height, duration, fps=24):
+    """Time-varying FFmpeg filter chain that performs a camera move on a width x height canvas over duration seconds."""
+    name = CAMERA_MOTION_ALIASES.get(name, name)
+    d = max(float(duration), 0.1)
+    frames = max(1, round(d * fps) - 1)
+    p = f'min(on/{frames},1)'
+    ease = f'(0.5-0.5*cos(PI*{p}))'
+    cx, cy = 'iw/2-(iw/zoom/2)', 'ih/2-(ih/zoom/2)'
+    span_x, span_y = '(iw-iw/zoom)', '(ih-ih/zoom)'
+    sec = f'(on/{fps})'
+
+    def zp(z, x=cx, y=cy):
+        # Upscale first so zoompan's integer crop offsets do not visibly jitter.
+        return (f"scale={width * 2}:{height * 2},"
+                f"zoompan=z='{z}':x='{x}':y='{y}':d=1:s={width}x{height}:fps={fps}")
+
+    if name == 'dolly_zoom':
+        return zp(f'1+0.3*{ease}') + ',vignette=angle=PI/5'
+    if name == 'tracking_shot':
+        return zp('1.15', x=f'{span_x}*{p}')
+    if name == 'crane_reveal':
+        return zp(f'1.3-0.25*{ease}', y=f'{span_y}*(1-{ease})')
+    if name == 'crane_down':
+        return zp(f'1.05+0.25*{ease}', y=f'{span_y}*{ease}')
+    if name == 'handheld_tension':
+        return zp('1.08',
+                  x=f'{cx}+iw*0.006*sin(on*0.7)+iw*0.003*sin(on*1.9)',
+                  y=f'{cy}+ih*0.006*cos(on*0.6)+ih*0.003*sin(on*2.3)') + ',eq=contrast=1.08:saturation=0.95'
+    if name == 'locked_off_static':
+        return 'eq=contrast=1.03:saturation=1.02'
+    if name == 'whip_pan':
+        whip = f'min(max(({p}-0.65)/0.25,0),1)'
+        return zp('1.2', x=f'{span_x}*{whip}') + ",tmix=frames=3:weights='1 2 1'"
+    if name == 'steadicam_oner':
+        return zp(f'1.05+0.12*{ease}',
+                  x=f'{cx}+iw*0.008*sin({sec}*1.3)',
+                  y=f'{cy}+ih*0.005*sin({sec}*0.9)')
+    if name == 'rack_focus':
+        # Stacked blurs drop out one by one, pulling the frame from soft to sharp focus.
+        steps = ','.join(f"gblur=sigma=2.5:enable='lt(t,{round(d * k, 3)})'" for k in (0.15, 0.3, 0.45, 0.6))
+        return steps + ',unsharp=5:5:0.8:5:5:0.0'
+    if name == 'push_in':
+        return zp(f'1+0.2*{ease}')
+    if name == 'pull_back':
+        return zp(f'1.2-0.2*{ease}')
+    if name == 'crash_zoom':
+        return zp(f'1+0.45*min({p}/0.2,1)')
+    if name == 'orbit_shot':
+        return zp('1.25', x=f'{span_x}*{ease}') + f",rotate=a='0.05*sin(2*PI*t/{d})':fillcolor=black"
+    if name == 'parallax_glide':
+        return zp(f'1.12+0.06*{ease}', x=f'{span_x}*(0.2+0.6*{ease})', y=f'{span_y}*(0.6-0.2*{ease})')
+    if name == 'dutch_angle':
+        return zp(f'1.3+0.05*{ease}') + ",rotate=a='0.14':fillcolor=black"
+    if name == 'over_the_shoulder':
+        return zp(f'1.2+0.06*{ease}', x=f'{span_x}*0.7') + ',vignette=angle=PI/7'
+    if name == 'point_of_view':
+        return zp('1.1',
+                  x=f'{cx}+iw*0.01*sin({sec}*2*PI*0.9)',
+                  y=f'{cy}+ih*0.012*abs(sin({sec}*2*PI*0.9))') + ',vignette=angle=PI/5'
+    if name == 'aerial_drone':
+        return zp(f'1.05+0.2*{ease}', y=f'{span_y}*(0.15+0.35*{ease})') + ',eq=contrast=1.05:saturation=1.07'
+    if name == 'time_lapse':
+        return f'setpts=0.25*PTS,fps={fps},tpad=stop_mode=clone:stop_duration={d}'
+    if name == 'slow_motion':
+        return f'setpts=2*PTS,fps={fps}'
+    if name == 'speed_ramp':
+        half = round(d / 2, 3)
+        return (f"setpts='if(lt(T,{half}),T,{half}+(T-{half})/3)/TB',fps={fps},"
+                f'tpad=stop_mode=clone:stop_duration={d}')
+    raise ValueError(f'Unsupported camera_motion "{name}"')
+
+
+# Act label and runtime share for each of the eight default screenplay beats:
+# setup, inciting incident, debate, first culmination, midpoint, all is lost, climax, resolution.
+SCREENPLAY_STRUCTURES = {
+    'three_act_feature': (
+        ['ACT I — SETUP & THE ORDINARY WORLD', 'ACT I — INCITING INCIDENT',
+         'ACT II — RISING COMPLICATION & DEBATE', 'ACT II — FIRST CULMINATION & RACK FOCUS REVELATION',
+         'ACT II — MIDPOINT REVERSAL (VERTIGO DOLLY ZOOM)', 'ACT II — ALL IS LOST / THE CRUCIBLE',
+         'ACT III — THE CLIMAX IN MOTION', 'ACT III — RESOLUTION & FINAL IMAGE'],
+        [0.11, 0.11, 0.13, 0.12, 0.14, 0.13, 0.14, 0.12],
+    ),
+    # Freytag's pyramid: the climax is the central turning point, then the fall and catastrophe/denouement.
+    'five_act_dramatic': (
+        ['ACT I — EXPOSITION', 'ACT I — EXPOSITION: THE EXCITING FORCE',
+         'ACT II — RISING ACTION', 'ACT II — RISING ACTION: COMPLICATIONS MOUNT',
+         'ACT III — CLIMAX: THE TURNING POINT', 'ACT IV — FALLING ACTION: REVERSAL',
+         'ACT IV — FALLING ACTION: MOMENT OF FINAL SUSPENSE', 'ACT V — DÉNOUEMENT'],
+        [0.10, 0.10, 0.12, 0.12, 0.16, 0.12, 0.14, 0.14],
+    ),
+    # Eight roughly equal sequences, each built around its own mini-goal (Frank Daniel's model).
+    'eight_sequence_cinema': (
+        ['SEQUENCE 1 (ACT I) — STATUS QUO', 'SEQUENCE 2 (ACT I) — PREDICAMENT & LOCK-IN',
+         'SEQUENCE 3 (ACT II) — FIRST ATTEMPT', 'SEQUENCE 4 (ACT II) — FIRST CULMINATION',
+         'SEQUENCE 5 (ACT II) — MIDPOINT SHIFT', 'SEQUENCE 6 (ACT II) — SECOND CULMINATION',
+         'SEQUENCE 7 (ACT III) — FINAL BATTLE', 'SEQUENCE 8 (ACT III) — RESOLUTION'],
+        [0.125] * 8,
+    ),
+}
+
+for _name, _spec in PROFESSIONAL_CAMERA_MOTIONS.items():
+    # Reference chain at 1920x1080 for 5 seconds; assemblies build per-clip chains for their own size and length.
+    _spec['ffmpeg_filter'] = camera_motion_filter(_name, 1920, 1080, 5.0)
 
 DEFAULT_REFERENCE_MASTERPIECES = {
     'the_godfather_1972': {
@@ -842,23 +930,24 @@ TOOLS = [
         ('task_type', 'duration_seconds'), read=True),
     tool('assemble_video_clips', 'One-shot Multi-Clip Video & Image Assembler: chains any sequence of variable-length video clips (e.g. 10s + 10s + 10s or mixed lengths) and/or still images (all-video, all-image, or mixed in any order) into one seamless MP4 with smooth FFmpeg xfade/acrossfade transitions.', {
         'project_id': field('Project ID'),
-        'clips': array_field('Ordered list of clip/image dicts: {path (optional local path), media_type ("video" or "image", auto-detected if omitted), duration_seconds (optional for videos if local file exists; defaults to default_image_duration_seconds for images), label, prompt, color_hex, transition_out}', min_items=1, max_items=60),
+        'clips': array_field('Ordered list of clip/image dicts: {path (optional local media path; must exist when execute_render is True), media_type ("video" or "image", auto-detected if omitted), duration_seconds (optional for videos if local file exists; defaults to default_image_duration_seconds for images), camera_motion, label, prompt, color_hex (placeholder card colour when path is omitted), transition_out}', min_items=1, max_items=60),
         'transition_type': field('Default FFmpeg xfade transition between items', enum=list(TRANSITION_TYPES)),
         'transition_duration_seconds': num_field('Transition overlap in seconds (default 0.5)', minimum=0.0, maximum=5.0),
         'default_image_duration_seconds': num_field('Default hold duration for still images when duration_seconds is omitted (default 4.0)', minimum=0.5, maximum=60.0),
         'aspect_ratio': field('Output aspect ratio', enum=['9:16', '1:1', '16:9', '4:5']),
-        'ken_burns_on_images': {'type': 'boolean', 'description': 'Apply subtle zoom/pan motion to still images'},
-        'execute_render': {'type': 'boolean', 'description': 'When True, run ffmpeg to render the final assembled MP4 on disk (auto-synthesizing placeholder clips/images if paths are omitted)'},
-        'srt_caption_path': field('Optional local .srt file path to attach/reference in the assembly manifest', maxLength=1000)},
+        'ken_burns_on_images': {'type': 'boolean', 'description': 'Give still images with a static camera_motion a slow push_in instead'},
+        'execute_render': {'type': 'boolean', 'description': 'When True, run ffmpeg to render the final assembled MP4 on disk (auto-synthesizing placeholder clips/images if paths are omitted; the result reports placeholder_clip_count)'},
+        'srt_caption_path': field('Optional local .srt file burned into the rendered MP4 as on-screen captions', maxLength=1000),
+        'burn_in_captions': {'type': 'boolean', 'description': 'Burn srt_caption_path into the picture (default True); False only records it in the manifest'}},
         ('project_id', 'clips')),
     tool('create_short_film', 'First-class Short Films Module: create a 1-to-5-minute (60s-300s) narrative short film with multi-act structure, scene breakdown, shot list, dialogue/narration, persistent character consistency locks across all scenes, and an assembly-ready clip plan.', {
         'project_id': field('Project ID'),
         'title': field('Short film title', maxLength=200),
         'logline': field('One-sentence narrative logline', maxLength=1000),
         'genre': field('Short film genre/style (e.g. pixar_3d_heartwarmer, cinematic_brand_film, 16bit_arcade_adventure, sci_fi_parable)', maxLength=120),
-        'target_duration_seconds': num_field('Target runtime in seconds (60 to 300 seconds / 1-5 minutes)', minimum=30.0, maximum=600.0),
+        'target_duration_seconds': num_field('Target runtime in seconds (60 to 300 seconds / 1-5 minutes)', minimum=60.0, maximum=300.0),
         'characters': array_field('List of character dicts: {name, role, visual_dna, voice_persona, reference_image_url} locked across all scenes', min_items=1, max_items=20),
-        'acts': array_field('Optional custom acts/scenes list; if omitted, auto-generates a rich 3-Act / 5-Beat narrative breakdown with variable-length shots totaling target_duration_seconds', min_items=1, max_items=40),
+        'acts': array_field('Optional custom acts/scenes list (each may set media_path to a real local video/image); if omitted, auto-generates a rich 3-Act / 5-Beat narrative breakdown with variable-length shots totaling target_duration_seconds', min_items=1, max_items=40),
         'product_or_theme_integration': field('How the brand, product, or moral theme weaves naturally into the story resolution', maxLength=2000),
         'aspect_ratio': field('Film aspect ratio', enum=['16:9', '9:16', '1:1', '4:5'])},
         ('project_id', 'title', 'logline', 'genre', 'target_duration_seconds', 'characters')),
@@ -886,7 +975,7 @@ TOOLS = [
         'primary_aspect_ratio': field('Primary output ratio (vertical 9:16 for social or horizontal 16:9 for web)', enum=['9:16', '16:9', '1:1', '4:5']),
         'platform_cuts': array_field('Platform-native cut ratios to pre-plan (defaults to ["9:16", "16:9", "1:1", "4:5"])', min_items=1, max_items=4),
         'characters_or_talent': array_field('Optional character/spokesperson dicts {name, role, visual_dna, voice_persona} locked across scenes', min_items=1, max_items=10),
-        'scenes': array_field('Optional custom marketing scenes; if omitted, generates a 6-scene hook-first marketing film structure', min_items=1, max_items=30)},
+        'scenes': array_field('Optional custom marketing scenes (each may set media_path to a real local video/image); if omitted, generates a 6-scene hook-first marketing film structure', min_items=1, max_items=30)},
         ('project_id', 'title', 'campaign_type', 'target_duration_seconds', 'opening_hook_line', 'call_to_action', 'brand_voice', 'tone_controls', 'audience_targeting_notes')),
     tool('list_marketing_short_films', 'List all Marketing Short Films created under a project.', {
         'project_id': field('Project ID')}, ('project_id',), read=True),
@@ -922,7 +1011,7 @@ TOOLS = [
         'world_building_notes': field('Rules of the world, visual palette, acoustic motif, era, and setting lore', maxLength=4000),
         'characters': array_field('List of character dicts: {name, role, visual_dna, internal_flaw_need, external_want, character_arc, voice_persona}', min_items=1, max_items=25),
         'scene_camera_motions': array_field('Optional ordered list of professional camera motions per scene (e.g. ["crane_reveal", "push_in", "tracking_shot", "dolly_zoom", "steadicam_oner", "rack_focus", "whip_pan", "orbit_shot", "pull_back"])', min_items=1, max_items=120),
-        'scenes': array_field('Optional custom screenplay scenes list; if omitted, generates a complete multi-act cinema screenplay with INT./EXT. sluglines, action lines, parentheticals, dialogue, transitions, and professional camera motions', min_items=1, max_items=120),
+        'scenes': array_field('Optional custom screenplay scenes list (each may set media_path to a real local video/image); if omitted, generates a complete multi-act cinema screenplay with INT./EXT. sluglines, action lines, parentheticals, dialogue, transitions, and professional camera motions', min_items=1, max_items=120),
         'aspect_ratio': field('Cinema aspect ratio', enum=['16:9', '9:16', '1:1', '4:5'])},
         ('project_id', 'title', 'logline', 'genre', 'reference_masterpieces', 'world_building_notes', 'characters')),
     tool('list_mirroring_masterpiece_screenplays', 'Mirroring Masterpieces Module: list all cinema movie screenplays created under a project.', {
@@ -1269,21 +1358,30 @@ class Studio:
             cam_motion = item.get('camera_motion', 'locked_off_static')
             if cam_motion not in PROFESSIONAL_CAMERA_MOTIONS:
                 raise ValueError(f'Unsupported camera_motion "{cam_motion}". Supported moves: {", ".join(PROFESSIONAL_CAMERA_MOTIONS.keys())}')
+            if ken_burns and mtype == 'image' and CAMERA_MOTION_ALIASES.get(cam_motion, cam_motion) == 'locked_off_static':
+                cam_motion = 'push_in'
             cam_spec = PROFESSIONAL_CAMERA_MOTIONS[cam_motion]
 
             color_hex = item.get('color_hex') or palette[idx % len(palette)]
             if not re.fullmatch(r'^#[0-9a-fA-F]{6}$', str(color_hex)):
                 color_hex = '#071120'
 
-            resolved_path = str(path_obj) if (path_obj and path_obj.exists()) else (raw_path or str(asm_dir / f"{asm_id}_input_{idx + 1}.{'png' if mtype == 'image' else 'mp4'}"))
+            has_media = bool(path_obj and path_obj.is_file())
+            if execute_render and path_obj and not has_media:
+                raise ValueError(f'Clip {idx + 1} media file not found: {raw_path}')
+            # Absolute paths keep inputs valid when ffmpeg runs from the assembly directory.
+            resolved_path = str(path_obj.resolve()) if has_media else (raw_path or str(asm_dir / f"{asm_id}_input_{idx + 1}.{'png' if mtype == 'image' else 'mp4'}"))
             has_audio = bool(item.get('has_audio', probed['has_audio']))
 
-            if execute_render and (not path_obj or not path_obj.exists()) and shutil.which('ffmpeg'):
+            if execute_render and not has_media and shutil.which('ffmpeg'):
                 synth_path = asm_dir / f"{asm_id}_synth_{idx + 1}.{'png' if mtype == 'image' else 'mp4'}"
                 c_clean = color_hex.lstrip('#')
+                # A faint grid keeps camera motion visible on placeholder cards.
+                card = f'color=c=0x{c_clean}:s={width}x{height}'
+                grid = 'drawgrid=w=iw/8:h=ih/8:t=2:c=white@0.25'
                 if mtype == 'image':
                     subprocess.run(
-                        ['ffmpeg', '-y', '-f', 'lavfi', '-i', f'color=c=0x{c_clean}:s={width}x{height}:d=1',
+                        ['ffmpeg', '-y', '-f', 'lavfi', '-i', f'{card}:d=1,{grid}',
                          '-frames:v', '1', str(synth_path)],
                         capture_output=True, timeout=15, check=True
                     )
@@ -1292,7 +1390,7 @@ class Studio:
                     freq = 220 + (idx * 55) % 440
                     subprocess.run(
                         ['ffmpeg', '-y',
-                         '-f', 'lavfi', '-i', f'color=c=0x{c_clean}:s={width}x{height}:r=24:d={dur}',
+                         '-f', 'lavfi', '-i', f'{card}:r=24:d={dur},{grid}',
                          '-f', 'lavfi', '-i', f'sine=frequency={freq}:sample_rate=44100:duration={dur}',
                          '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
                          '-c:a', 'aac', '-shortest', str(synth_path)],
@@ -1312,7 +1410,8 @@ class Studio:
                 'camera_motion': cam_motion,
                 'camera_motion_label': cam_spec['label'],
                 'camera_motion_cue': cam_spec['cinematography_cue'],
-                'camera_motion_ffmpeg_filter': cam_spec['ffmpeg_filter'],
+                'camera_motion_ffmpeg_filter': camera_motion_filter(cam_motion, width, height, dur),
+                'is_placeholder': not has_media,
                 'prompt': item.get('prompt', ''),
                 'color_hex': color_hex,
                 'transition_out': item_trans if idx < len(raw_clips) - 1 else 'none',
@@ -1359,17 +1458,20 @@ class Studio:
             else:
                 input_flags.extend(['-i', it['path']])
 
-            cam_filter = it.get('camera_motion_ffmpeg_filter', 'eq=contrast=1.02')
+            # Fit the source to the canvas first so the camera move animates the final frame.
+            # Clips shorter than their slot hold their last frame so xfade offsets stay valid.
             v_chain = (
-                f"[{idx}:v]{cam_filter},scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"[{idx}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,"
+                f"fps={fps},setpts=PTS-STARTPTS,{it['camera_motion_ffmpeg_filter']},setsar=1,"
+                f"tpad=stop_mode=clone:stop_duration={dur},"
                 f"format=yuv420p,trim=duration={dur},setpts=PTS-STARTPTS,fps={fps},settb=1/{fps}[v{idx}]"
             )
             filter_parts.append(v_chain)
             if it['media_type'] == 'video' and it['has_audio']:
                 a_chain = (
                     f"[{idx}:a]aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo,"
-                    f"atrim=duration={dur},asetpts=PTS-STARTPTS[a{idx}]"
+                    f"apad,atrim=duration={dur},asetpts=PTS-STARTPTS[a{idx}]"
                 )
             else:
                 a_chain = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={dur},asetpts=PTS-STARTPTS[a{idx}]"
@@ -1401,6 +1503,24 @@ class Studio:
             final_v_label = prev_v
             final_a_label = prev_a
 
+        # Burn captions into the picture. The .srt is copied next to the output under a
+        # hex-only name and ffmpeg runs from that directory, so no filtergraph escaping is needed.
+        burn_captions = bool(a.get('burn_in_captions', True))
+        srt_arg = a.get('srt_caption_path')
+        captions_burned_in = False
+        if burn_captions and srt_arg:
+            srt_source = Path(srt_arg)
+            if srt_source.is_file():
+                shutil.copyfile(srt_source, asm_dir / f"{asm_id}.srt")
+                filter_parts.append(
+                    f"{final_v_label}subtitles={asm_id}.srt:force_style="
+                    f"'FontName=DejaVu Sans,FontSize=16,Outline=1.5,Shadow=0,MarginV=24'[vsub]"
+                )
+                final_v_label = '[vsub]'
+                captions_burned_in = True
+            elif execute_render:
+                raise ValueError(f'srt_caption_path not found: {srt_arg}')
+
         output_mp4 = asm_dir / f"{asm_id}.mp4"
         filter_complex_str = ';'.join(filter_parts)
         ffmpeg_cmd = [
@@ -1415,7 +1535,8 @@ class Studio:
         rendered = False
         output_bytes = 0
         if execute_render and shutil.which('ffmpeg'):
-            proc = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=90, check=False)
+            proc = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=90, check=False,
+                                  cwd=str(asm_dir))
             if proc.returncode != 0:
                 raise ValueError(f"FFmpeg multi-clip assembly failed: {proc.stderr[-600:]}")
             rendered = output_mp4.exists()
@@ -1444,6 +1565,9 @@ class Studio:
             'output_mp4_path': str(output_mp4),
             'manifest_path': str(manifest_path),
             'srt_caption_path': a.get('srt_caption_path'),
+            'captions_burned_in': captions_burned_in,
+            'placeholder_clip_count': sum(1 for it in normalized_items if it['is_placeholder']),
+            'uses_placeholder_media': any(it['is_placeholder'] for it in normalized_items),
             'rendered': rendered,
             'output_bytes': output_bytes,
         }
@@ -1566,6 +1690,8 @@ class Studio:
             assembly_clips.append({
                 'media_type': mtype,
                 'duration_seconds': dur,
+                'camera_motion': shot_entry['camera_motion'],
+                'path': sc.get('media_path'),
                 'label': f"Shot {idx + 1}: {shot_entry['act']} ({shot_entry['shot_type']})",
                 'prompt': shot_entry['visual_prompt'],
                 'color_hex': colors[idx % len(colors)],
@@ -1605,7 +1731,8 @@ class Studio:
         captions = self.execute(db, 'generate_captions_and_vo_timing', {
             'project_id': a['project_id'],
             'script_text': film['full_narration_script'],
-            'total_duration_seconds': film['total_planned_duration_seconds'],
+            'total_duration_seconds': assembled_duration(
+                [c['duration_seconds'] for c in film['assembly_clips_spec']], trans_dur),
             'words_per_caption': 6,
             'style_preset': 'pixar_storybook_subtitles',
         })
@@ -1788,6 +1915,7 @@ class Studio:
                 'media_type': mtype,
                 'duration_seconds': dur,
                 'camera_motion': cam,
+                'path': sc.get('media_path'),
                 'label': f"Marketing Scene {idx + 1}: {scene_obj['stage']}",
                 'prompt': scene_obj['visual_prompt'],
                 'color_hex': palette[idx % len(palette)],
@@ -1858,7 +1986,8 @@ class Studio:
         captions = self.execute(db, 'generate_captions_and_vo_timing', {
             'project_id': a['project_id'],
             'script_text': mfilm['full_voiceover_script'],
-            'total_duration_seconds': mfilm['total_planned_duration_seconds'],
+            'total_duration_seconds': assembled_duration(
+                [c['duration_seconds'] for c in mfilm['assembly_clips_spec']], trans_dur),
             'words_per_caption': 4 if cut_ratio == '9:16' else 6,
             'style_preset': 'capcut_kinetic_pop' if cut_ratio == '9:16' else 'clean_cinema_lower_third',
         })
@@ -2198,6 +2327,16 @@ class Studio:
                 },
             ]
 
+        if not a.get('scenes'):
+            # Re-cut the eight default beats into the chosen structure's acts and runtime split.
+            act_labels, weights = SCREENPLAY_STRUCTURES[structure_model]
+            durs = [round(target_dur * w, 1) for w in weights]
+            durs[-1] = round(durs[-1] + round(target_dur - sum(durs), 1), 1)
+            for sc, label, dur in zip(raw_scenes, act_labels, durs):
+                sc['act'] = label
+                sc['duration_seconds'] = dur
+        act_structure = list(dict.fromkeys(sc.get('act', '') for sc in raw_scenes if sc.get('act')))
+
         normalized_scenes = []
         assembly_clips = []
         all_dialogue_lines = []
@@ -2272,6 +2411,7 @@ class Studio:
                 'camera_motion_cue': cam_spec['cinematography_cue'],
                 'camera_motion_ffmpeg_filter': cam_spec['ffmpeg_filter'],
                 'media_type': mtype,
+                'media_path': sc.get('media_path'),
                 'duration_seconds': dur,
                 'action_lines': action_text,
                 'dialogue_blocks': d_blocks,
@@ -2286,6 +2426,7 @@ class Studio:
                 'media_type': mtype,
                 'duration_seconds': dur,
                 'camera_motion': cam,
+                'path': sc.get('media_path'),
                 'scene_heading': heading,
                 'label': f"Scene {idx + 1}: {heading} [{cam}]",
                 'prompt': visual_prompt,
@@ -2310,6 +2451,7 @@ class Studio:
             'logline': logline,
             'genre': genre,
             'structure_model': structure_model,
+            'act_structure': act_structure,
             'aspect_ratio': aspect,
             'target_duration_seconds': target_dur,
             'total_planned_duration_seconds': total_dur,
@@ -2357,6 +2499,7 @@ class Studio:
             clips_to_assemble.append({
                 'media_type': sc['media_type'],
                 'duration_seconds': dur,
+                'path': sc.get('media_path'),
                 'camera_motion': sc['camera_motion'],
                 'scene_heading': sc['scene_heading'],
                 'label': f"Scene {sc['scene_number']}: {sc['scene_heading']} [{sc['camera_motion']}]",
@@ -2367,7 +2510,7 @@ class Studio:
             if sc.get('spoken_summary'):
                 dialogue_parts.append(sc['spoken_summary'])
 
-        total_spoken_dur = sum(c['duration_seconds'] for c in clips_to_assemble)
+        total_spoken_dur = assembled_duration([c['duration_seconds'] for c in clips_to_assemble], trans_dur)
         captions = self.execute(db, 'generate_captions_and_vo_timing', {
             'project_id': a['project_id'],
             'script_text': ' '.join(dialogue_parts) or sp['logline'],
@@ -2407,7 +2550,7 @@ class Studio:
             key_id, key_secret = higgsfield_credentials(self.env)
             return {
                 'name': 'Sun Ad Studio MCP',
-                'version': '0.4.0',
+                'version': '0.4.1',
                 'workspace': 'single trusted owner',
                 'implemented': [
                     'brands', 'projects', 'copy revisions', 'creative briefs',
@@ -2677,7 +2820,7 @@ class Studio:
                 'all_12_require_payment_for_cloud_api': True,
                 'recommended_primary': rankings[0] if rankings else None,
                 'sun_ad_studio_advantage': (
-                    'Under Fred\'s strict $0.00 zero-paid-API rule, Sun Ad Studio v0.4.0 reverse-engineers the best capabilities '
+                    'Under Fred\'s strict $0.00 zero-paid-API rule, Sun Ad Studio v0.4.1 reverse-engineers the best capabilities '
                     'of all 12 platforms locally for $0.00: Pixar 4-act scripting (Hailuo/Sora), Subject Locks (Pika/Kling), '
                     'word-level SRT/VTT captions (Descript/CapCut), multi-ratio safe zones (CapCut), Storytelling Short Films, '
                     'Marketing Short Films (HeyGen/Synthesia/CapCut), Mirroring Masterpieces screenplays with Reference-Film DNA '
@@ -3166,6 +3309,11 @@ class Studio:
         raise ValueError('Unsupported operation')
 
 
+def assembled_duration(durations, transition_seconds):
+    """Runtime after assembly: each transition overlaps two neighbouring clips."""
+    return round(sum(durations) - transition_seconds * max(len(durations) - 1, 0), 3)
+
+
 def make_svg(bundle):
     import textwrap
     c, brand = bundle['revisions'][-1], bundle['brand']
@@ -3212,7 +3360,7 @@ def dispatch(studio, message):
         result = {
             'protocolVersion': params.get('protocolVersion') if params.get('protocolVersion') in VERSIONS else VERSIONS[-1],
             'capabilities': {'tools': {'listChanged': False}},
-            'serverInfo': {'name': 'sun-ad-studio', 'version': '0.4.0'},
+            'serverInfo': {'name': 'sun-ad-studio', 'version': '0.4.1'},
             'instructions': INSTRUCTIONS,
         }
     elif method == 'ping':

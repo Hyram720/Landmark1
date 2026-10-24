@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from server import TOOLS, Studio, dispatch, handler_for, higgsfield_credentials
+from server import PROFESSIONAL_CAMERA_MOTIONS, TOOLS, Studio, dispatch, handler_for, higgsfield_credentials
 
 
 class StudioTests(unittest.TestCase):
@@ -555,7 +555,7 @@ class StudioTests(unittest.TestCase):
             title='Micro Short Film Render Test',
             logline='A fast three-shot narrative test.',
             genre='cinematic_brand_film',
-            target_duration_seconds=30.0,
+            target_duration_seconds=60.0,
             characters=[{'name': 'Scout', 'visual_dna': 'Expressive Pixar terrier with copper fur'}],
             acts=[
                 {'act': 'Act I', 'shot_type': 'Wide', 'media_type': 'video', 'duration_seconds': 2.0, 'dialogue_or_narration': 'Act one begins here.'},
@@ -757,10 +757,130 @@ class StudioTests(unittest.TestCase):
         self.assertTrue(assembled_sp['assembly']['rendered'])
         self.assertTrue(Path(assembled_sp['assembly']['output_mp4_path']).exists())
         self.assertTrue(Path(assembled_sp['captions']['srt_path']).exists())
-        # Verify the camera motion FFmpeg filter expressions are embedded in the executed filter_complex
+        # Verify the time-varying camera motion chains are embedded in the executed filter_complex
         fc = assembled_sp['assembly']['filter_complex']
-        self.assertIn('vignette=PI/6', fc)
-        self.assertIn('unsharp=5:5:0.8:5:5:0.0', fc)
+        self.assertIn('zoompan=', fc)  # crane_reveal / dolly_zoom
+        self.assertIn("gblur=sigma=2.5:enable='lt(t,", fc)  # rack_focus pull
+        self.assertTrue(assembled_sp['assembly']['captions_burned_in'])
+
+    # --- v0.4.1 fixes -----------------------------------------------------------
+
+    def gray_frame(self, path, t, size='64x36'):
+        return subprocess.run(
+            ['ffmpeg', '-v', 'error', '-ss', str(t), '-i', str(path), '-frames:v', '1',
+             '-vf', f'scale={size.replace("x", ":")},format=gray', '-f', 'rawvideo', '-'],
+            capture_output=True, check=True).stdout
+
+    @staticmethod
+    def frame_diff(a, b):
+        return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+
+    def lavfi_file(self, name, source, *extra):
+        path = Path(self.temp.name) / name
+        subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', source, *extra, str(path)],
+                       capture_output=True, check=True)
+        return path
+
+    def test_v041_camera_motions_move_the_frame_over_time(self):
+        p = self.project('video')
+        still = self.lavfi_file('still.png', 'testsrc=s=640x360:d=1', '-frames:v', '1')
+        speed_moves = {'time_lapse', 'slow_motion', 'speed_ramp'}
+        for move in list(PROFESSIONAL_CAMERA_MOTIONS)[:19]:
+            with self.subTest(move=move):
+                out = self.studio.call('assemble_video_clips', dict(
+                    project_id=p['id'], aspect_ratio='16:9', execute_render=True,
+                    clips=[{'path': str(still), 'duration_seconds': 2.0, 'camera_motion': move}],
+                ))['output_mp4_path']
+                change = self.frame_diff(self.gray_frame(out, 0.05), self.gray_frame(out, 1.9))
+                if move == 'locked_off_static' or move in speed_moves:
+                    self.assertLess(change, 1.0)  # a still image has nothing to speed up
+                else:
+                    self.assertGreater(change, 2.0)
+
+        # Speed moves retime real footage: slow motion shows source time t/2 at output time t.
+        moving = self.lavfi_file('moving.mp4', 'testsrc2=s=640x360:r=24:d=4', '-pix_fmt', 'yuv420p')
+        slow = self.studio.call('assemble_video_clips', dict(
+            project_id=p['id'], aspect_ratio='16:9', execute_render=True,
+            clips=[{'path': str(moving), 'duration_seconds': 2.0, 'camera_motion': 'slow_motion'}],
+        ))['output_mp4_path']
+        out_frame = self.gray_frame(slow, 1.0)
+        self.assertLess(self.frame_diff(out_frame, self.gray_frame(moving, 0.5)), 1.0)
+        self.assertGreater(self.frame_diff(out_frame, self.gray_frame(moving, 1.0)), 2.0)
+
+    def test_v041_captions_are_burned_into_the_picture(self):
+        p = self.project('video')
+        black = self.lavfi_file('black.mp4', 'color=c=black:s=640x360:r=24:d=2', '-pix_fmt', 'yuv420p')
+        srt = Path(self.temp.name) / 'line.srt'
+        srt.write_text('1\n00:00:00,000 --> 00:00:02,000\nHELLO WORLD CAPTION\n', encoding='utf-8')
+        base = dict(project_id=p['id'], aspect_ratio='16:9', execute_render=True,
+                    clips=[{'path': str(black)}], srt_caption_path=str(srt))
+        burned = self.studio.call('assemble_video_clips', base)
+        plain = self.studio.call('assemble_video_clips', dict(base, burn_in_captions=False))
+        self.assertTrue(burned['captions_burned_in'])
+        self.assertFalse(plain['captions_burned_in'])
+        self.assertIn('subtitles=', burned['filter_complex'])
+        self.assertNotIn('subtitles=', plain['filter_complex'])
+        # Only the captioned render has bright text pixels on the black frame.
+        self.assertGreater(max(self.gray_frame(burned['output_mp4_path'], 1.0, '320x180')), 150)
+        self.assertLess(max(self.gray_frame(plain['output_mp4_path'], 1.0, '320x180')), 40)
+
+        with self.assertRaisesRegex(ValueError, 'srt_caption_path not found'):
+            self.studio.call('assemble_video_clips', dict(base, srt_caption_path=str(srt) + '.missing'))
+
+    def test_v041_screenplay_structure_models_differ(self):
+        p = self.project('video')
+        results = {}
+        for model in ('three_act_feature', 'five_act_dramatic', 'eight_sequence_cinema'):
+            results[model] = self.studio.call('create_mirroring_masterpiece_screenplay', dict(
+                project_id=p['id'], title='Same Story', logline='A founder rebuilds a legacy.',
+                genre='Drama', structure_model=model, target_duration_seconds=4800.0,
+                reference_masterpieces=['the_godfather_1972'], world_building_notes='Cheyenne archives',
+                characters=[{'name': 'Marcus', 'visual_dna': 'charcoal coat'}],
+            ))
+        acts = {m: {label.split(' — ')[0] for label in r['act_structure']} for m, r in results.items()}
+        self.assertEqual(acts['three_act_feature'], {'ACT I', 'ACT II', 'ACT III'})
+        self.assertEqual(acts['five_act_dramatic'], {'ACT I', 'ACT II', 'ACT III', 'ACT IV', 'ACT V'})
+        self.assertEqual(len(results['eight_sequence_cinema']['act_structure']), 8)
+        self.assertEqual({s['duration_seconds'] for s in results['eight_sequence_cinema']['scenes']}, {600.0})
+        self.assertNotEqual(results['three_act_feature']['scenes'][4]['duration_seconds'],
+                            results['five_act_dramatic']['scenes'][4]['duration_seconds'])
+        for r in results.values():
+            self.assertAlmostEqual(r['total_planned_duration_seconds'], 4800.0, places=1)
+            self.assertIn(f"# {r['act_structure'][-1]}", r['formatted_screenplay_text'])
+        self.assertEqual(len({r['formatted_screenplay_text'].split('FADE IN:')[1] for r in results.values()}), 3)
+
+    def test_v041_short_film_range_real_media_and_camera_motions(self):
+        p = self.project('video')
+        base = dict(project_id=p['id'], title='Range', logline='A tailor finds purpose.', genre='Drama',
+                    characters=[{'name': 'Ana', 'visual_dna': 'green apron'}])
+        for bad in (59.0, 301.0):
+            with self.assertRaisesRegex(ValueError, 'target_duration_seconds'):
+                self.studio.call('create_short_film', dict(base, target_duration_seconds=bad))
+        for ok in (60.0, 300.0):
+            self.assertAlmostEqual(self.studio.call('create_short_film', dict(
+                base, target_duration_seconds=ok))['total_planned_duration_seconds'], ok, places=1)
+
+        # Supplied media is used as-is; only scenes without media_path become placeholder cards,
+        # and each shot's camera_motion reaches the assembler.
+        footage = self.lavfi_file('footage.mp4', 'testsrc2=s=640x360:r=24:d=2', '-pix_fmt', 'yuv420p')
+        film = self.studio.call('create_short_film', dict(base, target_duration_seconds=60.0, acts=[
+            {'act': 'Act I', 'duration_seconds': 2.0, 'camera_motion': 'crane_reveal', 'media_path': str(footage)},
+            {'act': 'Act II', 'duration_seconds': 2.0, 'camera_motion': 'whip_pan', 'media_type': 'image'},
+        ]))
+        assembled = self.studio.call('assemble_short_film', dict(
+            project_id=p['id'], film_id=film['id'], transition_duration_seconds=0.5, execute_render=True))
+        assembly = assembled['assembly']
+        self.assertEqual(assembly['camera_motions_applied'], ['crane_reveal', 'whip_pan'])
+        self.assertEqual([t['is_placeholder'] for t in assembly['timeline']], [False, True])
+        self.assertEqual(assembly['placeholder_clip_count'], 1)
+        self.assertEqual(assembly['timeline'][0]['path'], str(footage.resolve()))
+        # Captions are timed to the assembled runtime (transitions overlap neighbouring shots).
+        self.assertAlmostEqual(assembled['captions']['total_duration_seconds'], 3.5, places=2)
+        self.assertAlmostEqual(assembly['total_output_duration_seconds'], 3.5, places=2)
+
+        with self.assertRaisesRegex(ValueError, 'media file not found'):
+            self.studio.call('assemble_video_clips', dict(
+                project_id=p['id'], execute_render=True, clips=[{'path': str(footage) + '.missing'}]))
 
 
 if __name__ == '__main__':

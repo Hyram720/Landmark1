@@ -1,10 +1,10 @@
-# Sun Ad Studio MCP — Claude Quick-Start & Handoff (`v0.4.0`)
+# Sun Ad Studio MCP — Claude Quick-Start & Handoff (`v0.4.1`)
 
 ## Server Summary
-- **Path:** `/workspace/sun_ad_studio_mcp/server.py`
-- **Version:** `0.4.0`
+- **Path:** `sun_ad_studio_mcp/server.py`
+- **Version:** `0.4.1`
 - **Total MCP Tools:** `39`
-- **Unit Test Suite:** `16/16` passing (`python3 -m unittest discover -s /workspace/sun_ad_studio_mcp/tests -p "test_*.py" -v`)
+- **Unit Test Suite:** `20/20` passing from the repo root (`python3 -m unittest discover -s sun_ad_studio_mcp/tests -p "test_*.py" -v`); rendering tests need `ffmpeg` with libass.
 
 ## How to Test the New Modules in Claude
 
@@ -26,3 +26,12 @@
 ### 4. Multi-Clip Video & Still-Image Assembler + Pixar Problem-Solution Script Creator
 - **`assemble_video_clips`**: Chains any mix of video clips and still images (`all_video`, `all_image`, or `mixed_image_and_video`) with variable durations, per-clip `camera_motion`, and FFmpeg `xfade`/`acrossfade` transitions.
 - **`create_pixar_problem_solution_script`**: 4-act Pixar-style character problem-and-solution script generator.
+
+## v0.4.1 Fixes
+- **Camera motions now move.** Each move builds a time-varying FFmpeg chain sized to the clip (`zoompan` pushes/pulls/pans/cranes, `rotate` for orbit and Dutch tilt, stepped `gblur` for rack focus, `setpts` retiming for `slow_motion` (0.5x), `time_lapse` (4x) and `speed_ramp`). `locked_off_static` stays still. The 10 legacy names (`dolly_in`, `crash_zoom`, ...) render as their professional equivalents.
+- **Captions are burned in.** `assemble_video_clips` burns `srt_caption_path` into the picture (`captions_burned_in` in the result); pass `burn_in_captions=False` to only record it. Film assemblies time their captions to the assembled runtime, which transitions shorten.
+- **Real footage in film modules.** Scenes/acts in `create_short_film`, `create_marketing_short_film` and `create_mirroring_masterpiece_screenplay` accept `media_path`. Scenes without one still render as placeholder colour cards; assemblies report `placeholder_clip_count` / `uses_placeholder_media`. A `path` that does not exist is now an error when rendering instead of silently becoming a placeholder.
+- **Structure models differ.** `three_act_feature`, `five_act_dramatic` (Freytag) and `eight_sequence_cinema` label and time the default scenes differently; see `act_structure` in the result.
+- **Short films are 60s–300s.** `create_short_film` now enforces the documented range.
+- **Short-film shots keep their camera moves** in assembly (previously every shot rendered as `locked_off_static`).
+- **Required fields:** screenplay and short-film characters need `name` and `visual_dna`; `create_project` needs `request_key`.
