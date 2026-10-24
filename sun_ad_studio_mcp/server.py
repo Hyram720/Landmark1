@@ -854,7 +854,7 @@ TOOLS = [
         'project_id': field('Project ID'),
         'hook_id': field('Saved viral hook seed ID')},
         ('project_id', 'hook_id'), read=True),
-    tool('queue_batch_handoffs', 'Prepare a batch of A/B tagged render handoffs across hook seeds while enforcing a hard max_spend_usd cap (#2 & #3).', {
+    tool('queue_batch_handoffs', 'Prepare a batch of A/B tagged render handoffs across hook seeds while enforcing a persistent cumulative project-wide max_spend_usd cap (#2 & #3).', {
         'project_id': field('Project ID'),
         'provider': field('Provider (must be higgsfield for priced batch caps)', maxLength=100),
         'model': field('Higgsfield model ID', maxLength=100),
@@ -863,7 +863,8 @@ TOOLS = [
         'variant_tags': field('Comma-separated variant tags (e.g. var_a,var_b,var_c)', maxLength=1000),
         'hook_id': field('Optional viral hook seed ID applied to the batch', maxLength=120),
         'remix_style': field('Optional remix style tag applied to the batch', maxLength=120),
-        'max_spend_usd': num_field('Hard maximum USD budget for the entire batch', minimum=0.0001, maximum=10000.0),
+        'max_spend_usd': num_field('Cumulative project-wide USD budget cap across all active handoffs on this project (persisted on the project; raising an existing cap requires user_cap_increase_approved=True)', minimum=0.0001, maximum=10000.0),
+        'user_cap_increase_approved': {'type': 'boolean', 'description': 'Set True only when the user explicitly approves raising the project max_spend_usd cap above its saved limit'},
         'request_key': field('Unique retry key for this batch', maxLength=120)},
         ('project_id', 'provider', 'model', 'variant_tags', 'max_spend_usd', 'request_key')),
     tool('record_winner_feedback', 'Record conversion/sales performance for a variant or listing and promote winning hooks in the Viral Hook Library (#4).', {
@@ -2743,10 +2744,18 @@ class Studio:
             new_status = payload.get('status', job['status'])
             job_data = {k: v for k, v in job.items() if k not in ('id', 'created_at')}
             job_data['status'] = new_status
-            if new_status in ('failed', 'nsfw', 'canceled'):
+            if new_status in ('failed', 'nsfw', 'canceled', 'cancelled'):
                 job_data['reserved_usd'] = 0.0
                 job_data['settled_usd'] = 0.0
                 job_data['refunded'] = True
+                if job.get('handoff_id'):
+                    try:
+                        h_rec = self.get(db, job['handoff_id'], 'handoff')
+                        h_upd = {k: v for k, v in h_rec.items() if k not in ('id', 'created_at')}
+                        h_upd['status'] = new_status
+                        self.update_record(db, h_rec['id'], 'handoff', h_upd)
+                    except ValueError:
+                        pass
             elif new_status == 'completed':
                 job_data['settled_usd'] = job_data.get('reserved_usd', 0.0)
                 media_urls = []
@@ -2895,24 +2904,51 @@ class Studio:
                 raise ValueError('At least one variant_tag is required')
             if a['provider'] != 'higgsfield' or a['model'] not in HIGGSFIELD_MODELS:
                 raise ValueError('Batch cost cap requires provider="higgsfield" and a supported HIGGSFIELD_MODELS model')
+            requested_cap = float(a['max_spend_usd'])
+            saved_cap = b['project'].get('max_spend_usd')
+            if saved_cap is not None:
+                saved_cap = float(saved_cap)
+                if requested_cap > saved_cap and a.get('user_cap_increase_approved') is not True:
+                    raise ValueError(
+                        f"Project max_spend_usd cap is locked at ${saved_cap:.4f} USD; "
+                        f"raising it to ${requested_cap:.4f} USD requires explicit user_cap_increase_approved=True"
+                    )
+                effective_cap = requested_cap if (requested_cap > saved_cap and a.get('user_cap_increase_approved') is True) else min(saved_cap, requested_cap)
+            else:
+                effective_cap = requested_cap
             single_quote = quote_higgsfield(
                 a['model'],
                 b['project']['format'],
                 a.get('resolution'),
                 a.get('duration_seconds'),
             )
-            prior_quoted_usd = round(sum(
-                float(h['cost']) for h in b['handoffs']
-                if h.get('cost') is not None and h.get('status') not in ('cancelled', 'canceled', 'rejected')
-            ), 6)
+            terminal_release_statuses = ('cancelled', 'canceled', 'rejected', 'failed', 'nsfw')
+            jobs_by_handoff = {}
+            for j in b.get('jobs', []):
+                if j.get('handoff_id'):
+                    jobs_by_handoff.setdefault(j['handoff_id'], []).append(j)
+            active_handoffs = []
+            for h in b['handoffs']:
+                if h.get('cost') is None or h.get('status') in terminal_release_statuses:
+                    continue
+                h_jobs = jobs_by_handoff.get(h['id'], [])
+                if h_jobs and not any(j.get('status') in ('queued', 'in_progress', 'completed', 'uncertain_timeout') for j in h_jobs):
+                    if all(j.get('status') in terminal_release_statuses or j.get('refunded') is True for j in h_jobs):
+                        continue
+                active_handoffs.append(h)
+            prior_quoted_usd = round(sum(float(h['cost']) for h in active_handoffs), 6)
             total_cost = round(single_quote['cost'] * len(tags), 6)
             cumulative_quoted_usd = round(prior_quoted_usd + total_cost, 6)
-            if cumulative_quoted_usd > float(a['max_spend_usd']):
+            if cumulative_quoted_usd > effective_cap:
                 raise ValueError(
                     f"Cumulative project quoted cost ${cumulative_quoted_usd:.4f} USD "
                     f"(prior ${prior_quoted_usd:.4f} + batch ${total_cost:.4f}) "
-                    f"exceeds max_spend_usd cap of ${float(a['max_spend_usd']):.4f} USD"
+                    f"exceeds max_spend_usd cap of ${effective_cap:.4f} USD"
                 )
+            if saved_cap is None or (requested_cap > saved_cap and a.get('user_cap_increase_approved') is True):
+                proj_upd = {k: v for k, v in b['project'].items() if k not in ('id', 'created_at')}
+                proj_upd['max_spend_usd'] = effective_cap
+                b['project'] = self.update_record(db, b['project']['id'], 'project', proj_upd)
             created = []
             for tag in tags:
                 item_args = {
@@ -2932,8 +2968,8 @@ class Studio:
                 'prior_quoted_usd': prior_quoted_usd,
                 'total_quoted_usd': total_cost,
                 'cumulative_quoted_usd': cumulative_quoted_usd,
-                'remaining_budget_usd': round(float(a['max_spend_usd']) - cumulative_quoted_usd, 6),
-                'max_spend_usd': float(a['max_spend_usd']),
+                'remaining_budget_usd': round(effective_cap - cumulative_quoted_usd, 6),
+                'max_spend_usd': effective_cap,
                 'handoffs': created,
             }
         if name == 'record_winner_feedback':

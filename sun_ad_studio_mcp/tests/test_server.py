@@ -303,6 +303,70 @@ class StudioTests(unittest.TestCase):
                 request_key='batch-cumulative-exceeded',
             ))
 
+        # Gap 1: A later call cannot raise the project cap without user_cap_increase_approved=True
+        with self.assertRaisesRegex(ValueError, 'requires explicit user_cap_increase_approved=True'):
+            self.studio.call('queue_batch_handoffs', dict(
+                project_id=p['id'],
+                provider='higgsfield',
+                model='pixverse/v6/image-to-video',
+                resolution='720p',
+                duration_seconds=5,
+                variant_tags='hook_d,hook_e',
+                hook_id=hook['id'],
+                remix_style='16bit_arcade_boss',
+                max_spend_usd=50.00,
+                request_key='batch-unauthorized-cap-raise',
+            ))
+
+        # Gap 2: When a submitted handoff render job is canceled/failed, its reserved budget is released
+        self.studio.env['HF_KEY'] = 'kid:ksec'
+        def fake_cancel_transport(method, url, headers=None, json_body=None, timeout=20):
+            if method == 'POST':
+                return {'status': 200, 'headers': {}, 'body': b'{"request_id":"req-c1","status":"queued","status_url":"https://api.higgsfield.ai/requests/req-c1/status"}'}
+            return {'status': 200, 'headers': {}, 'body': b'{"status":"canceled"}'}
+        self.studio.transport = fake_cancel_transport
+        sub_job = self.studio.call('submit_render_job', dict(
+            handoff_id=batch['handoffs'][0]['id'],
+            user_spend_approved=True,
+            request_key='sub-c1',
+        ))
+        polled = self.studio.call('check_render_job', dict(job_id=sub_job['id']))
+        self.assertEqual(polled['status'], 'canceled')
+        self.assertTrue(polled['refunded'])
+
+        # Now prior active spend is $0.51 (2 active handoffs), so 1 replacement ($0.255) fits under $1.00 cap ($0.765 total)
+        replacement = self.studio.call('queue_batch_handoffs', dict(
+            project_id=p['id'],
+            provider='higgsfield',
+            model='pixverse/v6/image-to-video',
+            resolution='720p',
+            duration_seconds=5,
+            variant_tags='hook_replacement',
+            hook_id=hook['id'],
+            remix_style='16bit_arcade_boss',
+            max_spend_usd=1.00,
+            request_key='batch-after-cancel-refund',
+        ))
+        self.assertAlmostEqual(replacement['prior_quoted_usd'], 0.51, places=4)
+        self.assertAlmostEqual(replacement['cumulative_quoted_usd'], 0.765, places=4)
+
+        # And raising the cap with explicit user_cap_increase_approved=True succeeds and persists the new cap
+        raised = self.studio.call('queue_batch_handoffs', dict(
+            project_id=p['id'],
+            provider='higgsfield',
+            model='pixverse/v6/image-to-video',
+            resolution='720p',
+            duration_seconds=5,
+            variant_tags='hook_d,hook_e',
+            hook_id=hook['id'],
+            remix_style='16bit_arcade_boss',
+            max_spend_usd=1.50,
+            user_cap_increase_approved=True,
+            request_key='batch-approved-cap-raise',
+        ))
+        self.assertAlmostEqual(raised['cumulative_quoted_usd'], 1.275, places=4)
+        self.assertAlmostEqual(raised['max_spend_usd'], 1.50, places=4)
+
         fb = self.studio.call('record_winner_feedback', dict(
             project_id=p['id'],
             hook_id=hook['id'],
