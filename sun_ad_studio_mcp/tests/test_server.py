@@ -350,6 +350,16 @@ class StudioTests(unittest.TestCase):
         self.assertAlmostEqual(replacement['prior_quoted_usd'], 0.51, places=4)
         self.assertAlmostEqual(replacement['cumulative_quoted_usd'], 0.765, places=4)
 
+        # Queue 1 more replacement ($0.255) to bring active spend to $1.02? No, under $1.00 cap, let us raise cap to $0.90? Wait:
+        # Currently active spend is $0.765 (3 active handoffs x $0.255) and project cap is $1.00.
+        # Resubmitting the canceled handoff ($0.255) would bring active spend to $0.765 + $0.255 = $1.02 > $1.00 cap, so submit_render_job rejects it!
+        with self.assertRaisesRegex(ValueError, 'exceeding project max_spend_usd cap'):
+            self.studio.call('submit_render_job', dict(
+                handoff_id=batch['handoffs'][0]['id'],
+                user_spend_approved=True,
+                request_key='sub-c1-resubmit-over-cap',
+            ))
+
         # And raising the cap with explicit user_cap_increase_approved=True succeeds and persists the new cap
         raised = self.studio.call('queue_batch_handoffs', dict(
             project_id=p['id'],

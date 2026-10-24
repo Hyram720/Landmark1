@@ -1238,6 +1238,25 @@ class Studio:
                            (name, args['request_key'], digest, json.dumps(result)))
             return result
 
+    def _active_project_spend(self, b, exclude_handoff_id=None):
+        terminal_release_statuses = ('cancelled', 'canceled', 'rejected', 'failed', 'nsfw')
+        jobs_by_handoff = {}
+        for j in b.get('jobs', []):
+            if j.get('handoff_id'):
+                jobs_by_handoff.setdefault(j['handoff_id'], []).append(j)
+        active_handoffs = []
+        for h in b.get('handoffs', []):
+            if exclude_handoff_id and h.get('id') == exclude_handoff_id:
+                continue
+            if h.get('cost') is None or h.get('status') in terminal_release_statuses:
+                continue
+            h_jobs = jobs_by_handoff.get(h['id'], [])
+            if h_jobs and not any(j.get('status') in ('queued', 'in_progress', 'completed', 'uncertain_timeout') for j in h_jobs):
+                if all(j.get('status') in terminal_release_statuses or j.get('refunded') is True for j in h_jobs):
+                    continue
+            active_handoffs.append(h)
+        return round(sum(float(h['cost']) for h in active_handoffs), 6)
+
     def _build_handoff_record(self, db, b, a):
         if not b['revisions']:
             raise ValueError('Save copy before preparing a handoff')
@@ -2642,10 +2661,23 @@ class Studio:
                 raise ValueError('Handoff must use provider="higgsfield" with a valid model and quoted USD cost')
             if handoff['project_snapshot']['format'] == 'video' and not handoff.get('image_approval_snapshot'):
                 raise ValueError('Video render job requires an approved starting image snapshot')
-            existing_jobs = [j for j in self.listing(db, 'render_job', handoff['project_snapshot']['id'])
+            proj_id = handoff['project_snapshot']['id']
+            existing_jobs = [j for j in self.listing(db, 'render_job', proj_id)
                              if j['handoff_id'] == handoff['id'] and j['status'] in ('queued', 'in_progress', 'completed')]
             if existing_jobs:
                 return existing_jobs[-1]
+            proj_bundle = self.bundle(db, proj_id)
+            saved_cap = proj_bundle['project'].get('max_spend_usd')
+            if saved_cap is not None:
+                saved_cap = float(saved_cap)
+                other_active_usd = self._active_project_spend(proj_bundle, exclude_handoff_id=handoff['id'])
+                projected_usd = round(other_active_usd + float(handoff['cost']), 6)
+                if projected_usd > saved_cap:
+                    raise ValueError(
+                        f"Submitting handoff would bring cumulative project spend to ${projected_usd:.4f} USD "
+                        f"(active ${other_active_usd:.4f} + render ${float(handoff['cost']):.4f}), "
+                        f"exceeding project max_spend_usd cap of ${saved_cap:.4f} USD"
+                    )
             key_id, key_secret = higgsfield_credentials(self.env)
             if not (key_id and key_secret):
                 raise ValueError('Higgsfield credentials not configured; set HF_KEY (id:secret) or HF_API_KEY_ID and HF_KEY_SECRET')
@@ -2922,21 +2954,7 @@ class Studio:
                 a.get('resolution'),
                 a.get('duration_seconds'),
             )
-            terminal_release_statuses = ('cancelled', 'canceled', 'rejected', 'failed', 'nsfw')
-            jobs_by_handoff = {}
-            for j in b.get('jobs', []):
-                if j.get('handoff_id'):
-                    jobs_by_handoff.setdefault(j['handoff_id'], []).append(j)
-            active_handoffs = []
-            for h in b['handoffs']:
-                if h.get('cost') is None or h.get('status') in terminal_release_statuses:
-                    continue
-                h_jobs = jobs_by_handoff.get(h['id'], [])
-                if h_jobs and not any(j.get('status') in ('queued', 'in_progress', 'completed', 'uncertain_timeout') for j in h_jobs):
-                    if all(j.get('status') in terminal_release_statuses or j.get('refunded') is True for j in h_jobs):
-                        continue
-                active_handoffs.append(h)
-            prior_quoted_usd = round(sum(float(h['cost']) for h in active_handoffs), 6)
+            prior_quoted_usd = self._active_project_spend(b)
             total_cost = round(single_quote['cost'] * len(tags), 6)
             cumulative_quoted_usd = round(prior_quoted_usd + total_cost, 6)
             if cumulative_quoted_usd > effective_cap:
