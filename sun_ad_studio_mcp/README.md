@@ -25,4 +25,4 @@ A dependency-free Python Model Context Protocol (MCP) server for **Sun Marketing
 python3 -m unittest discover -s sun_ad_studio_mcp/tests -p "test_*.py" -v
 ```
 
-Run from the repository root. All **20/20 unit tests** pass offline with `$0.00` paid API spend (requires `ffmpeg` with libass on `PATH`).
+Run from the repository root. All **21/21 unit tests** pass offline with `$0.00` paid API spend (requires `ffmpeg` with libass on `PATH`).

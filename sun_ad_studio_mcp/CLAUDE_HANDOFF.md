@@ -4,7 +4,7 @@
 - **Path:** `sun_ad_studio_mcp/server.py`
 - **Version:** `0.4.1`
 - **Total MCP Tools:** `39`
-- **Unit Test Suite:** `20/20` passing from the repo root (`python3 -m unittest discover -s sun_ad_studio_mcp/tests -p "test_*.py" -v`); rendering tests need `ffmpeg` with libass.
+- **Unit Test Suite:** `21/21` passing from the repo root (`python3 -m unittest discover -s sun_ad_studio_mcp/tests -p "test_*.py" -v`); rendering tests need `ffmpeg` with libass.
 
 ## How to Test the New Modules in Claude
 
@@ -33,5 +33,6 @@
 - **Real footage in film modules.** Scenes/acts in `create_short_film`, `create_marketing_short_film` and `create_mirroring_masterpiece_screenplay` accept `media_path`. Scenes without one still render as placeholder colour cards; assemblies report `placeholder_clip_count` / `uses_placeholder_media`. A `path` that does not exist is now an error when rendering instead of silently becoming a placeholder.
 - **Structure models differ.** `three_act_feature`, `five_act_dramatic` (Freytag) and `eight_sequence_cinema` label and time the default scenes differently; see `act_structure` in the result.
 - **Short films are 60s–300s.** `create_short_film` now enforces the documented range.
+- **Screenplay page estimate measures the script.** `estimated_screenplay_pages` counts formatted screenplay lines (~55 per page); the requested runtime is in `target_runtime_minutes`.
 - **Short-film shots keep their camera moves** in assembly (previously every shot rendered as `locked_off_static`).
 - **Required fields:** screenplay and short-film characters need `name` and `visual_dna`; `create_project` needs `request_key`.
