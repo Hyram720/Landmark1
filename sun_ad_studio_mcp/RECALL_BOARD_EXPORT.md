@@ -95,3 +95,29 @@ Goal: Grow sales and search visibility for Fred's sites with help-first, problem
 - task #57 · in_progress · lead: champ · marketing: Sun Ad Studio #4 — Top-Seller Conversion Feedback Loop (Check 6 PM ET Oct 24) [Implemented via record_winner_feedback]
 - task #58 · in_progress · lead: champ · marketing: Sun Ad Studio #3 — A/B Variant & Remix Hook Tagging (Check 6 PM ET Oct 24) [Implemented via vibe_direct_brief & prepare_render_handoff]
 ```
+
+
+---
+
+## Updated Snapshot (2026-10-24 3:42 PM ET — Tasks #53 and #55–#60 All Closed `done`)
+
+### `fetch("task-60")`
+```text
+task #60 · done · lead: champ · marketing: Fred to confirm 5 new-device sign-ins Oct 24 12:11-1:08 PM ET (Stripe, Vercel, Supabase Cursor OAuth, Link, Higgsfield) (created by grok, updated 2026-10-24 19:38, v2)
+
+All from an iPhone (Mobile Safari, Coatesville PA), looks like Fred. Supabase alert: OAuth app "Cursor" authorized by Hyram720 for Hyram720's Org. Next: Fred confirms at 6 PM wrap-up; if not him, he uses Stripe's unrecognized-device link, revokes the app in Supabase org apps, reviews Vercel activity/tokens. Champ changes nothing.
+
+History:
+#145 2026-10-24 18:16 grok [task] Created task #60: Fred to confirm 5 new-device sign-ins Oct 24 12:11-1:08 PM ET (Stripe, Vercel, Supabase Cursor OAuth, Link, Higgsfield) (lead: champ) (marketing)
+#154 2026-10-24 19:38 grok [task] Task #60 (in_progress -> done): Closed: Fred confirmed at 3:38 PM ET on 2026-10-24 that all five Coatesville, PA iPhone sign-ins between 12:11 and 1:08 PM ET today (Stripe, Vercel, Link, Higgsfield, and the Cursor OAuth authorization on Supabase) were him. (marketing)
+#155 2026-10-24 19:38 grok [update] task #60: Closed task #60 as done: Fred confirmed at 3:38 PM ET today that all five Coatesville, PA iPhone sign-ins between 12:11 and 1:08 PM ET (Stripe, Vercel, Link, Higgsfield, and the Cursor OAuth app on Supabase) were him. All open tasks from the Sun Ad Studio & security check (#53, #55-#60) are now done. (marketing)
+```
+
+### Recently Done (`#53`, `#55`–`#60`)
+- `task #60 · done` — Fred confirmed at 3:38 PM ET (`[t1864u]`: `"yes"`) that all 5 Coatesville, PA iPhone sign-ins (Stripe, Vercel, Link, Higgsfield, and the Supabase Cursor OAuth app) were his.
+- `task #59 · done` — Sun Ad Studio v0.3.0–v0.4.1 (`39` tools, `21/21` unit tests passing, `$0.00` paid API spend).
+- `task #58 · done` — Sun Ad Studio #3 — A/B Variant & Remix Hook Tagging + 3-module film & screenplay suite (`Storytelling Short Films`, `Marketing Short Films`, `Mirroring Masterpieces`).
+- `task #57 · done` — Sun Ad Studio #4 — Top-Seller Conversion Feedback Loop + Multi-Clip Video Assembler + Pixar 4-Act Script Creator.
+- `task #56 · done` — Sun Ad Studio #2 — Batch Generation with Cost Caps (persistent project-wide `max_spend_usd` cap, `user_cap_increase_approved=True` gate, failed/canceled render budget release, and `submit_render_job` resubmit cap enforcement in `0a1b965`).
+- `task #55 · done` — Sun Ad Studio #1 — Viral Hook Library MCP Tool (`save_hook_seed`, `pull_hook_seeds`, `vibe_direct_brief`).
+- `task #53 · done` — JohnnyTube Viral-Ad Remix / Vibe Directing integration plan wired into Sun Ad Studio MCP.
