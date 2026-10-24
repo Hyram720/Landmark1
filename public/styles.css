@@ -166,3 +166,21 @@ ul.trust { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-t
 table.dates { width: 100%; border-collapse: collapse; background: var(--card); }
 table.dates th, table.dates td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
 .hero-frame img, .tile img, .ba img { height: auto; }
+
+/* --- SunCustomDesigns Flagship Apparel Drop --- */
+.apparel-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; margin-top: 18px; }
+.apparel-card { background: var(--card); border: 2px solid var(--gold); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 10px 28px rgba(43, 33, 24, .12); }
+.apparel-img-wrap { position: relative; background: #181411; padding: 14px; text-align: center; }
+.apparel-img-wrap img { width: 100%; aspect-ratio: 4 / 5; object-fit: contain; border-radius: 10px; margin: 0 auto; }
+.apparel-badge { display: inline-block; background: var(--accent); color: #fff; font-size: 12px; font-weight: bold; letter-spacing: .5px; padding: 5px 12px; border-radius: 999px; margin-bottom: 8px; text-transform: uppercase; }
+.apparel-ship { display: inline-block; background: #eef8f3; color: #0f6848; border: 1px solid #a6dec8; font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 999px; margin-bottom: 8px; margin-left: 6px; }
+.apparel-body { padding: 20px; display: flex; flex-direction: column; flex: 1; }
+.apparel-body h3 { margin: 4px 0 6px; font-size: 21px; line-height: 1.25; }
+.apparel-sub { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+.apparel-price { font-size: 26px; font-weight: bold; color: var(--ink); margin: 4px 0 12px; }
+.apparel-price s { color: var(--muted); font-size: 17px; font-weight: normal; margin-right: 6px; }
+.apparel-price small { display: block; font-size: 13px; color: var(--muted); font-weight: normal; margin-top: 2px; }
+.apparel-body .btn { margin-top: auto; text-align: center; }
+@media (max-width: 760px) {
+  .apparel-grid { grid-template-columns: 1fr; }
+}
