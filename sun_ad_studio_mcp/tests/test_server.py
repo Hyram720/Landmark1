@@ -883,5 +883,23 @@ class StudioTests(unittest.TestCase):
                 project_id=p['id'], execute_render=True, clips=[{'path': str(footage) + '.missing'}]))
 
 
+
+    def test_v041_estimated_screenplay_pages_tracks_text_length_not_runtime(self):
+        p = self.project('video')
+        sp_short_text_long_runtime = self.studio.call('create_mirroring_masterpiece_screenplay', dict(
+            project_id=p['id'],
+            title='Silent Horizon',
+            logline='A lone watchkeeper waits out a 90-minute storm across eight sequences.',
+            genre='Drama',
+            target_duration_seconds=5400.0,
+            reference_masterpieces=['the_godfather_1972'],
+            world_building_notes='Cheyenne archives',
+            characters=[{'name': 'Marcus', 'visual_dna': 'charcoal coat'}],
+        ))
+        self.assertEqual(sp_short_text_long_runtime['target_runtime_minutes'], 90.0)
+        self.assertLess(sp_short_text_long_runtime['estimated_screenplay_pages'], 10.0)
+        self.assertGreaterEqual(sp_short_text_long_runtime['estimated_screenplay_pages'], 1.0)
+
+
 if __name__ == '__main__':
     unittest.main()

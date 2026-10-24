@@ -2443,6 +2443,17 @@ class Studio:
 
         total_dur = round(sum(s['duration_seconds'] for s in normalized_scenes), 2)
         full_dialogue_text = ' '.join(all_dialogue_lines)
+        body_lines = fountain_lines[7:]
+        wrapped_line_count = 0
+        for raw_ln in body_lines:
+            stripped_ln = raw_ln.strip()
+            if not stripped_ln:
+                wrapped_line_count += 1
+            elif raw_ln.startswith('          ') and not raw_ln.startswith('                    '):
+                wrapped_line_count += max(1, ((len(stripped_ln) + 34) // 35))
+            else:
+                wrapped_line_count += max(1, ((len(stripped_ln) + 59) // 60))
+        estimated_pages = round(max(1.0, wrapped_line_count / 55.0), 1)
 
         return self.put(db, 'mirroring_masterpiece', {
             'module_name': 'Mirroring Masterpieces',
@@ -2455,7 +2466,8 @@ class Studio:
             'aspect_ratio': aspect,
             'target_duration_seconds': target_dur,
             'total_planned_duration_seconds': total_dur,
-            'estimated_screenplay_pages': max(1, round(total_dur / 60.0, 1)),
+            'target_runtime_minutes': round(total_dur / 60.0, 2),
+            'estimated_screenplay_pages': estimated_pages,
             'reference_masterpieces': refs,
             'inspiration_dna_synthesis': {
                 'mirrored_titles': [r['title'] for r in refs],
