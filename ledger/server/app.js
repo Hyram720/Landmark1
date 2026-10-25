@@ -654,7 +654,11 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const from = parseAddress(c.name, [c.address, `${c.city || ''}, ${c.state || ''} ${c.zip || ''}`].join('\n'));
     if (!from) return res.status(400).json({ error: 'The client’s mailing address is incomplete (street, city, state, ZIP)' });
     const { service, includeId } = req.body || {};
-    const extraService = ['certified', 'certified_return_receipt'].includes(service) ? service : null;
+    // Explicit choice wins ('none' = first-class). With no valid choice, letters to Equifax, Experian or
+    // TransUnion default to certified mail with return receipt so proof of receipt is never lost.
+    const extraService = ['certified', 'certified_return_receipt'].includes(service) ? service
+      : service === 'none' ? null
+      : Law.BUREAUS[d.recipient] ? 'certified_return_receipt' : null;
     const images = [];
     if (includeId) {
       ['id', 'address'].forEach(t => {
