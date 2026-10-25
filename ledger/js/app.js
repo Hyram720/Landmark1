@@ -258,7 +258,7 @@
         ${c.kind === 'business' ? '' : bizBlock}
         ${field('Referred by', 'referralId', c.referralId, { type: 'select', options: [['', '—']].concat(S().referrals.map(r => [r.id, r.name])) })}
         ${field('Billing', 'billingModel', c.billingModel || 'inherit', { type: 'select', options: [['inherit', 'Use the company default']].concat(root.Billing.MODELS) })}
-        ${field('Credit monitoring service', 'monitoring', c.monitoring || '', { type: 'select', options: ['', 'MyFreeScoreNow', 'IdentityIQ', 'SmartCredit', 'MyScoreIQ', 'Other'] , help: 'Where the client gets their monthly 3-bureau report' })}
+        ${field('Credit monitoring service', 'monitoring', c.monitoring || '', { type: 'select', options: ['', 'MyCreditIQ', 'MyFreeScoreNow', 'IdentityIQ', 'SmartCredit', 'MyScoreIQ', 'Other'] , help: 'Where the client gets their monthly 3-bureau report' })}
         <label class="check span2"><input type="checkbox" name="shareWithReferrer" ${c.shareWithReferrer ? 'checked' : ''}> Client agreed to share their progress with the person who referred them</label>
         ${field('Notes', 'notes', c.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Delete client</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
@@ -950,7 +950,11 @@
       onSubmit: d => { if (!d.title) return false; S().tasks.push({ id: Store.uid(), title: d.title, clientId: d.clientId || null, due: d.due, done: false, createdAt: Store.now() }); commit('Task added: ' + d.title, d.clientId); }
     }),
     'toggle-task': el => { const t = S().tasks.find(x => x.id === el.dataset.id); t.done = true; commit('Completed task: ' + t.title, t.clientId); },
-    'add-report': el => reportModal(el.dataset.id),
+    'add-report': el => {
+      reportModal(el.dataset.id);
+      const src = el.dataset.source && document.querySelector('.modal [name="source"], [name="source"]');
+      if (src && !src.value) src.value = el.dataset.source;
+    },
     'edit-report': el => { const r = Store.get.report(el.dataset.id); reportModal(r.clientId, r); },
     'delete-report': el => { const r = Store.get.report(el.dataset.id); if (!UI.ask(`Delete the ${r.bureau} report dated ${r.date}?`)) return; S().reports = S().reports.filter(x => x.id !== r.id); commit(`Deleted ${r.bureau} report`, r.clientId); },
     'edit-tradeline': el => tradelineModal(el.dataset.report, el.dataset.id),
@@ -1165,7 +1169,7 @@
     }
     modal({
       title: type === 'report' ? `Upload credit report — ${c.name}` : `Upload document — ${c.name}`,
-      body: `${field('Document type', 'type', type || 'other', { type: 'select', options: [['report', 'Credit report (MyFreeScoreNow, IdentityIQ, SmartCredit PDF/HTML)'], ['id', 'Photo ID'], ['address', 'Proof of address'], ['bureau-response', 'Bureau / furnisher response'], ['agreement', 'Signed agreement'], ['other', 'Other']] })}
+      body: `${field('Document type', 'type', type || 'other', { type: 'select', options: [['report', 'Credit report (MyCreditIQ, MyFreeScoreNow, IdentityIQ, SmartCredit PDF/HTML)'], ['id', 'Photo ID'], ['address', 'Proof of address'], ['bureau-response', 'Bureau / furnisher response'], ['agreement', 'Signed agreement'], ['other', 'Other']] })}
         <div style="height:12px"></div><label class="field"><span>File</span><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.html,.htm,.csv,.json,.txt"><small>PDF, image, HTML, CSV or JSON up to 15 MB. Stored encrypted when LEDGER_ENCRYPTION_KEY is set.</small></label>
         ${type === 'report' ? '<div class="callout" style="margin-top:12px">After uploading, add the report’s tradelines (by hand or CSV) so the Metro 2 audit can run. Automatic parsing of each provider’s report format can be added once sample exports are available.</div>' : ''}`,
       foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Upload</button>',

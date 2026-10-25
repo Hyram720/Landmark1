@@ -4,6 +4,20 @@
   const { esc, date, field, toast, DSTATE } = UI;
   const root = document.getElementById('portal');
 
+  // MyCreditIQ has no connection for other apps, so the client downloads the report there and uploads it here.
+  function mciqCard(me) {
+    const src = (me.reportSources || {}).mycreditiq;
+    if (!src || !/^https:\/\//.test(src.url || '')) return '';
+    return `<section class="card"><div class="card-h"><div><h2>Get your credit report from MyCreditIQ</h2><p>MyCreditIQ can’t send your report to us automatically, so it takes two steps: download it there, then upload it here.</p></div></div><div class="card-b stack">
+        <ol class="small" style="margin:0 0 0 18px;display:grid;gap:6px">
+          <li>Click <b>Open MyCreditIQ</b>. It opens in a new tab. Sign in or sign up there with your own details. We never see your MyCreditIQ password.</li>
+          <li>Open your full credit report.</li>
+          <li>Save it as a <b>PDF</b>: use the site’s Download or Print button, or press Ctrl+P (⌘P on a Mac) and choose <b>Save as PDF</b>. A saved web page (.html) also works.</li>
+          <li>Come back here and upload the file below.</li></ol>
+        <div class="row"><a class="btn" href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">Open MyCreditIQ ↗</a></div>
+        <form id="mciq-up" class="row" style="flex-wrap:wrap"><input type="file" name="file" accept=".pdf,.html,.htm" style="width:auto;flex:1"><button class="btn primary">Upload my MyCreditIQ report</button></form>
+        <p class="small muted">Your report is stored securely and only our team can see it. Getting your report doesn’t guarantee any change to your credit.</p></div></section>`;
+  }
   async function api(method, url, body) {
     const r = await fetch(url, { method, credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
     const data = (r.headers.get('content-type') || '').includes('json') ? await r.json() : null;
@@ -100,9 +114,10 @@
         ${signBlock('Credit services agreement', 'contract', me.documents.contract + '\n\n' + me.documents.cancellation, cr.contractSigned, !cr.disclosureSigned, me.client.name)}` : ''}
       ${scoreRows ? `<section class="card"><div class="card-h"><div><h2>Score movement</h2><p>From the reports on your file. Scores vary by model and bureau and can go up or down.</p></div></div><div class="card-b stack"><div class="grid g3">${scoreRows}</div>${history}</div></section>` : ''}
       ${me.wins && me.wins.length ? `<section class="card"><div class="card-h"><div><h2>🎉 Results so far</h2><p>${me.wins.length} item(s) removed or corrected</p></div></div><div class="card-b flush"><ul class="list">${me.wins.map(w => `<li><span class="badge ${w.result === 'deleted' ? 'b-ok' : 'b-info'}">${w.result === 'deleted' ? 'Removed' : 'Corrected'}</span><div class="grow"><b>${esc(w.creditor)}</b> · ${esc(w.bureau)}<div class="meta">${w.at ? date(w.at) : ''}</div></div></li>`).join('')}</ul></div></section>` : ''}
+      ${mciqCard(me)}
       <section class="card"><div class="card-h"><div><h2>Your documents</h2><p>Upload a photo ID, proof of address, and any letters you get from the bureaus</p></div></div><div class="card-b stack">
-        ${me.uploads.length ? `<ul class="list" style="margin:-16px -18px 0">${me.uploads.map(u => `<li><div class="grow"><b>${esc(u.name)}</b><div class="meta">${esc(u.type)} · ${date(u.uploadedAt)}</div></div><a class="btn sm" href="/api/files/${u.id}">Download</a></li>`).join('')}</ul>` : ''}
-        <form id="up" class="row" style="flex-wrap:wrap"><select name="type" style="width:auto"><option value="id">Photo ID</option><option value="address">Proof of address</option><option value="bureau-response">Letter from a bureau or creditor</option><option value="report">Credit report</option></select><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="width:auto;flex:1"><button class="btn primary">Upload</button></form></div></section>
+        ${me.uploads.length ? `<ul class="list" style="margin:-16px -18px 0">${me.uploads.map(u => `<li><div class="grow"><b>${esc(u.name)}</b><div class="meta">${esc(u.type)}${u.source ? ' from ' + esc(u.source) : ''} · ${date(u.uploadedAt)}</div></div><a class="btn sm" href="/api/files/${u.id}">Download</a></li>`).join('')}</ul>` : ''}
+        <form id="up" class="row" style="flex-wrap:wrap"><select name="type" style="width:auto"><option value="id">Photo ID</option><option value="address">Proof of address</option><option value="bureau-response">Letter from a bureau or creditor</option><option value="report">Credit report</option></select><input type="file" name="file" accept=".pdf,.html,.htm,.png,.jpg,.jpeg,.webp" style="width:auto;flex:1"><button class="btn primary">Upload</button></form></div></section>
       <section class="card"><div class="card-h"><h2>Your disputes</h2></div><div class="card-b flush">${disputes}</div></section>
       ${me.business ? `<section class="card"><div class="card-h"><h2>Business credit${me.business.name ? ' — ' + esc(me.business.name) : ''}</h2></div><div class="card-b small">${Object.keys(me.business.checklist).length} foundation items complete. ${me.business.scores.length ? 'Latest scores: ' + me.business.scores.slice(-3).map(s => esc(s.model) + ' ' + esc(s.score)).join(' · ') : ''}</div></section>` : ''}
       <section class="card"><div class="card-h"><div><h2>Recommended for you</h2><p>Optional products that may help your goals</p></div></div><div class="card-b flush">${recs}</div></section>
@@ -126,6 +141,14 @@
       const fd = new FormData(); fd.append('type', f.elements.type.value); fd.append('file', f.elements.file.files[0]);
       const r = await fetch('/api/portal/files', { method: 'POST', body: fd, credentials: 'same-origin' });
       const j = await r.json(); if (!r.ok) return toast(j.error); toast('Uploaded — thank you'); load();
+    });
+    const mf = document.getElementById('mciq-up');
+    if (mf) mf.addEventListener('submit', async e => {
+      e.preventDefault();
+      const file = mf.elements.file.files[0]; if (!file) return toast('Choose the report file you downloaded from MyCreditIQ');
+      const fd = new FormData(); fd.append('type', 'report'); fd.append('source', 'MyCreditIQ'); fd.append('file', file);
+      const r = await fetch('/api/portal/files', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const j = await r.json(); if (!r.ok) return toast(j.error); toast('Report received — thank you. Our team will review it.'); load();
     });
     bindCoach();
     const nt = document.getElementById('notify');

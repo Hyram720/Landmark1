@@ -111,6 +111,21 @@ Affiliate terms change often and third-party listings disagree. Treat these as s
 - Referral fees from a partner aren't fees charged to the consumer, but don't let them influence advice.
 - Paying or receiving referral fees connected to mortgages can trigger RESPA. Check with counsel.
 
+## 5. Getting a report from MyCreditIQ (researched 20 Oct 2026)
+
+Ledger has a **Get report from MyCreditIQ** flow: a button on the client's Documents tab (staff) and a card in the client portal. It opens MyCreditIQ in a new tab, shows how to save the report as a PDF or HTML page, and has an upload box. The file is stored under the client's Documents as a credit report tagged `source: "MyCreditIQ"`. With AI scanning on, it goes through the same redacted AI scan as any other report. With it off, staff get a task to add the accounts by hand or from a CSV.
+
+**Why the report can't come back on its own.** We found no public API, partner feed, webhook or affiliate program for mycreditiq.com. On 20 Oct 2026 the site didn't load from our servers (TLS errors and timeouts; a fetch service returned 504). Public DNS shows the domain on shared DirectNIC hosting, and the most recent Internet Archive snapshot is from April 2016. We couldn't confirm a working signup URL, so `MYCREDITIQ_URL` is configurable.
+
+**How other software does it, for comparison:**
+- IDIQ (IdentityIQ, MyScoreIQ) has a partner API: a partner ID and secret get a token, and a member token gets the latest report. Access comes through a partner agreement with IDIQ.
+- SmartCredit uses a partner API key and secret.
+- MyFreeScoreNow uses a per-client token from its affiliate dashboard.
+- Several tools also log in with the client's own username and password. Ledger does **not** do this: it would mean storing client passwords and acting as the client on a third-party site.
+- Every one of these tools falls back to a manual HTML/PDF upload, which is what Ledger does.
+
+**Parser.** Ledger has no provider-specific parser. Reports are read by the AI scan, which works with any provider. TODO: if MyCreditIQ turns out to be live and a real (redacted) sample export is available, consider a local parser. Don't write one from guesses about its format.
+
 ## Sources
 
 - [15 U.S.C. § 1679c — CROA disclosures (Cornell LII)](https://www.law.cornell.edu/uscode/text/15/1679c)
@@ -129,3 +144,11 @@ Affiliate terms change often and third-party listings disagree. Treat these as s
 Partner programs: [CreditStrong refer-a-friend](https://www.creditstrong.com/refer-a-friend/) · [CreditStrong business FAQ](https://www.creditstrong.com/business/business-faq) · [Nav partner program](https://www.nav.com/partner-program/) · [Nav (Lasso)](https://getlasso.co/affiliate/nav/) · [Credit Sesame (Commissiondex)](https://commissiondex.com/programs/credit-sesame/) · [Credit Sesame (UpPromote)](https://uppromote.com/affiliate-program-directory/credit-sesame/) · [Credit Sesame review (Creator Hero)](https://www.creator-hero.com/blog/credit-sesame-affiliate-program-in-depth-review-pros-and-cons) · [Kikoff affiliates](https://about.kikoff.com/affiliate) · [Self (FlexOffers)](https://www.flexoffers.com/affiliate-programs/self-inc-affiliate-program) · [IDIQ affiliate partners](https://www.idiq.com/partnerships/affiliate-partners) · [IdentityIQ (Awin)](https://ui.awin.com/merchant-profile/18765) · [MyFreeScoreNow (Lasso)](https://getlasso.co/affiliate/myfreescorenow-com/) · [MyFreeScoreNow (FlexOffers)](https://www.flexoffers.com/affiliate-programs/myfreescorenow-com-affiliate-program/) · [SmartCredit (FlexOffers)](https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/)
 
 The official CRRG is licensed by CDIA. Buy the current edition before relying on exact code tables or field positions in production.
+- [mycreditiq.com DNS records (dns.ninja)](https://dns.ninja/en/dns-lookup/com/mycreditiq)
+- [Internet Archive availability for mycreditiq.com (last snapshot 2016-04-08)](https://archive.org/wayback/available?url=mycreditiq.com)
+- [IDIQ Integration API, partner token and member token (The Credit Pros docs)](https://docs.ci.thecreditpros.com/IDIQ)
+- [IDIQ affiliate partners](https://www.idiq.com/partnerships/affiliate-partners)
+- [Crelit: Import credit report (SmartCredit API key/secret; IdentityIQ/MyScoreIQ credentials)](https://help.crelit.com/disputes/import-credit-report/)
+- [Credit Repair Cloud: Importing credit reports](https://help.creditrepaircloud.com/en/articles/9190918-part-3-importing-credit-reports)
+- [Client Dispute Manager: Manual HTML import for IdentityIQ / MyScoreIQ](https://training.clientdisputemanager.com/hc/en-us/articles/53926630132499-How-to-Manually-Import-IdentityIQ-and-MyScoreIQ-Credit-Reports)
+- [Client Dispute Manager: MyFreeScoreNow client token](https://training.clientdisputemanager.com/hc/en-us/articles/52952584891283-Credit-Monitoring-Troubleshooting)

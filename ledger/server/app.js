@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import express from 'express';
 import multer from 'multer';
 import { commsConfig, sendEmail, sendSms } from './comms.js';
+import { reportSource, reportSourcesInfo } from './report-sources.js';
 import { askAssistant, assistantConfigured, setKeyProvider, checkKey } from './assistant.js';
 import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
@@ -306,7 +307,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       company: { name: company().name, phone: company().phone, email: company().email },
       croa: { required: cs.required, steps: cs.steps.map(s => ({ label: s.label, done: s.done, date: s.date })), deadline: cs.deadline, inWindow: cs.inWindow, cancelled: cs.cancelled,
         disclosureSigned: !!(c.onboarding || {}).disclosureSignedAt, contractSigned: !!(c.onboarding || {}).contractSignedAt },
-      documents: documentsFor(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
+      documents: documentsFor(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, source: d.source || '', uploadedAt: d.uploadedAt })), scores, reportSources: reportSourcesInfo(), disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
       business: c.kind !== 'personal' ? { name: (c.business || {}).legalName || '', checklist: c.businessChecklist || {}, scores: c.businessScores || [] } : null
     });
   });
@@ -429,7 +430,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     res.json(keyInfo());
   });
 
-  app.get('/api/config', need('owner', 'staff'), (req, res) => res.json(Object.assign(commsConfig(), { assistant: assistantConfigured() })));
+  app.get('/api/config', need('owner', 'staff'), (req, res) => res.json(Object.assign(commsConfig(), { assistant: assistantConfigured(), reportSources: reportSourcesInfo() })));
   const aiLimit = rateLimiter(60, 60 * 60 * 1000);
   // Browser-side errors, so a button that silently fails shows up in the server log.
   // Only the message, location in code and page route are kept — never form data.
@@ -548,16 +549,20 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   app.post('/api/clients/:id/files', need('owner', 'staff'), upload.single('file'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
     if (!c || !req.file) return res.status(400).json({ error: 'Choose a PDF, image, HTML, CSV or JSON file under 15 MB' });
-    const doc = storeFile(req.file, { clientId: c.id, type: DOC_TYPES.includes(req.body.type) ? req.body.type : 'other', uploadedBy: req.user.email });
-    activity(`Uploaded ${doc.type === 'report' ? 'credit report' : 'document'} “${doc.name}”`, c.id);
+    const type = DOC_TYPES.includes(req.body.type) ? req.body.type : 'other';
+    const source = type === 'report' ? reportSource(req.body.source) : '';
+    const doc = storeFile(req.file, Object.assign({ clientId: c.id, type, uploadedBy: req.user.email }, source ? { source } : {}));
+    activity(`Uploaded ${doc.type === 'report' ? 'credit report' : 'document'} “${doc.name}”${source ? ` (from ${source})` : ''}`, c.id);
     commitWorkspace(req.user.email, 'file.upload', doc.name);
     res.json({ doc, version: D().workspaceVersion });
   });
   app.post('/api/portal/files', need('client'), upload.single('file'), (req, res) => {
     const c = portalClient(req);
-    if (!c || !req.file) return res.status(400).json({ error: 'Choose a PDF or image under 15 MB' });
-    const doc = storeFile(req.file, { clientId: c.id, type: ['id', 'address', 'bureau-response', 'report'].includes(req.body.type) ? req.body.type : 'other', uploadedBy: 'client' });
-    activity(`${c.name} uploaded “${doc.name}” in the portal`, c.id);
+    if (!c || !req.file) return res.status(400).json({ error: 'Choose a PDF, saved web page (HTML) or image under 15 MB' });
+    const type = ['id', 'address', 'bureau-response', 'report'].includes(req.body.type) ? req.body.type : 'other';
+    const source = type === 'report' ? reportSource(req.body.source) : '';
+    const doc = storeFile(req.file, Object.assign({ clientId: c.id, type, uploadedBy: 'client' }, source ? { source } : {}));
+    activity(`${c.name} uploaded “${doc.name}” in the portal${source ? ` (credit report from ${source})` : ''}`, c.id);
     commitWorkspace(req.user.email, 'portal.upload', doc.name);
     res.json({ ok: true });
     if (doc.type === 'report') autoScan(c, doc);
@@ -567,7 +572,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const ws = workspace();
     ws.pendingImports = ws.pendingImports || [];
     if (!assistantConfigured()) {
-      ws.tasks.push({ id: uid(), clientId: c.id, title: `Import the credit report ${c.name} uploaded (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
+      ws.tasks.push({ id: uid(), clientId: c.id, title: `Import the credit report ${c.name} uploaded (${doc.name}${doc.source ? ', from ' + doc.source : ''}) — AI scanning is off, so add the accounts by hand or CSV`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'report.uploaded', doc.name);
       return;
     }
