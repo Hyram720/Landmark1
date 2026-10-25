@@ -55,3 +55,18 @@ python3 marketing/legacyready-short-film/build.py /tmp/shoebox-work /tmp/the_sho
 
 - **Voice and music:** the film is silent, and the dialogue is in captions. The `.srt` beside the MP4 doubles as a voiceover script.
 - **Fully animated characters:** the characters are illustrated keyframes moved by camera motion. They don't walk or lip-sync. That needs a paid video model such as Higgsfield, which would need Fred's spend approval under the $0.00 rule.
+
+## 3D animated version (Higgsfield)
+
+A fully animated 3D version of the same script, made on 2026-10-25 with Fred's approval of a credit spend.
+
+- **Watch / download:** https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/39f7bd2d-9867-4d5f-9ee7-72e7db6fabb2.mp4 (also in the Higgsfield library). 60.0 s, 1280×720, spoken dialogue plus music and effects, captions burned in.
+- **How it was made:**
+  - 7 keyframes from Seedream 5.0 Flash; Maya and Grandma Rose are kept consistent by using the first image as a reference.
+  - Each keyframe was animated into an 8-second shot with sound by Google Veo 3.1 Lite.
+  - The shots were joined in Higgsfield's sandbox with a 4-second end card; the captions are timed to the speech, checked by transcribing the audio.
+- **Cost:** 88 Higgsfield credits, against an approved limit of 125.
+  - Keyframes, including one redo: 4 credits.
+  - Seven shots at 12 credits each: 84 credits.
+  - Kling v3.0, the first choice, needs a paid Higgsfield plan, so Veo 3.1 Lite was used instead.
+- **Scene 2:** redone so Grandma Rose holds the photo facing herself (Fred's feedback).
