@@ -798,6 +798,7 @@
         <form data-form="offer" data-id="${o.id}" class="row" style="margin-top:8px;flex-wrap:nowrap"><input name="affiliateUrl" value="${esc(o.affiliateUrl || '')}" placeholder="Paste your affiliate / referral link (https://…)" class="small"><button class="btn sm">Save</button></form>
         <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
       <div style="margin-top:16px">${card('Referral pipeline', referralRows(refs.slice().sort((a, b) => String(b.recommendedAt).localeCompare(String(a.recommendedAt))), true), { flush: true })}</div>
+      ${Store.remote ? '<div id="rent-clicks"></div>' : ''}
       <div style="margin-top:16px">${card('Client-facing disclosure', `<p class="small">${esc(root.Partners.DISCLOSURE)}</p><p class="small muted">This appears next to recommendations in the client portal. The FTC requires clear disclosure of material connections such as referral fees.</p>`)}</div>`;
   }
 

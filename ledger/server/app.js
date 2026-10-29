@@ -13,6 +13,7 @@ import { hashPassword, verifyPassword, burnPasswordCheck, signToken, verifyToken
 import { mountLedgerAssistant } from './ledger-assistant.js';
 import { mountCoach } from './coach.js';
 import { mountPartnerLinks } from './partner-links.js';
+import { mountRentReporting, rentPortalSection } from './rent.js';
 import { mountClientAuth } from './client-auth.js';
 import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
@@ -366,6 +367,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       croa: { required: cs.required, steps: cs.steps.map(s => ({ label: s.label, done: s.done, date: s.date })), deadline: cs.deadline, inWindow: cs.inWindow, cancelled: cs.cancelled,
         disclosureSigned: !!(c.onboarding || {}).disclosureSignedAt, contractSigned: !!(c.onboarding || {}).contractSignedAt },
       documents: documentsFor(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
+      rentReporting: rentPortalSection(),
       business: c.kind !== 'personal' ? { name: (c.business || {}).legalName || '', checklist: c.businessChecklist || {}, scores: c.businessScores || [] } : null
     });
   });
@@ -405,6 +407,9 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     commitWorkspace(req.user.email, 'portal.cancel', c.id);
     res.json({ ok: true });
   });
+
+  // ---------- rent reporting referrals (client portal) ----------
+  mountRentReporting(app, { D, db, currentUser, need });
 
   // ---------- partner referral redirects ----------
   app.get('/go/:id', (req, res) => {

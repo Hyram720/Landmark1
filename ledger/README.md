@@ -51,6 +51,9 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_REMEMBER_TTL_SECONDS` | Length when “Keep me signed in” is checked on `/app` (default 30 days). Never shorter than the normal session |
 | `LEDGER_SESSION_ABSOLUTE_SECONDS` | Hard cap from the original sign-in for a normal session, even while it keeps renewing (default 7 days, never shorter than the idle length) |
 | `LEDGER_REMEMBER_ABSOLUTE_SECONDS` | Hard cap for a “keep me signed in” session (default the remember length, so it ends 30 days after sign-in) |
+| `LEDGER_RENT_BOOM_URL` | Where a Boom rent-reporting click goes (default `https://www.boompay.app/renters`, the consumer page). Set an https affiliate link later; anything else is ignored |
+| `LEDGER_RENT_CRB_URL` | Where a Credit Rent Boost click goes (default `https://www.creditrentboost.com/`) |
+| `LEDGER_RENT_SELF_URL` | Where a Self rent-reporting click goes (default `https://www.self.inc/rent-and-bills-reporting`) |
 
 Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
 
