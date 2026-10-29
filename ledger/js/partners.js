@@ -48,16 +48,18 @@
       bonusLow: 35, bonusHigh: 40, cookie: '30 days (reported)', status: 'confirmed-program',
       note: 'Widely used by credit repair firms to pull 3-bureau reports. IDIQ also runs MyScoreIQ.', sources: ['https://www.idiq.com/partnerships/affiliate-partners', 'https://ui.awin.com/merchant-profile/18765', 'https://getlasso.co/affiliate/idiq/'] },
     { key: 'myfreescorenow', name: 'MyFreeScoreNow (MFSN)', audience: 'personal', category: '3-bureau monitoring (report pulls)',
-      url: 'https://www.myfreescorenow.com/', joinUrl: 'https://www.myfreescorenow.com/',
-      program: 'Affiliate (direct; network listings vary)', bonus: '$6 per trial to $50–$60 per sale (reported)',
-      bonusLow: 6, bonusHigh: 60, cookie: '1 day (reported)', status: 'verify',
-      note: 'Common report source for Metro 2 software (“MFSN import”). Listings conflict and some network listings are closed. Ask MFSN about its credit-professional program.',
+      url: 'https://app.myfreescorenow.com/enroll/B04C9729', joinUrl: 'https://app.myfreescorenow.com/enroll/B04C9729',
+      affiliateUrl: 'https://app.myfreescorenow.com/enroll/B04C9729',
+      program: 'Direct affiliate enroll link', bonus: '$6 per trial to $50–$60 per sale (reported)',
+      bonusLow: 6, bonusHigh: 60, cookie: '1 day (reported)', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: 'Common report source for Metro 2 imports. $39.90 per month after a 7-day trial. We may earn a commission if a client signs up. Clients do not have to use it.',
       sources: ['https://getlasso.co/affiliate/myfreescorenow-com/', 'https://www.flexoffers.com/affiliate-programs/myfreescorenow-com-affiliate-program/', 'https://www.affpaying.com/myfreescorenow'] },
     { key: 'smartcredit', name: 'SmartCredit', audience: 'personal', category: '3-bureau monitoring (report pulls)',
-      url: 'https://www.smartcredit.com/', joinUrl: 'https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/',
-      program: 'Affiliate (CJ, FlexOffers)', bonus: '$10–$24 per subscription (reported)',
-      bonusLow: 10, bonusHigh: 24, cookie: '30–45 days (reported)', status: 'verify',
-      note: 'Listings conflict and one shows the program as closed on a network. Check with SmartCredit directly.', sources: ['https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/', 'https://www.revshare.so/programs/advertiser/smartcredit-b3e2a826'] },
+      url: 'https://www.smartcredit.com/?PID=72556', joinUrl: 'https://www.smartcredit.com/?PID=72556',
+      affiliateUrl: 'https://www.smartcredit.com/?PID=72556',
+      program: 'Direct affiliate link (PID)', bonus: '$10–$24 per subscription (reported)',
+      bonusLow: 10, bonusHigh: 24, cookie: '30–45 days (reported)', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: '3-bureau monitoring for report pulls. Pricing is shown at sign-up. We may earn a commission if a client signs up. Clients do not have to use it.', sources: ['https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/', 'https://www.revshare.so/programs/advertiser/smartcredit-b3e2a826'] },
     { key: 'myscoreiq', name: 'MyScoreIQ', audience: 'personal', category: '3-bureau monitoring (report pulls)',
       url: 'https://www.myscoreiq.com/', joinUrl: 'https://www.idiq.com/partnerships/affiliate-partners',
       program: 'Affiliate (IDIQ, FlexOffers)', bonus: 'Up to $21–$100 per enrollment (reported)',
@@ -116,7 +118,10 @@
   }
   const AFFILIATE_NOTE = 'Affiliate link — we may earn a commission if you sign up. It doesn’t change your price, and you never have to use it to work with us.';
 
-  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, AFFILIATE_NOTE, SUBID_PARAM, seedOffers, withSubId, networkOf };
+  // Client-portal redirects. The server records the click, then sends the browser to url above.
+  const CREDIT_GO = { myfreescorenow: '/go/credit/myfreescorenow', smartcredit: '/go/credit/smartcredit' };
+
+  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, AFFILIATE_NOTE, SUBID_PARAM, CREDIT_GO, seedOffers, withSubId, networkOf };
   root.Partners = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -784,6 +784,7 @@
   function partners() {
     const s = S();
     const refs = s.partnerReferrals || [];
+    const creditGo = (root.Partners && root.Partners.CREDIT_GO) || {};
     const earned = refs.filter(r => ['approved', 'paid'].includes(r.status)).reduce((a, r) => a + Number(r.payout || 0), 0);
     const paid = refs.filter(r => r.status === 'paid').reduce((a, r) => a + Number(r.payout || 0), 0);
     const clicks = refs.reduce((a, r) => a + (r.clicks || 0), 0) + s.offers.reduce((a, o) => a + (o.clicks || 0), 0);
@@ -794,11 +795,11 @@
         <div class="row between small" style="margin-bottom:6px"><span class="muted">${esc(o.category)}</span>${offerStatus(o.status)}</div>
         <div class="grid g2 small" style="gap:6px 16px;margin-bottom:10px"><div><span class="muted">Program</span><br>${esc(o.program)}</div><div><span class="muted">Referral bonus</span><br><b>${esc(o.bonus)}</b></div><div><span class="muted">Cookie</span><br>${esc(o.cookie)}</div><div><span class="muted">Clicks</span><br>${(o.clicks || 0) + refs.filter(r => r.offerId === o.id).reduce((a, r) => a + (r.clicks || 0), 0)}</div></div>
         <p class="small">${esc(o.note || '')}</p>
-        <div class="small muted">Tracked link: <span class="mono">/go/partner/${esc(o.key)}</span>${o.subIdParam ? ` · sub-ID sent as <span class="mono">${esc(o.subIdParam)}</span>` : ' · no sub-ID for this network'}</div>
+        <div class="small muted">Tracked link: <span class="mono">${esc(creditGo[o.key] || '/go/partner/' + o.key)}</span>${creditGo[o.key] ? ' · records a signed-in client’s click, then opens the affiliate link' : o.subIdParam ? ` · sub-ID sent as <span class="mono">${esc(o.subIdParam)}</span>` : ' · no sub-ID for this network'}</div>
         <form data-form="offer" data-id="${o.id}" class="row" style="margin-top:8px;flex-wrap:nowrap"><input name="affiliateUrl" value="${esc(o.affiliateUrl || '')}" placeholder="Paste your affiliate / referral link (https://…)" class="small"><button class="btn sm">Save</button></form>
-        <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
+        <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(Store.remote && creditGo[o.key] ? creditGo[o.key] : o.url)}" target="_blank" rel="noopener${creditGo[o.key] ? ' sponsored' : ''}">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
       <div style="margin-top:16px">${card('Referral pipeline', referralRows(refs.slice().sort((a, b) => String(b.recommendedAt).localeCompare(String(a.recommendedAt))), true), { flush: true })}</div>
-      ${Store.remote ? '<div id="rent-clicks"></div>' : ''}
+      ${Store.remote ? '<div id="rent-clicks"></div><div id="credit-clicks"></div>' : ''}
       <div style="margin-top:16px">${card('Client-facing disclosure', `<p class="small">${esc(root.Partners.DISCLOSURE)}</p><p class="small muted">This appears next to recommendations in the client portal. The FTC requires clear disclosure of material connections such as referral fees.</p>`)}</div>`;
   }
 

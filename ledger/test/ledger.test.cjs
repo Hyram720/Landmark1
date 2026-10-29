@@ -149,6 +149,33 @@ test('partner catalog covers requested programs with sources', () => {
   assert.ok(ws.offers.length >= 10, 'migration adds new catalog offers');
 });
 
+test('credit monitoring offers use the approved affiliate links', () => {
+  const mfsn = Partners.seedOffers().find(o => o.key === 'myfreescorenow');
+  const sc = Partners.seedOffers().find(o => o.key === 'smartcredit');
+  assert.strictEqual(mfsn.url, 'https://app.myfreescorenow.com/enroll/B04C9729');
+  assert.strictEqual(mfsn.affiliateUrl, mfsn.url);
+  assert.strictEqual(mfsn.joinUrl, mfsn.url);
+  assert.strictEqual(sc.url, 'https://www.smartcredit.com/?PID=72556');
+  assert.strictEqual(sc.affiliateUrl, sc.url);
+  assert.strictEqual(Partners.CREDIT_GO.myfreescorenow, '/go/credit/myfreescorenow');
+  assert.strictEqual(Partners.CREDIT_GO.smartcredit, '/go/credit/smartcredit');
+  assert.match(mfsn.note, /\$39\.90/);
+  assert.match(sc.note, /sign-up/);
+  assert.ok(!/\bfree\b/i.test(mfsn.note + ' ' + sc.note), 'paid monitoring plans are not described as free');
+  const migrated = Store.migrate({ version: 2, clients: [], offers: [
+    { id: 'offer-myfreescorenow', key: 'myfreescorenow', url: 'https://www.myfreescorenow.com/', affiliateUrl: '', joinUrl: 'https://www.myfreescorenow.com/', note: 'Common report source for Metro 2 software (“MFSN import”). Listings conflict and some network listings are closed. Ask MFSN about its credit-professional program.' },
+    { id: 'offer-smartcredit', key: 'smartcredit', url: 'https://www.smartcredit.com/', affiliateUrl: 'https://example.com/keep-custom', joinUrl: 'https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/', note: 'staff edited this note' }
+  ]});
+  const moved = migrated.offers.find(o => o.key === 'myfreescorenow');
+  assert.strictEqual(moved.url, mfsn.url);
+  assert.strictEqual(moved.affiliateUrl, mfsn.url);
+  assert.match(moved.note, /\$39\.90/);
+  const kept = migrated.offers.find(o => o.key === 'smartcredit');
+  assert.strictEqual(kept.affiliateUrl, 'https://example.com/keep-custom', 'a saved affiliate link is left in place');
+  assert.strictEqual(kept.url, sc.url, 'the public homepage is replaced with the affiliate link');
+  assert.strictEqual(kept.note, 'staff edited this note');
+});
+
 test('business correction letter', () => {
   const r = Letters.build('business_correction', { client: { name: 'Avery Placeholder' }, recipient: { name: 'Dun & Bradstreet', address: 'x' }, items: [{ creditor: 'Uline', discrepancy: 'Payment reported 30 days late; paid on invoice terms.' }], today: 'x', business: { legalName: 'Example Bakery LLC', duns: '00-000-0000' } });
   assert.ok(r.ok);

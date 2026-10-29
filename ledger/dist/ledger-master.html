@@ -678,16 +678,18 @@ Signed: ______________________   Date: __________`;
       bonusLow: 35, bonusHigh: 40, cookie: '30 days (reported)', status: 'confirmed-program',
       note: 'Widely used by credit repair firms to pull 3-bureau reports. IDIQ also runs MyScoreIQ.', sources: ['https://www.idiq.com/partnerships/affiliate-partners', 'https://ui.awin.com/merchant-profile/18765', 'https://getlasso.co/affiliate/idiq/'] },
     { key: 'myfreescorenow', name: 'MyFreeScoreNow (MFSN)', audience: 'personal', category: '3-bureau monitoring (report pulls)',
-      url: 'https://www.myfreescorenow.com/', joinUrl: 'https://www.myfreescorenow.com/',
-      program: 'Affiliate (direct; network listings vary)', bonus: '$6 per trial to $50–$60 per sale (reported)',
-      bonusLow: 6, bonusHigh: 60, cookie: '1 day (reported)', status: 'verify',
-      note: 'Common report source for Metro 2 software (“MFSN import”). Listings conflict and some network listings are closed. Ask MFSN about its credit-professional program.',
+      url: 'https://app.myfreescorenow.com/enroll/B04C9729', joinUrl: 'https://app.myfreescorenow.com/enroll/B04C9729',
+      affiliateUrl: 'https://app.myfreescorenow.com/enroll/B04C9729',
+      program: 'Direct affiliate enroll link', bonus: '$6 per trial to $50–$60 per sale (reported)',
+      bonusLow: 6, bonusHigh: 60, cookie: '1 day (reported)', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: 'Common report source for Metro 2 imports. $39.90 per month after a 7-day trial. We may earn a commission if a client signs up. Clients do not have to use it.',
       sources: ['https://getlasso.co/affiliate/myfreescorenow-com/', 'https://www.flexoffers.com/affiliate-programs/myfreescorenow-com-affiliate-program/', 'https://www.affpaying.com/myfreescorenow'] },
     { key: 'smartcredit', name: 'SmartCredit', audience: 'personal', category: '3-bureau monitoring (report pulls)',
-      url: 'https://www.smartcredit.com/', joinUrl: 'https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/',
-      program: 'Affiliate (CJ, FlexOffers)', bonus: '$10–$24 per subscription (reported)',
-      bonusLow: 10, bonusHigh: 24, cookie: '30–45 days (reported)', status: 'verify',
-      note: 'Listings conflict and one shows the program as closed on a network. Check with SmartCredit directly.', sources: ['https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/', 'https://www.revshare.so/programs/advertiser/smartcredit-b3e2a826'] },
+      url: 'https://www.smartcredit.com/?PID=72556', joinUrl: 'https://www.smartcredit.com/?PID=72556',
+      affiliateUrl: 'https://www.smartcredit.com/?PID=72556',
+      program: 'Direct affiliate link (PID)', bonus: '$10–$24 per subscription (reported)',
+      bonusLow: 10, bonusHigh: 24, cookie: '30–45 days (reported)', status: 'confirmed-program', network: 'direct', subIdParam: '',
+      note: '3-bureau monitoring for report pulls. Pricing is shown at sign-up. We may earn a commission if a client signs up. Clients do not have to use it.', sources: ['https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/', 'https://www.revshare.so/programs/advertiser/smartcredit-b3e2a826'] },
     { key: 'myscoreiq', name: 'MyScoreIQ', audience: 'personal', category: '3-bureau monitoring (report pulls)',
       url: 'https://www.myscoreiq.com/', joinUrl: 'https://www.idiq.com/partnerships/affiliate-partners',
       program: 'Affiliate (IDIQ, FlexOffers)', bonus: 'Up to $21–$100 per enrollment (reported)',
@@ -746,7 +748,10 @@ Signed: ______________________   Date: __________`;
   }
   const AFFILIATE_NOTE = 'Affiliate link — we may earn a commission if you sign up. It doesn’t change your price, and you never have to use it to work with us.';
 
-  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, AFFILIATE_NOTE, SUBID_PARAM, seedOffers, withSubId, networkOf };
+  // Client-portal redirects. The server records the click, then sends the browser to url above.
+  const CREDIT_GO = { myfreescorenow: '/go/credit/myfreescorenow', smartcredit: '/go/credit/smartcredit' };
+
+  const api = { CATALOG, STATUS_LABEL, REFERRAL_STAGES, DISCLOSURE, AFFILIATE_NOTE, SUBID_PARAM, CREDIT_GO, seedOffers, withSubId, networkOf };
   root.Partners = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -2305,6 +2310,41 @@ Thank you for considering this request.`
   const V1_STATUS = { current: '11', paid: '13', closed: '13', late: '71', '30': '71', '60': '78', '90': '80', collection: '93', collections: '93', 'charged off': '97', chargeoff: '97', 'charge-off': '97', repossession: '96', foreclosure: '94' };
   const V1_TYPE = { revolving: 'R', installment: 'I', mortgage: 'M', open: 'O', 'line of credit': 'C' };
 
+  // Older workspaces stored the public homepages for these two offers. Point them at the
+  // approved affiliate links unless someone already saved a different affiliate URL.
+  const OLD_CREDIT_NOTES = {
+    myfreescorenow: 'Common report source for Metro 2 software (“MFSN import”). Listings conflict and some network listings are closed. Ask MFSN about its credit-professional program.',
+    smartcredit: 'Listings conflict and one shows the program as closed on a network. Check with SmartCredit directly.'
+  };
+  const OLD_CREDIT_URL = {
+    myfreescorenow: /^https:\/\/www\.myfreescorenow\.com\/?$/i,
+    smartcredit: /^https:\/\/www\.smartcredit\.com\/?$/i
+  };
+  const OLD_CREDIT_JOIN = {
+    myfreescorenow: /^https:\/\/www\.myfreescorenow\.com\/?$/i,
+    smartcredit: 'https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/'
+  };
+  function applyLiveCreditLinks(offers) {
+    const catalog = (root.Partners && root.Partners.CATALOG) || [];
+    (offers || []).forEach(o => {
+      const seed = catalog.find(c => c.key === o.key);
+      const bare = OLD_CREDIT_URL[o.key];
+      if (!seed || !bare || !seed.url) return;
+      if (!o.affiliateUrl || bare.test(o.affiliateUrl)) o.affiliateUrl = seed.affiliateUrl || seed.url;
+      if (!o.url || bare.test(o.url)) o.url = seed.url;
+      const oldJoin = OLD_CREDIT_JOIN[o.key];
+      const joinBare = typeof oldJoin === 'string' ? o.joinUrl === oldJoin : oldJoin.test(String(o.joinUrl || ''));
+      if (!o.joinUrl || joinBare) o.joinUrl = seed.joinUrl || seed.url;
+      if (o.note === OLD_CREDIT_NOTES[o.key]) {
+        o.note = seed.note;
+        if (seed.program) o.program = seed.program;
+        if (seed.status) o.status = seed.status;
+        if (seed.network) o.network = seed.network;
+        if (seed.subIdParam !== undefined) o.subIdParam = seed.subIdParam;
+      }
+    });
+  }
+
   /** Accepts a v1 backup (ledger-workspace-backup) or a v2 workspace and returns a v2 workspace. */
   function migrate(data) {
     if (!data || typeof data !== 'object') throw new Error('Not a workspace backup.');
@@ -2315,6 +2355,7 @@ Thank you for considering this request.`
       // Add catalog offers introduced after this workspace was created.
       const have = new Set((ws.offers || []).map(o => o.key));
       ws.offers = (ws.offers || []).concat(seed.filter(o => !have.has(o.key)));
+      applyLiveCreditLinks(ws.offers);
       // Any list that is missing or damaged (null, object) becomes an empty list so pages and forms never crash on it.
       Object.keys(base).forEach(k => { if (Array.isArray(base[k]) && !Array.isArray(ws[k])) ws[k] = []; });
       ['sequences', 'pendingImports', 'automationLog'].forEach(k => { if (ws[k] !== undefined && !Array.isArray(ws[k])) ws[k] = []; });
@@ -4484,6 +4525,7 @@ Thank you for considering this request.`
   function partners() {
     const s = S();
     const refs = s.partnerReferrals || [];
+    const creditGo = (root.Partners && root.Partners.CREDIT_GO) || {};
     const earned = refs.filter(r => ['approved', 'paid'].includes(r.status)).reduce((a, r) => a + Number(r.payout || 0), 0);
     const paid = refs.filter(r => r.status === 'paid').reduce((a, r) => a + Number(r.payout || 0), 0);
     const clicks = refs.reduce((a, r) => a + (r.clicks || 0), 0) + s.offers.reduce((a, o) => a + (o.clicks || 0), 0);
@@ -4494,10 +4536,11 @@ Thank you for considering this request.`
         <div class="row between small" style="margin-bottom:6px"><span class="muted">${esc(o.category)}</span>${offerStatus(o.status)}</div>
         <div class="grid g2 small" style="gap:6px 16px;margin-bottom:10px"><div><span class="muted">Program</span><br>${esc(o.program)}</div><div><span class="muted">Referral bonus</span><br><b>${esc(o.bonus)}</b></div><div><span class="muted">Cookie</span><br>${esc(o.cookie)}</div><div><span class="muted">Clicks</span><br>${(o.clicks || 0) + refs.filter(r => r.offerId === o.id).reduce((a, r) => a + (r.clicks || 0), 0)}</div></div>
         <p class="small">${esc(o.note || '')}</p>
-        <div class="small muted">Tracked link: <span class="mono">/go/partner/${esc(o.key)}</span>${o.subIdParam ? ` · sub-ID sent as <span class="mono">${esc(o.subIdParam)}</span>` : ' · no sub-ID for this network'}</div>
+        <div class="small muted">Tracked link: <span class="mono">${esc(creditGo[o.key] || '/go/partner/' + o.key)}</span>${creditGo[o.key] ? ' · records a signed-in client’s click, then opens the affiliate link' : o.subIdParam ? ` · sub-ID sent as <span class="mono">${esc(o.subIdParam)}</span>` : ' · no sub-ID for this network'}</div>
         <form data-form="offer" data-id="${o.id}" class="row" style="margin-top:8px;flex-wrap:nowrap"><input name="affiliateUrl" value="${esc(o.affiliateUrl || '')}" placeholder="Paste your affiliate / referral link (https://…)" class="small"><button class="btn sm">Save</button></form>
-        <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
+        <div class="row small" style="margin-top:10px">${o.joinUrl ? `<a href="${esc(o.joinUrl)}" target="_blank" rel="noopener">Join program ↗</a>` : ''}<a href="${esc(Store.remote && creditGo[o.key] ? creditGo[o.key] : o.url)}" target="_blank" rel="noopener${creditGo[o.key] ? ' sponsored' : ''}">Website ↗</a>${(o.sources || []).map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener" class="muted">source ${i + 1}</a>`).join('')}<label class="check" style="margin-left:auto"><input type="checkbox" data-act="offer-toggle" data-id="${o.id}" ${o.enabled ? 'checked' : ''}> Show to clients</label></div>`)).join('')}</div>
       <div style="margin-top:16px">${card('Referral pipeline', referralRows(refs.slice().sort((a, b) => String(b.recommendedAt).localeCompare(String(a.recommendedAt))), true), { flush: true })}</div>
+      ${Store.remote ? '<div id="rent-clicks"></div><div id="credit-clicks"></div>' : ''}
       <div style="margin-top:16px">${card('Client-facing disclosure', `<p class="small">${esc(root.Partners.DISCLOSURE)}</p><p class="small muted">This appears next to recommendations in the client portal. The FTC requires clear disclosure of material connections such as referral fees.</p>`)}</div>`;
   }
 
@@ -4584,6 +4627,7 @@ Thank you for considering this request.`
     if (emptyWs) html = `<div class="empty-banner"><div><b>Your workspace has no clients yet</b><div class="small">Pages fill in as you add clients. Load the demo to see every feature with sample data, or add your first client.</div></div><div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn primary" data-act="new-client">+ Add client</button></div></div>` + html;
     document.getElementById('view').innerHTML = html;
     if (nav === 'team') loadTeam();
+    if (nav === 'partners') { loadRentClicks(); loadCreditClicks(); }
     if (nav === 'settings') { loadAiSettings(); loadMailSettings(); loadPaySettings(); }
     document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('active', el.dataset.nav === nav));
     const open = Views.openDisputes().length;
@@ -4656,38 +4700,79 @@ Thank you for considering this request.`
     }
   };
 
-  function authScreen(session) {
+  // Ask the browser to store the password before the page reloads. Chrome and Edge honor
+  // PasswordCredential; other browsers use the autocomplete tokens on the form below.
+  async function offerSavedPassword(form) {
+    const password = form.elements.password;
+    if (!password || !password.value) return;
+    try {
+      if (typeof PasswordCredential !== 'function' || !navigator.credentials || typeof navigator.credentials.store !== 'function') return;
+      await navigator.credentials.store(new PasswordCredential(form));
+    } catch (e) { /* the form attributes still let the browser offer to save */ }
+  }
+
+  async function authScreen(session, initial) {
+    initial = initial || {};
+    let options = { magicLink: false, forgot: true, rememberDays: 30 };
+    try { options = Object.assign(options, await api('GET', '/api/auth/options')); } catch (e) { /* recovery links still render */ }
     const invite = (location.hash.match(/invite=([\w-]+)/) || [])[1];
     const reset = (location.hash.match(/reset=([\w-]+)/) || [])[1];
-    const mode = reset ? 'reset' : invite ? 'invite' : session.setupRequired ? 'setup' : 'login';
-    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger', reset: 'Choose a new password' }[mode];
+    const mode = initial.mode || (reset ? 'reset' : invite ? 'invite' : session.setupRequired ? 'setup' : 'login');
+    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger', reset: 'Choose a new password', forgot: 'Reset your password', magic: 'Email me a sign-in link', otp: 'Enter your sign-in code' }[mode];
+    const days = Math.max(1, Math.min(400, Number(options.rememberDays) || 30));
+    const passwordAttrs = mode === 'login'
+      ? 'autocomplete="current-password" id="current-password"'
+      : 'autocomplete="new-password" id="new-password"';
+    const emailAttrs = 'autocomplete="username" id="username" inputmode="email" autocapitalize="none" spellcheck="false"';
+    const emailField = field('Email', 'username', '', { type: 'email', required: true, attrs: emailAttrs });
+    const action = { login: '/api/login', setup: '/api/setup', invite: '/api/invites/accept', reset: '/api/auth/reset', forgot: '/api/auth/forgot', magic: '/api/auth/magic', otp: '/api/auth/otp' }[mode];
+    const extra = {
+      setup: field('Your name', 'name', '', { required: true, attrs: 'autocomplete="name"' }) + (session.setupCodeRequired ? field('Setup code', 'setupCode', '', { required: true, attrs: 'autocomplete="off"', help: 'The LEDGER_SETUP_CODE value from your server settings' }) : '') + emailField,
+      login: emailField,
+      forgot: field('Email', 'username', '', { type: 'email', required: true, attrs: emailAttrs, help: 'We’ll email a reset link that works once and expires in 30 minutes.' }),
+      magic: field('Email', 'username', '', { type: 'email', required: true, attrs: emailAttrs, help: 'We’ll email a sign-in link that works once and expires in 15 minutes.' }),
+      otp: field('6-digit code', 'code', '', { required: true, attrs: 'autocomplete="one-time-code" inputmode="numeric"', help: 'Check your email. The code expires in 10 minutes.' })
+    };
+    const showPassword = mode === 'login' || mode === 'setup' || mode === 'invite' || mode === 'reset';
+    const button = { login: 'Sign in', forgot: 'Send reset link', magic: 'Send sign-in link', otp: 'Verify' }[mode] || 'Continue';
     document.body.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:24px 16px">
-      <form class="card" id="auth" style="width:100%;max-width:400px"><div class="card-b stack">
+      <form class="card" id="auth" method="post" action="${action}" autocomplete="on" style="width:100%;max-width:400px"><div class="card-b stack">
         <div class="brand" style="padding:0;color:var(--ink)"><div class="brand-mark">L</div><div><b>Ledger</b><small style="color:var(--muted)">Credit workspace</small></div></div>
         <h1>${title}</h1>
-        ${mode === 'setup' ? field('Your name', 'name', '', { required: true }) : ''}
-        ${mode === 'setup' && session.setupCodeRequired ? field('Setup code', 'setupCode', '', { required: true, help: 'The LEDGER_SETUP_CODE value from your server settings' }) : ''}
-        ${mode !== 'invite' && mode !== 'reset' ? field('Email', 'email', '', { type: 'email', required: true }) : ''}
-        ${field('Password', 'password', '', { type: 'password', required: true, help: mode === 'login' ? '' : 'At least 10 characters' })}
-        <div id="auth-err" class="small" style="color:var(--high)"></div>
-        <button class="btn primary" style="width:100%">${mode === 'login' ? 'Sign in' : 'Continue'}</button>
+        ${initial.note ? `<p class="small">${esc(initial.note)}</p>` : ''}
+        ${mode === 'invite' ? '<p class="small muted">Choose a password to finish creating your account.</p>' : ''}
+        ${mode === 'reset' ? '<p class="small muted">At least 10 characters. This signs you out everywhere else.</p>' : ''}
+        ${extra[mode] || ''}
+        ${showPassword ? field('Password', 'password', '', { type: 'password', required: true, attrs: passwordAttrs, help: mode === 'login' ? '' : 'At least 10 characters' }) : ''}
+        ${mode === 'login' ? `<label class="check small"><input type="checkbox" name="remember" value="yes"> Keep me signed in for ${days} days</label>` : ''}
+        <div id="auth-err" class="small" role="alert" style="color:var(--high)"></div>
+        <button class="btn primary" type="submit" style="width:100%">${button}</button>
+        ${mode === 'login' ? `<div class="row between small"><a href="#" data-mode="forgot">Forgot password?</a>${options.magicLink ? '<a href="#" data-mode="magic">Email me a sign-in link</a>' : ''}</div>` : ['forgot', 'magic', 'otp'].includes(mode) ? '<div class="small"><a href="#" data-mode="login">Back to sign in</a></div>' : ''}
         ${session.encrypted ? '' : '<p class="small muted">Tip: set LEDGER_ENCRYPTION_KEY on the server to encrypt data at rest.</p>'}
       </div></form></div>`;
-    document.getElementById('auth').addEventListener('submit', async e => {
+    document.querySelectorAll('[data-mode]').forEach(a => { a.onclick = e => { e.preventDefault(); authScreen(session, { mode: a.dataset.mode }); }; });
+    const form = document.getElementById('auth');
+    if (form.elements[0]) form.elements[0].focus();
+    form.addEventListener('submit', async e => {
       e.preventDefault();
       const d = UI.formData(e.target);
+      if (!d.email && d.username) d.email = d.username;
+      const err = document.getElementById('auth-err');
       try {
-        if (mode === 'setup') await api('POST', '/api/setup', d);
+        if (mode === 'setup') await api('POST', '/api/setup', { name: d.name, email: d.email, password: d.password, setupCode: d.setupCode });
         else if (mode === 'invite') await api('POST', '/api/invites/accept', { token: invite, password: d.password });
         else if (mode === 'reset') await api('POST', '/api/auth/reset', { token: reset, password: d.password });
+        else if (mode === 'forgot') { const r = await api('POST', '/api/auth/forgot', { email: d.email }); return authScreen(session, { mode: 'login', note: r.message }); }
+        else if (mode === 'magic') { const r = await api('POST', '/api/auth/magic', { email: d.email }); return authScreen(session, { mode: 'login', note: r.message }); }
+        else if (mode === 'otp') await api('POST', '/api/auth/otp', { code: String(d.code || '').trim() });
         else {
-          const r = await api('POST', '/api/login', d);
-          // Optional emailed sign-in code (Settings → sign-in security).
-          if (r && r.otpRequired) { const code = window.prompt((r.message || 'We emailed you a code.') + ' Enter the 6-digit code:'); if (!code) return; await api('POST', '/api/auth/otp', { code: code.trim() }); }
+          const r = await api('POST', '/api/login', { email: d.email, password: d.password, remember: !!d.remember });
+          if (r && r.otpRequired) return authScreen(session, { mode: 'otp', note: r.message });
         }
+        await offerSavedPassword(e.target);
         location.hash = '';
         location.reload();
-      } catch (err) { document.getElementById('auth-err').textContent = err.message; }
+      } catch (ex) { err.textContent = ex.message; }
     });
   }
 
@@ -4720,6 +4805,22 @@ Thank you for considering this request.`
     };
     const rm = document.getElementById('ai-key-remove');
     if (rm) rm.onclick = async () => { await api('DELETE', '/api/settings/ai'); toast('Key removed — AI is off'); loadAiSettings(); };
+  }
+
+  async function loadRentClicks() {
+    const el = document.getElementById('rent-clicks');
+    if (!el || !Store.remote) return;
+    let r;
+    try { r = await api('GET', '/api/rent-reporting'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    el.innerHTML = `<section class="card" style="margin-top:16px"><div class="card-h"><div><h2>Rent reporting</h2><p>Clicks from the client portal. Clients are not charged.</p></div></div><div class="card-b"><div class="grid g3">${r.providers.map(p => `<div class="card kpi"><div class="label">${esc(p.name)}</div><div class="value">${p.clicks}</div></div>`).join('')}</div><p class="small muted" style="margin-top:10px">${esc(r.disclosure)}</p></div></section>`;
+  }
+
+  async function loadCreditClicks() {
+    const el = document.getElementById('credit-clicks');
+    if (!el || !Store.remote) return;
+    let r;
+    try { r = await api('GET', '/api/credit-monitoring'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    el.innerHTML = `<section class="card" style="margin-top:16px"><div class="card-h"><div><h2>Credit monitoring</h2><p>Clicks from the client portal. Credit Ledger does not charge for these referrals.</p></div></div><div class="card-b"><div class="grid g2">${r.providers.map(p => `<div class="card kpi"><div class="label">${esc(p.name)}</div><div class="value">${p.clicks}</div></div>`).join('')}</div><p class="small muted" style="margin-top:10px">${esc(r.disclosure)}</p></div></section>`;
   }
 
   async function loadTeam() {
@@ -5950,7 +6051,20 @@ Thank you for considering this request.`
       if (!session.user || !['owner', 'staff'].includes(session.user.role)) {
         if (session.user && session.user.role === 'client') { location.href = '/portal'; return; }
         if (session.user && session.user.role === 'partner') { location.href = '/partner'; return; }
-        authScreen(session); return;
+        const magic = (location.hash.match(/magic=([\w-]+)/) || [])[1];
+        if (magic && !session.user) {
+          try {
+            await api('POST', '/api/auth/magic/verify', { token: magic });
+            location.hash = '';
+            location.reload();
+            return;
+          } catch (e) {
+            await authScreen(session, { mode: 'login', note: e.message });
+            return;
+          }
+        }
+        await authScreen(session);
+        return;
       }
       await Remote.start(session.user);
       const foot = document.querySelector('.side-foot'); if (foot) foot.textContent = 'Saved securely on your Ledger server. Workflow software — not legal advice.';
@@ -6419,7 +6533,9 @@ function htmlToText(html) {
     const aiNote = m === 'none'
       ? `<div class="callout warn"><b>AI scanning is off</b>${Store.remote ? 'Set ANTHROPIC_API_KEY on the server to turn it on.' : 'Add your Anthropic API key in <a href="#/settings" data-close>Settings → AI in this browser</a> to read reports automatically.'} You can still import a CSV or enter accounts by hand.</div>`
       : `<div class="callout good"><b>✦ AI scan is on</b>Drop the report and AI reads every account for each bureau. You review everything before it is saved.</div>`;
+    const creditGo = (root.Partners && root.Partners.CREDIT_GO) || {};
     const offers = S().offers.filter(o => ['myfreescorenow', 'identityiq', 'smartcredit'].includes(o.key));
+    const reportHref = o => (Store.remote && creditGo[o.key]) ? creditGo[o.key] : (o.affiliateUrl || o.url);
     modal({
       title: 'Upload credit report', wide: true,
       body: `<div class="form-grid">${field('Client', 'cid', cid, { type: 'select', options: [['', 'Choose a client…']].concat(clients.map(c => [c.id, c.name])), cls: 'span2' })}</div>
@@ -6431,7 +6547,7 @@ function htmlToText(html) {
           <section class="up-card"><h3>Spreadsheet (CSV)</h3><p class="small muted">One row per account with Metro 2 columns. Download the template from Settings.</p><button type="button" class="btn sm" data-up="csv">Import CSV</button></section>
           <section class="up-card"><h3>Enter by hand</h3><p class="small muted">Create the report, then add each account.</p><button type="button" class="btn sm" data-up="manual">Add report manually</button></section>
           ${Store.remote ? `<section class="up-card"><h3>Ask the client to upload</h3><p class="small muted">They upload it in their portal and it appears in Documents for scanning.</p><button type="button" class="btn sm" data-up="ask">Message client</button></section>` : ''}
-          <section class="up-card"><h3>Need a report first?</h3><p class="small muted">3-bureau monitoring with downloadable reports:</p><div class="row small">${offers.map(o => `<a href="${esc(o.affiliateUrl || o.url)}" target="_blank" rel="noopener">${esc(o.name)} ↗</a>`).join('')}<a href="https://www.annualcreditreport.com" target="_blank" rel="noopener">AnnualCreditReport.com (free) ↗</a></div></section>
+          <section class="up-card"><h3>Need a report first?</h3><p class="small muted">3-bureau monitoring with downloadable reports. MyFreeScoreNow is $39.90/month after a 7-day trial. SmartCredit pricing is shown at sign-up. We may earn a commission if someone signs up.</p><div class="row small">${offers.map(o => `<a href="${esc(reportHref(o))}" target="_blank" rel="noopener sponsored">${esc(o.name)} ↗</a>`).join('')}<a href="https://www.annualcreditreport.com" target="_blank" rel="noopener">AnnualCreditReport.com (free) ↗</a></div></section>
         </div>`,
       foot: '<button type="button" class="btn" data-close>Close</button>',
       onOpen: f => {

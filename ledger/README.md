@@ -21,6 +21,8 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `/pricing`, `/terms`, `/refund-policy`, `/privacy`, `/checkout` | Public business pages (files in `ledger/site/`). **Still DRAFT**: DRAFT banner + `noindex`, with phone (856) 655-7855, contact fred@myledgercredit.com and effective date October 21, 2026 filled in, until the owner approves publishing. `/checkout` is the enrollment flow ($0 due, pay after service); it submits to `/api/intake` as a lead and the agreement is signed in the portal. Payments are cards only (no eCheck). Billing enforces a 12-month term and a $1,188 total cap per client agreement (`Billing.capCheck`, checked again by the server on save) |
 | `/go/<id>` | Tracked partner links: counts the click, then redirects to your affiliate link |
 | `/go/partner/<key>` | Partner links with a hashed sub-ID per client/staff (metadata-only click log; report under Partners → Click report) |
+| `/go/rent/<provider>` | Rent-reporting referrals (Boom, Credit Rent Boost, Self). A signed-in client’s click is stored, then the browser goes to the provider |
+| `/go/credit/<provider>` | Credit-monitoring referrals (`myfreescorenow`, `smartcredit`). Same click record (client, provider, time), then the approved affiliate link |
 | `/api/health` (`/healthz`) | Health check for Railway: status, uptime, build, encryption and storage |
 | `/api/coach/:id`, `/api/portal/coach` | Business credit coach (staff; signed-in client sees only their own plan) — see docs/assistant-spec.md §10 |
 
@@ -54,6 +56,8 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_RENT_BOOM_URL` | Where a Boom rent-reporting click goes (default `https://www.boompay.app/renters`, the consumer page). Set an https affiliate link later; anything else is ignored |
 | `LEDGER_RENT_CRB_URL` | Where a Credit Rent Boost click goes (default `https://www.creditrentboost.com/`) |
 | `LEDGER_RENT_SELF_URL` | Where a Self rent-reporting click goes (default `https://www.self.inc/rent-and-bills-reporting`) |
+| `LEDGER_CREDIT_MFSN_URL` | Where a MyFreeScoreNow click goes (default `https://app.myfreescorenow.com/enroll/B04C9729`). The plan is $39.90/month after a 7-day trial. Only an https URL is used; anything else is ignored |
+| `LEDGER_CREDIT_SMARTCREDIT_URL` | Where a SmartCredit click goes (default `https://www.smartcredit.com/?PID=72556`). Pricing is shown at sign-up. Only an https URL is used; anything else is ignored |
 
 Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
 
@@ -82,7 +86,7 @@ On Railway, set the start command to `node ledger/server/index.js` (or `npm run 
 - **✦ AI scan pasted text:** select all on the report page, copy, paste.
 - **CSV import** and **manual entry**.
 - **Ask the client to upload:** server mode. They upload in the portal, and you click Scan with AI in Documents.
-- **Links to get a report:** monitoring partners and the free AnnualCreditReport.com.
+- **Links to get a report:** MyFreeScoreNow ($39.90/month after a 7-day trial) and SmartCredit (pricing shown at sign-up) open through `/go/credit/…`, which records a signed-in client’s click. IdentityIQ stays on its own partner link. AnnualCreditReport.com is the no-charge weekly report. We may earn a commission on the paid plans. Clients do not have to use them.
 - In the **master file**, AI scanning works with your own Anthropic API key (Settings → AI in this browser). The key stays in that browser and is never included in backups. This doesn't work inside a claude.ai preview link, which blocks outside connections.
 
 **AI dispute engine:**
@@ -175,6 +179,8 @@ In preview mode, data stays in the browser. The JSON-file database fits a small 
 | `server/ledger-assistant.js`, `server/redact.js` | OpenAI assistant, letter drafting and helper (off by default); redaction |
 | `server/client-auth.js`, `server/mailer.js` | Forgot/reset password, magic link, email sign-in code, client notifications; pluggable mailer (off by default) |
 | `server/partner-links.js` | `/go/partner/:key` sub-ID redirect and click report |
+| `server/rent.js` | `/go/rent/:provider` rent-reporting redirect and click counts |
+| `server/credit-monitoring.js` | `/go/credit/:provider` MyFreeScoreNow and SmartCredit redirect and click counts |
 | `docs/assistant-spec.md` | Assistant / letters / KB spec, guardrails, data flow, costs |
 
 Tests: `npm run test:ledger`
