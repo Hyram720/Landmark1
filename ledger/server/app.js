@@ -9,7 +9,7 @@ import { commsConfig, sendEmail, sendSms } from './comms.js';
 import { askAssistant, assistantConfigured, setKeyProvider, checkKey } from './assistant.js';
 import { scanReport, planRound } from './ai.js';
 import { openDb } from './db.js';
-import { hashPassword, verifyPassword, burnPasswordCheck, signToken, verifyToken, passwordProblem, rateLimiter } from './auth.js';
+import { hashPassword, verifyPassword, burnPasswordCheck, signToken, verifyToken, passwordProblem, rateLimiter, sessionDurations } from './auth.js';
 import { mountLedgerAssistant } from './ledger-assistant.js';
 import { mountCoach } from './coach.js';
 import { mountPartnerLinks } from './partner-links.js';
@@ -20,7 +20,6 @@ import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
 import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
 
 const SESSION_COOKIE = 'ledger_session';
-const SESSION_TTL = 60 * 60 * 12; // 12 hours
 const INVITE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const ledgerDir = path.resolve(new URL('..', import.meta.url).pathname);
 
@@ -120,15 +119,64 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   // A malformed cookie from another site on the same host (bad % escape) must not 500 every request.
   const safeDecode = v => { try { return decodeURIComponent(v); } catch { return v; } };
   const cookies = (req) => Object.fromEntries(String(req.headers.cookie || '').split(';').map(c => c.trim().split('=')).filter(p => p[0]).map(([k, ...v]) => [k, safeDecode(v.join('='))]));
-  function currentUser(req) {
-    const p = verifyToken(cookies(req)[SESSION_COOKIE], D().secret);
-    if (!p) return null;
-    const u = D().users.find(x => x.id === p.uid && !x.disabled);
-    return u && u.sessionEpoch === p.ep ? u : null;
+  // "yes" / "on" cover a checkbox posted as a form field; the app sends a real boolean.
+  const wantsRemember = v => v === true || v === 1 || v === '1' || v === 'true' || v === 'on' || v === 'yes';
+  function cookieOpts(req, maxAgeMs) {
+    const opts = { httpOnly: true, sameSite: 'lax', secure: !!(req.secure || process.env.NODE_ENV === 'production'), path: '/' };
+    if (maxAgeMs !== undefined) opts.maxAge = maxAgeMs;
+    return opts;
   }
-  function startSession(req, res, u) {
-    const token = signToken({ uid: u.id, ep: u.sessionEpoch }, D().secret, SESSION_TTL);
-    res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: req.secure || process.env.NODE_ENV === 'production', maxAge: SESSION_TTL * 1000, path: '/' });
+  function readSession(req) {
+    if (Object.prototype.hasOwnProperty.call(req, '_ledgerSession')) return req._ledgerSession;
+    const payload = verifyToken(cookies(req)[SESSION_COOKIE], D().secret);
+    let session = null;
+    if (payload) {
+      const d = sessionDurations();
+      const now = Math.floor(Date.now() / 1000);
+      const remember = payload.rm === 1 || payload.rm === true;
+      // Tokens issued before remember-me have no iat; honor them until exp, then the next
+      // renewal stamps the original clock so the absolute cap starts from that sign-in.
+      const withinCap = !payload.iat || now < payload.iat + (remember ? d.rememberAbsolute : d.standardAbsolute);
+      const user = withinCap ? D().users.find(x => x.id === payload.uid && !x.disabled) : null;
+      if (user && user.sessionEpoch === payload.ep) session = { user, payload };
+    }
+    req._ledgerSession = session;
+    return session;
+  }
+  function currentUser(req) {
+    const s = readSession(req);
+    return s ? s.user : null;
+  }
+  function writeSession(req, res, user, { remember, iat, life }) {
+    const token = signToken({ uid: user.id, ep: user.sessionEpoch, iat, rm: remember ? 1 : 0 }, D().secret, life);
+    res.cookie(SESSION_COOKIE, token, cookieOpts(req, life * 1000));
+  }
+  function startSession(req, res, u, opts) {
+    const d = sessionDurations();
+    const remember = wantsRemember(opts && Object.prototype.hasOwnProperty.call(opts, 'remember') ? opts.remember : (req.body || {}).remember);
+    const ttl = remember ? d.remember : d.standard;
+    const absolute = remember ? d.rememberAbsolute : d.standardAbsolute;
+    const now = Math.floor(Date.now() / 1000);
+    const iat = opts && opts.iat ? opts.iat : now;
+    const life = Math.max(1, Math.min(ttl, iat + absolute - now));
+    writeSession(req, res, u, { remember, iat, life });
+  }
+  // Slide the idle window forward on active API use, but never past the absolute cap and
+  // never by restarting `iat` (that would let a stolen cookie live forever).
+  function renewSessionIfDue(req, res, user, payload) {
+    const d = sessionDurations();
+    const remember = payload.rm === 1 || payload.rm === true;
+    const ttl = remember ? d.remember : d.standard;
+    const absolute = remember ? d.rememberAbsolute : d.standardAbsolute;
+    const now = Math.floor(Date.now() / 1000);
+    const iat = payload.iat || (payload.exp - ttl);
+    const cap = iat + absolute;
+    if (!(now < cap)) return;
+    const remaining = payload.exp - now;
+    if (remaining > d.renewWithin) return;
+    const life = Math.min(ttl, cap - now);
+    if (life < remaining + 30) return;
+    writeSession(req, res, user, { remember, iat, life });
   }
   const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, clientId: u.clientId || null, referralId: u.referralId || null });
   const need = (...roles) => (req, res, next) => {
@@ -153,6 +201,17 @@ export function createApp({ dataDir, encryptionKey } = {}) {
 
   // Forgot password, magic links, email codes and client notifications (server/client-auth.js).
   let auth = null;
+
+  // Renew before the route runs. Skip routes that issue or clear a session themselves so a
+  // login response carries one cookie, not a renewal of the previous one plus the new one.
+  const NO_RENEW = new Set(['/api/logout', '/api/login', '/api/setup', '/api/invites/accept', '/api/auth/reset', '/api/auth/magic/verify', '/api/auth/otp']);
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/') && !NO_RENEW.has(req.path)) {
+      const session = readSession(req);
+      if (session) renewSessionIfDue(req, res, session.user, session.payload);
+    }
+    next();
+  });
 
   // ---------- session ----------
   app.get('/api/session', (req, res) => {
@@ -184,7 +243,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const u = D().users.find(x => x.email === addr && !x.disabled);
     if (!u) { burnPasswordCheck(password); return res.status(401).json({ error: 'Email or password is incorrect' }); }
     if (!verifyPassword(password, u.password)) return res.status(401).json({ error: 'Email or password is incorrect' });
-    if (auth.otpRequired(u)) { db.audit({ actor: u.email, action: 'login.password_ok_otp_sent', detail: req.ip }); return auth.startOtp(req, res, u); }
+    if (auth.otpRequired(u)) { db.audit({ actor: u.email, action: 'login.password_ok_otp_sent', detail: req.ip }); return auth.startOtp(req, res, u, { remember: wantsRemember((req.body || {}).remember) }); }
     db.audit({ actor: u.email, action: 'login', detail: req.ip });
     db.persist();
     startSession(req, res, u);
@@ -192,7 +251,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   });
 
   app.post('/api/logout', (req, res) => {
-    res.clearCookie(SESSION_COOKIE, { path: '/' });
+    res.clearCookie(SESSION_COOKIE, cookieOpts(req));
     res.json({ ok: true });
   });
 
@@ -797,7 +856,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       commission: { type: r.commissionType || 'none', amount: r.commissionAmount || '', terms: r.commission || '', earned: com.earned, paid: com.paid, owed: com.owed, payouts: r.payouts || [] } });
   });
 
-  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace });
+  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember });
 
   // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
   mountLedgerAssistant(app, { need, workspace, db, D, uid });

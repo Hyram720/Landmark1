@@ -106,38 +106,79 @@
     }
   };
 
-  function authScreen(session) {
+  // Ask the browser to store the password before the page reloads. Chrome and Edge honor
+  // PasswordCredential; other browsers use the autocomplete tokens on the form below.
+  async function offerSavedPassword(form) {
+    const password = form.elements.password;
+    if (!password || !password.value) return;
+    try {
+      if (typeof PasswordCredential !== 'function' || !navigator.credentials || typeof navigator.credentials.store !== 'function') return;
+      await navigator.credentials.store(new PasswordCredential(form));
+    } catch (e) { /* the form attributes still let the browser offer to save */ }
+  }
+
+  async function authScreen(session, initial) {
+    initial = initial || {};
+    let options = { magicLink: false, forgot: true, rememberDays: 30 };
+    try { options = Object.assign(options, await api('GET', '/api/auth/options')); } catch (e) { /* recovery links still render */ }
     const invite = (location.hash.match(/invite=([\w-]+)/) || [])[1];
     const reset = (location.hash.match(/reset=([\w-]+)/) || [])[1];
-    const mode = reset ? 'reset' : invite ? 'invite' : session.setupRequired ? 'setup' : 'login';
-    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger', reset: 'Choose a new password' }[mode];
+    const mode = initial.mode || (reset ? 'reset' : invite ? 'invite' : session.setupRequired ? 'setup' : 'login');
+    const title = { invite: 'Join the team', setup: 'Create the owner account', login: 'Sign in to Ledger', reset: 'Choose a new password', forgot: 'Reset your password', magic: 'Email me a sign-in link', otp: 'Enter your sign-in code' }[mode];
+    const days = Math.max(1, Math.min(400, Number(options.rememberDays) || 30));
+    const passwordAttrs = mode === 'login'
+      ? 'autocomplete="current-password" id="current-password"'
+      : 'autocomplete="new-password" id="new-password"';
+    const emailAttrs = 'autocomplete="username" id="username" inputmode="email" autocapitalize="none" spellcheck="false"';
+    const emailField = field('Email', 'username', '', { type: 'email', required: true, attrs: emailAttrs });
+    const action = { login: '/api/login', setup: '/api/setup', invite: '/api/invites/accept', reset: '/api/auth/reset', forgot: '/api/auth/forgot', magic: '/api/auth/magic', otp: '/api/auth/otp' }[mode];
+    const extra = {
+      setup: field('Your name', 'name', '', { required: true, attrs: 'autocomplete="name"' }) + (session.setupCodeRequired ? field('Setup code', 'setupCode', '', { required: true, attrs: 'autocomplete="off"', help: 'The LEDGER_SETUP_CODE value from your server settings' }) : '') + emailField,
+      login: emailField,
+      forgot: field('Email', 'username', '', { type: 'email', required: true, attrs: emailAttrs, help: 'We’ll email a reset link that works once and expires in 30 minutes.' }),
+      magic: field('Email', 'username', '', { type: 'email', required: true, attrs: emailAttrs, help: 'We’ll email a sign-in link that works once and expires in 15 minutes.' }),
+      otp: field('6-digit code', 'code', '', { required: true, attrs: 'autocomplete="one-time-code" inputmode="numeric"', help: 'Check your email. The code expires in 10 minutes.' })
+    };
+    const showPassword = mode === 'login' || mode === 'setup' || mode === 'invite' || mode === 'reset';
+    const button = { login: 'Sign in', forgot: 'Send reset link', magic: 'Send sign-in link', otp: 'Verify' }[mode] || 'Continue';
     document.body.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:24px 16px">
-      <form class="card" id="auth" style="width:100%;max-width:400px"><div class="card-b stack">
+      <form class="card" id="auth" method="post" action="${action}" autocomplete="on" style="width:100%;max-width:400px"><div class="card-b stack">
         <div class="brand" style="padding:0;color:var(--ink)"><div class="brand-mark">L</div><div><b>Ledger</b><small style="color:var(--muted)">Credit workspace</small></div></div>
         <h1>${title}</h1>
-        ${mode === 'setup' ? field('Your name', 'name', '', { required: true }) : ''}
-        ${mode === 'setup' && session.setupCodeRequired ? field('Setup code', 'setupCode', '', { required: true, help: 'The LEDGER_SETUP_CODE value from your server settings' }) : ''}
-        ${mode !== 'invite' && mode !== 'reset' ? field('Email', 'email', '', { type: 'email', required: true }) : ''}
-        ${field('Password', 'password', '', { type: 'password', required: true, help: mode === 'login' ? '' : 'At least 10 characters' })}
-        <div id="auth-err" class="small" style="color:var(--high)"></div>
-        <button class="btn primary" style="width:100%">${mode === 'login' ? 'Sign in' : 'Continue'}</button>
+        ${initial.note ? `<p class="small">${esc(initial.note)}</p>` : ''}
+        ${mode === 'invite' ? '<p class="small muted">Choose a password to finish creating your account.</p>' : ''}
+        ${mode === 'reset' ? '<p class="small muted">At least 10 characters. This signs you out everywhere else.</p>' : ''}
+        ${extra[mode] || ''}
+        ${showPassword ? field('Password', 'password', '', { type: 'password', required: true, attrs: passwordAttrs, help: mode === 'login' ? '' : 'At least 10 characters' }) : ''}
+        ${mode === 'login' ? `<label class="check small"><input type="checkbox" name="remember" value="yes"> Keep me signed in for ${days} days</label>` : ''}
+        <div id="auth-err" class="small" role="alert" style="color:var(--high)"></div>
+        <button class="btn primary" type="submit" style="width:100%">${button}</button>
+        ${mode === 'login' ? `<div class="row between small"><a href="#" data-mode="forgot">Forgot password?</a>${options.magicLink ? '<a href="#" data-mode="magic">Email me a sign-in link</a>' : ''}</div>` : ['forgot', 'magic', 'otp'].includes(mode) ? '<div class="small"><a href="#" data-mode="login">Back to sign in</a></div>' : ''}
         ${session.encrypted ? '' : '<p class="small muted">Tip: set LEDGER_ENCRYPTION_KEY on the server to encrypt data at rest.</p>'}
       </div></form></div>`;
-    document.getElementById('auth').addEventListener('submit', async e => {
+    document.querySelectorAll('[data-mode]').forEach(a => { a.onclick = e => { e.preventDefault(); authScreen(session, { mode: a.dataset.mode }); }; });
+    const form = document.getElementById('auth');
+    if (form.elements[0]) form.elements[0].focus();
+    form.addEventListener('submit', async e => {
       e.preventDefault();
       const d = UI.formData(e.target);
+      if (!d.email && d.username) d.email = d.username;
+      const err = document.getElementById('auth-err');
       try {
-        if (mode === 'setup') await api('POST', '/api/setup', d);
+        if (mode === 'setup') await api('POST', '/api/setup', { name: d.name, email: d.email, password: d.password, setupCode: d.setupCode });
         else if (mode === 'invite') await api('POST', '/api/invites/accept', { token: invite, password: d.password });
         else if (mode === 'reset') await api('POST', '/api/auth/reset', { token: reset, password: d.password });
+        else if (mode === 'forgot') { const r = await api('POST', '/api/auth/forgot', { email: d.email }); return authScreen(session, { mode: 'login', note: r.message }); }
+        else if (mode === 'magic') { const r = await api('POST', '/api/auth/magic', { email: d.email }); return authScreen(session, { mode: 'login', note: r.message }); }
+        else if (mode === 'otp') await api('POST', '/api/auth/otp', { code: String(d.code || '').trim() });
         else {
-          const r = await api('POST', '/api/login', d);
-          // Optional emailed sign-in code (Settings → sign-in security).
-          if (r && r.otpRequired) { const code = window.prompt((r.message || 'We emailed you a code.') + ' Enter the 6-digit code:'); if (!code) return; await api('POST', '/api/auth/otp', { code: code.trim() }); }
+          const r = await api('POST', '/api/login', { email: d.email, password: d.password, remember: !!d.remember });
+          if (r && r.otpRequired) return authScreen(session, { mode: 'otp', note: r.message });
         }
+        await offerSavedPassword(e.target);
         location.hash = '';
         location.reload();
-      } catch (err) { document.getElementById('auth-err').textContent = err.message; }
+      } catch (ex) { err.textContent = ex.message; }
     });
   }
 
@@ -1400,7 +1441,20 @@
       if (!session.user || !['owner', 'staff'].includes(session.user.role)) {
         if (session.user && session.user.role === 'client') { location.href = '/portal'; return; }
         if (session.user && session.user.role === 'partner') { location.href = '/partner'; return; }
-        authScreen(session); return;
+        const magic = (location.hash.match(/magic=([\w-]+)/) || [])[1];
+        if (magic && !session.user) {
+          try {
+            await api('POST', '/api/auth/magic/verify', { token: magic });
+            location.hash = '';
+            location.reload();
+            return;
+          } catch (e) {
+            await authScreen(session, { mode: 'login', note: e.message });
+            return;
+          }
+        }
+        await authScreen(session);
+        return;
       }
       await Remote.start(session.user);
       const foot = document.querySelector('.side-foot'); if (foot) foot.textContent = 'Saved securely on your Ledger server. Workflow software — not legal advice.';

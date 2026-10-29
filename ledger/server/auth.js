@@ -39,6 +39,28 @@ export function verifyToken(token, secret) {
   return payload && payload.exp > Date.now() / 1000 ? payload : null;
 }
 
+// Idle length of a normal sign-in, the opt-in "keep me signed in" length, and the hard caps
+// measured from the original sign-in. Caps stop a stolen cookie from being renewed forever.
+// Unset, non-numeric, or out-of-range values fall back to the defaults (minimum 60 seconds,
+// maximum 400 days — the longest a browser will keep a cookie).
+const MIN_SESSION_SECONDS = 60;
+const MAX_SESSION_SECONDS = 400 * 24 * 60 * 60;
+function clampSeconds(raw, fallback) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const s = Math.floor(n);
+  if (s < MIN_SESSION_SECONDS || s > MAX_SESSION_SECONDS) return fallback;
+  return s;
+}
+export function sessionDurations(env = process.env) {
+  const standard = clampSeconds(env.LEDGER_SESSION_TTL_SECONDS, 12 * 60 * 60);
+  const remember = Math.max(standard, clampSeconds(env.LEDGER_REMEMBER_TTL_SECONDS, 30 * 24 * 60 * 60));
+  const standardAbsolute = Math.max(standard, clampSeconds(env.LEDGER_SESSION_ABSOLUTE_SECONDS, Math.max(standard, 7 * 24 * 60 * 60)));
+  const rememberAbsolute = Math.max(remember, clampSeconds(env.LEDGER_REMEMBER_ABSOLUTE_SECONDS, remember));
+  return { standard, remember, standardAbsolute, rememberAbsolute, renewWithin: Math.min(2 * 60 * 60, Math.floor(standard / 2)) };
+}
+
 export function passwordProblem(pw) {
   if (String(pw || '').length < 10) return 'Use at least 10 characters.';
   return null;

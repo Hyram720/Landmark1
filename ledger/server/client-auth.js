@@ -16,7 +16,7 @@ const RESET_TTL = 30 * 60 * 1000, MAGIC_TTL = 15 * 60 * 1000, OTP_TTL = 10 * 60 
 const NEUTRAL = 'If an account exists for that email, we sent a link. It expires soon and works once.';
 const pageFor = role => (role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app');
 
-export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace }) {
+export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds }) {
   const ipLimit = rateLimiter(10, 15 * 60 * 1000);
   const emailLimit = rateLimiter(5, 60 * 60 * 1000);
   const otpLimit = rateLimiter(10, 15 * 60 * 1000);
@@ -111,9 +111,9 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   // ---------- email one-time code (2-step) ----------
   const OTP_COOKIE = 'ledger_otp';
   function otpRequired(u) { return !!settings().emailOtp && mailEnabled(); }
-  async function startOtp(req, res, u) {
+  async function startOtp(req, res, u, opts) {
     const pending = crypto.randomBytes(18).toString('base64url');
-    const { raw } = issue('otp', u, OTP_TTL, { pending: sha(pending) });
+    const { raw } = issue('otp', u, OTP_TTL, { pending: sha(pending), remember: !!(opts && opts.remember) });
     res.cookie(OTP_COOKIE, pending, { httpOnly: true, sameSite: 'strict', secure: req.secure, maxAge: OTP_TTL, path: '/api/auth' });
     await mail(u, `Your ${company()} sign-in code`, `Your sign-in code is ${raw}. It expires in 10 minutes. If you didn’t try to sign in, change your password.`);
     res.json({ otpRequired: true, message: 'We emailed you a 6-digit code.' });
@@ -125,12 +125,13 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     if (!rec) return res.status(400).json({ error: 'Your code expired. Sign in again.' });
     rec.attempts += 1;
     if (rec.attempts > 5) { rec.usedAt = 'locked'; db.persist(); return res.status(400).json({ error: 'Too many wrong codes. Sign in again.' }); }
+    const remember = !!rec.remember;
     const u = consume('otp', String((req.body || {}).code || '').trim(), t => t === rec);
     if (!u) { db.persist(); return res.status(400).json({ error: 'That code is not correct.' }); }
     res.clearCookie(OTP_COOKIE, { path: '/api/auth' });
     db.audit({ actor: u.email, action: 'login.otp', detail: req.ip });
     db.persist();
-    startSession(req, res, u);
+    startSession(req, res, u, { remember });
     res.json({ user: publicUser(u) });
   });
 
@@ -145,7 +146,8 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     db.persist();
     res.json(Object.assign({}, settings(), { mailMode: mailMode(), mailEnabled: mailEnabled() }));
   });
-  app.get('/api/auth/options', (req, res) => res.json({ magicLink: !!settings().magicLink && mailEnabled(), forgot: true }));
+  const rememberFor = typeof rememberSeconds === 'function' ? rememberSeconds : () => 30 * 24 * 60 * 60;
+  app.get('/api/auth/options', (req, res) => res.json({ magicLink: !!settings().magicLink && mailEnabled(), forgot: true, rememberDays: Math.max(1, Math.round(rememberFor() / 86400)) }));
 
   // ---------- client notifications ----------
   app.get('/api/portal/notifications', need('client'), (req, res) => res.json({ email: !req.user.notifyOptOut, available: mailEnabled() && settings().notifications !== false }));

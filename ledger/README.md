@@ -47,6 +47,10 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_SMTP_URL` | SMTP connection URL when `LEDGER_MAIL_MODE=smtp` (needs the optional `nodemailer` package) |
 | `LEDGER_BACKUPS` / `LEDGER_BACKUP_DAYS` | Daily encrypted DB snapshot in `<data dir>/backups` (on by default; `off` disables); days kept (default 14) |
 | `LEDGER_TRUST_PROXY_HOPS` | Proxy hops in front of the app (default 1 for Railway); used for client IPs in rate limits |
+| `LEDGER_SESSION_TTL_SECONDS` | Idle length of a normal sign-in (default 12 hours). Active requests renew it. Minimum 60 seconds, maximum 400 days |
+| `LEDGER_REMEMBER_TTL_SECONDS` | Length when “Keep me signed in” is checked on `/app` (default 30 days). Never shorter than the normal session |
+| `LEDGER_SESSION_ABSOLUTE_SECONDS` | Hard cap from the original sign-in for a normal session, even while it keeps renewing (default 7 days, never shorter than the idle length) |
+| `LEDGER_REMEMBER_ABSOLUTE_SECONDS` | Hard cap for a “keep me signed in” session (default the remember length, so it ends 30 days after sign-in) |
 
 Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
 
