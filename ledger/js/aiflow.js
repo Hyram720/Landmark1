@@ -179,7 +179,9 @@
     const aiNote = m === 'none'
       ? `<div class="callout warn"><b>AI scanning is off</b>${Store.remote ? 'Set ANTHROPIC_API_KEY on the server to turn it on.' : 'Add your Anthropic API key in <a href="#/settings" data-close>Settings → AI in this browser</a> to read reports automatically.'} You can still import a CSV or enter accounts by hand.</div>`
       : `<div class="callout good"><b>✦ AI scan is on</b>Drop the report and AI reads every account for each bureau. You review everything before it is saved.</div>`;
+    const creditGo = (root.Partners && root.Partners.CREDIT_GO) || {};
     const offers = S().offers.filter(o => ['myfreescorenow', 'identityiq', 'smartcredit'].includes(o.key));
+    const reportHref = o => (Store.remote && creditGo[o.key]) ? creditGo[o.key] : (o.affiliateUrl || o.url);
     modal({
       title: 'Upload credit report', wide: true,
       body: `<div class="form-grid">${field('Client', 'cid', cid, { type: 'select', options: [['', 'Choose a client…']].concat(clients.map(c => [c.id, c.name])), cls: 'span2' })}</div>
@@ -191,7 +193,7 @@
           <section class="up-card"><h3>Spreadsheet (CSV)</h3><p class="small muted">One row per account with Metro 2 columns. Download the template from Settings.</p><button type="button" class="btn sm" data-up="csv">Import CSV</button></section>
           <section class="up-card"><h3>Enter by hand</h3><p class="small muted">Create the report, then add each account.</p><button type="button" class="btn sm" data-up="manual">Add report manually</button></section>
           ${Store.remote ? `<section class="up-card"><h3>Ask the client to upload</h3><p class="small muted">They upload it in their portal and it appears in Documents for scanning.</p><button type="button" class="btn sm" data-up="ask">Message client</button></section>` : ''}
-          <section class="up-card"><h3>Need a report first?</h3><p class="small muted">3-bureau monitoring with downloadable reports:</p><div class="row small">${offers.map(o => `<a href="${esc(o.affiliateUrl || o.url)}" target="_blank" rel="noopener">${esc(o.name)} ↗</a>`).join('')}<a href="https://www.annualcreditreport.com" target="_blank" rel="noopener">AnnualCreditReport.com (free) ↗</a></div></section>
+          <section class="up-card"><h3>Need a report first?</h3><p class="small muted">3-bureau monitoring with downloadable reports. MyFreeScoreNow is $39.90/month after a 7-day trial. SmartCredit pricing is shown at sign-up. We may earn a commission if someone signs up.</p><div class="row small">${offers.map(o => `<a href="${esc(reportHref(o))}" target="_blank" rel="noopener sponsored">${esc(o.name)} ↗</a>`).join('')}<a href="https://www.annualcreditreport.com" target="_blank" rel="noopener">AnnualCreditReport.com (free) ↗</a></div></section>
         </div>`,
       foot: '<button type="button" class="btn" data-close>Close</button>',
       onOpen: f => {

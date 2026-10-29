@@ -34,7 +34,7 @@
     if (emptyWs) html = `<div class="empty-banner"><div><b>Your workspace has no clients yet</b><div class="small">Pages fill in as you add clients. Load the demo to see every feature with sample data, or add your first client.</div></div><div class="row"><button class="btn" data-act="load-demo">Load demo data</button><button class="btn primary" data-act="new-client">+ Add client</button></div></div>` + html;
     document.getElementById('view').innerHTML = html;
     if (nav === 'team') loadTeam();
-    if (nav === 'partners') loadRentClicks();
+    if (nav === 'partners') { loadRentClicks(); loadCreditClicks(); }
     if (nav === 'settings') { loadAiSettings(); loadMailSettings(); loadPaySettings(); }
     document.querySelectorAll('.nav a').forEach(el => el.classList.toggle('active', el.dataset.nav === nav));
     const open = Views.openDisputes().length;
@@ -220,6 +220,14 @@
     let r;
     try { r = await api('GET', '/api/rent-reporting'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
     el.innerHTML = `<section class="card" style="margin-top:16px"><div class="card-h"><div><h2>Rent reporting</h2><p>Clicks from the client portal. Clients are not charged.</p></div></div><div class="card-b"><div class="grid g3">${r.providers.map(p => `<div class="card kpi"><div class="label">${esc(p.name)}</div><div class="value">${p.clicks}</div></div>`).join('')}</div><p class="small muted" style="margin-top:10px">${esc(r.disclosure)}</p></div></section>`;
+  }
+
+  async function loadCreditClicks() {
+    const el = document.getElementById('credit-clicks');
+    if (!el || !Store.remote) return;
+    let r;
+    try { r = await api('GET', '/api/credit-monitoring'); } catch (e) { el.innerHTML = `<p class="small" style="color:var(--high)">${esc(e.message)}</p>`; return; }
+    el.innerHTML = `<section class="card" style="margin-top:16px"><div class="card-h"><div><h2>Credit monitoring</h2><p>Clicks from the client portal. Credit Ledger does not charge for these referrals.</p></div></div><div class="card-b"><div class="grid g2">${r.providers.map(p => `<div class="card kpi"><div class="label">${esc(p.name)}</div><div class="value">${p.clicks}</div></div>`).join('')}</div><p class="small muted" style="margin-top:10px">${esc(r.disclosure)}</p></div></section>`;
   }
 
   async function loadTeam() {

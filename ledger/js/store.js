@@ -25,6 +25,41 @@
   const V1_STATUS = { current: '11', paid: '13', closed: '13', late: '71', '30': '71', '60': '78', '90': '80', collection: '93', collections: '93', 'charged off': '97', chargeoff: '97', 'charge-off': '97', repossession: '96', foreclosure: '94' };
   const V1_TYPE = { revolving: 'R', installment: 'I', mortgage: 'M', open: 'O', 'line of credit': 'C' };
 
+  // Older workspaces stored the public homepages for these two offers. Point them at the
+  // approved affiliate links unless someone already saved a different affiliate URL.
+  const OLD_CREDIT_NOTES = {
+    myfreescorenow: 'Common report source for Metro 2 software (“MFSN import”). Listings conflict and some network listings are closed. Ask MFSN about its credit-professional program.',
+    smartcredit: 'Listings conflict and one shows the program as closed on a network. Check with SmartCredit directly.'
+  };
+  const OLD_CREDIT_URL = {
+    myfreescorenow: /^https:\/\/www\.myfreescorenow\.com\/?$/i,
+    smartcredit: /^https:\/\/www\.smartcredit\.com\/?$/i
+  };
+  const OLD_CREDIT_JOIN = {
+    myfreescorenow: /^https:\/\/www\.myfreescorenow\.com\/?$/i,
+    smartcredit: 'https://www.flexoffers.com/affiliate-programs/smartcredit-affiliate-program/'
+  };
+  function applyLiveCreditLinks(offers) {
+    const catalog = (root.Partners && root.Partners.CATALOG) || [];
+    (offers || []).forEach(o => {
+      const seed = catalog.find(c => c.key === o.key);
+      const bare = OLD_CREDIT_URL[o.key];
+      if (!seed || !bare || !seed.url) return;
+      if (!o.affiliateUrl || bare.test(o.affiliateUrl)) o.affiliateUrl = seed.affiliateUrl || seed.url;
+      if (!o.url || bare.test(o.url)) o.url = seed.url;
+      const oldJoin = OLD_CREDIT_JOIN[o.key];
+      const joinBare = typeof oldJoin === 'string' ? o.joinUrl === oldJoin : oldJoin.test(String(o.joinUrl || ''));
+      if (!o.joinUrl || joinBare) o.joinUrl = seed.joinUrl || seed.url;
+      if (o.note === OLD_CREDIT_NOTES[o.key]) {
+        o.note = seed.note;
+        if (seed.program) o.program = seed.program;
+        if (seed.status) o.status = seed.status;
+        if (seed.network) o.network = seed.network;
+        if (seed.subIdParam !== undefined) o.subIdParam = seed.subIdParam;
+      }
+    });
+  }
+
   /** Accepts a v1 backup (ledger-workspace-backup) or a v2 workspace and returns a v2 workspace. */
   function migrate(data) {
     if (!data || typeof data !== 'object') throw new Error('Not a workspace backup.');
@@ -35,6 +70,7 @@
       // Add catalog offers introduced after this workspace was created.
       const have = new Set((ws.offers || []).map(o => o.key));
       ws.offers = (ws.offers || []).concat(seed.filter(o => !have.has(o.key)));
+      applyLiveCreditLinks(ws.offers);
       // Any list that is missing or damaged (null, object) becomes an empty list so pages and forms never crash on it.
       Object.keys(base).forEach(k => { if (Array.isArray(base[k]) && !Array.isArray(ws[k])) ws[k] = []; });
       ['sequences', 'pendingImports', 'automationLog'].forEach(k => { if (ws[k] !== undefined && !Array.isArray(ws[k])) ws[k] = []; });
