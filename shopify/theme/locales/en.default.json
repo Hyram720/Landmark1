@@ -1,0 +1,91 @@
+{
+  "general": {
+    "page": "Page {{ page }}",
+    "search": "Search",
+    "cart": "Bag",
+    "menu": "Menu",
+    "close": "Close",
+    "view_all": "View all",
+    "previous": "Previous",
+    "next": "Next",
+    "continue_shopping": "Continue shopping",
+    "password_enter": "Enter store using password",
+    "password_label": "Password",
+    "password_submit": "Enter"
+  },
+  "accessibility": {
+    "skip_to_content": "Skip to content"
+  },
+  "products": {
+    "add_to_cart": "Add to bag",
+    "sold_out": "Sold out",
+    "unavailable": "Unavailable",
+    "made_to_order": "Made to order. Printed after you check out.",
+    "personalize": "Personalization",
+    "personalize_placeholder": "Your custom text (optional)",
+    "quantity": "Quantity"
+  },
+  "studio": {
+    "upload": "Upload your own artwork (PNG, SVG, JPG, WebP)",
+    "or_library": "Or choose from our Studio Library",
+    "clear": "Clear / upload my own art instead",
+    "remove_bg": "Remove background",
+    "restore": "Restore original",
+    "tolerance": "Color tolerance",
+    "scale": "Scale on garment",
+    "rotate": "Rotate",
+    "art_only": "Art-only view",
+    "garment_view": "Garment view",
+    "dpi_ok": "{{ dpi }} DPI at print size. Looks sharp.",
+    "dpi_low": "{{ dpi }} DPI at print size. 300 DPI or more prints sharpest.",
+    "need_art": "Upload artwork or pick a Studio Library design first.",
+    "add": "Add this custom design to my bag"
+  },
+  "cart": {
+    "title": "Your bag",
+    "empty": "Your bag is empty.",
+    "subtotal": "Subtotal",
+    "taxes": "Taxes and shipping calculated at checkout.",
+    "checkout": "Check out",
+    "remove": "Remove",
+    "update": "Update",
+    "note": "Order note",
+    "artwork_file": "Artwork file"
+  },
+  "collections": {
+    "empty": "No products in this collection yet.",
+    "all": "Everything"
+  },
+  "search": {
+    "title": "Search",
+    "placeholder": "Search tees, hoodies, series...",
+    "results": "{{ count }} results for “{{ terms }}”",
+    "no_results": "No results for “{{ terms }}”."
+  },
+  "blogs": {
+    "read_more": "Read more",
+    "comments": "Comments"
+  },
+  "contact": {
+    "name": "Name",
+    "email": "Email",
+    "phone": "Phone",
+    "message": "Message",
+    "send": "Send",
+    "success": "Thanks! We'll get back to you within one business day."
+  },
+  "newsletter": {
+    "label": "Email",
+    "subscribe": "Subscribe",
+    "success": "You're on the list."
+  },
+  "not_found": {
+    "title": "Page not found",
+    "text": "That page moved or never existed."
+  },
+  "gift_cards": {
+    "title": "Your gift card",
+    "code": "Gift card code",
+    "balance": "Balance"
+  }
+}

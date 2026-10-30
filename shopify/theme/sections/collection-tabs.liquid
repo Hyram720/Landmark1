@@ -1,0 +1,74 @@
+{%- comment -%} "The Goods": the homepage catalog with filter tabs, one tab per collection block. {%- endcomment -%}
+<section class="section" id="catalog">
+  <div class="wrap">
+    <div class="section-head">
+      {%- if section.settings.eyebrow != blank -%}<p class="eyebrow">{{ section.settings.eyebrow | escape }}</p>{%- endif -%}
+      <h2>{{ section.settings.heading | escape }}</h2>
+      {%- if section.settings.text != blank -%}<div>{{ section.settings.text }}</div>{%- endif -%}
+    </div>
+
+    <div class="tabs" role="tablist" data-tabs>
+      {%- if section.settings.show_all -%}
+        <button class="tab" role="tab" type="button" aria-selected="true" aria-controls="Tab-{{ section.id }}-all">{{ 'collections.all' | t }}</button>
+      {%- endif -%}
+      {%- for block in section.blocks -%}
+        {%- if block.settings.collection != blank -%}
+          <button class="tab" role="tab" type="button"
+            aria-selected="{% if forloop.first and section.settings.show_all == false %}true{% else %}false{% endif %}"
+            aria-controls="Tab-{{ section.id }}-{{ block.id }}" {{ block.shopify_attributes }}>
+            {{ block.settings.label | default: block.settings.collection.title | escape }} ({{ block.settings.collection.products_count }})
+          </button>
+        {%- endif -%}
+      {%- endfor -%}
+    </div>
+
+    {%- if section.settings.show_all -%}
+      <div class="grid" role="tabpanel" id="Tab-{{ section.id }}-all">
+        {%- for product in collections.all.products limit: section.settings.limit -%}
+          {%- unless product.tags contains 'Custom Studio' -%}
+            {% render 'product-card', product: product %}
+          {%- endunless -%}
+        {%- else -%}
+          <p class="muted">{{ 'collections.empty' | t }}</p>
+        {%- endfor -%}
+      </div>
+    {%- endif -%}
+
+    {%- for block in section.blocks -%}
+      {%- assign c = block.settings.collection -%}
+      {%- if c != blank -%}
+        <div class="grid" role="tabpanel" id="Tab-{{ section.id }}-{{ block.id }}"{% unless forloop.first and section.settings.show_all == false %} hidden{% endunless %}>
+          {%- for product in c.products limit: section.settings.limit -%}
+            {% render 'product-card', product: product %}
+          {%- else -%}
+            <p class="muted">{{ 'collections.empty' | t }}</p>
+          {%- endfor -%}
+        </div>
+      {%- endif -%}
+    {%- endfor -%}
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Catalog with tabs",
+  "settings": [
+    { "type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "Luxury Supercar, Motorsport & Championship Bootleg Division · 260-450 GSM" },
+    { "type": "text", "id": "heading", "label": "Heading", "default": "The Goods" },
+    { "type": "richtext", "id": "text", "label": "Text", "default": "<p>Headlined by our 260 GSM Architectural Series and Luxury Bootleg Tees: 100% standalone gallery-grade art with zero brand logo clutter, plus our signature Side-Stripe Hoodie, Sweatpants & Cap set.</p>" },
+    { "type": "checkbox", "id": "show_all", "label": "Show an \"Everything\" tab", "default": true },
+    { "type": "range", "id": "limit", "label": "Products per tab", "min": 4, "max": 48, "step": 4, "default": 24 }
+  ],
+  "blocks": [
+    {
+      "type": "collection",
+      "name": "Tab",
+      "settings": [
+        { "type": "collection", "id": "collection", "label": "Collection" },
+        { "type": "text", "id": "label", "label": "Tab label (optional)" }
+      ]
+    }
+  ],
+  "presets": [{ "name": "Catalog with tabs" }]
+}
+{% endschema %}

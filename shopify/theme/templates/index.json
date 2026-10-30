@@ -1,0 +1,59 @@
+{
+  "sections": {
+    "hero": {
+      "type": "hero",
+      "blocks": {
+        "chip1": { "type": "chip", "settings": { "label": "New: Architectural Series & Continental V12 Tees" } },
+        "chip2": { "type": "chip", "settings": { "label": "260 GSM Heavyweight Boxy Fits" } },
+        "chip3": { "type": "chip", "settings": { "label": "300-DPI Customizer + BG Remover" } }
+      },
+      "block_order": ["chip1", "chip2", "chip3"],
+      "settings": {
+        "product": "generational-blueprint-build-what-outlives-your-name-tee",
+        "cta1_link": "#catalog",
+        "cta2_link": "/products/custom-studio-design"
+      }
+    },
+    "catalog": {
+      "type": "collection-tabs",
+      "blocks": {
+        "t1": { "type": "collection", "settings": { "collection": "mesoamerican-architectural-series" } },
+        "t2": { "type": "collection", "settings": { "collection": "supercar-bout-tees" } },
+        "t3": { "type": "collection", "settings": { "collection": "winter-bootleg-hoodies" } },
+        "t4": { "type": "collection", "settings": { "collection": "street-graphic-tees" } },
+        "t5": { "type": "collection", "settings": { "collection": "signature-tracksuit-cap-set" } },
+        "t6": { "type": "collection", "settings": { "collection": "all-over-prints" } },
+        "t7": { "type": "collection", "settings": { "collection": "collaborations" } }
+      },
+      "block_order": ["t1", "t2", "t3", "t4", "t5", "t6", "t7"],
+      "settings": {}
+    },
+    "studio": {
+      "type": "studio-teaser",
+      "settings": { "product": "custom-studio-design" }
+    },
+    "lookbook": {
+      "type": "lookbook",
+      "blocks": {
+        "l1": { "type": "look", "settings": { "product": "continental-boss-presidential-v12-bone-cream-tee", "tag": "260 GSM Bone Cream · V12 Luxury Coupe · Zero Logo", "title": "\"Continental Boss // Presidential V12\" Grand-Tourer Look" } },
+        "l2": { "type": "look", "settings": { "product": "pink-slips-only-street-circuit-legends-drift-tee", "tag": "260 GSM Washed-Charcoal · Twin-Turbo Drift · Zero Logo", "title": "\"Pink Slips Only // Street Circuit Legends\" Motorsport Look" } },
+        "l3": { "type": "look", "settings": { "product": "undisputed-world-championship-vegas-fight-night-tee", "tag": "260 GSM Jet-Black · Vegas Championship Bout · Zero Logo", "title": "\"Undisputed // World Championship\" Vegas Fight-Night Look" } },
+        "l4": { "type": "look", "settings": { "product": "executive-syndicate-private-airspace-tee", "tag": "260 GSM Espresso Mineral-Wash · Private Airspace · Zero Logo", "title": "\"Executive Syndicate // Private Airspace\" Luxury Lifestyle Look" } },
+        "l5": { "type": "look", "settings": { "product": "signature-side-stripe-tracksuit-cap-set", "tag": "The Single Signature Tracksuit & Cap Look", "title": "Signature Side-Stripe Hoodie, Sweatpants & Baseball Cap Set" } }
+      },
+      "block_order": ["l1", "l2", "l3", "l4", "l5"],
+      "settings": {}
+    },
+    "process": {
+      "type": "text-columns",
+      "blocks": {
+        "c1": { "type": "column", "settings": { "title": "The blanks", "text": "<p>Heavyweight 260 to 450 GSM blanks: oversized boxy tees, drop-shoulder hoodies, and stacked-hem sweatpants.</p>" } },
+        "c2": { "type": "column", "settings": { "title": "The print", "text": "<p>Every piece is made to order after you check out: screen-printed, DTF-pressed, or embroidered, including jumbo full-chest bootleg graphics and side-seam runs.</p>" } },
+        "c3": { "type": "column", "settings": { "title": "Custom & wholesale runs", "text": "<p>Need one custom tracksuit or graphic tee? Done. Scaling a drop for your brand, crew, or car club? <a href=\"mailto:hello@suncustomdesigns.com\">Write to us</a> for tiered wholesale.</p>" } }
+      },
+      "block_order": ["c1", "c2", "c3"],
+      "settings": {}
+    }
+  },
+  "order": ["hero", "catalog", "studio", "lookbook", "process"]
+}

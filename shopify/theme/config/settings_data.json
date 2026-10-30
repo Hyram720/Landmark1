@@ -1,0 +1,16 @@
+{
+  "current": "Default",
+  "presets": {
+    "Default": {
+      "color_background": "#0D0F12",
+      "color_surface": "#16191E",
+      "color_border": "#2A2F37",
+      "color_text": "#FAF8F5",
+      "color_muted": "#A39B8F",
+      "color_accent": "#EA580C",
+      "color_gold": "#F59E0B",
+      "logo_width": 180,
+      "button_radius": 3
+    }
+  }
+}

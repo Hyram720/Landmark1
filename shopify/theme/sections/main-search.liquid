@@ -1,0 +1,32 @@
+<section class="page">
+  <div class="wrap">
+    <h1>{{ 'search.title' | t }}</h1>
+    <form action="{{ routes.search_url }}" method="get" role="search" class="row" style="max-width:640px;margin-bottom:32px;flex-wrap:nowrap">
+      <input type="search" name="q" value="{{ search.terms | escape }}" placeholder="{{ 'search.placeholder' | t }}" aria-label="{{ 'search.title' | t }}">
+      <input type="hidden" name="type" value="product">
+      <button class="btn" type="submit">{{ 'general.search' | t }}</button>
+    </form>
+    {%- if search.performed -%}
+      {%- paginate search.results by 24 -%}
+        <p class="muted">
+          {%- if search.results_count > 0 -%}{{ 'search.results' | t: count: search.results_count, terms: search.terms }}{%- else -%}{{ 'search.no_results' | t: terms: search.terms }}{%- endif -%}
+        </p>
+        <div class="grid">
+          {%- for item in search.results -%}
+            {%- if item.object_type == 'product' -%}{% render 'product-card', product: item %}{%- endif -%}
+          {%- endfor -%}
+        </div>
+        {%- if paginate.pages > 1 -%}
+          <nav class="pagination" aria-label="Pagination">
+            {%- if paginate.previous -%}<a class="btn btn--ghost btn--small" href="{{ paginate.previous.url }}">{{ 'general.previous' | t }}</a>{%- endif -%}
+            {%- if paginate.next -%}<a class="btn btn--ghost btn--small" href="{{ paginate.next.url }}">{{ 'general.next' | t }}</a>{%- endif -%}
+          </nav>
+        {%- endif -%}
+      {%- endpaginate -%}
+    {%- endif -%}
+  </div>
+</section>
+
+{% schema %}
+{ "name": "Search results" }
+{% endschema %}

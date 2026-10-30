@@ -1,0 +1,40 @@
+[
+  {
+    "name": "theme_info",
+    "theme_name": "Sun Atelier",
+    "theme_version": "1.0.0",
+    "theme_author": "Sun Custom Designs",
+    "theme_documentation_url": "https://suncustomdesigns.com/",
+    "theme_support_email": "hello@suncustomdesigns.com"
+  },
+  {
+    "name": "Colors",
+    "settings": [
+      { "type": "color", "id": "color_background", "label": "Background", "default": "#0D0F12" },
+      { "type": "color", "id": "color_surface", "label": "Cards and inputs", "default": "#16191E" },
+      { "type": "color", "id": "color_border", "label": "Borders", "default": "#2A2F37" },
+      { "type": "color", "id": "color_text", "label": "Text", "default": "#FAF8F5" },
+      { "type": "color", "id": "color_muted", "label": "Secondary text", "default": "#A39B8F" },
+      { "type": "color", "id": "color_accent", "label": "Accent (buttons)", "default": "#EA580C" },
+      { "type": "color", "id": "color_gold", "label": "Gold (links, highlights)", "default": "#F59E0B" }
+    ]
+  },
+  {
+    "name": "Brand",
+    "settings": [
+      { "type": "image_picker", "id": "logo", "label": "Logo" },
+      { "type": "range", "id": "logo_width", "label": "Logo width", "min": 80, "max": 300, "step": 10, "unit": "px", "default": 180 },
+      { "type": "image_picker", "id": "favicon", "label": "Favicon", "info": "32 x 32px PNG" },
+      { "type": "range", "id": "button_radius", "label": "Button corner radius", "min": 0, "max": 20, "step": 1, "unit": "px", "default": 3 }
+    ]
+  },
+  {
+    "name": "Social",
+    "settings": [
+      { "type": "text", "id": "social_instagram", "label": "Instagram URL" },
+      { "type": "text", "id": "social_tiktok", "label": "TikTok URL" },
+      { "type": "text", "id": "social_facebook", "label": "Facebook URL" },
+      { "type": "text", "id": "social_pinterest", "label": "Pinterest URL" }
+    ]
+  }
+]

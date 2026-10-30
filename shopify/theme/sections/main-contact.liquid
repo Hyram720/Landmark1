@@ -1,0 +1,19 @@
+<section class="page">
+  <div class="wrap" style="max-width:760px">
+    <h1>{{ page.title | escape }}</h1>
+    <div class="rte">{{ page.content }}</div>
+    {%- form 'contact' -%}
+      {%- if form.posted_successfully? -%}<p class="form-success">{{ 'contact.success' | t }}</p>{%- endif -%}
+      {%- if form.errors -%}<div class="errors">{{ form.errors | default_errors }}</div>{%- endif -%}
+      <div class="field"><label for="ContactName">{{ 'contact.name' | t }}</label><input id="ContactName" type="text" name="contact[name]" value="{{ form.name }}"></div>
+      <div class="field"><label for="ContactEmail">{{ 'contact.email' | t }}</label><input id="ContactEmail" type="email" name="contact[email]" value="{{ form.email }}" required></div>
+      <div class="field"><label for="ContactPhone">{{ 'contact.phone' | t }}</label><input id="ContactPhone" type="tel" name="contact[phone]" value="{{ form.phone }}"></div>
+      <div class="field"><label for="ContactBody">{{ 'contact.message' | t }}</label><textarea id="ContactBody" name="contact[body]" rows="6">{{ form.body }}</textarea></div>
+      <button class="btn" type="submit">{{ 'contact.send' | t }}</button>
+    {%- endform -%}
+  </div>
+</section>
+
+{% schema %}
+{ "name": "Contact form" }
+{% endschema %}

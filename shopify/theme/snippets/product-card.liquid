@@ -1,0 +1,34 @@
+{%- comment -%}
+  Renders a product card.
+  Accepts: product (required)
+{%- endcomment -%}
+{%- liquid
+  assign eyebrow = product.type
+  for tag in product.tags
+    if tag contains 'GSM'
+      assign eyebrow = tag | append: ' · ' | append: product.type
+      break
+    endif
+  endfor
+-%}
+<article class="card">
+  <a class="card__media" href="{{ product.url }}" tabindex="-1" aria-hidden="true">
+    {%- if product.featured_image -%}
+      {{ product.featured_image | image_url: width: 800 | image_tag: loading: 'lazy', sizes: '(min-width: 1240px) 300px, (min-width: 600px) 45vw, 100vw', widths: '300, 500, 800', alt: product.featured_image.alt | default: product.title }}
+    {%- else -%}
+      {{ 'product-apparel-1' | placeholder_svg_tag }}
+    {%- endif -%}
+  </a>
+  <div class="card__body">
+    <span class="card__eyebrow">{{ eyebrow | escape }}</span>
+    <h3 class="card__title"><a href="{{ product.url }}">{{ product.title | escape }}</a></h3>
+    <div class="card__footer">
+      <span class="price">
+        {%- if product.price_varies -%}From {% endif -%}
+        {{ product.price_min | money }}
+        {%- if product.compare_at_price > product.price -%}<s>{{ product.compare_at_price | money }}</s>{%- endif -%}
+      </span>
+      <a class="btn btn--small" href="{{ product.url }}">{% if product.available %}Shop{% else %}{{ 'products.sold_out' | t }}{% endif %}</a>
+    </div>
+  </div>
+</article>

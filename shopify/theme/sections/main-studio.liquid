@@ -1,0 +1,169 @@
+{%- comment -%}
+  Custom Studio: upload-your-own-art product page (assign the "studio" product template).
+  The artwork file is sent with the cart line as a line item property, so it appears on the order
+  in Shopify admin and in Printful/Printify (as a link) for fulfillment.
+{%- endcomment -%}
+{%- assign current = product.selected_or_first_available_variant -%}
+<div class="wrap studio" data-studio>
+  <div class="studio__stage">
+    <div class="stage" data-stage>
+      <div class="stage__garment" data-garment>
+        {%- comment -%} Simple garment silhouettes; fill follows the Color option. {%- endcomment -%}
+        <svg viewBox="0 0 400 420" data-shape="tee" aria-hidden="true">
+          <path d="M140 20 L100 30 L20 85 L55 160 L95 140 L95 400 L305 400 L305 140 L345 160 L380 85 L300 30 L260 20 C250 50 225 62 200 62 C175 62 150 50 140 20 Z" fill="currentColor" stroke="rgba(255,255,255,.08)" stroke-width="2"/>
+        </svg>
+        <svg viewBox="0 0 400 420" data-shape="hoodie" aria-hidden="true" hidden>
+          <path d="M140 50 C140 -5 260 -5 260 50 L305 62 L345 110 L392 345 L348 360 L305 175 L305 400 L95 400 L95 175 L52 360 L8 345 L55 110 L95 62 Z" fill="currentColor" stroke="rgba(255,255,255,.08)" stroke-width="2"/>
+          <path d="M155 55 C160 95 240 95 245 55 C240 20 160 20 155 55 Z" fill="rgba(0,0,0,.3)"/>
+          <path d="M185 95 L182 150 M215 95 L218 150" stroke="rgba(255,255,255,.25)" stroke-width="3"/>
+          <path d="M130 300 L270 300 L285 370 L115 370 Z" fill="rgba(0,0,0,.18)"/>
+        </svg>
+        <svg viewBox="0 0 400 420" data-shape="tote" aria-hidden="true" hidden>
+          <path d="M140 110 C140 30 260 30 260 110" fill="none" stroke="currentColor" stroke-width="14"/>
+          <rect x="70" y="110" width="260" height="290" fill="currentColor" stroke="rgba(0,0,0,.2)" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="stage__print" data-print>
+        <img alt="" width="1000" height="1200" data-art hidden>
+      </div>
+    </div>
+    <div class="stage__meta">
+      <span data-art-name>{{ 'studio.need_art' | t }}</span>
+      <span data-dpi></span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button type="button" class="btn btn--ghost btn--small" data-view-toggle>{{ 'studio.art_only' | t }}</button>
+      <button type="button" class="btn btn--ghost btn--small" data-clear>✕ {{ 'studio.clear' | t }}</button>
+    </div>
+  </div>
+
+  <div>
+    <p class="eyebrow">{{ section.settings.eyebrow | escape }}</p>
+    <h1 class="product__title">{{ product.title | escape }}</h1>
+    <div class="product__price" data-price>{{ current.price | money }}</div>
+
+    <form method="post" action="{{ routes.cart_add_url }}" enctype="multipart/form-data" accept-charset="UTF-8" data-studio-form>
+      <input type="hidden" name="form_type" value="product">
+      <input type="hidden" name="utf8" value="✓">
+      <input type="hidden" name="id" value="{{ current.id }}" data-variant-id>
+      <input type="hidden" name="properties[Studio Library design]" value="" data-library-input disabled>
+      <input type="hidden" name="properties[Placement]" value="" data-placement-input>
+      <input type="hidden" name="properties[_Background removed]" value="No" data-bg-input>
+
+      <div class="studio__panel">
+        <h3>1. {{ 'studio.upload' | t }}</h3>
+        <input type="file" name="properties[Artwork]" accept="image/png,image/jpeg,image/webp,image/svg+xml" data-upload>
+        <div class="row" style="margin-top:12px">
+          <button type="button" class="btn btn--small" data-remove-bg>{{ 'studio.remove_bg' | t }}</button>
+          <button type="button" class="btn btn--ghost btn--small" data-restore hidden>{{ 'studio.restore' | t }}</button>
+          <label style="margin:0;display:flex;gap:8px;align-items:center">
+            {{ 'studio.tolerance' | t }}
+            <input type="range" min="5" max="120" value="38" data-tolerance style="width:120px">
+          </label>
+        </div>
+        <p class="note">{{ section.settings.upload_note | escape }}</p>
+      </div>
+
+      {%- assign library_count = 0 -%}
+      {%- for block in section.blocks -%}
+        {%- if block.settings.image != blank -%}{%- assign library_count = library_count | plus: 1 -%}{%- endif -%}
+      {%- endfor -%}
+      {%- if library_count > 0 -%}
+        <div class="studio__panel">
+          <h3>{{ 'studio.or_library' | t }}</h3>
+          <div class="library">
+            {%- for block in section.blocks -%}
+              {%- if block.settings.image != blank -%}
+                <button type="button" aria-pressed="false"
+                  data-library="{{ block.settings.image | image_url: width: 2400 }}"
+                  data-title="{{ block.settings.title | escape }}" {{ block.shopify_attributes }}>
+                  {{ block.settings.image | image_url: width: 300 | image_tag: loading: 'lazy', alt: block.settings.title }}
+                  <span>{{ block.settings.title | escape }}</span>
+                </button>
+              {%- endif -%}
+            {%- endfor -%}
+          </div>
+        </div>
+      {%- endif -%}
+
+      <div class="studio__panel">
+        <h3>2. Garment</h3>
+        {%- for option in product.options_with_values -%}
+          {%- assign option_index = forloop.index -%}
+          <fieldset class="option">
+            <legend>{{ option.name | escape }}</legend>
+            <div class="swatches">
+              {%- for value in option.values -%}
+                {%- assign oid = section.id | append: '-' | append: option_index | append: '-' | append: forloop.index -%}
+                <input type="radio" id="SOpt-{{ oid }}" name="option{{ option_index }}" value="{{ value | escape }}" data-option="{{ option_index | minus: 1 }}" data-option-name="{{ option.name | downcase | escape }}" {% if option.selected_value == value %}checked{% endif %}>
+                <label for="SOpt-{{ oid }}">{{ value | escape }}</label>
+              {%- endfor -%}
+            </div>
+          </fieldset>
+        {%- endfor -%}
+      </div>
+
+      <div class="studio__panel">
+        <h3>3. Placement</h3>
+        <div class="field">
+          <label for="Scale-{{ section.id }}">{{ 'studio.scale' | t }} (<span data-scale-label>100</span>%)</label>
+          <input id="Scale-{{ section.id }}" type="range" min="30" max="100" value="100" data-scale>
+        </div>
+        <div class="field">
+          <label for="Rotate-{{ section.id }}">{{ 'studio.rotate' | t }} (<span data-rotate-label>0</span>°)</label>
+          <input id="Rotate-{{ section.id }}" type="range" min="-45" max="45" value="0" data-rotate>
+        </div>
+      </div>
+
+      <button class="btn btn--block" type="submit" data-add-button>{{ 'studio.add' | t }}</button>
+      <p class="studio__error" data-error hidden>{{ 'studio.need_art' | t }}</p>
+      <p class="note">{{ 'products.made_to_order' | t }}</p>
+    </form>
+
+    <div class="product__desc rte">{{ product.description }}</div>
+  </div>
+
+  <script type="application/json" data-product-json>
+    {{ product.variants | json }}
+  </script>
+  <script type="application/json" data-studio-config>
+    {
+      "printWidthInches": {{ section.settings.print_width }},
+      "colors": {
+        "vintage black": "#17181b",
+        "midnight navy": "#1c2740",
+        "bone cream": "#f1ebdf",
+        "charcoal pepper": "#3a3c40"
+      },
+      "strings": {
+        "dpiOk": {{ 'studio.dpi_ok' | t: dpi: '__DPI__' | json }},
+        "dpiLow": {{ 'studio.dpi_low' | t: dpi: '__DPI__' | json }},
+        "artOnly": {{ 'studio.art_only' | t | json }},
+        "garmentView": {{ 'studio.garment_view' | t | json }},
+        "needArt": {{ 'studio.need_art' | t | json }}
+      }
+    }
+  </script>
+</div>
+<script src="{{ 'studio.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Custom Studio",
+  "settings": [
+    { "type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "The Design Studio · 300-DPI Live Mockup" },
+    { "type": "text", "id": "upload_note", "label": "Upload note", "default": "Best results: a 3000 x 3600px (300 DPI at 10\" x 12\") PNG with a transparent background." },
+    { "type": "range", "id": "print_width", "label": "Max print width (inches)", "min": 4, "max": 16, "step": 1, "default": 10 }
+  ],
+  "blocks": [
+    {
+      "type": "art",
+      "name": "Studio Library design",
+      "settings": [
+        { "type": "image_picker", "id": "image", "label": "Transparent PNG artwork" },
+        { "type": "text", "id": "title", "label": "Design name" }
+      ]
+    }
+  ]
+}
+{% endschema %}

@@ -9,7 +9,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "DEV_SKIP_PAYMENT=true IMAGE_PROVIDER=mock node --watch src/server.js",
-    "content": "node scripts/content-engine.js 30"
+    "content": "node scripts/content-engine.js 30",
+    "shopify:csv": "node scripts/build-shopify-csv.js",
+    "shopify:assets": "node scripts/download-site-assets.js",
+    "shopify:zip": "cd shopify/theme && rm -f ../sun-atelier-theme.zip && zip -rq ../sun-atelier-theme.zip . -x \"*.DS_Store\""
   },
   "repository": {
     "type": "git",

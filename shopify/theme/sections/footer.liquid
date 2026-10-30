@@ -1,0 +1,66 @@
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="site-footer__grid">
+      <div>
+        <h4>{{ shop.name }}</h4>
+        <p>{{ section.settings.about }}</p>
+        {%- if section.settings.email != blank -%}
+          <p><a href="mailto:{{ section.settings.email }}">{{ section.settings.email }}</a></p>
+        {%- endif -%}
+      </div>
+      <div>
+        <h4>{{ section.settings.menu_shop.title | default: 'Shop' }}</h4>
+        <ul>
+          {%- for link in section.settings.menu_shop.links -%}
+            <li><a href="{{ link.url }}">{{ link.title | escape }}</a></li>
+          {%- endfor -%}
+        </ul>
+      </div>
+      <div>
+        <h4>{{ section.settings.menu_help.title | default: 'Help' }}</h4>
+        <ul>
+          {%- for link in section.settings.menu_help.links -%}
+            <li><a href="{{ link.url }}">{{ link.title | escape }}</a></li>
+          {%- endfor -%}
+        </ul>
+      </div>
+      <div>
+        <h4>{{ section.settings.newsletter_heading }}</h4>
+        {%- form 'customer', class: 'newsletter-form' -%}
+          <input type="hidden" name="contact[tags]" value="newsletter">
+          {%- if form.posted_successfully? -%}
+            <p class="form-success">{{ 'newsletter.success' | t }}</p>
+          {%- endif -%}
+          <div class="newsletter">
+            <input type="email" name="contact[email]" placeholder="you@example.com" aria-label="{{ 'newsletter.label' | t }}" required>
+            <button class="btn btn--small" type="submit">{{ 'newsletter.subscribe' | t }}</button>
+          </div>
+        {%- endform -%}
+        <ul class="row" style="margin-top:16px;display:flex;gap:14px">
+          {%- if settings.social_instagram != blank -%}<li><a href="{{ settings.social_instagram }}">Instagram</a></li>{%- endif -%}
+          {%- if settings.social_tiktok != blank -%}<li><a href="{{ settings.social_tiktok }}">TikTok</a></li>{%- endif -%}
+          {%- if settings.social_facebook != blank -%}<li><a href="{{ settings.social_facebook }}">Facebook</a></li>{%- endif -%}
+          {%- if settings.social_pinterest != blank -%}<li><a href="{{ settings.social_pinterest }}">Pinterest</a></li>{%- endif -%}
+        </ul>
+      </div>
+    </div>
+    <div class="site-footer__bottom">
+      <span>&copy; {{ 'now' | date: '%Y' }} {{ shop.name }}. {{ section.settings.location }}</span>
+      <span>{{ powered_by_link }}</span>
+    </div>
+  </div>
+</footer>
+
+{% schema %}
+{
+  "name": "Footer",
+  "settings": [
+    { "type": "textarea", "id": "about", "label": "About text", "default": "Heavyweight luxury bootleg streetwear and a live 300-DPI custom design studio." },
+    { "type": "text", "id": "email", "label": "Contact email", "default": "hello@suncustomdesigns.com" },
+    { "type": "text", "id": "location", "label": "Location line", "default": "Camden, New Jersey." },
+    { "type": "link_list", "id": "menu_shop", "label": "Shop menu", "default": "main-menu" },
+    { "type": "link_list", "id": "menu_help", "label": "Help menu", "default": "footer" },
+    { "type": "text", "id": "newsletter_heading", "label": "Newsletter heading", "default": "First access to drops" }
+  ]
+}
+{% endschema %}

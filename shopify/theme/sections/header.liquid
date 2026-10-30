@@ -1,0 +1,35 @@
+<header class="site-header">
+  <div class="wrap site-header__inner" style="position:relative">
+    <a href="{{ routes.root_url }}" class="site-header__logo">
+      {%- if settings.logo != blank -%}
+        {{ settings.logo | image_url: width: 600 | image_tag: alt: shop.name, style: 'width:' | append: settings.logo_width | append: 'px', loading: 'eager' }}
+      {%- else -%}
+        {{ shop.name }}
+      {%- endif -%}
+    </a>
+
+    <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="SiteNav" data-menu-toggle>{{ 'general.menu' | t }}</button>
+    <ul class="site-nav" id="SiteNav">
+      {%- for link in section.settings.menu.links -%}
+        <li><a href="{{ link.url }}"{% if link.active %} aria-current="page"{% endif %}>{{ link.title | escape }}</a></li>
+      {%- endfor -%}
+    </ul>
+
+    <div class="site-header__icons">
+      <a href="{{ routes.search_url }}">{{ 'general.search' | t }}</a>
+      {%- if shop.customer_accounts_enabled -%}
+        <a href="{{ routes.account_url }}">Account</a>
+      {%- endif -%}
+      <a href="{{ routes.cart_url }}">{{ 'general.cart' | t }}<span class="cart-count" data-cart-count>{{ cart.item_count }}</span></a>
+    </div>
+  </div>
+</header>
+
+{% schema %}
+{
+  "name": "Header",
+  "settings": [
+    { "type": "link_list", "id": "menu", "label": "Menu", "default": "main-menu" }
+  ]
+}
+{% endschema %}

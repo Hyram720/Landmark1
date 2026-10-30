@@ -1,0 +1,64 @@
+<section class="hero">
+  <div class="wrap hero__grid">
+    <div>
+      {%- if section.settings.kicker != blank -%}<p class="hero__kicker">{{ section.settings.kicker | escape }}</p>{%- endif -%}
+      <h1>{{ section.settings.heading }}</h1>
+      {%- if section.settings.text != blank -%}<div class="hero__text">{{ section.settings.text }}</div>{%- endif -%}
+      <div class="hero__chips">
+        {%- for block in section.blocks -%}
+          <span class="chip" {{ block.shopify_attributes }}>{{ block.settings.label | escape }}</span>
+        {%- endfor -%}
+      </div>
+      <div class="hero__ctas">
+        {%- if section.settings.cta1_label != blank -%}
+          <a class="btn" href="{{ section.settings.cta1_link | default: routes.all_products_collection_url }}">{{ section.settings.cta1_label | escape }}</a>
+        {%- endif -%}
+        {%- if section.settings.cta2_label != blank -%}
+          <a class="btn btn--ghost" href="{{ section.settings.cta2_link | default: '#' }}">{{ section.settings.cta2_label | escape }}</a>
+        {%- endif -%}
+      </div>
+    </div>
+    <div class="hero__media">
+      {%- if section.settings.image != blank -%}
+        {{ section.settings.image | image_url: width: 1200 | image_tag: loading: 'eager', fetchpriority: 'high', sizes: '(min-width: 860px) 45vw, 100vw', widths: '400, 700, 1000, 1200' }}
+      {%- elsif section.settings.product != blank and section.settings.product.featured_image -%}
+        {{ section.settings.product.featured_image | image_url: width: 1200 | image_tag: loading: 'eager', fetchpriority: 'high', sizes: '(min-width: 860px) 45vw, 100vw', widths: '400, 700, 1000, 1200' }}
+      {%- else -%}
+        {{ 'product-apparel-1' | placeholder_svg_tag }}
+      {%- endif -%}
+      {%- if section.settings.caption != blank -%}<p class="hero__caption">{{ section.settings.caption | escape }}</p>{%- endif -%}
+    </div>
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Hero",
+  "settings": [
+    { "type": "text", "id": "kicker", "label": "Kicker", "default": "Camden, New Jersey · 260 GSM Luxury Bootleg & Heavyweight Streetwear Studio" },
+    { "type": "inline_richtext", "id": "heading", "label": "Heading (italic text shows in gold serif)", "default": "Exotic bootleg heat, <em>printed & stitched,</em> built to stop the scroll." },
+    { "type": "richtext", "id": "text", "label": "Text", "default": "<p>Gallery-grade 90s Pen & Pixel luxury supercar, V12 grand-tourer, twin-turbo street circuit, and Las Vegas championship fight-night bootleg art on 260 GSM oversized boxy tees, plus our signature Side-Stripe Tracksuit & Cap set and live 300-DPI customizer.</p>" },
+    { "type": "text", "id": "cta1_label", "label": "Primary button", "default": "Shop Luxury Bootleg Drops" },
+    { "type": "url", "id": "cta1_link", "label": "Primary button link" },
+    { "type": "text", "id": "cta2_label", "label": "Secondary button", "default": "Customize Your Apparel" },
+    { "type": "url", "id": "cta2_link", "label": "Secondary button link" },
+    { "type": "image_picker", "id": "image", "label": "Image" },
+    { "type": "product", "id": "product", "label": "Or use a product's image" },
+    { "type": "text", "id": "caption", "label": "Image caption", "default": "Featured Drop: Architectural Blueprint Monolith 260 GSM Boxy Streetwear Tee." }
+  ],
+  "blocks": [
+    { "type": "chip", "name": "Chip", "settings": [{ "type": "text", "id": "label", "label": "Label", "default": "260 GSM Heavyweight Boxy Fits" }] }
+  ],
+  "max_blocks": 6,
+  "presets": [
+    {
+      "name": "Hero",
+      "blocks": [
+        { "type": "chip", "settings": { "label": "New: Architectural Series & Continental V12 Tees" } },
+        { "type": "chip", "settings": { "label": "260 GSM Heavyweight Boxy Fits" } },
+        { "type": "chip", "settings": { "label": "300-DPI Customizer + BG Remover" } }
+      ]
+    }
+  ]
+}
+{% endschema %}

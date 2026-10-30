@@ -1,0 +1,35 @@
+<section class="section" id="custom-studio">
+  <div class="wrap hero__grid">
+    <div>
+      {%- if section.settings.eyebrow != blank -%}<p class="eyebrow">{{ section.settings.eyebrow | escape }}</p>{%- endif -%}
+      <h2>{{ section.settings.heading }}</h2>
+      <div class="hero__text">{{ section.settings.text }}</div>
+      <div class="hero__ctas" style="margin-top:24px">
+        {%- assign studio = section.settings.product -%}
+        <a class="btn" href="{% if studio != blank %}{{ studio.url }}{% else %}{{ routes.all_products_collection_url }}{% endif %}">{{ section.settings.button | escape }}</a>
+      </div>
+    </div>
+    <div class="hero__media">
+      {%- if section.settings.image != blank -%}
+        {{ section.settings.image | image_url: width: 1000 | image_tag: loading: 'lazy', widths: '400, 700, 1000', sizes: '(min-width: 860px) 45vw, 100vw' }}
+      {%- else -%}
+        {{ 'product-apparel-2' | placeholder_svg_tag }}
+      {%- endif -%}
+    </div>
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Custom Studio teaser",
+  "settings": [
+    { "type": "text", "id": "eyebrow", "label": "Eyebrow", "default": "The Design Studio · 300-DPI Live Mockup" },
+    { "type": "inline_richtext", "id": "heading", "label": "Heading", "default": "Upload your own art, or <em>choose from our Studio Library</em>" },
+    { "type": "richtext", "id": "text", "label": "Text", "default": "<p>Upload a PNG, SVG, JPG or WebP, remove the background in one click, and see it live on a 260 GSM tee or 450 GSM hoodie before you order.</p>" },
+    { "type": "text", "id": "button", "label": "Button", "default": "Open the Design Studio" },
+    { "type": "product", "id": "product", "label": "Custom Studio product" },
+    { "type": "image_picker", "id": "image", "label": "Image" }
+  ],
+  "presets": [{ "name": "Custom Studio teaser" }]
+}
+{% endschema %}

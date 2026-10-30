@@ -1,0 +1,25 @@
+{%- layout none -%}
+<!doctype html>
+<html lang="{{ request.locale.iso_code }}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{{ 'gift_cards.title' | t }} &ndash; {{ shop.name }}</title>
+    {{ 'theme.css' | asset_url | stylesheet_tag }}
+    <style>:root{--bg:#0D0F12;--surface:#16191E;--line:#2A2F37;--text:#FAF8F5;--muted:#A39B8F;--accent:#EA580C;--gold:#F59E0B;--radius:3px}</style>
+    {{ content_for_header }}
+  </head>
+  <body>
+    <main class="page" style="text-align:center">
+      <div class="wrap" style="max-width:520px">
+        <p class="eyebrow">{{ shop.name }}</p>
+        <h1>{{ 'gift_cards.title' | t }}</h1>
+        <p class="price" style="font-size:40px">{{ gift_card.balance | money }}</p>
+        <p class="muted">{{ 'gift_cards.code' | t }}</p>
+        <p style="font-size:22px;letter-spacing:.12em">{{ gift_card.code | format_code }}</p>
+        {%- if gift_card.pass_url -%}<p><a href="{{ gift_card.pass_url }}">Add to Apple Wallet</a></p>{%- endif -%}
+        <a class="btn" href="{{ shop.url }}">{{ 'general.continue_shopping' | t }}</a>
+      </div>
+    </main>
+  </body>
+</html>

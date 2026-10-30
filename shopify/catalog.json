@@ -1,0 +1,401 @@
+{
+  "source": "https://suncustomdesigns.com/ (scraped 2026-10-29)",
+  "vendor": "Sun Custom Designs",
+  "sizes": {
+    "apparel": ["S", "M", "L", "XL", "2XL", "3XL"],
+    "cap": ["One Size"]
+  },
+  "collections": [
+    { "handle": "mesoamerican-architectural-series", "title": "Mesoamerican & Architectural Series", "tag": "series-mesoamerican-architectural", "description": "Gallery-grade stone, marble and blueprint monument art on 260 GSM heavyweight boxy tees." },
+    { "handle": "supercar-bout-tees", "title": "260 GSM Supercar & Bout Tees", "tag": "series-supercar-bout", "description": "V12 grand-tourer, twin-turbo street circuit and Las Vegas fight-night bootleg tees. Zero brand logos." },
+    { "handle": "winter-bootleg-hoodies", "title": "450 GSM Winter Bootleg Hoodies", "tag": "series-winter-hoodies", "description": "450 GSM heavyweight drop-shoulder hoodies with 6-layer pyramid chest prints." },
+    { "handle": "street-graphic-tees", "title": "Street Graphic Tees", "tag": "series-street-graphic", "description": "Oversized acid-wash and mineral-wash street graphic tees. 100% original art." },
+    { "handle": "signature-tracksuit-cap-set", "title": "Signature Tracksuit & Cap Set", "tag": "series-tracksuit", "description": "Our signature side-stripe hoodie, sweatpants and embroidered cap set." },
+    { "handle": "all-over-prints", "title": "All-Over Prints", "tag": "series-all-over-print", "description": "Cut & sew pieces printed seam to seam." },
+    { "handle": "collaborations", "title": "Collaborations", "tag": "series-collaboration", "description": "Official partner collaboration pieces." }
+  ],
+  "products": [
+    {
+      "handle": "olmec-colossal-head-feathered-serpent-eternal-tee",
+      "title": "Olmec Colossal Head & Feathered Serpent Shirt: “Eternal” 90s Bootleg Mesoamerican Stone Tee",
+      "type": "T-Shirt",
+      "price": 42,
+      "color": "Black",
+      "collections": ["series-mesoamerican-architectural"],
+      "tags": ["260 GSM", "Mesoamerican", "Bootleg", "Tee"],
+      "eyebrow": "Mesoamerican Stone Series · 4-Screen Verdigris & Copper-Gold · 42 LPI Crackle",
+      "headline": "THE FIRST FACES IN STONE / STILL WATCHING OVER THE AMERICAS.",
+      "description": "Before Rome, before Greece: the colossal stone faces of the Americas rendered in 42 LPI screenprint crackle. 3,000 years of stone civilization in one 4-screen Verdigris (#3E8878), Flame Copper-Gold (#D9822B) & Aged Basalt Sandstone (#D6B888) 90s bootleg monument tee with twin Quetzalcoatl feathered serpents and a Chichen Itza step-pyramid on 260 GSM heavyweight cotton.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/olmec-serpent-04-eternal-photorealistic-mockup.jpg",
+        "https://suncustomdesigns.com/assets/products/olmec-serpent-04-eternal-bootleg-monolith-preview.jpg"
+      ]
+    },
+    {
+      "handle": "sovereign-resplendent-quetzal-varsity-tee",
+      "title": "“Sovereign” Resplendent Quetzal & Mayan Step-Pyramid Varsity 260 GSM Tee",
+      "type": "T-Shirt",
+      "price": 42,
+      "color": "Black",
+      "collections": ["series-mesoamerican-architectural"],
+      "tags": ["260 GSM", "Mesoamerican", "Tee"],
+      "eyebrow": "Mesoamerican Stone Series · Multi-Color Jade, Crimson & 24K Gold · 300-DPI",
+      "headline": "WINGS THAT NEVER BOWED / CROWNED BEFORE EMPIRES ROSE.",
+      "description": "Soaring Resplendent Quetzal with twin sweeping tail plumes rising above a hand-carved Mesoamerican step-pyramid and cracked stone varsity arch on a 260 GSM heavyweight black boxy tee (Zero Brand Logo).",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/sovereign-quetzal-multicolor-photorealistic-mockup.jpg",
+        "https://suncustomdesigns.com/assets/products/mesoamerican-quetzal-02-sovereign-varsity-arch-preview.jpg"
+      ]
+    },
+    {
+      "handle": "sovereign-quetzal-solid-24k-gold-tee",
+      "title": "“Sovereign” Resplendent Quetzal & Step-Pyramid Tee (Solid 24K Gold Edition)",
+      "type": "T-Shirt",
+      "price": 40,
+      "color": "Black",
+      "collections": ["series-mesoamerican-architectural"],
+      "tags": ["260 GSM", "Mesoamerican", "Tee"],
+      "eyebrow": "Mesoamerican Stone Series · Solid 24K Gold 1-Color · 38 LPI Halftone",
+      "headline": "WINGS THAT NEVER BOWED / CROWNED BEFORE EMPIRES ROSE.",
+      "description": "Single-color burnished 24K gold (#DF9F38) 38 LPI 1-bit halftone screen-print edition where the jet-black 260 GSM ring-spun cotton forms the deep carved stone shadows.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/sovereign-quetzal-solid-gold-photorealistic-mockup.jpg",
+        "https://suncustomdesigns.com/assets/products/sovereign-quetzal-solid-gold-1color-preview.jpg"
+      ]
+    },
+    {
+      "handle": "mesoamerican-step-pyramid-bald-eagle-tee",
+      "title": "Mesoamerican Step-Pyramid & Bald Eagle Asymmetric 260 GSM Tee (Var 03)",
+      "type": "T-Shirt",
+      "price": 42,
+      "color": "Jet Black",
+      "collections": ["series-mesoamerican-architectural"],
+      "tags": ["260 GSM", "Mesoamerican", "Architectural", "Tee"],
+      "eyebrow": "Architectural Series · 260 GSM Jet Black · 300-DPI Zero-Text Master",
+      "headline": "",
+      "description": "Lower-left Bald Eagle in V-wing stance perched atop a chiseled Mesoamerican stepped stone pyramid with a razor-thin diagonal 24K gold sightline to an upper-right crescent glyph across 65% open negative space (Zero Text, Zero Box Edges).",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/eagle-var03-monolith-perch-photorealistic-mockup.jpg",
+        "https://suncustomdesigns.com/assets/products/eagle-var03-monolith-perch.jpg"
+      ]
+    },
+    {
+      "handle": "heavy-motion-let-the-results-make-the-noise-tee",
+      "title": "\"Heavy Motion // Let The Results Make The Noise\" 260 GSM Tee",
+      "type": "T-Shirt",
+      "price": 34,
+      "color": "Washed Obsidian",
+      "collections": ["series-mesoamerican-architectural"],
+      "tags": ["260 GSM", "Architectural", "Tee"],
+      "eyebrow": "Architectural Series · 260 GSM Washed Obsidian · 300-DPI Screenprint",
+      "headline": "",
+      "description": "Monochromatic off-white chiseled Carrara marble Pegasus monument over a technical acoustic decibel grid (0 dB Speech // 100% Output) on a 260 GSM heavyweight boxy tee (Zero Brand Logo).",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/exec-v2-preview-heavy-motion.jpg",
+        "https://suncustomdesigns.com/assets/products/exec-v2-heavy-motion-4500x5400-300dpi.png"
+      ]
+    },
+    {
+      "handle": "generational-blueprint-build-what-outlives-your-name-tee",
+      "title": "\"Generational Blueprint // Build What Outlives Your Name\" 260 GSM Tee",
+      "type": "T-Shirt",
+      "price": 34,
+      "color": "Midnight Navy",
+      "collections": ["series-mesoamerican-architectural"],
+      "tags": ["260 GSM", "Architectural", "Tee", "Featured"],
+      "eyebrow": "Architectural Series · 260 GSM Midnight Navy · 300-DPI Screenprint",
+      "headline": "",
+      "description": "Chiseled white-marble & 24K-gold neoclassical skyscraper monolith rising from a cyan architectural blueprint grid (+100' to +300' elevation) with a brass drafting compass on a 260 GSM boxy tee (Zero Brand Logo).",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/exec-v2-preview-generational-blueprint.jpg",
+        "https://suncustomdesigns.com/assets/products/exec-v2-generational-blueprint-4500x5400-300dpi.png"
+      ]
+    },
+    {
+      "handle": "continental-boss-presidential-v12-bone-cream-tee",
+      "title": "\"Continental Boss // Presidential V12\" 260 GSM Bone Cream Tee",
+      "type": "T-Shirt",
+      "price": 40,
+      "color": "Bone Cream",
+      "collections": ["series-supercar-bout"],
+      "tags": ["260 GSM", "Supercar", "Bootleg", "Tee", "Lookbook"],
+      "eyebrow": "V12 Grand-Tourer Bootleg · 260 GSM Bone · Zero Logo",
+      "headline": "",
+      "description": "Pigment-dyed bone cream (#F4F0EA) 260 GSM heavyweight tee showcasing a British Racing Emerald Green & 24K gold V12 coupe on forged gold wheels, quilted saddle-leather cockpit cutaway & iced emerald/gold 3D type.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/luxury-bootleg-02-continental-v12-presidential.jpg",
+        "https://suncustomdesigns.com/assets/studio-library/continental-boss-v12-art-only.png"
+      ]
+    },
+    {
+      "handle": "pink-slips-only-street-circuit-legends-drift-tee",
+      "title": "\"Pink Slips Only // Street Circuit Legends\" 260 GSM Drift Tee",
+      "type": "T-Shirt",
+      "price": 38,
+      "color": "Washed Charcoal",
+      "collections": ["series-supercar-bout"],
+      "tags": ["260 GSM", "Motorsport", "Bootleg", "Tee", "Lookbook"],
+      "eyebrow": "Twin-Turbo Motorsport Bootleg · Zero Logo",
+      "headline": "",
+      "description": "Washed-charcoal 260 GSM boxy tee featuring twin widebody street-circuit coupes drifting through neon-magenta & cyan rain beneath mirror-chrome twin turbochargers and checkered flags.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/luxury-bootleg-03-pink-slips-street-circuit.jpg"
+      ]
+    },
+    {
+      "handle": "undisputed-world-championship-vegas-fight-night-tee",
+      "title": "\"Undisputed // World Championship\" Vegas Fight-Night 260 GSM Tee",
+      "type": "T-Shirt",
+      "price": 40,
+      "color": "Jet Black",
+      "collections": ["series-supercar-bout"],
+      "tags": ["260 GSM", "Fight Night", "Bootleg", "Tee", "Lookbook"],
+      "eyebrow": "Vegas Championship Fight-Night Bootleg · Zero Logo",
+      "headline": "",
+      "description": "Jet-black 260 GSM heavyweight tee with a 24K gold & jewel World Championship boxing belt, metallic crimson gloves, roaring Bengal tiger, Las Vegas Strip neon skyline, and 3D gold-and-chrome PPV lettering.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/luxury-bootleg-04-undisputed-vegas-fight-night.jpg",
+        "https://suncustomdesigns.com/assets/studio-library/undisputed-championship-art-only.png"
+      ]
+    },
+    {
+      "handle": "executive-syndicate-private-airspace-tee",
+      "title": "\"Executive Syndicate // Private Airspace\" 260 GSM Luxury Tee",
+      "type": "T-Shirt",
+      "price": 42,
+      "color": "Espresso Mineral-Wash",
+      "collections": ["series-supercar-bout"],
+      "tags": ["260 GSM", "Luxury", "Bootleg", "Tee", "Lookbook"],
+      "eyebrow": "Private Jet & Tourbillon Luxury Bootleg · Zero Logo",
+      "headline": "",
+      "description": "Vintage espresso-black 260 GSM mineral-wash tee combining a private jet banking over a yacht marina, pearl-white exotic coupe, diamond-bezel tourbillon watch, and 3D gold-and-platinum type.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/luxury-bootleg-05-executive-syndicate-jet-coupe.jpg"
+      ]
+    },
+    {
+      "handle": "apex-predator-untouchable-division-450gsm-hoodie",
+      "title": "\"Apex Predator // Untouchable Division\" 450 GSM Winter Hoodie",
+      "type": "Hoodie",
+      "price": 68,
+      "color": "Charcoal-Pepper",
+      "collections": ["series-winter-hoodies"],
+      "tags": ["450 GSM", "Hoodie", "Bootleg"],
+      "eyebrow": "450 GSM Winter Fleece · Armored Vault Bootleg · Zero Logo",
+      "headline": "",
+      "description": "Charcoal-pepper 450 GSM drop-shoulder hoodie featuring a 6-layer pyramid print above the pocket: spiked-gold-collar Doberman, bursting gold bullion bank vault, armored 4x4 truck & emerald-gold lightning.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/winter-hoodie-02-apex-predator-armored-vault-450gsm.jpg"
+      ]
+    },
+    {
+      "handle": "continental-boss-presidential-v12-reserve-450gsm-hoodie",
+      "title": "\"Continental Boss // Presidential V12 Reserve\" 450 GSM Bone Hoodie",
+      "type": "Hoodie",
+      "price": 68,
+      "color": "Bone Cream",
+      "collections": ["series-winter-hoodies"],
+      "tags": ["450 GSM", "Hoodie", "Supercar", "Bootleg"],
+      "eyebrow": "450 GSM Bone Cream Fleece · V12 Reserve · Zero Logo",
+      "headline": "",
+      "description": "Pigment-dyed bone cream (#F4EFE6) 450 GSM heavyweight hoodie with a British Racing Green & 24K gold V12 coupe, saddle-leather cockpit cutout, roaring golden lion & feathered halftone edges.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/winter-hoodie-03-continental-boss-bone-450gsm.jpg"
+      ]
+    },
+    {
+      "handle": "undisputed-heavyweight-winter-division-450gsm-hoodie",
+      "title": "\"Undisputed // Heavyweight Winter Division\" 450 GSM Hoodie",
+      "type": "Hoodie",
+      "price": 68,
+      "color": "Jet Black",
+      "collections": ["series-winter-hoodies"],
+      "tags": ["450 GSM", "Hoodie", "Fight Night", "Bootleg"],
+      "eyebrow": "450 GSM Jet-Black Fleece · Vegas Bout · Zero Logo",
+      "headline": "",
+      "description": "Jet-black 450 GSM heavyweight hoodie featuring a tailored 10.5\" 6-layer pyramid chest print above the pocket: 24K gold & emerald World Championship belt, roaring Bengal tiger & crimson gloves.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/winter-hoodie-04-undisputed-fight-night-450gsm.jpg"
+      ]
+    },
+    {
+      "handle": "executive-syndicate-private-airspace-reserve-450gsm-hoodie",
+      "title": "\"Executive Syndicate // Private Airspace Reserve\" 450 GSM Hoodie",
+      "type": "Hoodie",
+      "price": 72,
+      "color": "Washed Espresso-Black",
+      "collections": ["series-winter-hoodies"],
+      "tags": ["450 GSM", "Hoodie", "Luxury", "Bootleg"],
+      "eyebrow": "450 GSM Espresso Fleece · Private Airspace · Zero Logo",
+      "headline": "",
+      "description": "Washed espresso-black 450 GSM pullover hoodie with a 6-layer pyramid print above the pocket: private jet in golden sunburst rays, skeleton tourbillon watch, silver exotic coupe & superyacht.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/winter-hoodie-05-executive-syndicate-450gsm.jpg"
+      ]
+    },
+    {
+      "handle": "king-of-the-block-built-from-the-concrete-tee",
+      "title": "\"King of the Block // Built From The Concrete\" 260 GSM Rooftop Tee",
+      "type": "T-Shirt",
+      "price": 38,
+      "color": "Obsidian Acid-Wash",
+      "collections": ["series-street-graphic"],
+      "tags": ["260 GSM", "Street", "Tee"],
+      "eyebrow": "260 GSM Acid-Wash · 100% Original Art · Zero Logo",
+      "headline": "",
+      "description": "Oversized 260 GSM obsidian acid-wash drop-shoulder tee featuring a 3D molten-gold crowned roaring lion, lightning bolts, and wildstyle graffiti tags.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/swag-tee-01-king-of-the-block-rooftop.jpg"
+      ]
+    },
+    {
+      "handle": "paper-chaser-24-7-concrete-hustle-tee",
+      "title": "\"Paper Chaser // 24/7 Concrete Hustle\" Bodega Neon 260 GSM Tee",
+      "type": "T-Shirt",
+      "price": 38,
+      "color": "Charcoal Mineral-Wash",
+      "collections": ["series-street-graphic"],
+      "tags": ["260 GSM", "Street", "Bootleg", "Tee"],
+      "eyebrow": "Street-Hustle Bootleg Collage · Zero Logo",
+      "headline": "",
+      "description": "Charcoal mineral-wash 260 GSM baggy tee packed with twin spiked-collar Dobermans, burning neon $100 bills, chrome dice rolling sevens, purple lightning, and 3D chrome block type.",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/swag-tee-02-paid-in-full-bodega-neon.jpg"
+      ]
+    },
+    {
+      "handle": "signature-side-stripe-tracksuit-cap-set",
+      "title": "Signature Side-Stripe Hoodie, Sweatpants & Baseball Cap Set",
+      "type": "Tracksuit Set",
+      "price": 88,
+      "color": "",
+      "collections": ["series-tracksuit"],
+      "tags": ["400 GSM", "Tracksuit", "Set", "Customizable", "Lookbook"],
+      "eyebrow": "400 GSM Fleece + Matching Embroidered Cap",
+      "headline": "",
+      "description": "Our single signature emblem tracksuit look: 400 GSM heavyweight fleece pullover hoodie + stacked-hem sweatpants with custom vertical side-stripe lettering and matching 3D puff embroidered baseball cap.",
+      "personalize": "Side-stripe text",
+      "images": [
+        "https://suncustomdesigns.com/assets/products/lookbook-tracksuit-side-stripe-1.jpg"
+      ]
+    },
+    {
+      "handle": "eclipse-cut-sew-all-over-tee",
+      "title": "Eclipse Cut & Sew All-Over Tee",
+      "type": "T-Shirt",
+      "price": 42,
+      "color": "",
+      "collections": ["series-all-over-print"],
+      "tags": ["All-Over Print", "Tee"],
+      "eyebrow": "Cut & Sew All-Over Print",
+      "headline": "",
+      "description": "Printed seam to seam with custom full-bleed street artwork (zero brand logo).",
+      "images": ["https://suncustomdesigns.com/assets/products/sku-10-aop-eclipse-tee.png"]
+    },
+    {
+      "handle": "topo-cut-sew-all-over-tee",
+      "title": "Topo Cut & Sew All-Over Tee",
+      "type": "T-Shirt",
+      "price": 42,
+      "color": "",
+      "collections": ["series-all-over-print"],
+      "tags": ["All-Over Print", "Tee"],
+      "eyebrow": "Cut & Sew All-Over Print",
+      "headline": "",
+      "description": "Heavyweight seam-to-seam topographical street print (zero brand logo).",
+      "images": ["https://suncustomdesigns.com/assets/products/sku-11-aop-topo-tee.png"]
+    },
+    {
+      "handle": "horizon-cut-sew-pullover-hoodie",
+      "title": "Horizon Cut & Sew Pullover Hoodie",
+      "type": "Hoodie",
+      "price": 68,
+      "color": "",
+      "collections": ["series-all-over-print", "series-winter-hoodies"],
+      "tags": ["All-Over Print", "Hoodie"],
+      "eyebrow": "Cut & Sew All-Over Print",
+      "headline": "",
+      "description": "Full-coverage sublimation + heavyweight fleece interior (zero brand logo).",
+      "images": ["https://suncustomdesigns.com/assets/products/sku-12-aop-horizon-hoodie.png"]
+    },
+    {
+      "handle": "prooffinder-capsule-tee",
+      "title": "ProofFinder Capsule Tee",
+      "type": "T-Shirt",
+      "price": 30,
+      "color": "",
+      "collections": ["series-collaboration"],
+      "tags": ["Collaboration", "Tee"],
+      "eyebrow": "Collaboration",
+      "headline": "",
+      "description": "Official partner collaboration graphic tee.",
+      "images": ["https://suncustomdesigns.com/assets/products/sku-15-prooffinder-tee.png"]
+    },
+    {
+      "handle": "legacyready-family-hoodie",
+      "title": "LegacyReady Family Hoodie",
+      "type": "Hoodie",
+      "price": 52,
+      "color": "",
+      "collections": ["series-collaboration"],
+      "tags": ["Collaboration", "Hoodie"],
+      "eyebrow": "Collaboration",
+      "headline": "",
+      "description": "Official partner collaboration heavyweight hoodie.",
+      "images": ["https://suncustomdesigns.com/assets/products/sku-16-legacyready-hoodie.png"]
+    },
+    {
+      "handle": "hustle-vault-structured-cap",
+      "title": "Hustle Vault Structured Cap",
+      "type": "Hat",
+      "price": 32,
+      "color": "",
+      "sizeSet": "cap",
+      "collections": ["series-collaboration"],
+      "tags": ["Collaboration", "Cap"],
+      "eyebrow": "Collaboration",
+      "headline": "",
+      "description": "Official partner collaboration embroidered cap.",
+      "images": ["https://suncustomdesigns.com/assets/products/sku-17-hustlevault-cap.png"]
+    },
+    {
+      "handle": "press-box-wire-street-tee",
+      "title": "Press Box Wire Street Tee",
+      "type": "T-Shirt",
+      "price": 44,
+      "color": "",
+      "collections": ["series-collaboration", "series-all-over-print"],
+      "tags": ["Collaboration", "Tee"],
+      "eyebrow": "Collaboration",
+      "headline": "",
+      "description": "Official partner collaboration athletic street tee.",
+      "images": ["https://suncustomdesigns.com/assets/products/sku-18-pressbox-aop-tee.png"]
+    }
+  ],
+  "studioLibrary": [
+    { "title": "“Eternal” // Olmec Colossal Head & Feathered Serpents", "image": "https://suncustomdesigns.com/assets/products/olmec-serpent-04-eternal-bootleg-monolith-preview.jpg" },
+    { "title": "“Sovereign” // Resplendent Quetzal & Step-Pyramid", "image": "https://suncustomdesigns.com/assets/products/mesoamerican-quetzal-02-sovereign-varsity-arch-preview.jpg" },
+    { "title": "“Sovereign” // Solid 24K Gold 1-Color Edition", "image": "https://suncustomdesigns.com/assets/products/sovereign-quetzal-solid-gold-1color-preview.jpg" },
+    { "title": "Mesoamerican Monolith & Eagle (Var 03)", "image": "https://suncustomdesigns.com/assets/products/eagle-var03-monolith-perch.jpg" },
+    { "title": "Heavy Motion // Let The Results Make The Noise", "image": "https://suncustomdesigns.com/assets/products/exec-v2-heavy-motion-4500x5400-300dpi.png" },
+    { "title": "Generational Blueprint // Build What Outlives Your Name", "image": "https://suncustomdesigns.com/assets/products/exec-v2-generational-blueprint-4500x5400-300dpi.png" },
+    { "title": "Architectural Pegasus Monument (Image-Only Edition)", "image": "https://suncustomdesigns.com/assets/products/exec-v2-pegasus-image-only-4500x5400-300dpi.png" },
+    { "title": "Architectural Blueprint Monolith (Image-Only Edition)", "image": "https://suncustomdesigns.com/assets/products/exec-v2-monolith-image-only-4500x5400-300dpi.png" },
+    { "title": "Built In The Dark // Lights Came On", "image": "https://suncustomdesigns.com/assets/studio-library/nextlevel-art-01-built-in-the-dark.png" },
+    { "title": "Continental Boss // V12 Reserve", "image": "https://suncustomdesigns.com/assets/studio-library/continental-boss-v12-art-only.png" },
+    { "title": "Undisputed Championship", "image": "https://suncustomdesigns.com/assets/studio-library/undisputed-championship-art-only.png" },
+    { "title": "Relentless 77 // Heavyweight", "image": "https://suncustomdesigns.com/assets/studio-library/relentless-77-art-only.png" }
+  ],
+  "customStudio": {
+    "handle": "custom-studio-design",
+    "title": "Custom Studio Design (Upload Your Own Art)",
+    "styles": [
+      { "name": "260 GSM Boxy Heavyweight Tee", "price": 38 },
+      { "name": "450 GSM Heavyweight Winter Hoodie", "price": 68 },
+      { "name": "Bella+Canvas 3001 Ringspun Tee", "price": 30 },
+      { "name": "Cut & Sew All-Over-Print Tee", "price": 42 },
+      { "name": "12 oz Heavy Cotton Canvas Tote", "price": 28 }
+    ],
+    "colors": ["Vintage Black", "Midnight Navy", "Bone Cream", "Charcoal Pepper"]
+  }
+}

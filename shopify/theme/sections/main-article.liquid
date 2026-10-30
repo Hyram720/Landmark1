@@ -1,0 +1,15 @@
+<article class="page">
+  <div class="wrap" style="max-width:820px">
+    <p class="eyebrow">{{ article.published_at | date: '%B %d, %Y' }}</p>
+    <h1>{{ article.title | escape }}</h1>
+    {%- if article.image -%}
+      {{ article.image | image_url: width: 1600 | image_tag: loading: 'eager', widths: '600, 1000, 1600', sizes: '(min-width: 820px) 820px, 100vw', style: 'margin-bottom:24px' }}
+    {%- endif -%}
+    <div class="rte">{{ article.content }}</div>
+    <p style="margin-top:32px"><a href="{{ blog.url }}">&larr; {{ blog.title | escape }}</a></p>
+  </div>
+</article>
+
+{% schema %}
+{ "name": "Article" }
+{% endschema %}
