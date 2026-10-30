@@ -144,6 +144,6 @@ The old site was a single page with `#catalog` / `#custom-studio` anchors, so th
 
 ## Check the copy before launch
 
-The current site says every order is printed **"locally in Camden by people we know by name"** with **"factory-direct mill blanks."** If Printful or Printify make the products, those claims aren't accurate, and advertising law (and customer trust) requires the copy to match how products are actually made. The theme's default copy already says "made to order", with no local-production claim. Keep it that way unless you really do print in Camden.
+The theme's default copy says "made to order" and makes no location or local-production claim. Keep it that way: do not add any claim about where or by whom the products are printed.
 
 The products are also marketed as **"bootleg"** art featuring luxury cars, championship belts, and so on, and as having "zero brand logos". Keep it that way. Trademarked logos, car badges, or real fighters' names and likenesses can get products taken down by Shopify, Printful, or Printify.
