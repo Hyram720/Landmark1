@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "explainer-motion"
+version = "0.1.0"
+description = "MCP server for animated YouTube explainer boards (HTML + GSAP) synced to your voice and rendered frame-exact to MP4"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.10", "anyio>=4", "playwright>=1.40", "uvicorn>=0.30"]
+
+[project.optional-dependencies]
+whisper = ["faster-whisper>=1.0"]
+test = ["pytest>=8"]
+
+[project.scripts]
+explainer-motion = "explainer_motion.server:main"
+
+[tool.setuptools]
+packages = ["explainer_motion"]
