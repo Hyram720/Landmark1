@@ -1,11 +1,11 @@
-// Loads the browser modules (law, partners, business, store) so the server applies the same rules.
+// Loads the browser modules (law, partners, business, store, sequences, …) so the server applies the same rules.
 import fs from 'node:fs';
 import vm from 'node:vm';
 
 const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Error, URLSearchParams };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
-for (const f of ['law.js', 'partners.js', 'business.js', 'metro2.js', 'store.js', 'billing.js', 'aiprompts.js', 'sales.js', 'invoices.js', 'letters.js', 'kb.js', 'filecheck.js', 'disputereasons.js', 'acquisition.js']) {
+for (const f of ['law.js', 'partners.js', 'business.js', 'metro2.js', 'store.js', 'billing.js', 'aiprompts.js', 'sales.js', 'invoices.js', 'letters.js', 'kb.js', 'filecheck.js', 'disputereasons.js', 'acquisition.js', 'furnishers.js', 'sequences.js']) {
   vm.runInContext(fs.readFileSync(new URL(`../js/${f}`, import.meta.url), 'utf8'), ctx, { filename: f });
 }
-export const { Law, Partners, Business, Metro2, Store, Billing, AIPrompts, Sales, Invoices, Letters, KB, DisputeReasons, FileCheck, Acquisition } = ctx;
+export const { Law, Partners, Business, Metro2, Store, Billing, AIPrompts, Sales, Invoices, Letters, KB, DisputeReasons, FileCheck, Acquisition, Furnishers, Sequences } = ctx;

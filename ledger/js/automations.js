@@ -72,7 +72,7 @@
       const removed = ds.reduce((a, d) => a + d.items.filter((it) => ['deleted', 'corrected'].includes(it.result || d.outcome)).length, 0);
       out.push({ key: c.id + ':' + n, clientId: c.id, at: Law.addDays(c.onboarding.contractSignedAt, n * 30), vars: { removed_count: removed, open_count: ds.filter(d => d.sentAt && !d.outcome).length } });
     });
-    if (trigger === 'sequence_due') (ws.disputes || []).filter(d => d.seqId && d.parentId && !d.sentAt && (ws.letters.find(l => l.id === d.letterId) || {}).status === 'draft').forEach(d => out.push({ key: d.clientId + ':' + d10(d.createdAt), clientId: d.clientId, at: d10(d.createdAt) }));
+    if (trigger === 'sequence_due') (ws.disputes || []).filter(d => d.seqId && d.parentId && !d.sentAt && !d.withdrawnAt && (ws.letters.find(l => l.id === d.letterId) || {}).status === 'draft').forEach(d => out.push({ key: d.clientId + ':' + d10(d.createdAt), clientId: d.clientId, at: d10(d.createdAt) }));
     return out;
   }
   function invVars(i) { return { amount: '$' + Number(i.amount || 0).toFixed(2), description: i.description, due: i.dueAt || '', invoiceId: i.id, payToken: i.payToken || '' }; }

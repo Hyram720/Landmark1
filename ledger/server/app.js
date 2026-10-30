@@ -17,7 +17,7 @@ import { mountRentReporting, rentPortalSection } from './rent.js';
 import { mountCreditMonitoring, creditPortalSection } from './credit-monitoring.js';
 import { mountClientAuth } from './client-auth.js';
 import { sendMail, mailEnabled } from './mailer.js';
-import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
+import { Law, Partners, Store, Sales, Invoices, Billing, Sequences } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
 import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
 
@@ -873,6 +873,25 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   mountPartnerLinks(app, { need, workspace, db, D, currentUser });
   mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity });
 
+  // ---------- dispute sequences: advance on the server, even when nobody is signed in ----------
+  function sequenceSweep(actor = 'system', onlyId) {
+    if (!D().workspace || !(D().workspace.sequences || []).length) return { drafted: 0, withdrawn: 0 };
+    const r = Sequences.advance(workspace(), today(), { uid, now: () => new Date().toISOString(), onlyId });
+    if (r.events.length) {
+      r.events.forEach(e => activity(e.text, e.clientId));
+      commitWorkspace(actor, 'sequences.advance', `${r.drafted} drafted, ${r.withdrawn} withdrawn`);
+    }
+    return { drafted: r.drafted, withdrawn: r.withdrawn };
+  }
+  app.post('/api/sequences/run', need('owner', 'staff'), (req, res) => {
+    const id = req.body && typeof req.body.id === 'string' ? req.body.id : undefined;
+    res.json(Object.assign(sequenceSweep(req.user.email, id), { version: D().workspaceVersion }));
+  });
+  const runSweep = () => { try { sequenceSweep(); } catch (e) { console.error('[sequences]', e.message); } };
+  const sequenceTimer = setInterval(runSweep, 60 * 60 * 1000);
+  sequenceTimer.unref();
+  setImmediate(runSweep);
+
   // ---------- static ----------
   // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old
   // file with a new one after an update.
@@ -911,5 +930,5 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     else res.status(status).type('text/plain').send(msg);
   });
 
-  return { app, db, auth, shutdown: () => { auth.stop(); db.flush(); } };
+  return { app, db, auth, sequenceSweep, shutdown: () => { auth.stop(); clearInterval(sequenceTimer); db.flush(); } };
 }

@@ -43,6 +43,7 @@
     const leaves = all.filter(d => !all.some(c => c.parentId === d.id));
     return leaves.map(d => {
       const step = stepOf(ws, d);
+      if (d.withdrawnAt) return { d, step, state: 'withdrawn' };
       if (RESOLVED.includes(d.outcome)) return { d, step, state: 'won' };
       if (!d.sentAt) return { d, step, state: 'to_mail' };
       const answered = !!d.outcome;
@@ -107,7 +108,84 @@
     return rows.sort((a, b) => a.step - b.step);
   }
 
-  const api = { PLAN, NEXT, RESOLVED, branches, status, plan, outline, waitUntil, stepOf };
+  /** The letter text for a sequence dispute, built with the same rules as the staff app. */
+  function letterFor(ws, d) {
+    const L = root.Letters;
+    if (!L) return null;
+    const client = ws.clients.find(c => c.id === d.clientId);
+    const bureau = Law.BUREAUS[d.recipient];
+    const book = !bureau && !d.recipientAddress && root.Furnishers && root.Furnishers.lookup(ws, d.recipient);
+    const recipient = bureau ? { name: bureau.name, address: bureau.address } : { name: d.recipient, address: d.recipientAddress || (book ? book.address : '') };
+    const prior = ws.disputes.find(p => p.id === d.parentId);
+    const report = d.items[0] && (ws.reports || []).find(r => r.id === d.items[0].reportId);
+    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const res = L.build(d.type, { client, recipient, recipientName: d.recipient, items: d.items, today, report, priorSentAt: prior && prior.sentAt, business: client && client.business });
+    return res.ok ? res.text : null;
+  }
+
+  /**
+   * Moves every active sequence forward on `today` and records the results in `ws`:
+   *  - withdraws unmailed letters whose previous letter has since been answered deleted/corrected,
+   *  - drafts every due letter (as a draft dispute + draft letter that staff still approve),
+   *  - adds one review task per client with new drafts, an attorney-review task, and completion.
+   * Runs the same in the browser and on the server. Returns { drafted, withdrawn, events }.
+   */
+  function advance(ws, today, opts) {
+    const { uid, now, onlyId } = opts;
+    const events = [];
+    let drafted = 0, withdrawn = 0;
+    const perClient = {};
+    const nextRound = (cid, recipient) => 1 + Math.max(0, ...ws.disputes.filter(d => d.clientId === cid && d.recipient === recipient).map(d => d.round || 0));
+    ws.sequences = ws.sequences || [];
+    ws.tasks = ws.tasks || [];
+    ws.letters = ws.letters || [];
+    ws.sequences.filter(q => q.status !== 'stopped' && (!onlyId || q.id === onlyId)).forEach(q => {
+      // A letter drafted after "no response" is moot once the earlier letter is answered deleted/corrected.
+      seqDisputes(ws, q).filter(d => d.parentId && !d.sentAt && !d.withdrawnAt).forEach(d => {
+        const parent = ws.disputes.find(p => p.id === d.parentId);
+        if (!parent || !RESOLVED.includes(parent.outcome)) return;
+        d.withdrawnAt = now();
+        d.status = 'closed';
+        d.notes = `${d.notes ? d.notes + '\n' : ''}Withdrawn: ${parent.recipient} answered ${parent.outcome} before this letter was mailed.`;
+        const l = ws.letters.find(x => x.id === d.letterId);
+        if (l) l.status = 'draft';
+        withdrawn++;
+        events.push({ text: `Sequence “${q.title}”: withdrew the unmailed letter to ${d.recipient} — ${parent.recipient} answered ${parent.outcome}`, clientId: q.clientId });
+      });
+      plan(ws, q, today).forEach(p => {
+        const d = { id: uid(), clientId: q.clientId, type: p.type, round: nextRound(q.clientId, p.recipient), recipient: p.recipient, recipientAddress: p.recipientAddress, status: 'draft', items: p.items, letterId: null, createdAt: now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: `Sequence “${q.title}” — Letter ${p.step}, after ${p.parent.recipient} ${p.parent.outcome ? 'answered: ' + p.parent.outcome.replace('_', ' ') : 'did not answer by the deadline'}.`, seqId: q.id, parentId: p.parent.id, strategyStep: Math.min(p.step, 3) };
+        ws.disputes.push(d);
+        const text = letterFor(ws, d);
+        if (text) {
+          const l = { id: uid(), clientId: d.clientId, disputeId: d.id, type: d.type, status: 'draft', createdAt: now(), approvedAt: null, text };
+          ws.letters.push(l);
+          d.letterId = l.id;
+        }
+        drafted++;
+        perClient[q.clientId] = (perClient[q.clientId] || 0) + 1;
+      });
+      const st = status(ws, q, today);
+      if (st.state === 'attorney' && !q.attorneyTaskAt) {
+        const c = ws.clients.find(x => x.id === q.clientId);
+        ws.tasks.push({ id: uid(), clientId: q.clientId, title: `Attorney review: “${q.title}” still reported after Letter 3 — offer ${c ? c.name : 'the client'} a consumer attorney referral (FCRA §§ 616–617)`, due: today, done: false, createdAt: now() });
+        q.attorneyTaskAt = now();
+        events.push({ text: `Sequence “${q.title}” reached attorney review`, clientId: q.clientId });
+      }
+      if (st.state === 'won' && !q.completedAt) {
+        q.completedAt = now();
+        events.push({ text: `Sequence “${q.title}” completed — items removed or corrected`, clientId: q.clientId });
+      }
+    });
+    Object.keys(perClient).forEach(cid => {
+      const c = ws.clients.find(x => x.id === cid);
+      const n = perClient[cid];
+      ws.tasks.push({ id: uid(), clientId: cid, title: `Review ${n} sequence letter${n > 1 ? 's' : ''} for ${c ? c.name : 'client'}: confirm with the client, approve, then add to Send round`, due: today, done: false, createdAt: now() });
+      events.push({ text: `Sequences: drafted ${n} due letter${n > 1 ? 's' : ''}`, clientId: cid });
+    });
+    return { drafted, withdrawn, events };
+  }
+
+  const api = { PLAN, NEXT, RESOLVED, branches, status, plan, outline, waitUntil, stepOf, advance, letterFor };
   root.Sequences = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

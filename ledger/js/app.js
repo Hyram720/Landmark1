@@ -772,40 +772,20 @@
   }
 
   /** Draft every due letter in active sequences (all, or one). Returns the number of letters drafted. */
+  // Without a server (preview / master file) the browser runs the sequences itself.
   function runSequences(onlyId) {
-    const Sq = root.Sequences, t = T();
-    let n = 0;
-    (S().sequences || []).filter(q => q.status !== 'stopped' && (!onlyId || q.id === onlyId)).forEach(q => {
-      Sq.plan(S(), q, t).forEach(p => {
-        const disp = { id: Store.uid(), clientId: q.clientId, type: p.type, round: nextRound(q.clientId, p.recipient), recipient: p.recipient, recipientAddress: p.recipientAddress, status: 'draft', items: p.items, letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: `Sequence “${q.title}” — Letter ${p.step}, after ${p.parent.recipient} ${p.parent.outcome ? 'answered: ' + p.parent.outcome.replace('_', ' ') : 'did not answer by the deadline'}.`, seqId: q.id, parentId: p.parent.id, strategyStep: Math.min(p.step, 3) };
-        S().disputes.push(disp);
-        buildLetter(disp);
-        n++;
-      });
-      const st = Sq.status(S(), q, t);
-      if (st.state === 'attorney' && !q.attorneyTaskAt) {
-        const c = Store.get.client(q.clientId);
-        S().tasks.push({ id: Store.uid(), clientId: q.clientId, title: `Attorney review: “${q.title}” still reported after Letter 3 — offer ${c ? c.name : 'the client'} a consumer attorney referral (FCRA §§ 616–617)`, due: t, done: false, createdAt: Store.now() });
-        q.attorneyTaskAt = Store.now();
-        Store.log(`Sequence “${q.title}” reached attorney review`, q.clientId);
-        n++;
-      }
-      if (st.state === 'won' && !q.completedAt) { q.completedAt = Store.now(); Store.log(`Sequence “${q.title}” completed — items removed or corrected`, q.clientId); }
-    });
-    if (n) { Store.log(`Sequences: drafted ${n} due letter(s) / step(s)`); Store.save(); }
-    return n;
+    const r = root.Sequences.advance(S(), T(), { uid: Store.uid, now: Store.now, onlyId });
+    r.events.forEach(e => Store.log(e.text, e.clientId));
+    if (r.events.length) Store.save();
+    return r.drafted;
   }
-
-  /** Build a dispute's letter without re-rendering (used for batches). */
-  function buildLetter(d) {
-    const c = Store.get.client(d.clientId);
-    const prior = S().disputes.find(p => p.id === d.parentId) || S().disputes.filter(p => p.clientId === d.clientId && p.recipient === d.recipient && p.round < d.round && p.sentAt).sort((a, b) => b.round - a.round)[0];
-    const res = Letters.build(d.type, { client: c, recipient: recipientFor(d), recipientName: d.recipient, items: d.items, today: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), report: d.items[0] && Store.get.report(d.items[0].reportId), priorSentAt: prior && prior.sentAt, business: c && c.business });
-    if (!res.ok) return false;
-    let l = d.letterId && Store.get.letter(d.letterId);
-    if (!l) { l = { id: Store.uid(), clientId: d.clientId, disputeId: d.id, type: d.type, status: 'draft', createdAt: Store.now(), approvedAt: null }; S().letters.push(l); d.letterId = l.id; }
-    l.text = res.text;
-    return true;
+  /** "Draft next letters" button: on the server the sweep runs there, so both stay in step. */
+  async function runSequencesNow(onlyId) {
+    if (!Store.remote) return runSequences(onlyId);
+    await Remote.flushNow();
+    const r = await api('POST', '/api/sequences/run', { id: onlyId || null });
+    await Remote.reload();
+    return r.drafted;
   }
 
   function seqPreview(q) {
@@ -963,7 +943,7 @@
     },
     'mail-refresh': el => { Remote.flushNow().then(() => api('POST', `/api/disputes/${el.dataset.id}/mail/refresh`)).then(r => Remote.reload().then(() => toast(r.deliveredAt ? 'Delivered ' + r.deliveredAt + ' — deadline updated' : `${r.events.length} tracking update(s)`)), e => toast(e.message)); },
     templates: el => templatePicker(el.dataset.client, !!el.dataset.seq),
-    'seq-run': el => { const n = runSequences(el.dataset.id); toast(n ? `${n} letter(s) drafted — review, approve and add to Send round` : 'Nothing is due yet'); render(); },
+    'seq-run': el => { runSequencesNow(el.dataset.id).then(n => { toast(n ? `${n} letter(s) drafted — review, approve and add to Send round` : 'Nothing is due yet'); render(); }).catch(e => toast(e.message || 'Could not run sequences')); },
     'seq-stop': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q && UI.ask('Stop this sequence? Letters already drafted stay; no new letters will be drafted.')) { q.status = 'stopped'; commit(`Stopped sequence “${q.title}”`, q.clientId); } },
     'seq-resume': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q) { q.status = 'active'; commit(`Resumed sequence “${q.title}”`, q.clientId); } },
     'seq-preview': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q) seqPreview(q); },
@@ -1482,10 +1462,11 @@
       document.getElementById('who').innerHTML = '<span class="badge plain b-med" title="Data is stored in this browser only">Preview · local data</span>';
     }
     wire();
-    try { const n = runSequences(); if (n) setTimeout(() => toast(`Sequences: ${n} letter(s) drafted and waiting for approval`), 400); } catch (e) { console.error(e); }
+    // On the server, sequences advance in the hourly server sweep even when nobody is signed in.
+    if (!Store.remote) try { const n = runSequences(); if (n) setTimeout(() => toast(`Sequences: ${n} letter(s) drafted and waiting for approval`), 400); } catch (e) { console.error(e); }
     render();
     runEngine().then(n => { if (n) render(); }).catch(e => console.error(e));
-    setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
+    setInterval(() => { if (!Store.remote) runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
   root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
   document.addEventListener('DOMContentLoaded', boot);
