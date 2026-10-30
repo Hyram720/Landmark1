@@ -1,0 +1,29 @@
+# Netlify settings for pressboxkicksjerseys.com.
+# If the Netlify project is connected to this repo, set Base directory = pressbox.
+
+[build]
+  command = "node build.mjs"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# The old single-page site sent /news to the homepage.
+[[redirects]]
+  from = "/news"
+  to = "/"
+  status = 301
+
+# Product photos that aren't in ./assets yet are served from the Oct 25, 2026
+# deploy, so nothing breaks while the originals are copied into the repo.
+[[redirects]]
+  from = "/assets/*"
+  to = "https://6ade909ca6ab3ffe109c7110--pressbox-kicks-jerseys.netlify.app/assets/:splat"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
