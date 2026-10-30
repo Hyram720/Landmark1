@@ -12,7 +12,9 @@
     "content": "node scripts/content-engine.js 30",
     "shopify:csv": "node scripts/build-shopify-csv.js",
     "shopify:assets": "node scripts/download-site-assets.js",
-    "shopify:zip": "cd shopify/theme && rm -f ../sun-atelier-theme.zip && zip -rq ../sun-atelier-theme.zip . -x \"*.DS_Store\""
+    "shopify:zip": "cd shopify/theme && rm -f ../sun-atelier-theme.zip && zip -rq ../sun-atelier-theme.zip . -x \"*.DS_Store\"",
+    "storefront:build": "node scripts/build-storefront.js",
+    "storefront:serve": "node scripts/serve-storefront.js"
   },
   "repository": {
     "type": "git",

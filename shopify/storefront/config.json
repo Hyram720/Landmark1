@@ -1,0 +1,37 @@
+{
+  "shopName": "Sun Custom Designs",
+  "contactEmail": "hello@suncustomdesigns.com",
+  "announcement": "260 GSM Luxury Bootleg Tees · Live 300-DPI Design Studio",
+  "hero": {
+    "kicker": "260 GSM Luxury Bootleg & Heavyweight Streetwear Studio",
+    "headingHtml": "Exotic bootleg heat, <em>printed &amp; stitched,</em> built to stop the scroll.",
+    "text": "Gallery-grade 90s Pen & Pixel luxury supercar, V12 grand-tourer, twin-turbo street circuit, and Las Vegas championship fight-night bootleg art on 260 GSM oversized boxy tees, plus our signature Side-Stripe Tracksuit & Cap set and live 300-DPI customizer.",
+    "productHandle": "generational-blueprint-build-what-outlives-your-name-tee",
+    "caption": "Featured Drop: Architectural Blueprint Monolith 260 GSM Boxy Streetwear Tee.",
+    "chips": ["New: Architectural Series & Continental V12 Tees", "260 GSM Heavyweight Boxy Fits", "300-DPI Customizer + BG Remover"]
+  },
+  "catalog": {
+    "eyebrow": "Luxury Supercar, Motorsport & Championship Bootleg Division",
+    "heading": "The Goods",
+    "text": "Headlined by our 260 GSM Architectural Series and Luxury Bootleg Tees: 100% standalone gallery-grade art with zero brand logo clutter, plus our signature Side-Stripe Hoodie, Sweatpants & Cap set."
+  },
+  "studioTeaser": {
+    "eyebrow": "The Design Studio · 300-DPI Live Mockup",
+    "headingHtml": "Upload your own art, or <em>choose from our Studio Library</em>",
+    "text": "Upload a PNG, SVG, JPG or WebP, remove the background in one click, and see it live on a 260 GSM tee or 450 GSM hoodie before you order."
+  },
+  "lookbook": {
+    "eyebrow": "Pro Model Lookbook",
+    "headingHtml": "Top Models, <em>Luxury Bootleg Heat</em>",
+    "looks": [
+      { "handle": "continental-boss-presidential-v12-bone-cream-tee", "tag": "260 GSM Bone Cream · V12 Luxury Coupe · Zero Logo" },
+      { "handle": "pink-slips-only-street-circuit-legends-drift-tee", "tag": "260 GSM Washed-Charcoal · Twin-Turbo Drift · Zero Logo" },
+      { "handle": "undisputed-world-championship-vegas-fight-night-tee", "tag": "260 GSM Jet-Black · Vegas Championship Bout · Zero Logo" },
+      { "handle": "executive-syndicate-private-airspace-tee", "tag": "260 GSM Espresso Mineral-Wash · Private Airspace · Zero Logo" },
+      { "handle": "signature-side-stripe-tracksuit-cap-set", "tag": "The Single Signature Tracksuit & Cap Look" }
+    ]
+  },
+  "footerAbout": "Heavyweight luxury bootleg streetwear and a live 300-DPI custom design studio.",
+  "studio": { "handle": "custom-studio-design", "printWidthInches": 10 },
+  "personalizeLabel": "Side-stripe text"
+}

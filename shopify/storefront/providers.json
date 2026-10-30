@@ -1,0 +1,5 @@
+{
+  "_note": "Print-on-demand provider for each product handle (see products.csv). Products listed under \"printify\" are left out of the storefront build. Printful products and anything not listed are included. Fred: fill these in. Nothing in the repo or the live site records which provider fulfills which product.",
+  "printful": [],
+  "printify": []
+}
