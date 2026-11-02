@@ -105,4 +105,5 @@ src/config.js       styles (prompts), products, prices, all settings
 scripts/content-engine.js   generates social calendar, Pinterest pins, Meta ad copy (CSV)
 marketing/          generated CSVs (re-run with your real BASE_URL)
 docs/MARKETING.md   customer acquisition playbook
+krea3-mcp/          Krea 3 Studio MCP server + skills for Claude, ChatGPT and Grok (see krea3-mcp/README.md)
 ```
