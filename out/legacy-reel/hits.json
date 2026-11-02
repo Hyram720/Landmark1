@@ -1,0 +1,240 @@
+[
+ {
+  "beat": 0,
+  "t": 0.0017,
+  "label": "hook lands",
+  "sfx": "impact"
+ },
+ {
+  "beat": 1,
+  "t": 0.6267,
+  "label": "writes it down",
+  "sfx": "thud",
+  "opts": {
+   "gain": 0.5
+  }
+ },
+ {
+  "beat": 2,
+  "t": 1.2516,
+  "label": "the story starts to fade",
+  "sfx": "type",
+  "opts": {
+   "n": 7,
+   "len": 0.8
+  }
+ },
+ {
+  "beat": 4,
+  "t": 2.5016,
+  "label": "gold wipe lands",
+  "sfx": "swell"
+ },
+ {
+  "beat": 4,
+  "t": 2.5016,
+  "label": "wipe lands",
+  "sfx": "thud"
+ },
+ {
+  "beat": 4,
+  "t": 2.5016,
+  "label": "search headline",
+  "sfx": "whoosh",
+  "opts": {
+   "len": 0.45,
+   "from": 500,
+   "to": 2600
+  }
+ },
+ {
+  "beat": 4.5,
+  "t": 2.8141,
+  "label": "ancestors",
+  "sfx": "pop",
+  "opts": {
+   "pitch": "F5"
+  }
+ },
+ {
+  "beat": 8,
+  "t": 5.0016,
+  "label": "form lands (drums in)",
+  "sfx": "thud"
+ },
+ {
+  "beat": 9,
+  "t": 5.6266,
+  "label": "name field",
+  "sfx": "tick"
+ },
+ {
+  "beat": 10,
+  "t": 6.2516,
+  "label": "place field",
+  "sfx": "tick"
+ },
+ {
+  "beat": 11,
+  "t": 6.8766,
+  "label": "years field",
+  "sfx": "tick"
+ },
+ {
+  "beat": 12,
+  "t": 7.5016,
+  "label": "search pressed",
+  "sfx": "pop",
+  "opts": {
+   "pitch": "A5"
+  }
+ },
+ {
+  "beat": 12,
+  "t": 7.5016,
+  "label": "click",
+  "sfx": "click"
+ },
+ {
+  "beat": 14,
+  "t": 8.7516,
+  "label": "circle opens",
+  "sfx": "whoosh",
+  "opts": {
+   "len": 0.5,
+   "from": 2400,
+   "to": 500
+  }
+ },
+ {
+  "beat": 14,
+  "t": 8.7516,
+  "label": "preserve lands",
+  "sfx": "thud"
+ },
+ {
+  "beat": 16,
+  "t": 10.0016,
+  "label": "Relatives",
+  "sfx": "blip",
+  "opts": {
+   "pitch": "F5"
+  }
+ },
+ {
+  "beat": 17,
+  "t": 10.6266,
+  "label": "Timelines",
+  "sfx": "blip",
+  "opts": {
+   "pitch": "A5"
+  }
+ },
+ {
+  "beat": 18,
+  "t": 11.2516,
+  "label": "Sources",
+  "sfx": "blip",
+  "opts": {
+   "pitch": "C6"
+  }
+ },
+ {
+  "beat": 19,
+  "t": 11.8765,
+  "label": "Stories",
+  "sfx": "blip",
+  "opts": {
+   "pitch": "F6"
+  }
+ },
+ {
+  "beat": 20,
+  "t": 12.5015,
+  "label": "free card",
+  "sfx": "thud"
+ },
+ {
+  "beat": 21,
+  "t": 13.1265,
+  "label": "Free to start",
+  "sfx": "tick"
+ },
+ {
+  "beat": 22,
+  "t": 13.7515,
+  "label": "No credit card",
+  "sfx": "tick"
+ },
+ {
+  "beat": 23,
+  "t": 14.3765,
+  "label": "Private by default",
+  "sfx": "bell",
+  "opts": {
+   "pitch": "C6"
+  }
+ },
+ {
+  "beat": 24,
+  "t": 15.0015,
+  "label": "push through",
+  "sfx": "sub",
+  "opts": {
+   "len": 0.6
+  }
+ },
+ {
+  "beat": 24,
+  "t": 15.0015,
+  "label": "give your family",
+  "sfx": "pop",
+  "opts": {
+   "pitch": "C5"
+  }
+ },
+ {
+  "beat": 24.85,
+  "t": 15.5328,
+  "label": "its story",
+  "sfx": "pop",
+  "opts": {
+   "pitch": "F5",
+   "gain": 0.5
+  }
+ },
+ {
+  "beat": 26,
+  "t": 16.2515,
+  "label": "not a scavenger hunt",
+  "sfx": "pop",
+  "opts": {
+   "pitch": "A5"
+  }
+ },
+ {
+  "beat": 28,
+  "t": 17.5015,
+  "label": "end card",
+  "sfx": "impact"
+ },
+ {
+  "beat": 28.5,
+  "t": 17.814,
+  "label": "logo drawn",
+  "sfx": "bell",
+  "opts": {
+   "pitch": "F6",
+   "gain": 0.55
+  }
+ },
+ {
+  "beat": 30,
+  "t": 18.7515,
+  "label": "start free",
+  "sfx": "pop",
+  "opts": {
+   "pitch": "C6"
+  }
+ }
+]

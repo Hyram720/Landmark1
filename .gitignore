@@ -1,3 +1,10 @@
 node_modules/
 data/
 .env
+# motion reel scratch (contact frames, strips, intermediate audio)
+out/*/contact*/
+out/*/cut_*
+out/*/hook*
+out/*/video_*.mp4
+legacy-reel/audio/sfx.wav
+legacy-reel/audio/stems/

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LegacyReady Family</title>
+<style>
+  /* Two faces only: one display, one UI. Point these at the brand's files in fonts/. */
+  @font-face { font-family: Display; src: url(fonts/display.woff2) format('woff2'); font-weight: 800; }
+  @font-face { font-family: UI; src: url(fonts/ui.woff2) format('woff2'); font-weight: 500; }
+  @font-face { font-family: UI; src: url(fonts/ui600.woff2) format('woff2'); font-weight: 600; }
+  html, body { margin: 0; height: 100%; background: #12233F; overflow: hidden; }
+  body { display: grid; place-items: center; }
+  canvas { display: block; max-width: 100vw; max-height: 100vh; width: auto; height: auto; }
+  #hud { position: fixed; left: 12px; bottom: 10px; font: 12px/1 ui-monospace, monospace; color: #888; }
+  .render #hud { display: none; }
+</style>
+</head>
+<body>
+<canvas id="film"></canvas>
+<div id="hud">space: play/pause · ←/→: step · click: scrub · ?format=9x16 to preview other formats</div>
+<script type="module" src="film.js"></script>
+</body>
+</html>
