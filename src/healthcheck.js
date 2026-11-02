@@ -2,6 +2,7 @@
 // logs one line, and emails the owner when something that used to work stops working.
 import config from './config.js';
 import { alertOwner } from './notify.js';
+import { kreaKeyCheck } from './krea.js';
 
 export let lastHealth = null;
 
@@ -16,12 +17,13 @@ async function probe(url, token) {
 }
 
 export async function runHealthcheck() {
-  const [openai, resend, printful] = await Promise.all([
-    probe('https://api.openai.com/v1/models', config.image.openaiKey),
+  // Only probe the image provider in use, so an unused one never raises an alert.
+  const [image, resend, printful] = await Promise.all([
+    config.image.provider === 'krea' ? kreaKeyCheck() : config.image.provider === 'openai' ? probe('https://api.openai.com/v1/models', config.image.openaiKey) : 'mock',
     probe('https://api.resend.com/domains', config.email.resendKey),
     probe('https://api.printful.com/stores', config.printful.token),
   ]);
-  const result = { openai, resend, printful, paymentLinks: Object.values(config.stripe.paymentLinks).filter(Boolean).length, webhookSecret: config.stripe.webhookSecret ? 'set' : 'missing' };
+  const result = { [config.image.provider]: image, resend, printful, paymentLinks: Object.values(config.stripe.paymentLinks).filter(Boolean).length, webhookSecret: config.stripe.webhookSecret ? 'set' : 'missing' };
   const failing = Object.entries(result).filter(([, v]) => typeof v === 'string' && /failed|missing|not configured/.test(v));
   console.log(`Health check: ${JSON.stringify(result)}`);
   const key = failing.map(([k]) => k).join(',');

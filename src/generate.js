@@ -5,6 +5,11 @@ import sharp from 'sharp';
 import config, { STYLES } from './config.js';
 import { enhancePortrait } from './enhance.js';
 import { applyNameplate, lookFor } from './nameplate.js';
+import { kreaEdit } from './krea.js';
+import { createRequire } from 'node:module';
+import opentype from 'opentype.js';
+
+const markFont = opentype.loadSync(createRequire(import.meta.url).resolve('@fontsource/cinzel/files/cinzel-latin-700-normal.woff'));
 
 // Appended to every style: keeps portraits bright and sharp instead of murky old-master darkness.
 const QUALITY = ' Lighting: bright, warm, even light on the face and fur; the pet is clearly lit and the brightest part of the image. Crisp fine detail, sharp focus on the eyes, rich but not dark colors, no murky shadows. Ultra high detail.';
@@ -37,6 +42,9 @@ export async function generatePhoto(prompt) {
   if (config.image.provider === 'mock') {
     return sharp({ create: { width: 1024, height: 1536, channels: 3, background: '#c9a46b' } }).png().toBuffer();
   }
+  if (config.image.provider === 'krea') {
+    return withRetry(() => kreaEdit({ prompt, thinkingMode: 'fast' }));
+  }
   return withRetry(async () => {
     const res = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
@@ -67,11 +75,40 @@ export async function paintPortrait({ photoPath, mimeType, style, variant = 1 })
   if (!styleDef) throw new Error(`unknown style ${style}`);
   // No lettering from the AI: models misspell names. The nameplate is added by code afterwards.
   const prompt = `${styleDef.prompt}${QUALITY} Variation ${variant}: vary the pose, framing and background details slightly. Do not include any text, letters, numbers, signatures, labels or nameplates anywhere in the image; keep the bottom edge of the painting simple.`;
+  return enhancePortrait(await paintRaw({ photoPath, mimeType, prompt }), { tone: styleDef.tone });
+}
+
+// One un-finished image from the configured provider.
+async function paintRaw({ photoPath, mimeType, prompt }) {
+  if (config.image.provider === 'mock') return fs.readFileSync(photoPath);
+  if (config.image.provider === 'krea') return withRetry(() => kreaEdit({ photoPath, mimeType, prompt }));
+  return withRetry(() => generateOpenAI(photoPath, mimeType, prompt));
+}
+
+// Cheap, small, watermarked preview shown before checkout (Krea 3 at 1K, fast mode).
+export async function paintPreview({ photoPath, mimeType, style }) {
+  const styleDef = STYLES[style];
+  if (!styleDef) throw new Error(`unknown style ${style}`);
+  const prompt = `${styleDef.prompt}${QUALITY} Do not include any text, letters, numbers, signatures, labels or nameplates anywhere in the image.`;
   const raw =
-    config.image.provider === 'mock'
-      ? fs.readFileSync(photoPath)
-      : await withRetry(() => generateOpenAI(photoPath, mimeType, prompt));
-  return enhancePortrait(raw, { tone: styleDef.tone });
+    config.image.provider === 'krea'
+      ? await kreaEdit({ photoPath, mimeType, prompt, resolution: '1K', thinkingMode: 'fast', timeoutMs: 90_000 })
+      : fs.readFileSync(photoPath); // mock mode: the photo itself
+  return watermark(raw);
+}
+
+// 640x960, diagonal repeating "PREVIEW" marks: good enough to judge likeness, not to print.
+// The word is drawn as vector outlines from the bundled font, so no system fonts are needed.
+const MARK = markFont.getPath('PREVIEW', 0, 0, 46).toPathData(1);
+async function watermark(input) {
+  const marks = [];
+  for (let y = -200; y < 1300; y += 190) for (let x = -300; x < 900; x += 330) marks.push(`<path transform="translate(${x + ((y / 190) % 2) * 165} ${y})" d="${MARK}"/>`);
+  const overlay = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="960">
+      <g transform="rotate(-30 320 480)" fill="#ffffff" fill-opacity="0.4" stroke="#000000" stroke-opacity="0.2" stroke-width="1">${marks.join('')}</g>
+    </svg>`
+  );
+  return sharp(input).rotate().resize({ width: 640, height: 960, fit: 'cover' }).composite([{ input: overlay }]).jpeg({ quality: 78 }).toBuffer();
 }
 
 // Writes N variants to outDir and returns their filenames.
@@ -79,13 +116,17 @@ export async function generatePortraits({ photoPath, mimeType, style, petName, o
   fs.mkdirSync(outDir, { recursive: true });
   // clean/ keeps the unlettered master so the nameplate can be re-rendered if the name changes.
   fs.mkdirSync(path.join(outDir, 'clean'), { recursive: true });
-  const files = [];
-  for (let i = 1; i <= config.image.variants; i++) {
+  const finish = async (i) => {
     const clean = await paintPortrait({ photoPath, mimeType, style, variant: i });
     const name = `${prefix}-${i}.png`;
     fs.writeFileSync(path.join(outDir, 'clean', name), clean);
     fs.writeFileSync(path.join(outDir, name), await applyNameplate(clean, petName, { look: lookFor(STYLES[style]) }));
-    files.push(name);
-  }
+    return name;
+  };
+  const variants = Array.from({ length: config.image.variants }, (_, i) => i + 1);
+  // Krea 3 returns in seconds, so paint all variants at once; OpenAI stays sequential (rate limits).
+  if (config.image.provider === 'krea') return Promise.all(variants.map(finish));
+  const files = [];
+  for (const i of variants) files.push(await finish(i));
   return files;
 }

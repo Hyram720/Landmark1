@@ -5,6 +5,8 @@ import multer from 'multer';
 import config, { STYLES, PRODUCTS } from './config.js';
 import { newOrderId, getOrder, saveOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { createCheckoutSession, verifyWebhook } from './stripe.js';
+import { paintPreview } from './generate.js';
+import { kreaKeyCheck } from './krea.js';
 import { enqueue, selectForPrint, requestRepaint, repaintStatus, resumePending, startRetryScheduler, enhanceExistingOrders, renameOrder } from './pipeline.js';
 import { cleanName } from './nameplate.js';
 import { renderStatic } from './render.js';
@@ -132,6 +134,7 @@ const catalogJson = () => ({
     promoVideo: PROMO_VIDEO_SOURCE ? '/media/infomercial.mp4' : null,
     styles: Object.fromEntries(Object.entries(STYLES).map(([k, s]) => [k, s.name])),
     products: Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, { name: p.name, price: p.price }])),
+    preview: previewEnabled(),
 });
 app.get('/api/catalog', (req, res) => res.json(catalogJson()));
 
@@ -147,6 +150,69 @@ const renderOr500 = (file) => (req, res, next) => {
 app.get('/', renderOr500('index.html'));
 app.get('/offer', renderOr500('offer.html'));
 app.use(express.static(publicDir, { extensions: ['html'], index: 'index.html' }));
+
+// --- Free watermarked preview before checkout (Krea 3 at 1K, ~$0.05 each) ---------------------
+// Caps per visitor and per day keep ad clicks and bots from draining image credits.
+const previewsDir = path.join(config.dataDir, 'previews');
+fs.mkdirSync(previewsDir, { recursive: true });
+function previewEnabled() {
+  if (config.preview.enabled !== null) return config.preview.enabled;
+  return (config.image.provider === 'krea' && Boolean(config.krea.apiKey)) || config.image.provider === 'mock';
+}
+const previewUse = { day: '', total: 0, perVisitor: new Map(), inFlight: 0 };
+function takePreviewSlot(visitor) {
+  const day = new Date().toISOString().slice(0, 10);
+  if (previewUse.day !== day) Object.assign(previewUse, { day, total: 0, perVisitor: new Map() });
+  if (previewUse.total >= config.preview.dailyCap) return 'Free previews are paused for today. Your order still includes 4 portraits and a free repaint.';
+  if ((previewUse.perVisitor.get(visitor) || 0) >= config.preview.perVisitorPerDay) return `You've used today's ${config.preview.perVisitorPerDay} free previews. Order to get 4 full portraits, with a free repaint if needed.`;
+  if (previewUse.inFlight >= 12) return 'Lots of previews are being painted right now. Please try again in a minute.';
+  previewUse.total++;
+  previewUse.perVisitor.set(visitor, (previewUse.perVisitor.get(visitor) || 0) + 1);
+  return null;
+}
+function sweepPreviews() {
+  const cutoff = Date.now() - 24 * 3600_000;
+  for (const f of fs.readdirSync(previewsDir)) {
+    const p = path.join(previewsDir, f);
+    try {
+      if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
+    } catch {}
+  }
+}
+setInterval(sweepPreviews, 3600_000).unref();
+
+app.post('/api/preview', upload.single('photo'), async (req, res) => {
+  const photoPath = req.file?.path;
+  const cleanup = () => photoPath && fs.rm(photoPath, { force: true }, () => {});
+  try {
+    if (!previewEnabled()) return res.status(404).json({ error: 'Previews are not available.' });
+    if (!req.file) return res.status(400).json({ error: 'Please upload a JPG, PNG or WEBP photo first.' });
+    const style = String(req.body.style || '');
+    if (!STYLES[style]) return res.status(400).json({ error: 'Pick a style first.' });
+    const blocked = takePreviewSlot(req.ip || 'unknown');
+    if (blocked) return res.status(429).json({ error: blocked });
+
+    previewUse.inFlight++;
+    let jpg;
+    try {
+      jpg = await paintPreview({ photoPath, mimeType: req.file.mimetype, style });
+    } finally {
+      previewUse.inFlight--;
+    }
+    const id = newOrderId();
+    fs.writeFileSync(path.join(previewsDir, `${id}.jpg`), jpg);
+    res.json({ url: `/preview/${id}.jpg`, style: STYLES[style].name });
+  } catch (err) {
+    console.error('preview', err.message);
+    res.status(502).json({ error: "We couldn't paint a preview just now. You can still order: you'll get 4 portraits and a free repaint." });
+  } finally {
+    cleanup(); // the photo is uploaded again with the order; previews never keep it
+  }
+});
+app.get('/preview/:file', (req, res) => {
+  if (!/^[a-f0-9]{32}\.jpg$/.test(req.params.file)) return res.sendStatus(404);
+  res.set('Cache-Control', 'private, max-age=86400').sendFile(path.join(previewsDir, req.params.file), (err) => err && !res.headersSent && res.sendStatus(404));
+});
 
 app.post('/api/orders', upload.single('photo'), async (req, res) => {
   // Don't take money until Stripe can also tell us about it (webhook secret in place).
@@ -422,13 +488,14 @@ app.get('/admin/check', requireAdmin, async (req, res) => {
       return `failed (${err.message})`;
     }
   };
-  const [openai, resend, printful, stripe] = await Promise.all([
+  const [krea, openai, resend, printful, stripe] = await Promise.all([
+    kreaKeyCheck(),
     probe('https://api.openai.com/v1/models', config.image.openaiKey),
     probe('https://api.resend.com/domains', config.email.resendKey),
     probe('https://api.printful.com/stores', config.printful.token),
     probe('https://api.stripe.com/v1/balance', config.stripe.secretKey),
   ]);
-  res.json({ openai, resend, printful, stripe, stripeSetup: stripeSetupStatus, emailDomain: emailDomainStatus });
+  res.json({ imageProvider: config.image.provider, krea, openai, resend, printful, stripe, preview: previewEnabled(), stripeSetup: stripeSetupStatus, emailDomain: emailDomainStatus });
 });
 
 app.post('/admin/retry/:id', requireAdmin, (req, res) => {

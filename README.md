@@ -28,7 +28,8 @@ What the data shows:
 
 | | Digital $29 | Canvas 12×18 $89 |
 |---|---|---|
-| AI image cost (4 images) | ~$1 | ~$1 |
+| AI image cost (4 images, Krea 3 at 2K) | ~$0.40 (~$1 with OpenAI) | ~$0.40 |
+| Free previews before checkout (Krea 3 at 1K) | ~$0.05 each, capped | ~$0.05 each, capped |
 | Stripe fees | ~$1.14 | ~$2.88 |
 | Print + shipping (Printful) | n/a | ~$25 + ~$10–15 shipping |
 | **Gross profit before ads** | **~$27 (93%)** | **~$46–51** |
@@ -48,7 +49,7 @@ The one real unknown is **customer acquisition cost** (CAC): what you pay in ads
 ## How the automation works (~95% hands-off)
 
 ```
-Customer uploads photo ─► Stripe Checkout ─► webhook ─► AI paints 4 versions ─► gallery email
+Customer uploads photo ─► free watermarked preview (Krea 3, ~10 s) ─► Stripe Checkout ─► webhook ─► AI paints 4 versions ─► gallery email
                                                                   │
                                     canvas order? ─► customer taps "Print this one" ─► Printful prints & ships
                                                                   │
@@ -70,7 +71,9 @@ Customer uploads photo ─► Stripe Checkout ─► webhook ─► AI paints 4 
 
 1. **Accounts:**
    - [Stripe](https://stripe.com)
-   - [OpenAI API](https://platform.openai.com) (image generation)
+   - [Krea](https://www.krea.ai/app/api) (image generation with Krea 3; set `KREA_API_KEY`). [OpenAI API](https://platform.openai.com) still works as a fallback.
+     - With Krea, all 4 portraits paint in parallel, usually in under a minute.
+     - Visitors can see a free watermarked preview before paying, capped at 3 per visitor and 200 per day.
    - [Resend](https://resend.com) (email)
    - [Printful](https://printful.com) (free; print-on-demand)
    - a domain name
@@ -95,7 +98,8 @@ Owner dashboard: `/admin?key=YOUR_ADMIN_KEY`. It shows revenue, every order, whi
 ```
 src/server.js       routes: checkout, webhook, gallery, SEO pages, admin
 src/pipeline.js     paid order → generate → email → print
-src/generate.js     AI portrait generation (OpenAI image edits; mock mode for testing)
+src/generate.js     AI portrait generation (Krea 3 or OpenAI; mock mode for testing) + watermarked previews
+src/krea.js         Krea 3 API client (edit, poll, download, key check)
 src/stripe.js       Stripe Checkout + webhook signature verification (no SDK)
 src/stripe-setup.js automatic webhook + promo code setup on boot
 src/printful.js     print-on-demand fulfillment

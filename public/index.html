@@ -426,7 +426,13 @@
         </div>
         <p class="fine left">Tip: face and eyes clearly visible, good light. <a href="#photo-tips">Photo tips</a></p>
       </div>
-      <div><label>2. Style</label><div class="choices styles" id="styles"></div></div>
+      <div><label>2. Style</label><div class="choices styles" id="styles"></div>
+        <div class="preview-box" id="previewBox" hidden>
+          <button type="button" class="btn ghost" id="previewBtn">✨ See a free preview in this style</button>
+          <p class="fine left" id="previewHint">About 10 seconds. A small watermarked sample so you can check the likeness. Your order gets 4 hi-res portraits without watermarks.</p>
+          <figure class="preview-fig" id="previewFig" hidden><img id="previewImg" alt="" width="320" height="480"><figcaption id="previewCap"></figcaption></figure>
+          <p class="error" id="previewError" role="alert"></p>
+        </div></div>
       <div><label>3. Format</label><div class="choices" id="products"></div><p class="fine left" id="canvasNote" hidden>Canvas: you'll pick your favorite of the 4 portraits in your private gallery, then we print and ship that one (3–5 business days, US &amp; Canada). The digital files are included.</p></div>
       <div><label for="petName">Pet's name (optional, shown on a gold nameplate)</label><input type="text" id="petName" name="petName" maxlength="24" placeholder="e.g. Duke" autocomplete="off">
         <p id="namePreview" class="name-preview" hidden>Nameplate will read: <strong id="namePreviewText"></strong>. Please double-check the spelling. You can still fix it after your portraits are ready.</p></div>
@@ -533,6 +539,50 @@
       $('error').textContent = '';
       showPreview();
     });
+
+    // Free watermarked preview (only when the store has Krea 3 configured).
+    if (catalog.preview) {
+      $('previewBox').hidden = false;
+      const styleName = () => {
+        const k = document.querySelector('input[name=style]:checked')?.value;
+        return { key: k, name: catalog.styles[k] || 'this style' };
+      };
+      const syncBtn = () => {
+        if ($('previewBtn').disabled) return;
+        $('previewBtn').textContent = $('previewFig').hidden ? `✨ See a free preview as ${styleName().name}` : `↻ Preview as ${styleName().name}`;
+      };
+      $('styles').addEventListener('change', syncBtn);
+      syncBtn();
+      $('previewBtn').addEventListener('click', async () => {
+        $('previewError').textContent = '';
+        const photo = $('photo').files[0];
+        if (!photo) {
+          $('previewError').textContent = 'Upload a photo of your pet first (step 1).';
+          return $('drop').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        const { key, name } = styleName();
+        const data = new FormData();
+        data.append('photo', photo);
+        data.append('style', key);
+        $('previewBtn').disabled = true;
+        $('previewBtn').textContent = 'Painting your preview…';
+        try {
+          const res = await fetch('/api/preview', { method: 'POST', body: data });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error || 'Preview failed. You can still order.');
+          $('previewImg').src = body.url;
+          $('previewImg').alt = `Watermarked preview of your pet as ${name}`;
+          $('previewCap').textContent = `${name} preview · your order gets 4 full-resolution versions with your nameplate`;
+          $('previewFig').hidden = false;
+          if (window.fbq) fbq('trackCustom', 'PreviewGenerated', { style: key });
+        } catch (err) {
+          $('previewError').textContent = err.message;
+        } finally {
+          $('previewBtn').disabled = false;
+          syncBtn();
+        }
+      });
+    }
 
     $('orderForm').addEventListener('submit', async (e) => {
       e.preventDefault();

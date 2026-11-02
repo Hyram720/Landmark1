@@ -27,12 +27,29 @@ const config = {
     },
   },
 
-  // IMAGE_PROVIDER=openai (default) or mock (copies the upload; for testing the pipeline).
+  // IMAGE_PROVIDER=krea (Krea 3; default when KREA_API_KEY is set), openai, or mock
+  // (copies the upload; for testing the pipeline).
   image: {
-    provider: env.IMAGE_PROVIDER || 'openai',
+    provider: env.IMAGE_PROVIDER || (env.KREA_API_KEY ? 'krea' : 'openai'),
     openaiKey: env.OPENAI_API_KEY || '',
     model: env.IMAGE_MODEL || 'gpt-image-1',
     variants: Number(env.IMAGE_VARIANTS || 4),
+  },
+
+  // Krea 3: ~$0.10 per 2K portrait with "high" (base $0.06 + $0.02 photo + $0.02 high).
+  krea: {
+    apiKey: env.KREA_API_KEY || '',
+    apiBase: env.KREA_API_BASE || 'https://api.krea.ai',
+    resolution: env.KREA_RESOLUTION || '2K',
+    thinkingMode: env.KREA_THINKING_MODE || 'high',
+  },
+
+  // Free watermarked preview before checkout (Krea 3 at 1K, ~$0.05 each).
+  // On by default when Krea is the provider (or in mock mode). Caps keep ad clicks from draining credits.
+  preview: {
+    enabled: env.PREVIEW_ENABLED ? env.PREVIEW_ENABLED === 'true' : null, // null = auto
+    perVisitorPerDay: Number(env.PREVIEW_PER_VISITOR_PER_DAY || 3),
+    dailyCap: Number(env.PREVIEW_DAILY_CAP || 200),
   },
 
   email: {

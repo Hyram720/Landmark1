@@ -217,3 +217,11 @@ table.dates th, table.dates td { border: 1px solid var(--line); padding: 8px 10p
 @media (max-width: 760px) {
   .apparel-grid { grid-template-columns: 1fr; }
 }
+
+/* Free preview before checkout */
+.preview-box { margin-top: 12px; }
+.btn.ghost { background: transparent; color: var(--accent); border: 2px solid var(--accent); padding: 10px 18px; font-size: 16px; }
+.btn.ghost:hover { background: #fbeeee; filter: none; }
+.preview-fig { margin: 12px 0 0; max-width: 320px; }
+.preview-fig img { border-radius: 8px; border: 1px solid var(--line); width: 100%; height: auto; }
+.preview-fig figcaption { font-size: 14px; color: var(--muted); margin-top: 6px; }
