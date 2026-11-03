@@ -236,6 +236,11 @@ pre.doc { white-space: pre-wrap; font: 13px/1.65 var(--font); background: var(--
 .modal-f { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; background: var(--surface-2); border-radius: 0 0 14px 14px; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 60; font-weight: 500; animation: rise .2s ease-out; }
 @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+.busy-row { display: flex; gap: 12px; align-items: flex-start; }
+.busy-row p { margin: 0; }
+[data-busy-msg] { white-space: pre-wrap; }
+.spinner { width: 18px; height: 18px; margin-top: 2px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1080px) {
   .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -3659,7 +3664,13 @@ Thank you for considering this request.`
     el.addEventListener('input', () => { el.classList.remove('invalid'); note.remove(); }, { once: true });
     el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus();
   }
-  function close() { if (modalEl) { modalEl.remove(); modalEl = null; } document.querySelectorAll('.overlay[data-ask]').forEach(o => o.remove()); }
+  function close() {
+    // An in-progress upload/scan (data-busy="1") stays up. Escape and opening another
+    // dialog only dismiss a finished error (data-busy="error") or a normal modal.
+    document.querySelectorAll('.overlay[data-busy="error"]').forEach(o => o.remove());
+    if (modalEl) { modalEl.remove(); modalEl = null; }
+    document.querySelectorAll('.overlay[data-ask]').forEach(o => o.remove());
+  }
   function formData(form) {
     const out = {};
     Array.from(form.elements).forEach(el => {
@@ -3677,6 +3688,79 @@ Thank you for considering this request.`
     t.textContent = msg;
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 2600);
+  }
+  // Long upload / AI scan. A toast disappears in 2.6s, which is before a report scan finishes,
+  // so the page looks frozen and the result modal arrives as an unexplained dark overlay.
+  // This one stays until busyEnd() or until the user closes an error. Backdrop clicks and
+  // UI.close() do not dismiss the in-progress state.
+  function ensureBusy() {
+    let wrap = document.querySelector('.overlay[data-busy]');
+    if (wrap) return wrap;
+    wrap = document.createElement('div');
+    wrap.className = 'overlay';
+    wrap.dataset.busy = '1';
+    wrap.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="busy-title" aria-busy="true">
+      <div class="modal-h"><h2 id="busy-title"></h2></div>
+      <div class="modal-b"><div class="busy-row"><span class="spinner" data-busy-spin aria-hidden="true"></span><div><p data-busy-msg></p><p class="small muted" data-busy-detail></p></div></div></div>
+      <div class="modal-f" data-busy-foot hidden></div></div>`;
+    wrap.addEventListener('mousedown', e => { if (e.target === wrap) { e.preventDefault(); e.stopPropagation(); } });
+    document.body.appendChild(wrap);
+    return wrap;
+  }
+  function busy(title, detail) {
+    const wrap = ensureBusy();
+    wrap.dataset.busy = '1';
+    const dialog = wrap.querySelector('[role="dialog"]');
+    if (dialog) dialog.setAttribute('aria-busy', 'true');
+    wrap.querySelector('#busy-title').textContent = title;
+    wrap.querySelector('[data-busy-msg]').textContent = detail || '';
+    wrap.querySelector('[data-busy-detail]').textContent = 'Keep this page open. This stays up until it finishes.';
+    const spin = wrap.querySelector('[data-busy-spin]');
+    if (spin) spin.hidden = false;
+    const foot = wrap.querySelector('[data-busy-foot]');
+    foot.hidden = true;
+    foot.innerHTML = '';
+    return wrap;
+  }
+  /** Exact failure text, still on screen after a toast would have gone. Close is explicit. */
+  function busyError(message) {
+    const wrap = ensureBusy();
+    wrap.dataset.busy = 'error';
+    const dialog = wrap.querySelector('[role="dialog"]');
+    if (dialog) dialog.setAttribute('aria-busy', 'false');
+    wrap.querySelector('#busy-title').textContent = 'Couldn’t finish';
+    wrap.querySelector('[data-busy-msg]').textContent = message == null ? '' : String(message);
+    wrap.querySelector('[data-busy-detail]').textContent = '';
+    const spin = wrap.querySelector('[data-busy-spin]');
+    if (spin) spin.hidden = true;
+    const foot = wrap.querySelector('[data-busy-foot]');
+    foot.hidden = false;
+    foot.innerHTML = '<button type="button" class="btn primary" data-busy-close>Close</button>';
+    foot.querySelector('[data-busy-close]').onclick = () => wrap.remove();
+    return wrap;
+  }
+  function busyEnd() { document.querySelectorAll('.overlay[data-busy]').forEach(o => o.remove()); }
+  /** JSON body, including a heartbeat of leading spaces. Throws the server's `error` string. */
+  async function readJson(r) {
+    const text = await r.text();
+    const trimmed = String(text || '').trim();
+    let data = null;
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try { data = JSON.parse(trimmed); } catch (e) { data = null; }
+    }
+    const exact = data && typeof data.error === 'string' ? data.error : '';
+    const hasResult = !!(data && (Object.prototype.hasOwnProperty.call(data, 'bureaus') || Object.prototype.hasOwnProperty.call(data, 'doc') || Object.prototype.hasOwnProperty.call(data, 'letters')));
+    if (!r.ok || (exact && !hasResult)) {
+      const err = new Error(exact || ('Request failed (' + r.status + ')'));
+      err.status = r.status;
+      throw err;
+    }
+    if (!data) {
+      const err = new Error('Request failed (' + r.status + ')');
+      err.status = r.status;
+      throw err;
+    }
+    return data;
   }
   function download(name, content, type) {
     const blob = new Blob([content], { type: type || 'application/json' });
@@ -3734,7 +3818,7 @@ Thank you for considering this request.`
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { fieldError, inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
+  root.UI = { fieldError, inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, busy, busyError, busyEnd, readJson, download, printDoc, printDocs, printHtml, field };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -5837,12 +5921,21 @@ Thank you for considering this request.`
       onSubmit: (d, f) => {
         const file = f.elements.file.files[0];
         if (!file) { toast('Choose a file'); return false; }
+        if (file.size > 15 * 1024 * 1024) { UI.busyError(`${file.name} is over 15 MB`); return false; }
+        if (f.dataset.uploading) return false;
+        f.dataset.uploading = '1';
         const fd = new FormData(); fd.append('type', d.type); fd.append('file', file);
-        Remote.flushNow().then(() => fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' }).then(async r => {
-          const j = await r.json(); if (!r.ok) throw new Error(j.error);
-          await Remote.reload(); toast('Uploaded');
-          if (d.type === 'report') reportModal(cid);
-        }).catch(e => toast(e.message)));
+        const type = d.type;
+        UI.busy('Uploading…', file.name);
+        Remote.flushNow().then(() => fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' }))
+          .then(r => UI.readJson(r))
+          .then(async () => {
+            await Remote.reload();
+            UI.busyEnd();
+            if (type === 'report') reportModal(cid);
+            else toast('Uploaded');
+          })
+          .catch(e => UI.busyError(e.message || 'Upload failed'));
       }
     });
   }
@@ -6405,19 +6498,34 @@ function htmlToText(html) {
     });
   }
 
+  const inflight = new Set();
+  const SCAN_WAIT = 'AI is reading your report… (can take 1–3 minutes)';
+  function postJson(url, body) {
+    return fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(r => UI.readJson(r));
+  }
+
   async function scanDoc(cid, docId) {
+    if (!docId || inflight.has(docId)) return;
+    inflight.add(docId);
     const doc = (S().documents || []).find(d => d.id === docId);
-    toast('Scanning the report with AI… this can take a minute');
-    let out;
-    try { out = await App().api('POST', `/api/clients/${cid}/files/${docId}/scan`); } catch (e) { toast(e.message); return; }
-    reviewScan(cid, out, doc ? doc.name : 'report', docId);
+    UI.busy(SCAN_WAIT, doc ? doc.name : 'Credit report');
+    try {
+      const out = await postJson(`/api/clients/${cid}/files/${docId}/scan`);
+      reviewScan(cid, out, doc ? doc.name : 'report', docId);
+    } catch (e) { UI.busyError(e.message); }
+    finally { inflight.delete(docId); }
   }
 
   /** Shows what the AI read and imports the selected bureaus as reports. */
   function reviewScan(cid, out, label, docId) {
     const doc = { name: label };
     const bureaus = out.bureaus || [];
-    if (!bureaus.length) { toast('No tradelines were found in this file'); return; }
+    if (!bureaus.length) { UI.busyEnd(); UI.busyError('No tradelines were found in this file'); return; }
+    UI.busyEnd();
     modal({
       title: `AI scan — ${esc(label)}`, wide: true,
       body: `<p class="small">Review what the AI read before importing. ${out.source ? `Source: <b>${esc(out.source)}</b>. ` : ''}${out.reportDate ? `Report date: <b>${esc(out.reportDate)}</b>.` : ''}</p>
@@ -6501,42 +6609,66 @@ function htmlToText(html) {
     return merged;
   }
   async function scanFiles(cid, files) {
+    const list = Array.from(files || []);
     const m = mode();
-    if (m === 'none') { toast('Turn on AI first: Settings → AI in this browser'); return; }
+    if (m === 'none') { UI.busyError('Turn on AI first: Settings → AI in this browser'); return; }
+    const key = 'upload:' + cid;
+    if (inflight.has(key)) return;
+    inflight.add(key);
+    const lockedDocs = [];
+    const names = list.map(f => f.name).filter(Boolean).join(', ') || 'Credit report';
+    UI.busy(m === 'server' ? 'Uploading…' : SCAN_WAIT, names);
+    UI.close();
     const results = [];
+    const problems = [];
     let firstDoc = null;
-    for (const [i, file] of files.entries()) {
-      if (file.size > 15 * 1024 * 1024) { toast(`${file.name} is over 15 MB`); continue; }
-      toast(`AI is reading ${file.name}${files.length > 1 ? ` (${i + 1} of ${files.length})` : ''}… this can take a minute`);
-      try {
-        if (m === 'server') {
-          const fd = new FormData(); fd.append('type', 'report'); fd.append('file', file);
-          if (Store.remote.flushNow) await Store.remote.flushNow();
-          const r = await fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' });
-          const j = await r.json(); if (!r.ok) throw new Error(j.error);
-          firstDoc = firstDoc || j.doc.id;
-          await Store.remote.reload();
-          results.push(await App().api('POST', `/api/clients/${cid}/files/${j.doc.id}/scan`));
-        } else {
-          results.push(await root.AIDirect.scan({ file }));
-        }
-      } catch (e) { toast(`${file.name}: ${e.message}`); }
+    try {
+      for (const [i, file] of list.entries()) {
+        const label = list.length > 1 ? `${file.name} (${i + 1} of ${list.length})` : (file.name || 'Credit report');
+        if (file.size > 15 * 1024 * 1024) { problems.push(`${file.name} is over 15 MB`); continue; }
+        try {
+          if (m === 'server') {
+            UI.busy('Uploading…', label);
+            const fd = new FormData(); fd.append('type', 'report'); fd.append('file', file);
+            if (Store.remote && Store.remote.flushNow) await Store.remote.flushNow();
+            const r = await fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' });
+            const j = await UI.readJson(r);
+            firstDoc = firstDoc || j.doc.id;
+            if (!inflight.has(j.doc.id)) { inflight.add(j.doc.id); lockedDocs.push(j.doc.id); }
+            if (Store.remote && Store.remote.reload) await Store.remote.reload();
+            UI.busy(SCAN_WAIT, label);
+            results.push(await postJson(`/api/clients/${cid}/files/${j.doc.id}/scan`));
+          } else {
+            UI.busy(SCAN_WAIT, label);
+            results.push(await root.AIDirect.scan({ file }));
+          }
+        } catch (e) { problems.push(list.length > 1 ? `${file.name}: ${e.message}` : e.message); }
+      }
+      if (!results.length) { UI.busyError(problems.join('\n') || 'Nothing was scanned.'); return; }
+      const out = mergeScans(results);
+      if (problems.length) out.notes = [out.notes, problems.join(' ')].filter(Boolean).join(' ');
+      if (!out.bureaus.length) { UI.busyError(problems.join('\n') || 'The AI found no accounts in that report'); return; }
+      reviewScan(cid, out, list.length === 1 ? list[0].name : `${list.length} files`, firstDoc);
+    } finally {
+      inflight.delete(key);
+      lockedDocs.forEach(id => inflight.delete(id));
     }
-    if (!results.length) return;
-    const out = mergeScans(results);
-    if (!out.bureaus.length) { toast('The AI found no accounts in that report'); return; }
-    reviewScan(cid, out, files.length === 1 ? files[0].name : `${files.length} files`, firstDoc);
   }
   async function scanText(cid, text) {
     const m = mode();
-    if (m === 'none') { toast('Turn on AI first: Settings → AI in this browser'); return; }
-    if (String(text).trim().length < 200) { toast('Paste the full report text (select all on the report page, copy, paste)'); return; }
-    toast('AI is reading the pasted report… this can take a minute');
+    if (m === 'none') { UI.busyError('Turn on AI first: Settings → AI in this browser'); return; }
+    if (String(text).trim().length < 200) { UI.busyError('Paste the full report text (select all on the report page, copy, paste)'); return; }
+    const key = 'text:' + cid;
+    if (inflight.has(key)) return;
+    inflight.add(key);
+    UI.busy(SCAN_WAIT, 'Pasted report');
+    UI.close();
     try {
-      const out = m === 'server' ? await App().api('POST', `/api/clients/${cid}/scan-text`, { text }) : await root.AIDirect.scan({ text });
-      if (!out.bureaus || !out.bureaus.length) { toast('The AI found no accounts in that text'); return; }
+      const out = m === 'server' ? await postJson(`/api/clients/${cid}/scan-text`, { text }) : await root.AIDirect.scan({ text });
+      if (!out.bureaus || !out.bureaus.length) { UI.busyError('The AI found no accounts in that text'); return; }
       reviewScan(cid, out, 'pasted report');
-    } catch (e) { toast(e.message); }
+    } catch (e) { UI.busyError(e.message); }
+    finally { inflight.delete(key); }
   }
 
   function uploadHub(cid) {
@@ -6566,7 +6698,8 @@ function htmlToText(html) {
       foot: '<button type="button" class="btn" data-close>Close</button>',
       onOpen: f => {
         const pick = () => { const v = f.elements.cid.value; if (!v) toast('Choose the client first'); return v; };
-        const go = files => { const id = pick(); if (!id || !files.length) return; UI.close(); scanFiles(id, Array.from(files)); };
+        // Copy the FileList before the dialog closes. Removing the input can empty a live FileList.
+        const go = fileList => { const id = pick(); const files = Array.from(fileList || []); if (!id || !files.length) return; scanFiles(id, files); };
         const drop = f.querySelector('#drop'), inp = f.querySelector('#up-files');
         inp.onchange = () => go(inp.files);
         ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
@@ -6575,7 +6708,7 @@ function htmlToText(html) {
         f.querySelectorAll('[data-up]').forEach(b => b.onclick = () => {
           const id = pick(); if (!id) return;
           const k = b.dataset.up;
-          if (k === 'text') { const t = f.querySelector('#up-text').value; UI.close(); scanText(id, t); }
+          if (k === 'text') { scanText(id, f.querySelector('#up-text').value); }
           if (k === 'csv' || k === 'manual') { UI.close(); App().A['add-report']({ dataset: { id } }); }
           if (k === 'ask') { UI.close(); App().messageModal(id, 'email', { subject: 'Please upload your credit report', body: TEMPLATE_ASK(Store.get.client(id)) }); }
         });

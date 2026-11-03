@@ -224,6 +224,11 @@ pre.doc { white-space: pre-wrap; font: 13px/1.65 var(--font); background: var(--
 .modal-f { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; background: var(--surface-2); border-radius: 0 0 14px 14px; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 60; font-weight: 500; animation: rise .2s ease-out; }
 @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+.busy-row { display: flex; gap: 12px; align-items: flex-start; }
+.busy-row p { margin: 0; }
+[data-busy-msg] { white-space: pre-wrap; }
+.spinner { width: 18px; height: 18px; margin-top: 2px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1080px) {
   .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

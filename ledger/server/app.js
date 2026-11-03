@@ -596,21 +596,58 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   });
 
   // ---------- AI report scanning & round planning ----------
-  const aiError = (res, e) => {
+  const aiMessage = (e) => {
     const status = e.status === 404 ? 404 : e.status === 429 ? 429 : e.status >= 400 && e.status < 500 ? 400 : 502;
-    res.status(status).json({ error: status === 429 ? 'The AI service is busy. Try again in a minute.' : e.message });
+    const error = status === 429 ? 'The AI service is busy. Try again in a minute.' : (e && e.message) || 'The AI request failed.';
+    return { status, error };
   };
+  const aiError = (res, e) => {
+    const { status, error } = aiMessage(e);
+    res.status(status).json({ error });
+  };
+  // Railway closes an HTTP request that transfers no bytes (5 minutes with no data; some edges
+  // drop it closer to 60s). A scan often takes 1–3 minutes and otherwise writes nothing until the
+  // model returns, so the browser sees a dead connection. Once the model call starts, flush
+  // headers and a whitespace heartbeat. JSON.parse allows the leading spaces. The status is 200
+  // from here on; a later failure is `{ error }` with the same text aiError would have sent.
+  // Refusals that happen before the model (missing doc, image, scanned PDF) keep their status.
+  function holdOpen(req, res) {
+    req.setTimeout(0);
+    res.setTimeout(0);
+    res.statusCode = 200;
+    res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    if (res.socket) { res.socket.setNoDelay(true); res.socket.setTimeout(0); }
+    const beat = () => { if (!res.writableEnded) res.write(' '); };
+    beat();
+    const timer = setInterval(beat, 10000);
+    if (typeof timer.unref === 'function') timer.unref();
+    let settled = false;
+    const stop = () => { if (settled) return; settled = true; clearInterval(timer); };
+    res.on('close', stop);
+    return { send(body) { stop(); if (!res.writableEnded) res.end(JSON.stringify(body)); } };
+  }
+  const scanningDocs = new Set();
+  function sendModel(res, held, body) { if (held) held.send(body); else res.json(body); }
+  function failModel(res, held, e) { if (held) held.send({ error: aiMessage(e).error }); else aiError(res, e); }
   app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
     if (!doc) return res.status(404).json({ error: 'Document not found' });
+    if (scanningDocs.has(doc.id)) return res.status(409).json({ error: 'This document is already being scanned.' });
+    scanningDocs.add(doc.id);
+    let held = null;
     try {
-      const out = await scanReport({ buffer: readFile(doc.id), mime: doc.mime, client: workspace().clients.find(x => x.id === req.params.id) });
+      const out = await scanReport({
+        buffer: readFile(doc.id), mime: doc.mime, client: workspace().clients.find(x => x.id === req.params.id),
+        onModel: () => { if (!held) held = holdOpen(req, res); }
+      });
       db.audit({ actor: req.user.email, action: 'ai.scan', detail: doc.name });
       db.persist();
-      res.json(out);
-    } catch (e) { aiError(res, e); }
+      sendModel(res, held, out);
+    } catch (e) { failModel(res, held, e); }
+    finally { scanningDocs.delete(doc.id); }
   });
   app.post('/api/clients/:id/scan-text', need('owner', 'staff'), async (req, res) => {
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
@@ -618,28 +655,64 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const text = String((req.body || {}).text || '');
     if (text.trim().length < 200) return res.status(400).json({ error: 'Paste the full report text (select all on the report page, copy, then paste).' });
     if (!workspace().clients.some(c => c.id === req.params.id)) return res.status(404).json({ error: 'Client not found' });
+    const lockKey = 'text:' + req.params.id;
+    if (scanningDocs.has(lockKey)) return res.status(409).json({ error: 'A scan is already running for this client.' });
+    scanningDocs.add(lockKey);
+    let held = null;
     try {
       const isHtml = /<(table|div|td|html)\b/i.test(text);
-      const out = await scanReport({ buffer: Buffer.from(text.slice(0, 600000), 'utf8'), mime: isHtml ? 'text/html' : 'text/plain', client: workspace().clients.find(x => x.id === req.params.id) });
+      const out = await scanReport({
+        buffer: Buffer.from(text.slice(0, 600000), 'utf8'), mime: isHtml ? 'text/html' : 'text/plain',
+        client: workspace().clients.find(x => x.id === req.params.id),
+        onModel: () => { if (!held) held = holdOpen(req, res); }
+      });
       db.audit({ actor: req.user.email, action: 'ai.scan', detail: 'pasted text' });
       db.persist();
-      res.json(out);
-    } catch (e) { aiError(res, e); }
+      sendModel(res, held, out);
+    } catch (e) { failModel(res, held, e); }
+    finally { scanningDocs.delete(lockKey); }
   });
   app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
+    let held = null;
     try {
-      const out = await planRound({ ws: workspace(), clientId: req.params.id });
+      const out = await planRound({
+        ws: workspace(), clientId: req.params.id,
+        onModel: () => { if (!held) held = holdOpen(req, res); }
+      });
       db.audit({ actor: req.user.email, action: 'ai.plan', detail: req.params.id });
       db.persist();
-      res.json(out);
-    } catch (e) { aiError(res, e); }
+      sendModel(res, held, out);
+    } catch (e) { failModel(res, held, e); }
   });
 
   // ---------- documents ----------
+  const ALLOWED_MIME = /^(application\/pdf|image\/(png|jpeg|webp)|text\/(html|csv|plain)|application\/json)$/;
+  const EXT_MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', html: 'text/html', htm: 'text/html', csv: 'text/csv', txt: 'text/plain', json: 'application/json' };
+  // Browsers sometimes label a real PDF as application/octet-stream or blank. Accept that when the
+  // file name says what it is, and store the specific type so a later scan treats a PDF as a PDF.
+  function fileMime(file) {
+    const mime = String(file.mimetype || '').toLowerCase().split(';')[0].trim();
+    if (mime === 'application/x-pdf' || mime === 'application/acrobat') return 'application/pdf';
+    if (mime === 'image/jpg') return 'image/jpeg';
+    if (ALLOWED_MIME.test(mime)) return mime;
+    if (mime && mime !== 'application/octet-stream') return null;
+    const ext = String(file.originalname || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+    return ext ? (EXT_MIME[ext[1]] || null) : null;
+  }
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 1 },
-    fileFilter: (req, f, cb) => cb(null, /^(application\/pdf|image\/(png|jpeg|webp)|text\/(html|csv|plain)|application\/json)$/.test(f.mimetype)) });
+    fileFilter: (req, f, cb) => cb(null, !!fileMime(f)) });
+  function normalizeUpload(file) {
+    if (!file) return null;
+    const mime = fileMime(file);
+    if (!mime) return null;
+    const declared = String(file.mimetype || '').toLowerCase().split(';')[0].trim();
+    const guessed = !ALLOWED_MIME.test(declared) && declared !== 'application/x-pdf' && declared !== 'application/acrobat' && declared !== 'image/jpg';
+    if (guessed && mime === 'application/pdf' && !file.buffer.subarray(0, 5).toString('latin1').startsWith('%PDF')) return null;
+    file.mimetype = mime;
+    return file;
+  }
   function storeFile(file, meta) {
     const id = uid();
     let buf = file.buffer;
@@ -667,16 +740,18 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   const DOC_TYPES = ['report', 'id', 'address', 'bureau-response', 'agreement', 'other'];
   app.post('/api/clients/:id/files', need('owner', 'staff'), upload.single('file'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
-    if (!c || !req.file) return res.status(400).json({ error: 'Choose a PDF, image, HTML, CSV or JSON file under 15 MB' });
-    const doc = storeFile(req.file, { clientId: c.id, type: DOC_TYPES.includes(req.body.type) ? req.body.type : 'other', uploadedBy: req.user.email });
+    const file = normalizeUpload(req.file);
+    if (!c || !file) return res.status(400).json({ error: 'Choose a PDF, image, HTML, CSV or JSON file under 15 MB' });
+    const doc = storeFile(file, { clientId: c.id, type: DOC_TYPES.includes(req.body.type) ? req.body.type : 'other', uploadedBy: req.user.email });
     activity(`Uploaded ${doc.type === 'report' ? 'credit report' : 'document'} “${doc.name}”`, c.id);
     commitWorkspace(req.user.email, 'file.upload', doc.name);
     res.json({ doc, version: D().workspaceVersion });
   });
   app.post('/api/portal/files', need('client'), upload.single('file'), (req, res) => {
     const c = portalClient(req);
-    if (!c || !req.file) return res.status(400).json({ error: 'Choose a PDF or image under 15 MB' });
-    const doc = storeFile(req.file, { clientId: c.id, type: ['id', 'address', 'bureau-response', 'report'].includes(req.body.type) ? req.body.type : 'other', uploadedBy: 'client' });
+    const file = normalizeUpload(req.file);
+    if (!c || !file) return res.status(400).json({ error: 'Choose a PDF or image under 15 MB' });
+    const doc = storeFile(file, { clientId: c.id, type: ['id', 'address', 'bureau-response', 'report'].includes(req.body.type) ? req.body.type : 'other', uploadedBy: 'client' });
     activity(`${c.name} uploaded “${doc.name}” in the portal`, c.id);
     commitWorkspace(req.user.email, 'portal.upload', doc.name);
     res.json({ ok: true });

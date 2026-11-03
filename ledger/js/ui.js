@@ -144,7 +144,13 @@
     el.addEventListener('input', () => { el.classList.remove('invalid'); note.remove(); }, { once: true });
     el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus();
   }
-  function close() { if (modalEl) { modalEl.remove(); modalEl = null; } document.querySelectorAll('.overlay[data-ask]').forEach(o => o.remove()); }
+  function close() {
+    // An in-progress upload/scan (data-busy="1") stays up. Escape and opening another
+    // dialog only dismiss a finished error (data-busy="error") or a normal modal.
+    document.querySelectorAll('.overlay[data-busy="error"]').forEach(o => o.remove());
+    if (modalEl) { modalEl.remove(); modalEl = null; }
+    document.querySelectorAll('.overlay[data-ask]').forEach(o => o.remove());
+  }
   function formData(form) {
     const out = {};
     Array.from(form.elements).forEach(el => {
@@ -162,6 +168,79 @@
     t.textContent = msg;
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 2600);
+  }
+  // Long upload / AI scan. A toast disappears in 2.6s, which is before a report scan finishes,
+  // so the page looks frozen and the result modal arrives as an unexplained dark overlay.
+  // This one stays until busyEnd() or until the user closes an error. Backdrop clicks and
+  // UI.close() do not dismiss the in-progress state.
+  function ensureBusy() {
+    let wrap = document.querySelector('.overlay[data-busy]');
+    if (wrap) return wrap;
+    wrap = document.createElement('div');
+    wrap.className = 'overlay';
+    wrap.dataset.busy = '1';
+    wrap.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="busy-title" aria-busy="true">
+      <div class="modal-h"><h2 id="busy-title"></h2></div>
+      <div class="modal-b"><div class="busy-row"><span class="spinner" data-busy-spin aria-hidden="true"></span><div><p data-busy-msg></p><p class="small muted" data-busy-detail></p></div></div></div>
+      <div class="modal-f" data-busy-foot hidden></div></div>`;
+    wrap.addEventListener('mousedown', e => { if (e.target === wrap) { e.preventDefault(); e.stopPropagation(); } });
+    document.body.appendChild(wrap);
+    return wrap;
+  }
+  function busy(title, detail) {
+    const wrap = ensureBusy();
+    wrap.dataset.busy = '1';
+    const dialog = wrap.querySelector('[role="dialog"]');
+    if (dialog) dialog.setAttribute('aria-busy', 'true');
+    wrap.querySelector('#busy-title').textContent = title;
+    wrap.querySelector('[data-busy-msg]').textContent = detail || '';
+    wrap.querySelector('[data-busy-detail]').textContent = 'Keep this page open. This stays up until it finishes.';
+    const spin = wrap.querySelector('[data-busy-spin]');
+    if (spin) spin.hidden = false;
+    const foot = wrap.querySelector('[data-busy-foot]');
+    foot.hidden = true;
+    foot.innerHTML = '';
+    return wrap;
+  }
+  /** Exact failure text, still on screen after a toast would have gone. Close is explicit. */
+  function busyError(message) {
+    const wrap = ensureBusy();
+    wrap.dataset.busy = 'error';
+    const dialog = wrap.querySelector('[role="dialog"]');
+    if (dialog) dialog.setAttribute('aria-busy', 'false');
+    wrap.querySelector('#busy-title').textContent = 'Couldn’t finish';
+    wrap.querySelector('[data-busy-msg]').textContent = message == null ? '' : String(message);
+    wrap.querySelector('[data-busy-detail]').textContent = '';
+    const spin = wrap.querySelector('[data-busy-spin]');
+    if (spin) spin.hidden = true;
+    const foot = wrap.querySelector('[data-busy-foot]');
+    foot.hidden = false;
+    foot.innerHTML = '<button type="button" class="btn primary" data-busy-close>Close</button>';
+    foot.querySelector('[data-busy-close]').onclick = () => wrap.remove();
+    return wrap;
+  }
+  function busyEnd() { document.querySelectorAll('.overlay[data-busy]').forEach(o => o.remove()); }
+  /** JSON body, including a heartbeat of leading spaces. Throws the server's `error` string. */
+  async function readJson(r) {
+    const text = await r.text();
+    const trimmed = String(text || '').trim();
+    let data = null;
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try { data = JSON.parse(trimmed); } catch (e) { data = null; }
+    }
+    const exact = data && typeof data.error === 'string' ? data.error : '';
+    const hasResult = !!(data && (Object.prototype.hasOwnProperty.call(data, 'bureaus') || Object.prototype.hasOwnProperty.call(data, 'doc') || Object.prototype.hasOwnProperty.call(data, 'letters')));
+    if (!r.ok || (exact && !hasResult)) {
+      const err = new Error(exact || ('Request failed (' + r.status + ')'));
+      err.status = r.status;
+      throw err;
+    }
+    if (!data) {
+      const err = new Error('Request failed (' + r.status + ')');
+      err.status = r.status;
+      throw err;
+    }
+    return data;
   }
   function download(name, content, type) {
     const blob = new Blob([content], { type: type || 'application/json' });
@@ -219,5 +298,5 @@
     return `<label class="field ${opts.cls || ''}"><span>${esc(label)}</span>${control}${opts.help ? `<small>${esc(opts.help)}</small>` : ''}</label>`;
   };
 
-  root.UI = { fieldError, inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, download, printDoc, printDocs, printHtml, field };
+  root.UI = { fieldError, inFrame, showDoc, ask, submitForm, esc, money, date, ago, icon, sevBadge, dBadge, cBadge, DSTATE, CSTATE, modal, close, formData, toast, busy, busyError, busyEnd, readJson, download, printDoc, printDocs, printHtml, field };
 })(typeof window !== 'undefined' ? window : globalThis);
