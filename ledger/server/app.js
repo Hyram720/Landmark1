@@ -18,7 +18,7 @@ import { mountCreditMonitoring, creditPortalSection } from './credit-monitoring.
 import { mountClientAuth } from './client-auth.js';
 import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
-import { parseAddress, checkLobKey, sendLetter, getLetter } from './mail.js';
+import { parseAddress, checkLobKey, sendLetter, getLetter, verifyLobWebhook, letterEventName, isReturnedLetterEvent, LOB_WEBHOOK_PATH } from './mail.js';
 import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './payments.js';
 
 const SESSION_COOKIE = 'ledger_session';
@@ -26,6 +26,38 @@ const INVITE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const ledgerDir = path.resolve(new URL('..', import.meta.url).pathname);
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+// 16×16 teal icon. Browsers request /favicon.ico even when a page has an inline icon.
+let FAVICON;
+function faviconIco() {
+  if (FAVICON) return FAVICON;
+  const w = 16, h = 16;
+  const xor = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = ((h - 1 - y) * w + x) * 4;
+    xor[o] = 0x6e; xor[o + 1] = 0x76; xor[o + 2] = 0x0f; xor[o + 3] = 0xff;
+  }
+  const and = Buffer.alloc((((w + 31) >> 5) * 4) * h, 0);
+  const dib = Buffer.alloc(40);
+  dib.writeUInt32LE(40, 0);
+  dib.writeInt32LE(w, 4);
+  dib.writeInt32LE(h * 2, 8);
+  dib.writeUInt16LE(1, 12);
+  dib.writeUInt16LE(32, 14);
+  dib.writeUInt32LE(xor.length, 20);
+  const dir = Buffer.alloc(6);
+  dir.writeUInt16LE(1, 2);
+  dir.writeUInt16LE(1, 4);
+  const entry = Buffer.alloc(16);
+  entry.writeUInt8(w, 0);
+  entry.writeUInt8(h, 1);
+  entry.writeUInt16LE(1, 4);
+  entry.writeUInt16LE(32, 6);
+  const image = Buffer.concat([dib, xor, and]);
+  entry.writeUInt32LE(image.length, 8);
+  entry.writeUInt32LE(6 + 16, 12);
+  FAVICON = Buffer.concat([dir, entry, image]);
+  return FAVICON;
+}
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
@@ -79,6 +111,20 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     console.log(`[bootstrap] owner account ${action} from LEDGER_BOOTSTRAP_OWNER_* — remove those variables from Railway after signing in.`);
   })(process.env);
   const app = express();
+  // WordPress and dotenv scans are constant and uninteresting. Answer them before any other
+  // middleware so they are not parsed, audited, or written to the log.
+  const isQuietProbe = (pathname) => {
+    let p = String(pathname || '');
+    try { p = decodeURIComponent(p); } catch { /* keep the raw path */ }
+    p = p.toLowerCase();
+    return p.includes('wp-admin') || p.includes('wp-login.php') || p.includes('xmlrpc.php')
+      || p.includes('wp-content') || p.includes('wp-includes')
+      || /(^|\/)\.env(\.|$|\/)/.test(p);
+  };
+  app.use((req, res, next) => {
+    if (!isQuietProbe(req.path)) return next();
+    res.status(404).type('text/plain').send('Not found');
+  });
   // Railway puts exactly one proxy in front of the app. Trusting only that hop means req.ip is the
   // address the proxy saw, not whatever a client writes into X-Forwarded-For (which would let
   // anyone dodge the login and intake rate limits).
@@ -105,8 +151,13 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   // Public endpoints get a small body limit; signed-in staff need room for whole-workspace saves.
   const smallJson = express.json({ limit: '32kb' });
   const bigJson = express.json({ limit: '10mb' });
+  // Signature verification needs the exact bytes Lob signed. Parsing JSON first would change them.
+  const webhookRaw = express.raw({ type: () => true, limit: '1mb' });
   const PUBLIC_POSTS = new Set(['/api/intake', '/api/login', '/api/setup', '/api/invites/accept', '/api/assistant/public']);
-  app.use((req, res, next) => (PUBLIC_POSTS.has(req.path) || req.path.startsWith('/api/auth/') ? smallJson : bigJson)(req, res, next));
+  app.use((req, res, next) => {
+    if (req.method === 'POST' && req.path === LOB_WEBHOOK_PATH) return webhookRaw(req, res, next);
+    return (PUBLIC_POSTS.has(req.path) || req.path.startsWith('/api/auth/') ? smallJson : bigJson)(req, res, next);
+  });
 
   // ---------- health ----------
   // Used by Railway's health check. No secrets, no client data; cheap enough to call every few seconds.
@@ -661,19 +712,48 @@ export function createApp({ dataDir, encryptionKey } = {}) {
 
   // ---------- owner settings: print & mail (Lob) and payments (Authorize.net) ----------
   const secrets = () => (D().secrets = D().secrets || {});
-  const mailInfo = () => { const k = secrets().lobKey || ''; return { configured: !!k, mode: k.startsWith('live_') ? 'live' : k ? 'test' : null, last4: k.slice(-4), savedAt: secrets().lobKeySavedAt || null }; };
-  app.get('/api/settings/mail', need('owner', 'staff'), (req, res) => res.json(mailInfo()));
+  const mailInfo = (req) => {
+    const k = secrets().lobKey || '';
+    const wh = secrets().lobWebhookSecret || '';
+    const host = req && req.get ? req.get('host') : '';
+    const https = !!(req && (req.secure || process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT));
+    const proto = https ? 'https' : ((req && req.protocol) || 'https');
+    return {
+      configured: !!k, mode: k.startsWith('live_') ? 'live' : k ? 'test' : null, last4: k.slice(-4), savedAt: secrets().lobKeySavedAt || null,
+      webhookPath: LOB_WEBHOOK_PATH,
+      webhookUrl: host ? `${proto}://${host}${LOB_WEBHOOK_PATH}` : LOB_WEBHOOK_PATH,
+      webhookSecretConfigured: !!wh, webhookSecretLast4: wh ? wh.slice(-4) : ''
+    };
+  };
+  app.get('/api/settings/mail', need('owner', 'staff'), (req, res) => res.json(mailInfo(req)));
   app.put('/api/settings/mail', need('owner'), async (req, res) => {
-    const key = String((req.body || {}).lobKey || '').trim();
-    if (!/^(test|live)_[A-Za-z0-9]{10,}$/.test(key)) return res.status(400).json({ error: 'That doesn’t look like a Lob API key. It starts with test_ or live_.' });
-    const check = await checkLobKey(key);
-    if (check === 'invalid') return res.status(400).json({ error: 'Lob rejected this key. Copy it again from dashboard.lob.com → Settings → API Keys.' });
-    Object.assign(secrets(), { lobKey: key, lobKeySavedAt: new Date().toISOString() });
-    db.audit({ actor: req.user.email, action: 'settings.mail', detail: `saved …${key.slice(-4)} (${check})` });
+    const body = req.body || {};
+    const hasKey = String(body.lobKey || '').trim() !== '';
+    const hasSecret = String(body.lobWebhookSecret || '').trim() !== '';
+    if (!hasKey && !hasSecret) return res.status(400).json({ error: 'Enter a Lob API key or a webhook signing secret.' });
+    let key, check, secret;
+    if (hasKey) {
+      key = String(body.lobKey).trim();
+      if (!/^(test|live)_[A-Za-z0-9]{10,}$/.test(key)) return res.status(400).json({ error: 'That doesn’t look like a Lob API key. It starts with test_ or live_.' });
+      check = await checkLobKey(key);
+      if (check === 'invalid') return res.status(400).json({ error: 'Lob rejected this key. Copy it again from dashboard.lob.com → Settings → API Keys.' });
+    }
+    if (hasSecret) {
+      secret = String(body.lobWebhookSecret).trim();
+      if (secret.length < 6 || secret.length > 200) return res.status(400).json({ error: 'Paste the signing secret from the webhook’s details page in Lob.' });
+    }
+    if (hasKey) {
+      Object.assign(secrets(), { lobKey: key, lobKeySavedAt: new Date().toISOString() });
+      db.audit({ actor: req.user.email, action: 'settings.mail', detail: `saved …${key.slice(-4)} (${check})` });
+    }
+    if (hasSecret) {
+      Object.assign(secrets(), { lobWebhookSecret: secret, lobWebhookSecretSavedAt: new Date().toISOString() });
+      db.audit({ actor: req.user.email, action: 'settings.mail', detail: `webhook secret saved …${secret.slice(-4)}` });
+    }
     db.persist();
-    res.json(Object.assign(mailInfo(), { verified: check === 'ok' }));
+    res.json(Object.assign(mailInfo(req), hasKey ? { verified: check === 'ok' } : {}));
   });
-  app.delete('/api/settings/mail', need('owner'), (req, res) => { delete secrets().lobKey; db.audit({ actor: req.user.email, action: 'settings.mail', detail: 'removed' }); db.persist(); res.json(mailInfo()); });
+  app.delete('/api/settings/mail', need('owner'), (req, res) => { delete secrets().lobKey; db.audit({ actor: req.user.email, action: 'settings.mail', detail: 'removed' }); db.persist(); res.json(mailInfo(req)); });
 
   const anet = () => secrets().anet || null;
   const payInfo = () => { const a = anet(); return { configured: !!a, sandbox: !!(a && a.sandbox), loginLast4: a ? a.loginId.slice(-4) : '', savedAt: a ? a.savedAt : null }; };
@@ -756,20 +836,89 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     } catch (e) { res.status(e.status === 401 ? 400 : 502).json({ error: 'Lob: ' + e.message }); }
   });
 
+  // One place for Lob tracking. Refresh and the webhook both call this.
+  // A Delivered event sets the received date and the statutory deadline (Law.responseDue).
+  // "Processed for Delivery" and "Out for Delivery" are not delivery. Returned mail is flagged
+  // here and the caller keeps the previous deadline when the event itself is a return.
+  function applyLobLetterTracking(d, letter) {
+    const events = (letter.tracking_events || []).map(e => ({ name: e.name || e.type || '', at: String(e.time || e.date_created || '').slice(0, 10), location: e.location || '' }));
+    d.mail = d.mail || {};
+    d.mail.events = events;
+    if (letter.tracking_number && !d.tracking) d.tracking = letter.tracking_number;
+    const delivered = events.find(e => /deliver/i.test(e.name) && !/out for|attempt|processed/i.test(e.name));
+    if (delivered && delivered.at && !d.outcome) { d.receivedAt = delivered.at; d.dueAt = Law.responseDue(d.type, d.receivedAt); d.mail.deliveredAt = delivered.at; }
+    if (events.some(e => /returned to sender/i.test(e.name))) {
+      d.mail.returnedToSender = true;
+      const ret = events.find(e => /returned to sender/i.test(e.name));
+      if (ret && ret.at) d.mail.returnedAt = ret.at;
+    }
+    return { events, deliveredAt: d.mail.deliveredAt || null };
+  }
+
   app.post('/api/disputes/:id/mail/refresh', need('owner', 'staff'), async (req, res) => {
     const key = secrets().lobKey;
     const d = workspace().disputes.find(x => x.id === req.params.id);
     if (!key || !d || !d.mail || !d.mail.id) return res.status(404).json({ error: 'No online mailing for this dispute' });
     try {
       const out = await getLetter(key, d.mail.id);
-      const events = (out.tracking_events || []).map(e => ({ name: e.name || e.type, at: String(e.time || e.date_created || '').slice(0, 10), location: e.location || '' }));
-      d.mail.events = events;
-      if (out.tracking_number && !d.tracking) d.tracking = out.tracking_number;
-      const delivered = events.find(e => /deliver/i.test(e.name) && !/out for|attempt/i.test(e.name));
-      if (delivered && delivered.at && !d.outcome) { d.receivedAt = delivered.at; d.dueAt = Law.responseDue(d.type, d.receivedAt); d.mail.deliveredAt = delivered.at; }
+      const { events, deliveredAt } = applyLobLetterTracking(d, out);
       commitWorkspace(req.user.email, 'mail.refresh', d.id);
-      res.json({ ok: true, version: D().workspaceVersion, events, deliveredAt: d.mail.deliveredAt || null });
+      res.json({ ok: true, version: D().workspaceVersion, events, deliveredAt });
     } catch (e) { res.status(502).json({ error: 'Lob: ' + e.message }); }
+  });
+
+  // Lob POSTs one notification per tracking change. No session: the signature is the auth.
+  const rememberLobEvent = (id) => {
+    if (!id) return false;
+    const list = D().lobEventIds = D().lobEventIds || [];
+    if (list.includes(id)) return true;
+    list.push(id);
+    if (list.length > 2000) list.splice(0, list.length - 2000);
+    return false;
+  };
+  app.post(LOB_WEBHOOK_PATH, (req, res) => {
+    try {
+      const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+      const check = verifyLobWebhook({ secret: secrets().lobWebhookSecret || '', timestamp: req.get('lob-signature-timestamp'), signature: req.get('lob-signature'), rawBody: raw });
+      if (!check.ok) return res.status(401).json({ error: 'Invalid webhook signature' });
+      let event;
+      try { event = JSON.parse(raw.toString('utf8')); } catch { return res.status(400).json({ error: 'Invalid JSON' }); }
+      if (!event || typeof event !== 'object') return res.status(400).json({ error: 'Invalid JSON' });
+      const eventId = String(event.id || '').trim().slice(0, 80) || sha(raw.toString('utf8'));
+      if (rememberLobEvent(eventId)) return res.json({ ok: true, duplicate: true });
+      const typeId = String(event.event_type && event.event_type.id || '');
+      const body = event.body && typeof event.body === 'object' && !Array.isArray(event.body) ? Object.assign({}, event.body) : {};
+      const name = letterEventName(typeId);
+      const events = Array.isArray(body.tracking_events) ? body.tracking_events.slice() : [];
+      if (name && !events.some(e => String(e.name || e.type || '') === name)) events.push({ name, time: event.date_created || '', location: '' });
+      body.tracking_events = events;
+      const letterId = String(body.id || event.reference_id || '');
+      const d = (workspace().disputes || []).find(x => x && x.mail && x.mail.id && x.mail.id === letterId);
+      if (!d) {
+        console.warn(`[lob] ignored ${typeId || 'event'} for unknown letter ${letterId.slice(0, 40) || '(none)'}`);
+        db.persist();
+        return res.json({ ok: true, matched: false });
+      }
+      const snap = { receivedAt: d.receivedAt, dueAt: d.dueAt, deliveredAt: d.mail.deliveredAt || null };
+      const applied = applyLobLetterTracking(d, body);
+      if (isReturnedLetterEvent(typeId)) {
+        d.receivedAt = snap.receivedAt;
+        d.dueAt = snap.dueAt;
+        if (snap.deliveredAt) d.mail.deliveredAt = snap.deliveredAt;
+        else delete d.mail.deliveredAt;
+        d.mail.returnedToSender = true;
+        if (!d.mail.returnedAt) d.mail.returnedAt = String(event.date_created || '').slice(0, 10) || null;
+      }
+      const who = d.recipient || 'the recipient';
+      if (d.mail.returnedToSender && isReturnedLetterEvent(typeId)) activity(`Letter to ${who} was returned to the sender — correct the address and mail it again`, d.clientId);
+      else if (applied.deliveredAt && applied.deliveredAt !== snap.deliveredAt) activity(`Letter to ${who} was delivered ${applied.deliveredAt} — response deadline updated`, d.clientId);
+      else if (name) activity(`Letter to ${who}: ${name}`, d.clientId);
+      commitWorkspace('lob', 'mail.webhook', `${typeId || 'event'} ${d.id}`);
+      res.json({ ok: true, matched: true, deliveredAt: d.mail.deliveredAt || null, returned: !!d.mail.returnedToSender });
+    } catch (e) {
+      console.error('[lob] webhook failed:', e && e.message);
+      if (!res.headersSent) res.status(500).json({ error: 'Webhook could not be processed' });
+    }
   });
 
   // ---------- online invoice payments ----------
@@ -881,6 +1030,12 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     if (!pageCache[f]) pageCache[f] = fs.readFileSync(path.join(ledgerDir, f), 'utf8').replace(/(src|href)="((?:js|css)\/[\w.-]+\.(?:js|css))"/g, `$1="$2?v=${BUILD}"`);
     res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).send(pageCache[f]);
   };
+  app.get('/robots.txt', (req, res) => {
+    res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }).send('User-agent: *\nDisallow: /\n');
+  });
+  app.get('/favicon.ico', (req, res) => {
+    res.set({ 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=86400' }).send(faviconIco());
+  });
   app.get(['/', '/app'], page('index.html'));
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
