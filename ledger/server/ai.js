@@ -43,8 +43,10 @@ async function structured({ content, schema, system, maxTokens }) {
   return JSON.parse(text);
 }
 
-/** Reads a credit report file (PDF, HTML, text) and returns tradelines per bureau. Nothing is saved. */
-export async function scanReport({ buffer, mime, client }) {
+/** Reads a credit report file (PDF, HTML, text) and returns tradelines per bureau. Nothing is saved.
+ *  onModel runs after local redaction checks and immediately before the model call, so the HTTP
+ *  layer can start a heartbeat only once the slow part begins. Privacy checks are unchanged. */
+export async function scanReport({ buffer, mime, client, onModel }) {
   let text;
   if (mime === 'application/pdf') {
     text = await pdfText(buffer);
@@ -57,6 +59,7 @@ export async function scanReport({ buffer, mime, client }) {
   }
   // Identifiers masked; account numbers keep the last 4 so tradelines still match. getClient() redacts and guards again.
   const content = `<credit_report redacted="true">\n${redact(text, { terms: nameTerms(client) })}\n</credit_report>\n\n${SCAN_PROMPT}`;
+  if (typeof onModel === 'function') onModel();
   return structured({ content, schema: REPORT_SCHEMA, system: SCAN_SYSTEM });
 }
 
@@ -102,10 +105,11 @@ Rules:
 - clientMessage: a short, plain update for the client about the plan and what they need to provide. No promises of results.`;
 
 /** Proposes the next round of letters for a client. Nothing is saved. */
-export async function planRound({ ws, clientId }) {
+export async function planRound({ ws, clientId, onModel }) {
   const ctx = clientContext(ws, clientId, { withIds: true });
   if (!ctx) throw Object.assign(new Error('Client not found'), { status: 404 });
   const { SYSTEM } = await import('./assistant.js');
+  if (typeof onModel === 'function') onModel();
   return structured({ content: `<client_file>\n${ctx}\n</client_file>\n\n${PLAN_PROMPT}`, schema: PLAN_SCHEMA, system: SYSTEM, maxTokens: 32000 });
 }
 

@@ -37,19 +37,34 @@
     });
   }
 
+  const inflight = new Set();
+  const SCAN_WAIT = 'AI is reading your report… (can take 1–3 minutes)';
+  function postJson(url, body) {
+    return fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(r => UI.readJson(r));
+  }
+
   async function scanDoc(cid, docId) {
+    if (!docId || inflight.has(docId)) return;
+    inflight.add(docId);
     const doc = (S().documents || []).find(d => d.id === docId);
-    toast('Scanning the report with AI… this can take a minute');
-    let out;
-    try { out = await App().api('POST', `/api/clients/${cid}/files/${docId}/scan`); } catch (e) { toast(e.message); return; }
-    reviewScan(cid, out, doc ? doc.name : 'report', docId);
+    UI.busy(SCAN_WAIT, doc ? doc.name : 'Credit report');
+    try {
+      const out = await postJson(`/api/clients/${cid}/files/${docId}/scan`);
+      reviewScan(cid, out, doc ? doc.name : 'report', docId);
+    } catch (e) { UI.busyError(e.message); }
+    finally { inflight.delete(docId); }
   }
 
   /** Shows what the AI read and imports the selected bureaus as reports. */
   function reviewScan(cid, out, label, docId) {
     const doc = { name: label };
     const bureaus = out.bureaus || [];
-    if (!bureaus.length) { toast('No tradelines were found in this file'); return; }
+    if (!bureaus.length) { UI.busyEnd(); UI.busyError('No tradelines were found in this file'); return; }
+    UI.busyEnd();
     modal({
       title: `AI scan — ${esc(label)}`, wide: true,
       body: `<p class="small">Review what the AI read before importing. ${out.source ? `Source: <b>${esc(out.source)}</b>. ` : ''}${out.reportDate ? `Report date: <b>${esc(out.reportDate)}</b>.` : ''}</p>
@@ -133,42 +148,66 @@
     return merged;
   }
   async function scanFiles(cid, files) {
+    const list = Array.from(files || []);
     const m = mode();
-    if (m === 'none') { toast('Turn on AI first: Settings → AI in this browser'); return; }
+    if (m === 'none') { UI.busyError('Turn on AI first: Settings → AI in this browser'); return; }
+    const key = 'upload:' + cid;
+    if (inflight.has(key)) return;
+    inflight.add(key);
+    const lockedDocs = [];
+    const names = list.map(f => f.name).filter(Boolean).join(', ') || 'Credit report';
+    UI.busy(m === 'server' ? 'Uploading…' : SCAN_WAIT, names);
+    UI.close();
     const results = [];
+    const problems = [];
     let firstDoc = null;
-    for (const [i, file] of files.entries()) {
-      if (file.size > 15 * 1024 * 1024) { toast(`${file.name} is over 15 MB`); continue; }
-      toast(`AI is reading ${file.name}${files.length > 1 ? ` (${i + 1} of ${files.length})` : ''}… this can take a minute`);
-      try {
-        if (m === 'server') {
-          const fd = new FormData(); fd.append('type', 'report'); fd.append('file', file);
-          if (Store.remote.flushNow) await Store.remote.flushNow();
-          const r = await fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' });
-          const j = await r.json(); if (!r.ok) throw new Error(j.error);
-          firstDoc = firstDoc || j.doc.id;
-          await Store.remote.reload();
-          results.push(await App().api('POST', `/api/clients/${cid}/files/${j.doc.id}/scan`));
-        } else {
-          results.push(await root.AIDirect.scan({ file }));
-        }
-      } catch (e) { toast(`${file.name}: ${e.message}`); }
+    try {
+      for (const [i, file] of list.entries()) {
+        const label = list.length > 1 ? `${file.name} (${i + 1} of ${list.length})` : (file.name || 'Credit report');
+        if (file.size > 15 * 1024 * 1024) { problems.push(`${file.name} is over 15 MB`); continue; }
+        try {
+          if (m === 'server') {
+            UI.busy('Uploading…', label);
+            const fd = new FormData(); fd.append('type', 'report'); fd.append('file', file);
+            if (Store.remote && Store.remote.flushNow) await Store.remote.flushNow();
+            const r = await fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' });
+            const j = await UI.readJson(r);
+            firstDoc = firstDoc || j.doc.id;
+            if (!inflight.has(j.doc.id)) { inflight.add(j.doc.id); lockedDocs.push(j.doc.id); }
+            if (Store.remote && Store.remote.reload) await Store.remote.reload();
+            UI.busy(SCAN_WAIT, label);
+            results.push(await postJson(`/api/clients/${cid}/files/${j.doc.id}/scan`));
+          } else {
+            UI.busy(SCAN_WAIT, label);
+            results.push(await root.AIDirect.scan({ file }));
+          }
+        } catch (e) { problems.push(list.length > 1 ? `${file.name}: ${e.message}` : e.message); }
+      }
+      if (!results.length) { UI.busyError(problems.join('\n') || 'Nothing was scanned.'); return; }
+      const out = mergeScans(results);
+      if (problems.length) out.notes = [out.notes, problems.join(' ')].filter(Boolean).join(' ');
+      if (!out.bureaus.length) { UI.busyError(problems.join('\n') || 'The AI found no accounts in that report'); return; }
+      reviewScan(cid, out, list.length === 1 ? list[0].name : `${list.length} files`, firstDoc);
+    } finally {
+      inflight.delete(key);
+      lockedDocs.forEach(id => inflight.delete(id));
     }
-    if (!results.length) return;
-    const out = mergeScans(results);
-    if (!out.bureaus.length) { toast('The AI found no accounts in that report'); return; }
-    reviewScan(cid, out, files.length === 1 ? files[0].name : `${files.length} files`, firstDoc);
   }
   async function scanText(cid, text) {
     const m = mode();
-    if (m === 'none') { toast('Turn on AI first: Settings → AI in this browser'); return; }
-    if (String(text).trim().length < 200) { toast('Paste the full report text (select all on the report page, copy, paste)'); return; }
-    toast('AI is reading the pasted report… this can take a minute');
+    if (m === 'none') { UI.busyError('Turn on AI first: Settings → AI in this browser'); return; }
+    if (String(text).trim().length < 200) { UI.busyError('Paste the full report text (select all on the report page, copy, paste)'); return; }
+    const key = 'text:' + cid;
+    if (inflight.has(key)) return;
+    inflight.add(key);
+    UI.busy(SCAN_WAIT, 'Pasted report');
+    UI.close();
     try {
-      const out = m === 'server' ? await App().api('POST', `/api/clients/${cid}/scan-text`, { text }) : await root.AIDirect.scan({ text });
-      if (!out.bureaus || !out.bureaus.length) { toast('The AI found no accounts in that text'); return; }
+      const out = m === 'server' ? await postJson(`/api/clients/${cid}/scan-text`, { text }) : await root.AIDirect.scan({ text });
+      if (!out.bureaus || !out.bureaus.length) { UI.busyError('The AI found no accounts in that text'); return; }
       reviewScan(cid, out, 'pasted report');
-    } catch (e) { toast(e.message); }
+    } catch (e) { UI.busyError(e.message); }
+    finally { inflight.delete(key); }
   }
 
   function uploadHub(cid) {
@@ -198,7 +237,8 @@
       foot: '<button type="button" class="btn" data-close>Close</button>',
       onOpen: f => {
         const pick = () => { const v = f.elements.cid.value; if (!v) toast('Choose the client first'); return v; };
-        const go = files => { const id = pick(); if (!id || !files.length) return; UI.close(); scanFiles(id, Array.from(files)); };
+        // Copy the FileList before the dialog closes. Removing the input can empty a live FileList.
+        const go = fileList => { const id = pick(); const files = Array.from(fileList || []); if (!id || !files.length) return; scanFiles(id, files); };
         const drop = f.querySelector('#drop'), inp = f.querySelector('#up-files');
         inp.onchange = () => go(inp.files);
         ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
@@ -207,7 +247,7 @@
         f.querySelectorAll('[data-up]').forEach(b => b.onclick = () => {
           const id = pick(); if (!id) return;
           const k = b.dataset.up;
-          if (k === 'text') { const t = f.querySelector('#up-text').value; UI.close(); scanText(id, t); }
+          if (k === 'text') { scanText(id, f.querySelector('#up-text').value); }
           if (k === 'csv' || k === 'manual') { UI.close(); App().A['add-report']({ dataset: { id } }); }
           if (k === 'ask') { UI.close(); App().messageModal(id, 'email', { subject: 'Please upload your credit report', body: TEMPLATE_ASK(Store.get.client(id)) }); }
         });

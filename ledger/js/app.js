@@ -1238,12 +1238,21 @@
       onSubmit: (d, f) => {
         const file = f.elements.file.files[0];
         if (!file) { toast('Choose a file'); return false; }
+        if (file.size > 15 * 1024 * 1024) { UI.busyError(`${file.name} is over 15 MB`); return false; }
+        if (f.dataset.uploading) return false;
+        f.dataset.uploading = '1';
         const fd = new FormData(); fd.append('type', d.type); fd.append('file', file);
-        Remote.flushNow().then(() => fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' }).then(async r => {
-          const j = await r.json(); if (!r.ok) throw new Error(j.error);
-          await Remote.reload(); toast('Uploaded');
-          if (d.type === 'report') reportModal(cid);
-        }).catch(e => toast(e.message)));
+        const type = d.type;
+        UI.busy('Uploading…', file.name);
+        Remote.flushNow().then(() => fetch(`/api/clients/${cid}/files`, { method: 'POST', body: fd, credentials: 'same-origin' }))
+          .then(r => UI.readJson(r))
+          .then(async () => {
+            await Remote.reload();
+            UI.busyEnd();
+            if (type === 'report') reportModal(cid);
+            else toast('Uploaded');
+          })
+          .catch(e => UI.busyError(e.message || 'Upload failed'));
       }
     });
   }

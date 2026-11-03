@@ -23,8 +23,12 @@ const server = app.listen(port, () => {
   console.log(`  data: ${db.file}${db.encrypted ? ' (encrypted)' : ' (NOT encrypted — set LEDGER_ENCRYPTION_KEY in production)'}`);
 });
 // Slightly longer than the proxy's idle timeout so the proxy, not Node, closes idle connections.
+// server.timeout stays 0 (no socket idle limit). A report scan often takes 1–3 minutes; the scan
+// routes write a heartbeat so Railway's edge, which closes a request that sends no bytes, does
+// not drop it. requestTimeout still caps how long the request body itself may upload.
 server.keepAliveTimeout = 65_000;
 server.headersTimeout = 66_000;
+server.timeout = 0;
 
 let stopping = false;
 function stop(signal) {
