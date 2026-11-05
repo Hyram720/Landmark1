@@ -17,6 +17,7 @@ import { alertOwner } from './notify.js';
 import { startHealthcheck } from './healthcheck.js';
 import { INDEXNOW_KEY, submitIndexNow } from './indexnow.js';
 import { runPrintfulSelftest } from './printful-selftest.js';
+import { runPrintfulPreflight } from './printful-preflight.js';
 import { PROMO_VIDEO_SOURCE, promoVideoPath, promoVideoCached, cachePromoVideo } from './promo-video.js';
 
 let stripeSetupStatus = 'pending';
@@ -457,6 +458,7 @@ app.listen(config.port, () => {
   startFollowupScheduler();
   startEmailDomainSetup();
   startHealthcheck();
+  runPrintfulPreflight().catch((err) => console.error('Printful preflight unexpected error:', err.message));
   setTimeout(() => submitIndexNow().catch((e) => console.error('IndexNow', e.message)), 30_000);
   if (process.env.PRINTFUL_SELFTEST === 'true') setTimeout(() => runPrintfulSelftest(), 20_000);
   cachePromoVideo().catch((err) => console.error('promo video', err.message));
