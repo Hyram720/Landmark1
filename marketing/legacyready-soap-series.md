@@ -157,3 +157,8 @@ For each scene: generate a still first frame using the listed character sheets a
 - "The Hospital Bill" Shot A (Whitmores, waiting room): https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021022_06b5defa-e6c2-46ef-ba3c-22fcf5c4aea7.png
 - "The Hospital Bill" Shot B (mother + little sister): https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021024_3ca860cd-0ad1-482e-b968-ead55b2053e5.png
 - "The Hospital Bill" Shot C (Maya Bennett narrator close): https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021025_b7829bb2-ba49-4473-af3e-93a9759aa26c.png
+- Ep 5 Scene 2 "The Accusation": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021323_ce4b2b15-5a02-40fc-8aef-787793454707.png
+- Ep 5 Scene 3 "Delores Knows": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021324_1a531cb4-a987-401b-b4fa-1ff3f39110b6.png
+- Ep 5 Scene 4 "Dani Digs In": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021324_5d9cf4c3-f355-4357-938b-c19acdcf0985.png
+- Ep 5 Scene 5 "The Reveal": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021323_0cb4b2d6-cae4-470f-a25f-b25c9a43b15e.png
+- Ep 5 Scene 6 "Legacy": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021324_7ad75f79-033e-4cfc-bc91-b0534e372a07.png
