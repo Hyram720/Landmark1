@@ -124,3 +124,16 @@ For each scene: generate a still first frame using the listed character sheets a
 3. **Animate** — `generate_video` image-to-video from each approved still (5–8s, 9:16).
 4. **Voice & music** — `generate_audio` for VO lines and the organ sting; reuse the same sting every episode.
 5. **Assemble** — stitch scenes + end card into one episode with burned-in captions.
+
+---
+
+## Generated character sheets (Higgsfield API, Soul model, 16:9) — links expire 2026-11-20, download to keep
+
+| Character | Sheet |
+|---|---|
+| Eleanor Whitmore | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d29d-64ae-7692-9578-0db71d38b763/468ae264-a6ea-4128-9a73-72df58250f6b.png |
+| Victoria Whitmore-Shaw | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a0-8e4a-7d33-8df5-a5872e3d2c32/9ea11483-5d56-4361-ac89-2f13bb2d28ae.png |
+| Rick Whitmore | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a0-8f86-7a60-923a-f80566fe2f14/c004ddb0-c853-44c0-8c96-c9e91b9dfbda.png |
+| Dani Whitmore | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a0-90cb-7942-b322-fc4cda576919/406b2d9b-23d5-4285-8645-570dea758222.png |
+| Aunt Delores Vance | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a0-91ea-72a7-82d8-3e346dc6079a/817dd33e-2334-485b-827f-752e03edeb37.png |
+| Marcus Whitmore (Ep 5 guest) | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a1-6921-7076-989e-7606d410ac9c/285ff679-1f90-488b-a927-4a2bde70ffde.png |
