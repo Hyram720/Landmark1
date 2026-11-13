@@ -205,3 +205,22 @@ For each scene: generate a still first frame using the listed character sheets a
 > ✔ Final wishes ✔ Beneficiaries ✔ Insurance info — organized in one private place.
 > Start free at LegacyReadyFamily.com — no credit card required.
 > #LegacyLane #FamilyPlanning #EstatePlanning #LifeInsurance #SoapOpera
+
+---
+
+## HANDOFF — moving the Higgsfield connector to the LegacyReady (funded) account
+
+The API key ("LegacyReady API", saved as a network secret for api.higgsfield.ai) and the old connector account are **different Higgsfield accounts**. The API's `soul/reference` model ignores reference images, so character consistency requires connector **Elements**. Plan: reconnect the connector to the funded account, then in a NEW session:
+
+1. Re-import each sheet with `media_import_url`, then `manage_reference_elements` action=create, category=character, using these names + source images:
+   - Eleanor-Whitmore — https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/7f1f8a96-8ed2-4318-98b0-43008fee570b.png
+   - Victoria-Whitmore — https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/428ffa1f-e172-47e5-a100-f7dab70f92e6.png
+   - Rick-Whitmore — https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/9ba1b94f-c07c-41b5-ae00-9404c1c01775.png
+   - Dani-Whitmore — https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/60bd9b8d-b39f-4c72-bf09-3a544adf44e7.png
+   - Delores-Vance — https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/2a778e41-01f8-4358-a06a-fb716e2f4b4a.png
+   - Marcus-Whitmore — https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/bfd20456-9bb7-46e5-ad12-8b7916d3a7ad.png
+   - Harold-Whitmore (new, flashbacks) — https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2c9-736c-78a7-ba4f-3b4a03e683da/84e92967-5d00-4115-b71c-616a3703d542.png (expires 2026-11-20)
+   - Closing VO (reuse): https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_022958_a59c6a8d-05a1-4b8e-a4e2-bf85adbe55c8.wav
+2. Generate Episode 1 stills (above) with `nano_banana_2`, 9:16, `<<<element_id>>>` placeholders (~1.5 credits each).
+3. Animate with Kling 3.0 i2v 5s (connector `kling3_0` with start_image, or API `kling-video/v3.0/pro/image-to-video` with `image_url`).
+4. Assemble in the Higgsfield sandbox exactly like Ep 5 (title card, Montserrat captions w/ gold speaker name, sox organ sting, VO end card) — the build script pattern is in the Ep 5 section notes.
