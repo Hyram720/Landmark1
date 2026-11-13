@@ -174,3 +174,8 @@ For each scene: generate a still first frame using the listed character sheets a
 - hb_a: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5e72-775f-b1ad-fca6db7ef255/d6091352-ca55-4ce1-b1f1-2ac1652947fd.mp4
 - hb_b: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5f6f-7ea5-91ab-9c788b7f0991/a489a0df-a585-4538-ab54-876afd29dbd0.mp4
 - hb_c: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-6044-7d8e-9daa-6564f596581b/21acb12b-e539-4692-856c-137cecda6f64.mp4
+
+## Finished episodes (9:16, 1076x1924, captions + organ sting + VO end card)
+
+- Ep 5 "Roots of Deception" (45.7s): https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/18f0fab5-a837-4558-967b-6395788a645b.mp4
+- "The Hospital Bill" (30.6s): https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/d906178c-7603-4e60-9ce0-0c8cfc40291c.mp4
