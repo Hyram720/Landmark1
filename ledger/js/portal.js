@@ -94,7 +94,7 @@
 
     root.innerHTML = `<div class="page-head"><div><h1>Welcome, ${esc(me.client.name.split(' ')[0])}</h1><p>${me.company.phone || me.company.email ? 'Questions? ' + esc([me.company.phone, me.company.email].filter(Boolean).join(' · ')) : ''}</p></div></div>
       ${cr.required && cr.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>You can cancel until midnight ${date(cr.deadline)}</b>Cancel for any reason, without penalty, before then. No work starts and no fees are charged until this period ends. <button class="btn sm danger" data-cancel style="margin-left:8px">Cancel my agreement</button></div>` : ''}
-      ${cr.cancelled ? '<div class="callout bad" style="margin-bottom:16px"><b>Your agreement is cancelled</b>We will refund any payment you made.</div>' : ''}
+      ${cr.cancelled ? '<div class="callout bad" style="margin-bottom:16px"><b>Your agreement is cancelled</b>No further work will be performed or billed. Any amount collected during your 3-business-day cancellation window is returned as federal law requires.</div>' : ''}
       <div class="stack">
       ${cr.required ? `${signBlock('Consumer Credit File Rights Under State and Federal Law', 'disclosure', me.documents.disclosure, cr.disclosureSigned, false, me.client.name)}
         ${signBlock('Credit services agreement', 'contract', me.documents.contract + '\n\n' + me.documents.cancellation, cr.contractSigned, !cr.disclosureSigned, me.client.name)}` : ''}
