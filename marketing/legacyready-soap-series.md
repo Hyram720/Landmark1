@@ -179,3 +179,29 @@ For each scene: generate a still first frame using the listed character sheets a
 
 - Ep 5 "Roots of Deception" (45.7s): https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/18f0fab5-a837-4558-967b-6395788a645b.mp4
 - "The Hospital Bill" (30.6s): https://d2ol7oe51mr4n9.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/d906178c-7603-4e60-9ce0-0c8cfc40291c.mp4
+
+---
+
+## Episode 1 — "The Reading of the Will That Wasn't There" (production script)
+
+**Logline:** The day after Harold's funeral, the family gathers for the reading of his wishes — and there's nothing to read. Accusations fly, the house gets torn apart, and all anyone finds is a bowling trophy.
+**Runtime:** ~45s · 6 scenes · 9:16 · Cast: Eleanor, Victoria, Rick, Dani, Delores, Harold (flashback) + an unnamed family lawyer (non-recurring).
+**Wardrobe note:** funeral day — everyone in black, but keep each character's signature accessory (Eleanor's pearls, Victoria's gold hoops, Rick's silver watch, Dani's glasses + locket, Delores's giant black hat).
+
+| # | Scene | Still prompt (use saved Elements) | Motion | Caption |
+|---|---|---|---|---|
+| 1 | **The Empty Folder** | Rainy evening, grand living room. Eleanor, Victoria, Rick and Dani in black funeral clothes sit stiffly on sofas; an elderly lawyer in a gray suit stands holding an open, empty manila folder. | Slow push-in on the empty folder; lawyer clears throat. | LAWYER: "I'm afraid Harold never left a copy of his wishes." |
+| 2 | **Where. Is. It?** | Victoria rises from the sofa, pointing, furious; the others look up at her. | Victoria slams her palm on the coffee table; dramatic push-in. | VICTORIA: "Daddy TOLD me there was a life insurance policy. Where. Is. It?" |
+| 3 | **The Accusation** | Rick, eyes narrowed, turns slowly toward Dani; Dani's face in shock behind her glasses. | Slow zoom on Dani's stunned face. | RICK: "Maybe someone already found it." |
+| 4 | **Delores Arrives** | Delores in her enormous black hat in the doorway, rain behind her, lace gloves, holding a casserole dish. | She lifts her chin; organ sting. | DELORES: "Harold kept everything… in his head." |
+| 5 | **The Search** | The study torn apart: open file cabinets, scattered papers, shoeboxes on the floor. Rick holds up a dusty 1987 bowling trophy; Victoria digs through a drawer. | Papers flutter; Rick lifts the trophy in disbelief. | RICK: "…A bowling trophy." |
+| 6 | **Flashback: Harold** | Warm sepia flashback: Harold in his brown cardigan with reading glasses on a chain, smiling at the kitchen table, tapping his temple. | Soft light flicker; he chuckles. VO begins. | ELEANOR (V.O.): "Oh, Harold… why didn't you write it down?" |
+
+**End card + VO:** "Give your loved ones clarity, not a scavenger hunt. Preserve your family's past. Protect your family's future. Start free at LegacyReadyFamily.com. No credit card required." (reuse existing VO)
+
+**Post caption:**
+> Episode 1 of LEGACY LANE ⚡ The family gathered to hear Harold's final wishes… there weren't any.
+> Don't leave your family a scavenger hunt.
+> ✔ Final wishes ✔ Beneficiaries ✔ Insurance info — organized in one private place.
+> Start free at LegacyReadyFamily.com — no credit card required.
+> #LegacyLane #FamilyPlanning #EstatePlanning #LifeInsurance #SoapOpera
