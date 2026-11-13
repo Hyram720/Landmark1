@@ -162,3 +162,15 @@ For each scene: generate a still first frame using the listed character sheets a
 - Ep 5 Scene 4 "Dani Digs In": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021324_5d9cf4c3-f355-4357-938b-c19acdcf0985.png
 - Ep 5 Scene 5 "The Reveal": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021323_0cb4b2d6-cae4-470f-a25f-b25c9a43b15e.png
 - Ep 5 Scene 6 "Legacy": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021324_7ad75f79-033e-4cfc-bc91-b0534e372a07.png
+
+## Video clips (Kling 3.0 Pro i2v, 5s, via LegacyReady API) — expire 2026-11-20
+
+- ep5_s1: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b2-d3af-7174-ac3b-75780431b41d/a8c788b9-981d-4804-9ab3-2e6becb4db0e.mp4
+- ep5_s2: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5a19-73e2-821e-be5648aa14c1/47e8592f-f1b7-457a-b36a-952fcffd3f2c.mp4
+- ep5_s3: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5af8-7f89-9155-823c83908142/110bebb6-a025-4452-9768-192035b1f74d.mp4
+- ep5_s4: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5bdb-7cde-948b-1aec4d7ded8f/971097a5-3ed1-4e25-be23-fb5019374ccf.mp4
+- ep5_s5: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5cba-72f4-9e12-de2dc070de1e/fa6b949d-42d8-4811-bf1b-718c2a11d5d4.mp4
+- ep5_s6: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5d99-7669-8223-8fac51d8c44f/c8ac766b-d6d2-4c5c-b026-b681769558e4.mp4
+- hb_a: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5e72-775f-b1ad-fca6db7ef255/d6091352-ca55-4ce1-b1f1-2ac1652947fd.mp4
+- hb_b: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-5f6f-7ea5-91ab-9c788b7f0991/a489a0df-a585-4538-ab54-876afd29dbd0.mp4
+- hb_c: https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2b7-6044-7d8e-9daa-6564f596581b/21acb12b-e539-4692-856c-137cecda6f64.mp4
