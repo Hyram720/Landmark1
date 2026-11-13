@@ -137,3 +137,23 @@ For each scene: generate a still first frame using the listed character sheets a
 | Dani Whitmore | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a0-90cb-7942-b322-fc4cda576919/406b2d9b-23d5-4285-8645-570dea758222.png |
 | Aunt Delores Vance | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a0-91ea-72a7-82d8-3e346dc6079a/817dd33e-2334-485b-827f-752e03edeb37.png |
 | Marcus Whitmore (Ep 5 guest) | https://d3u0tzju9qaucj.cloudfront.net/8d84ac64-cd91-47ea-8bb8-8cc846ed2626/01a1d2a1-6921-7076-989e-7606d410ac9c/285ff679-1f90-488b-a927-4a2bde70ffde.png |
+
+---
+
+## Saved Higgsfield Elements (connector account) — use `<<<id>>>` in prompts
+
+| Character | Element ID |
+|---|---|
+| Eleanor-Whitmore | 27c88e60-9f15-4f9b-9ce4-a37b448bf242 |
+| Victoria-Whitmore | 6cf59b12-c60c-4d6c-abdb-b65ea4177e6e |
+| Rick-Whitmore | 4ee77e51-b370-49f1-84b0-ca68ab6c1c2a |
+| Dani-Whitmore | 6e46a005-5280-45e3-b598-f2cd5d0e3292 |
+| Delores-Vance | f240bda8-4acd-4829-bc8b-f067b037f6cd |
+| Marcus-Whitmore | 06af85be-c6b6-42e3-a29a-8bb5f6aee3e4 |
+
+## Generated scene stills (Nano Banana 2, 9:16)
+
+- Ep 5 Scene 1 "The Stranger": https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_020510_3d1fd9bc-2413-4a5a-afe4-bd0cdbdb1760.png
+- "The Hospital Bill" Shot A (Whitmores, waiting room): https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021022_06b5defa-e6c2-46ef-ba3c-22fcf5c4aea7.png
+- "The Hospital Bill" Shot B (mother + little sister): https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021024_3ca860cd-0ad1-482e-b968-ead55b2053e5.png
+- "The Hospital Bill" Shot C (Maya Bennett narrator close): https://d8j0ntlcm91z4.cloudfront.net/user_391qpEAynVndVvvLA4RZWiHERjU/hf_20261113_021025_b7829bb2-ba49-4473-af3e-93a9759aa26c.png
