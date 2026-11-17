@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import express from 'express';
 import multer from 'multer';
 import config, { STYLES, PRODUCTS } from './config.js';
@@ -14,7 +15,8 @@ import { setupStripe } from './stripe-setup.js';
 import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
 import { generateMissingSamples, listShowcase, showcasePreview, masterPath } from './samples.js';
 import { alertOwner } from './notify.js';
-import { startHealthcheck } from './healthcheck.js';
+import { startHealthcheck, probeImageProvider, lastHealth } from './healthcheck.js';
+import { photoRightsTimestamp } from './consent.js';
 import { INDEXNOW_KEY, submitIndexNow } from './indexnow.js';
 import { runPrintfulSelftest } from './printful-selftest.js';
 import { runPrintfulPreflight } from './printful-preflight.js';
@@ -124,7 +126,14 @@ app.get(['/index.html', '/offer.html', '/order.html'], (req, res) => {
 
 app.use(express.json());
 
-app.get('/health', (req, res) => res.json({ ok: true }));
+// Process stays up while the scheduled check is still pending. After it runs, a missing
+// credential, a missing endpoint, or exhausted credits report not-ok (HTTP 503).
+app.get('/health', (req, res) => {
+  const report = lastHealth;
+  if (!report) return res.json({ ok: true, provider: config.image.provider, image: 'pending' });
+  const body = { ok: report.ok, provider: report.provider, image: report.image };
+  res.status(report.ok ? 200 : 503).json(body);
+});
 
 const catalogJson = () => ({
     brand: config.brandName,
@@ -160,6 +169,12 @@ app.post('/api/orders', upload.single('photo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Please upload a JPG, PNG or WEBP photo.' });
     if (!STYLES[style] || !product) return res.status(400).json({ error: 'Pick a style and a product.' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) return res.status(400).json({ error: 'Enter a valid email.' });
+    let photoRightsAt;
+    try {
+      photoRightsAt = photoRightsTimestamp(req.body);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
 
     const order = saveOrder({
       id: newOrderId(),
@@ -172,6 +187,7 @@ app.post('/api/orders', upload.single('photo'), async (req, res) => {
       physical: product.physical,
       photo: req.file.filename,
       photoMime: req.file.mimetype,
+      photoRightsAt,
       source: String(req.body.source || '').slice(0, 100), // utm/ad attribution
     });
 
@@ -345,6 +361,12 @@ app.post(['/admin/gift', '/admin/manual-order'], requireAdmin, upload.single('ph
   if (!req.file || !STYLES[b.style]) return res.status(400).send(`A photo and a style are required.${back}`);
   if (email && !EMAIL_RE.test(email)) return res.status(400).send(`That email doesn't look right.${back}`);
   if (channel === 'gift' && !email) return res.status(400).send(`Gifts need the recipient's email.${back}`);
+  let photoRightsAt;
+  try {
+    photoRightsAt = photoRightsTimestamp(b);
+  } catch (err) {
+    return res.status(400).send(`${err.message}${back}`);
+  }
   let shipping = null;
   if (product.physical) {
     const need = ['shipName', 'line1', 'city', 'state', 'zip'];
@@ -368,6 +390,7 @@ app.post(['/admin/gift', '/admin/manual-order'], requireAdmin, upload.single('ph
     shipping,
     photo: req.file.filename,
     photoMime: req.file.mimetype,
+    photoRightsAt,
     source: `${channel}${note ? `|${note}` : ''}`,
     channel,
     gift: channel === 'gift',
@@ -406,6 +429,7 @@ app.get('/admin', requireAdmin, (req, res) => {
       <input name="city" placeholder="City"> <input name="state" placeholder="State (e.g. NJ)" maxlength="3"> <input name="zip" placeholder="ZIP">
       <select name="country"><option value="US">United States</option><option value="CA">Canada</option></select> <input name="phone" placeholder="Phone (optional)"></fieldset>
     <label>Note (e.g. "Etsy #3456789" or "TikTok winner @user") <input name="note" maxlength="80"></label>
+    <label><input type="checkbox" name="photoRights" value="yes" required> I own this photo or have the right to use it</label>
     <button>Paint it (~$1 in AI)</button>
   </form></details>
   <script>(function(){const p=document.getElementById('mo-product'),f=document.getElementById('mo-ship');const t=()=>{f.style.display=p.value==='digital'?'none':'grid'};p.addEventListener('change',t);t();})();</script>
@@ -423,13 +447,13 @@ app.get('/admin/check', requireAdmin, async (req, res) => {
       return `failed (${err.message})`;
     }
   };
-  const [openai, resend, printful, stripe] = await Promise.all([
-    probe('https://api.openai.com/v1/models', config.image.openaiKey),
+  const [image, resend, printful, stripe] = await Promise.all([
+    probeImageProvider(),
     probe('https://api.resend.com/domains', config.email.resendKey),
     probe('https://api.printful.com/stores', config.printful.token),
     probe('https://api.stripe.com/v1/balance', config.stripe.secretKey),
   ]);
-  res.json({ openai, resend, printful, stripe, stripeSetup: stripeSetupStatus, emailDomain: emailDomainStatus });
+  res.json({ imageProvider: config.image.provider, image, resend, printful, stripe, stripeSetup: stripeSetupStatus, emailDomain: emailDomainStatus });
 });
 
 app.post('/admin/retry/:id', requireAdmin, (req, res) => {
@@ -447,7 +471,10 @@ app.post('/admin/retry/:id', requireAdmin, (req, res) => {
 
 if (!fs.existsSync(path.join(publicDir, 'index.html'))) console.warn('public/index.html missing');
 
-app.listen(config.port, () => {
+export { app };
+
+const startedAsMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (startedAsMain) app.listen(config.port, () => {
   console.log(`${config.brandName} listening on ${config.baseUrl}`);
   if (config.devSkipPayment) console.warn('DEV_SKIP_PAYMENT is on — orders are not charged.');
   enhanceExistingOrders()

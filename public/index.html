@@ -431,6 +431,8 @@
       <div><label for="petName">Pet's name (optional, shown on a gold nameplate)</label><input type="text" id="petName" name="petName" maxlength="24" placeholder="e.g. Duke" autocomplete="off">
         <p id="namePreview" class="name-preview" hidden>Nameplate will read: <strong id="namePreviewText"></strong>. Please double-check the spelling. You can still fix it after your portraits are ready.</p></div>
       <div><label for="email">Email for delivery</label><input type="email" id="email" name="email" required placeholder="you@example.com"></div>
+      <label class="consent" for="photoRights"><input type="checkbox" id="photoRights" name="photoRights" value="yes" required> I own this photo or have the right to use it</label>
+      <p class="fine left">Digital portraits are final sale. If a file is defective or never delivered, we replace that file.</p>
       <p class="launch-note" id="launchNote" hidden></p>
       <p class="error" id="error" role="alert"></p>
       <button class="btn big" id="submit" type="submit">Continue to secure checkout →</button>
@@ -538,6 +540,7 @@
       e.preventDefault();
       $('error').textContent = '';
       if (!$('photo').files[0]) return ($('error').textContent = 'Please upload a photo of your pet.');
+      if (!$('photoRights').checked) return ($('error').textContent = 'Confirm that you own this photo or have the right to use it.');
       const data = new FormData($('orderForm'));
       // Attribution: which ad / page sent this buyer.
       data.append('source', [params.get('utm_source'), params.get('utm_campaign'), params.get('breed'), document.referrer && new URL(document.referrer).pathname].filter(Boolean).join('|'));
