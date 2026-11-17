@@ -4,6 +4,7 @@ import path from 'node:path';
 import config, { PRODUCTS, STYLES } from './config.js';
 import { getOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { generatePortraits } from './generate.js';
+import { assertPhotoRights } from './consent.js';
 import { applyNameplate, cleanName, lookFor } from './nameplate.js';
 import { enhancePortrait, upgradeToMaster, makePrintFile, ENHANCE_ENABLED, MASTER_VERSION } from './enhance.js';
 import { sendEmail, alertOwner, portraitsReadyEmail } from './notify.js';
@@ -41,10 +42,11 @@ async function drain() {
   running = false;
 }
 
-async function processOrder(id) {
+export async function processOrder(id) {
   const order = getOrder(id);
   if (order?.status === 'repainting') return processRepaint(order);
   if (!order || !['paid', 'generating'].includes(order.status)) return;
+  assertPhotoRights(order);
 
   updateOrder(id, { status: 'generating' });
   // Reuse portraits from an earlier attempt instead of paying to paint them again.
@@ -98,6 +100,7 @@ export function requestRepaint(id, styleKey) {
 }
 
 async function processRepaint(order) {
+  assertPhotoRights(order);
   const { style, returnStatus } = order.repaint;
   const outDir = path.join(outputDir, order.id);
   const images = await generatePortraits({

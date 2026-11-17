@@ -29,6 +29,8 @@ section.block { max-width: 1000px; margin: 0 auto; padding: 32px 16px; }
 .step b { color: var(--gold); font-size: 26px; }
 form.order { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; display: grid; gap: 18px; }
 form.order label { font-weight: bold; display: block; margin-bottom: 6px; }
+form.order label.consent { font-weight: normal; display: flex; gap: 8px; align-items: flex-start; margin: 0; }
+form.order label.consent input { margin-top: 2px; }
 input[type=text], input[type=email] { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .choice { position: relative; }

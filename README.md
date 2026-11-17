@@ -70,10 +70,11 @@ Customer uploads photo ─► Stripe Checkout ─► webhook ─► AI paints 4 
 
 1. **Accounts:**
    - [Stripe](https://stripe.com)
-   - [OpenAI API](https://platform.openai.com) (image generation)
+   - [OpenAI API](https://platform.openai.com) (image generation until the Qwen cutover)
    - [Resend](https://resend.com) (email)
    - [Printful](https://printful.com) (free; print-on-demand)
    - a domain name
+   - For the Qwen cutover only: a [Hugging Face token](https://huggingface.co/settings/tokens) with Inference Providers permission, or a self-hosted GPU. Do not switch `IMAGE_PROVIDER` until that cutover is approved.
 2. **Deploy:** Railway, Render or any Node host. Mount a persistent volume at `/data`, copy `.env.example` into your host's environment variables, and fill them in. The start command is `npm start`.
 3. **Stripe:** Set only `STRIPE_SECRET_KEY`. On startup the store creates its own webhook (and moves it when `BASE_URL` changes) and creates the `COMEBACK15` and `FRIEND20` promo codes. Check the result at `/admin/check`.
 4. **Printful:** The canvas sizes are preset to 12×18 and 16×24, which fit the portraits exactly. Create an API token and set `PRINTFUL_TOKEN`. Leave `PRINTFUL_AUTO_CONFIRM=false` for your first 10 orders, then switch it to `true`.
@@ -90,12 +91,38 @@ npm run dev          # http://localhost:3000. No payments, mock images, emails p
 
 Owner dashboard: `/admin?key=YOUR_ADMIN_KEY`. It shows revenue, every order, which ad or page each order came from, and retry buttons.
 
+Tests: `npm test`.
+
+## Image provider
+
+`IMAGE_PROVIDER` defaults to `openai`, which keeps today's GPT Image edit call. Set it to `qwen` to edit the customer's photo with [Qwen/Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) (Apache-2.0). The portrait path does not read `OPENAI_API_KEY` in that mode. Demo subject photos for the showcase are text-to-image and are not created by Qwen; leave those PNGs cached. The local upscaler in `src/enhance.js` (Lanczos resize to 2400×3600 at 300 DPI) still runs after either provider.
+
+`QWEN_BACKEND=hf` calls Hugging Face with `HF_TOKEN`. `QWEN_BACKEND=http` POSTs JSON `{ model, prompt, image, mime, seed }` to `QWEN_ENDPOINT_URL` and accepts raw image bytes or JSON `{ image }` / `{ url }`.
+
+Which Hugging Face providers were live for this model on 17 Nov 2026, from `GET https://huggingface.co/api/models/Qwen/Qwen-Image-Edit-2511?expand[]=inferenceProviderMapping`:
+
+| `QWEN_HF_PROVIDER` | Hub provider id | Note |
+|---|---|---|
+| `wavespeed` (default) | `wavespeed-ai/qwen-image/edit-2511` | The mapped id is the 2511 model. |
+| `fal-ai` | `fal-ai/qwen-image-edit-plus` | fal's own page for that id describes it as Qwen-Image-Edit-2509, not 2511. |
+
+Replicate and `hf-inference` were not in that mapping. A `QWEN_HF_URL` whose host is not `router.huggingface.co` is treated as a dedicated Inference Endpoint and is called with `{ inputs, parameters: { prompt } }`. Prices and GPU notes for the cutover decision are in the pull request; they change, so confirm them on the provider's page before switching.
+
+Published prices read on 17 Nov 2026:
+
+- fal prices [Qwen Image Edit 2511](https://fal.ai/models/fal-ai/qwen-image-edit-2511/llms.txt) and [Qwen Image Edit Plus](https://fal.ai/models/fal-ai/qwen-image-edit-plus/llms.txt) at **$0.03 per megapixel**. fal Serverless lists an H100 at **$4.50 per hour** (as low as $2.49 per hour) for deploying your own weights.
+- [WaveSpeed's 2511 page](https://wavespeed.ai/models/wavespeed-ai/qwen-image/edit-2511) shows **$0.02 per run** next to the form and **$0.03 per edited image** under Pricing. Confirm the live price in their playground before relying on either number.
+- [Hugging Face Inference Endpoints](https://huggingface.co/docs/inference-endpoints/support/pricing) bills per minute while an endpoint is running. Examples from that table: AWS L4 24 GB **$0.80/hour**, L40S 48 GB **$1.80/hour**, A10G 24 GB **$1.00/hour**, A100 80 GB **$2.50/hour**, H200 141 GB **$5/hour**. The Qwen model card does not publish a VRAM figure. It is a 20B BF16 checkpoint (the weights alone are about 40 GB before activations), so a 24 GB instance is unlikely to hold the unquantized diffusers quick start.
+- [Hugging Face Inference Providers pricing](https://huggingface.co/docs/inference-providers/pricing): Hugging Face charges the provider's rate with no markup. Free accounts have no included credits. PRO is described there as **$2 of monthly credits**. Routed calls need a token with Inference Providers permission.
+
+The health check reports `provider` and `image`. It is not ok when the selected provider's key or URL is missing, or when OpenAI returns `credit_balance_exhausted` / a spend-limit code, or when Hugging Face returns HTTP 402. `GET /v1/models` is not used, because that stays successful after credits run out. `/health` returns HTTP 503 once that check has failed, which will restart the app if the host treats `/health` as a liveness probe.
+
 ## Project layout
 
 ```
 src/server.js       routes: checkout, webhook, gallery, SEO pages, admin
 src/pipeline.js     paid order → generate → email → print
-src/generate.js     AI portrait generation (OpenAI image edits; mock mode for testing)
+src/generate.js     portrait generation (OpenAI by default, Qwen when IMAGE_PROVIDER=qwen)
 src/stripe.js       Stripe Checkout + webhook signature verification (no SDK)
 src/stripe-setup.js automatic webhook + promo code setup on boot
 src/printful.js     print-on-demand fulfillment

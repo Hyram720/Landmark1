@@ -12,3 +12,5 @@ Facts the site already states (safe to reuse):
 - Canvas shipping countries at checkout: US and Canada (src/stripe.js; confirm the payment links match).
 - Checkout by Stripe (cards, Apple Pay, Google Pay). Support: sunmarketingllc@gmail.com, reply within one business day.
 - Christmas: canvas order-by Thu Dec 10, 2026 for US delivery (Printful US standard cutoff is Dec 11).
+- Customers must confirm they own the photo or have the right to use it. The confirmation time is stored on the order.
+- Digital files are final sale. A defective or undelivered digital file is replaced.
