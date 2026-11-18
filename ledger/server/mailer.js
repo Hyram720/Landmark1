@@ -29,23 +29,26 @@ function withFooter(text) {
 }
 
 /** Returns { sent: boolean, mode }. Never throws for "off"; throws provider errors otherwise. */
-export async function sendMail({ to, subject, text }, env = process.env) {
+export async function sendMail({ to, subject, text, attachments }, env = process.env) {
   const full = withFooter(text);
-  if (override) { await override({ to, subject, text: full }); return { sent: true, mode: 'test' }; }
+  const files = Array.isArray(attachments) ? attachments : [];
+  if (override) { await override({ to, subject, text: full, attachments: files }); return { sent: true, mode: 'test' }; }
   const mode = mailMode(env);
   if (mode === 'off') return { sent: false, mode };
   if (mode === 'console') {
-    console.log(`[mail:console] to=${to} subject=${JSON.stringify(subject)}\n${full}\n[/mail]`);
+    const names = files.map(a => `${a.filename || 'file'} (${Buffer.byteLength(a.content || '')} bytes)`).join(', ');
+    console.log(`[mail:console] to=${to} subject=${JSON.stringify(subject)}${names ? ' attachments=' + names : ''}\n${full}\n[/mail]`);
     return { sent: true, mode };
   }
   if (mode === 'resend') {
     if (!(env.LEDGER_RESEND_KEY || env.RESEND_API_KEY) || !env.LEDGER_EMAIL_FROM) throw new Error('Resend is not configured');
-    await resendSend({ to, subject, text: full }, env);
+    const encoded = files.map(a => ({ filename: a.filename, content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : a.content }));
+    await resendSend({ to, subject, text: full, attachments: encoded }, env);
     return { sent: true, mode };
   }
   if (!env.LEDGER_SMTP_URL || !env.LEDGER_EMAIL_FROM) throw new Error('SMTP is not configured');
   let nodemailer;
   try { nodemailer = (await import('nodemailer')).default; } catch { throw new Error('SMTP mode needs the nodemailer package (npm i nodemailer)'); }
-  await nodemailer.createTransport(env.LEDGER_SMTP_URL).sendMail({ from: env.LEDGER_EMAIL_FROM, to, subject, text: full });
+  await nodemailer.createTransport(env.LEDGER_SMTP_URL).sendMail({ from: env.LEDGER_EMAIL_FROM, to, subject, text: full, attachments: files.map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType })) });
   return { sent: true, mode };
 }

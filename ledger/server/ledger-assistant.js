@@ -182,6 +182,10 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     const msgs = (Array.isArray(history) ? history : []).slice(-12).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: redact(String(m.content || '').slice(0, 6000)) }));
     if (!msgs.length || msgs[msgs.length - 1].role !== 'user') return res.status(400).json({ error: 'Ask a question first' });
     const ws = workspace();
+    const held = clientId ? (ws.clients || []).find(x => x.id === clientId) : null;
+    if (clientId && held && held.signupSource === 'self' && !selfSignupCleared(held)) {
+      return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
+    }
     const dig = clientId ? clientDigest(ws, clientId) : null;
     if (clientId && !dig) return res.status(404).json({ error: 'Client not found' });
     const cfg = aiConfig();

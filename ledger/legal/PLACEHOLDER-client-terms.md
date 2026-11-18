@@ -1,5 +1,5 @@
 PLACEHOLDER FOR COMPLIANCE REVIEW
-PENDING — client account terms
+PENDING: client account terms
 
 This is not a finished terms document. Compliance has not approved it.
 Do not link the signup checkbox to the live /terms page. That page is a

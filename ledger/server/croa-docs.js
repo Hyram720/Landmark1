@@ -27,13 +27,47 @@ function clientAddress(client) {
   return line || 'New Jersey';
 }
 
-function scheduleA(client) {
+function money(n) {
+  const rounded = Math.round(Number(n) * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+}
+
+/** One row per item and bureau. A string is not a Schedule A record. */
+export function scheduleAEntries(client) {
   const rows = client && client.scheduleA;
-  if (typeof rows === 'string' && rows.trim() && !/\[[^\]]+\]/.test(rows)) return rows.trim();
-  if (Array.isArray(rows) && rows.length) {
-    return rows.map(r => [r.item || r.creditor, r.last4 ? 'ending ' + r.last4 : '', r.bureau].filter(Boolean).join(' / ')).join('\n');
-  }
-  return 'None listed yet.';
+  if (!Array.isArray(rows)) return [];
+  const entries = [];
+  rows.forEach(row => {
+    if (!row || typeof row !== 'object') return;
+    const creditor = String(row.creditor || row.item || '').trim();
+    if (!creditor) return;
+    const last4 = String(row.last4 || '').replace(/\D/g, '').slice(-4);
+    const listed = Array.isArray(row.bureaus) ? row.bureaus : String(row.bureau || '').split(/[,/]/);
+    listed.map(b => String(b || '').trim()).filter(Boolean).forEach(bureau => {
+      entries.push({ creditor, last4, bureau });
+    });
+  });
+  return entries;
+}
+
+/** Dollars per result, per item, per bureau. Missing or non-positive stays unset. */
+export function pricePerResult(client) {
+  const n = Number(client && client.pricePerResult);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+export function maximumTotal(client) {
+  const price = pricePerResult(client);
+  const count = scheduleAEntries(client).length;
+  if (price == null || count < 1) return null;
+  return Math.round(price * count * 100) / 100;
+}
+
+function scheduleAText(client) {
+  const entries = scheduleAEntries(client);
+  if (!entries.length) return 'None listed yet.';
+  return entries.map(e => [e.creditor, e.last4 ? 'ending ' + e.last4 : '', e.bureau].filter(Boolean).join(' / ')).join('\n');
 }
 
 /** Replace blanks that belong to this client. Owner blanks are left in place. */
@@ -42,15 +76,26 @@ export function fillPerClientText(text, client, now = new Date()) {
   const signedAt = (c.onboarding && (c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt)) || now;
   const win = cancellationWindow(signedAt, now instanceof Date ? now : new Date(now));
   const name = String(c.name || '').trim() || 'Client';
-  return String(text || '')
+  let out = String(text || '')
     .replace(/\[CLIENT FULL NAME\]/g, name)
     .replace(/\[CLIENT ADDRESS\]/g, clientAddress(c))
     .replace(/\[DATE SIGNED[^\]]*\]/g, etLongDate(signedAt))
-    .replace(/\[ITEM \/ CREDITOR NAME \/ ACCOUNT ENDING IN LAST 4 ONLY \/ BUREAU\(S\)\]/g, scheduleA(c))
+    .replace(/\[ITEM \/ CREDITOR NAME \/ ACCOUNT ENDING IN LAST 4 ONLY \/ BUREAU\(S\)\]/g, scheduleAText(c))
     .replace(/\[DATE:[^\]]*\]/g, etLongDate(win.deadlineInstant))
     .replace(/\[LINK TO SAMPLE PDF\]/g, '/api/portal/esign/sample')
     .replace(/\[______\]/g, 'the 6-character code from the sample PDF')
     .replace(/\[ \]/g, '');
+  const total = maximumTotal(c);
+  const price = pricePerResult(c);
+  if (total != null && price != null) {
+    const count = scheduleAEntries(c).length;
+    out = out
+      .replace(/\[PRICE PER RESULT:[^\]]*\]/g, money(price))
+      .replace(/\[NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A\]/g, String(count))
+      .replace(/\[MAXIMUM TOTAL\]/g, money(total))
+      .replace(/\[PRICE\]/g, money(price));
+  }
+  return out;
 }
 
 export function personalizeCroaDocs(docs, client, now = new Date()) {
@@ -74,6 +119,7 @@ export function documentBlocksSigning(text) {
 
 export function enrollmentBlocksSigning(docs) {
   const set = docs || {};
+  if (set.contract && /None listed yet\./.test(set.contract)) return true;
   return ['disclosure', 'contract', 'cancellation', 'esign'].some(key => documentBlocksSigning(set[key]));
 }
 

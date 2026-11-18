@@ -97,6 +97,7 @@ function listen(app) {
       const ct = r.headers.get('content-type') || '';
       return { status: r.status, body: ct.includes('json') ? await r.json() : await r.text(), headers: r.headers };
     };
+    f.jar = jar;
     return f;
   };
   return { server, base, client };
@@ -208,10 +209,11 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual(blockedSign.status, 503);
     assert.match(blockedSign.body.error, /not open yet/i);
     const me = await pat('GET', '/api/portal/me');
-    assert.ok(me.body.documents.disclosure.startsWith('Consumer Credit File Rights Under State and Federal Law'));
-    assert.match(me.body.documents.contract, /\[PRICE\]/);
-    assert.doesNotMatch(me.body.documents.contract, /Cherry Hill/);
-    assert.match(me.body.documents.cancellation, /You may cancel this contract, without any penalty or obligation/);
+    assert.strictEqual(me.body.documents.disclosure, '');
+    assert.strictEqual(me.body.documents.contract, '');
+    assert.strictEqual(me.body.documents.cancellation, '');
+    assert.match(me.body.documents.esign, /Consent to Electronic Records/);
+    assert.doesNotMatch(me.body.documents.esign, /Cherry Hill/);
     assert.strictEqual(me.body.client.status, 'pending');
     assert.strictEqual(me.body.croa.disclosureAcknowledged, false);
     assert.strictEqual(me.body.croa.disclosureSigned, false);
@@ -389,8 +391,10 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
   assert.strictEqual(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).enabled, false);
   assert.match(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).warning, /https/);
   assert.strictEqual(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT: 'production', PUBLIC_BASE_URL: 'https://ledger.example' }, signupRequested: true }).enabled, true);
-  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'test', RAILWAY_ENVIRONMENT: 'production' }, signupRequested: true }).enabled, true);
-  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'development', RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).enabled, true);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'test', RAILWAY_ENVIRONMENT: 'production' }, signupRequested: true }).enabled, false);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'development', RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).enabled, false);
+  assert.match(resolveSignupAccess({ env: { NODE_ENV: 'development', RAILWAY_ENVIRONMENT: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).warning, /https/);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'development', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).enabled, true);
 
   async function boot(env, publicBaseUrl) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-pub-url-'));
@@ -412,10 +416,11 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
   const https = await boot({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
   const railway = await boot({ RAILWAY_ENVIRONMENT: 'production', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
   const railwayHttp = await boot({ RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
+  const railwayDev = await boot({ NODE_ENV: 'development', RAILWAY_ENVIRONMENT: 'production', PUBLIC_BASE_URL: 'http://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
   const outbox = [];
   setTransport(async m => { outbox.push(m); });
   try {
-    for (const app of [unset, http, railway, railwayHttp]) {
+    for (const app of [unset, http, railway, railwayHttp, railwayDev]) {
       const anon = app.client();
       const page = await anon('GET', '/signup');
       const post = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true, state: 'NJ', njResident: true });
@@ -428,6 +433,7 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
     assert.ok(http.warnings.some(w => /https/i.test(w)));
     assert.ok(railway.warnings.some(w => /not set/i.test(w)));
     assert.ok(railwayHttp.warnings.some(w => /https/i.test(w)));
+    assert.ok(railwayDev.warnings.some(w => /https/i.test(w)));
     assert.deepStrictEqual(https.warnings, []);
     const anon = https.client();
     assert.strictEqual((await anon('GET', '/signup')).status, 200);
@@ -438,7 +444,7 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
     assert.doesNotMatch(mail.text, /127\.0\.0\.1|evil\.test/);
   } finally {
     setTransport(null);
-    for (const app of [unset, http, https, railway, railwayHttp]) {
+    for (const app of [unset, http, https, railway, railwayHttp, railwayDev]) {
       app.server.close();
       app.built.shutdown();
       fs.rmSync(app.dir, { recursive: true, force: true });
@@ -465,7 +471,7 @@ test('cancellation window skips weekends and observed holidays in Eastern time',
 });
 
 test('contract package PDF bolds the cancellation sentence and repeats the notice', async () => {
-  const { buildContractPackagePdf } = await import('../server/enrollment-pdf.js');
+  const { buildContractPackagePdf, extractPdfText } = await import('../server/enrollment-pdf.js');
   const built = buildContractPackagePdf({
     clientName: 'Pat Example',
     signedLabel: 'November 18, 2026',
@@ -473,9 +479,10 @@ test('contract package PDF bolds the cancellation sentence and repeats the notic
     contract: 'Services are described here.',
     notice: '**Notice of Cancellation**\n\nYou may cancel this contract, without any penalty or obligation, at any time before midnight of the 3rd day which begins after the date the contract is signed by you.\n\nTo cancel this contract, mail or deliver a signed, dated copy of this cancellation notice, or any other written notice before midnight on [DATE: Weekday, Month D, YYYY]\n\n[date]\n\n[purchaser\'s signature]'
   });
-  const text = Buffer.from(built.pdf).toString('latin1');
-  assert.match(text, /^%PDF-1\.4/);
-  assert.match(text, /\/F2 10 Tf/);
+  const raw = built.pdf.toString('latin1');
+  const text = extractPdfText(built.pdf).replace(/\s+/g, ' ');
+  assert.match(raw, /^%PDF-1\.4/);
+  assert.match(raw, /\/F2 10 Tf/);
   assert.match(text, /You may cancel this contract without penalty or obligation/);
   assert.ok(!text.includes('[DATE:'));
   assert.ok(text.includes('November 23, 2026 at 11:59 PM ET'));
@@ -490,19 +497,30 @@ test('contract package PDF bolds the cancellation sentence and repeats the notic
 
 test('per-client blanks can be signed, owner blanks still block, and mail failures stay private', async () => {
   const { personalizeCroaDocs, enrollmentBlocksSigning, croaDocs, documentBlocksSigning } = await import('../server/croa-docs.js');
-  const client = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', scheduleA: [{ creditor: 'Sample Bank', last4: '4242', bureau: 'Equifax' }] };
+  const client = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', pricePerResult: 40, scheduleA: [{ creditor: 'Sample Bank', last4: '4242', bureau: 'Equifax' }] };
   const onlyClient = {
     disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nI received this statement before any contract.\n',
-    contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nAddress: [CLIENT ADDRESS]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\n',
+    contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nAddress: [CLIENT ADDRESS]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe under this agreement is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
     cancellation: '**Notice of Cancellation**\n\nbefore midnight on [DATE: Weekday, Month D, YYYY]\n\nI hereby cancel this transaction,\n\n[date]\n\n[purchaser\'s signature]\n',
-    esign: 'Open this sample PDF: [LINK TO SAMPLE PDF]. Enter the code: [______]\n\n[ ] I agree to electronic records.\n'
+    esign: 'Consent to Electronic Records\n\nOpen this sample PDF: [LINK TO SAMPLE PDF]. Enter the code: [______]\n\n[ ] I agree to electronic records.\n'
   };
   const filled = personalizeCroaDocs(onlyClient, client);
   assert.strictEqual(enrollmentBlocksSigning(filled), false);
   assert.match(filled.contract, /Pat Example/);
   assert.match(filled.contract, /1 Main St/);
   assert.match(filled.contract, /Sample Bank/);
+  assert.match(filled.contract, /which is \$40/);
   assert.doesNotMatch(filled.contract, /\[[^\]]+\]/);
+  const bare = personalizeCroaDocs(onlyClient, { name: 'Pat Example', state: 'NJ' });
+  assert.match(bare.contract, /None listed yet/);
+  assert.match(bare.contract, /\[MAXIMUM TOTAL\]/);
+  assert.strictEqual(enrollmentBlocksSigning(bare), true);
+  const two = personalizeCroaDocs(croaDocs(), { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', pricePerResult: 40, scheduleA: [{ creditor: 'Sample Bank', last4: '4242', bureaus: ['Equifax', 'Experian'] }] });
+  assert.match(two.contract, /Sample Bank \/ ending 4242 \/ Equifax/);
+  assert.match(two.contract, /Sample Bank \/ ending 4242 \/ Experian/);
+  assert.match(two.contract, /which is \$80/);
+  assert.doesNotMatch(two.contract, /\[MAXIMUM TOTAL\]/);
+  assert.strictEqual(enrollmentBlocksSigning(two), true);
   assert.match(filled.cancellation, /\[date\]/);
   assert.match(filled.cancellation, /\[purchaser's signature\]/);
   assert.doesNotMatch(filled.cancellation, /\[DATE:/);
@@ -510,6 +528,7 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
   assert.doesNotMatch(filled.esign, /\[[^\]]+\]/);
   const live = personalizeCroaDocs(croaDocs(), client);
   assert.strictEqual(enrollmentBlocksSigning(live), true);
+  assert.match(live.contract, /\[LEGAL NAME/);
   assert.strictEqual(documentBlocksSigning('Terms. [PRICE PER RESULT: Fred to decide].'), true);
   assert.strictEqual(documentBlocksSigning('PLACEHOLDER still here'), true);
   assert.strictEqual(documentBlocksSigning('PENDING COMPLIANCE REVIEW'), true);
@@ -520,9 +539,11 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
   const { server, client: makeClient } = listen(built.app);
   const pat = makeClient();
   const logs = [];
+  const mailed = [];
   const origErr = console.error;
   console.error = (...args) => { logs.push(args.map(String).join(' ')); };
   setTransport(async m => {
+    mailed.push(m);
     if (/^Your /.test(m.subject)) throw Object.assign(new Error('mailbox down for ' + m.to), { code: 'EFAIL' });
   });
   try {
@@ -530,14 +551,29 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
     const user = built.db.data.users.find(u => u.email === 'pat-sign@signup.test');
     user.emailVerifiedAt = new Date().toISOString();
     assert.strictEqual((await pat('POST', '/api/login', { email: 'pat-sign@signup.test', password: 'pat password 1' })).status, 200);
-    const me = await pat('GET', '/api/portal/me');
-    assert.strictEqual(me.body.croa.enrollmentClosed, false);
-    assert.match(me.body.documents.contract, /Pat Example/);
-    assert.match(me.body.documents.cancellation, /\[purchaser's signature\]/);
+    const hidden = await pat('GET', '/api/portal/me');
+    assert.strictEqual(hidden.body.documents.disclosure, '');
+    assert.strictEqual(hidden.body.documents.contract, '');
+    assert.strictEqual(hidden.body.documents.cancellation, '');
+    assert.match(hidden.body.documents.esign, /Consent to Electronic Records/);
+    assert.strictEqual((await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true })).status, 503);
+    const row = built.db.data.workspace.clients.find(c => c.email === 'pat-sign@signup.test');
+    row.address = '1 Main St';
+    row.city = 'Newark';
+    row.zip = '07102';
+    row.pricePerResult = 40;
+    row.scheduleA = [{ creditor: 'Sample Bank', last4: '4242', bureaus: ['Equifax', 'Experian'] }];
+    const stillHidden = await pat('GET', '/api/portal/me');
+    assert.strictEqual(stillHidden.body.documents.contract, '');
     const sample = await pat('GET', '/api/portal/esign/sample');
     const code = sample.body.match(/Your code is ([A-F0-9]{6})/);
     assert.ok(code, 'sample PDF shows a code');
     assert.strictEqual((await pat('POST', '/api/portal/esign/consent', { agree: true, code: code[1] })).status, 200);
+    const shown = await pat('GET', '/api/portal/me');
+    assert.match(shown.body.documents.contract, /1 Main St/);
+    assert.match(shown.body.documents.contract, /Sample Bank \/ ending 4242 \/ Experian/);
+    assert.match(shown.body.documents.contract, /which is \$80/);
+    assert.doesNotMatch(shown.body.documents.contract, /\[MAXIMUM TOTAL\]|None listed yet/);
     assert.strictEqual((await pat('POST', '/api/portal/disclosure-view')).status, 200);
     const disclosure = await pat('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Pat Example', agree: true });
     assert.strictEqual(disclosure.status, 200);
@@ -547,9 +583,17 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
     assert.strictEqual(saved.length, 2);
     const pdf = await pat('GET', '/api/portal/signed/' + contract.body.signature.pdfId);
     assert.strictEqual(pdf.status, 200);
+    assert.ok(pdf.body.includes('Sample Bank'));
+    assert.ok(pdf.body.includes('$80') || pdf.body.includes('80'));
     assert.ok(pdf.body.includes('[date]'));
     assert.ok(pdf.body.includes("[purchaser's signature]"));
     assert.ok(pdf.body.split('[date]').length - 1 >= 2);
+    const contractMail = mailed.find(m => m.subject === 'Your signed Credit Ledger agreement');
+    const disclosureMail = mailed.find(m => m.subject === 'Your Consumer Credit File Rights statement');
+    assert.ok(contractMail.attachments[0].content.includes('%PDF'));
+    assert.match(contractMail.text, /\battached\b/);
+    assert.strictEqual(disclosureMail.attachments.length, 0);
+    assert.doesNotMatch(disclosureMail.text, /attached/i);
     const logged = logs.join('\n');
     assert.match(logged, /\[mail\] disclosure copy failed \(EFAIL\)/);
     assert.match(logged, /\[mail\] contract copy failed \(EFAIL\)/);
@@ -557,6 +601,93 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
   } finally {
     console.error = origErr;
     setTransport(null);
+    server.close();
+    built.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('full contract PDF keeps one bold cancellation sentence, section signs, and two notices', async () => {
+  const { buildContractPackagePdf, readPdfPages, CANCEL_SENTENCE } = await import('../server/enrollment-pdf.js');
+  const { personalizeCroaDocs } = await import('../server/croa-docs.js');
+  const { execFileSync } = await import('node:child_process');
+  const contract = read('legal/croa-contract-1679d.md');
+  const notice = read('legal/croa-cancellation-1679e.md');
+  const client = {
+    name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', pricePerResult: 40,
+    scheduleA: [{ creditor: 'Sample Bank', last4: '4242', bureaus: ['Equifax', 'Experian'] }]
+  };
+  const docs = personalizeCroaDocs({ disclosure: '', contract, cancellation: notice, esign: '' }, client);
+  const built = buildContractPackagePdf({ contract: docs.contract, notice: docs.cancellation, clientName: client.name, signedLabel: 'November 18, 2026', deadlineLabel: 'November 23, 2026' });
+  const pages = readPdfPages(built.pdf);
+  assert.ok(pages.length >= 3);
+  pages.forEach(lines => {
+    for (let i = 1; i < lines.length; i++) assert.ok(lines[i].y < lines[i - 1].y, 'lines overlap on a page');
+  });
+  const flat = pages.flat().map(line => line.text).join(' ').replace(/\s+/g, ' ');
+  const bold = pages.flat().filter(line => line.font === 'F2').map(line => line.text).join(' ').replace(/\s+/g, ' ');
+  const regular = pages.flat().filter(line => line.font === 'F1').map(line => line.text).join(' ').replace(/\s+/g, ' ');
+  assert.ok(flat.includes('§'), 'section sign renders');
+  assert.ok(flat.includes('1681i'));
+  assert.ok(bold.includes(CANCEL_SENTENCE));
+  assert.strictEqual(flat.split(CANCEL_SENTENCE).length - 1, 1);
+  assert.ok(!regular.includes('You may cancel this contract without penalty or obligation'));
+  assert.strictEqual(flat.split('Notice of Cancellation').length - 1, 2);
+  assert.strictEqual(regular.split('Client typed name (signature):').length - 1, 1);
+  assert.ok(!flat.includes('______________________'));
+  assert.ok(flat.includes('Pat Example'));
+  assert.ok(flat.includes('1 Main St'));
+  assert.ok(flat.includes('Sample Bank / ending 4242 / Equifax'));
+  assert.ok(flat.includes('which is $80'));
+  assert.ok(flat.includes('[date]'));
+  assert.ok(flat.includes("purchaser's signature"));
+  let poppler = '';
+  try { poppler = execFileSync('pdftotext', ['-layout', '-', '-'], { input: built.pdf }).toString('utf8'); } catch { poppler = ''; }
+  if (poppler) {
+    const collapsed = poppler.replace(/\s+/g, ' ');
+    assert.ok(collapsed.includes('§'));
+    assert.strictEqual(collapsed.split(CANCEL_SENTENCE).length - 1, 1);
+    assert.strictEqual(collapsed.split('Notice of Cancellation').length - 1, 2);
+    assert.ok(collapsed.includes('which is $80'));
+  }
+});
+
+test('uploads stay open while report AI and staff chat wait for the cancellation window', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-ai-hold-'));
+  const built = createApp({ dataDir: dir, encryptionKey: 'ai-hold-key-not-a-secret', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } });
+  const { server, base, client: makeClient } = listen(built.app);
+  const owner = makeClient();
+  const pat = makeClient();
+  try {
+    assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner-hold@signup.test', password: 'owner password 1' })).status, 200);
+    assert.strictEqual((await pat('POST', '/api/signup', { firstName: 'Pat', lastName: 'Example', email: 'pat-hold@signup.test', password: 'pat password 1', acceptAccountTerms: true, state: 'NJ', njResident: true })).status, 200);
+    const user = built.db.data.users.find(u => u.email === 'pat-hold@signup.test');
+    user.emailVerifiedAt = new Date().toISOString();
+    assert.strictEqual((await pat('POST', '/api/login', { email: 'pat-hold@signup.test', password: 'pat password 1' })).status, 200);
+    const fd = new FormData();
+    fd.append('type', 'report');
+    fd.append('file', new Blob(['%PDF-1.4\n'], { type: 'application/pdf' }), 'report.pdf');
+    const cookie = Object.entries(pat.jar).map(([k, v]) => `${k}=${v}`).join('; ');
+    const up = await fetch(base + '/api/portal/files', { method: 'POST', body: fd, headers: { cookie } });
+    assert.strictEqual(up.status, 200);
+    await new Promise(r => setImmediate(r));
+    const ws = (await owner('GET', '/api/workspace')).body.data;
+    const row = ws.clients.find(c => c.email === 'pat-hold@signup.test');
+    assert.ok(ws.documents.some(d => d.clientId === row.id && d.type === 'report'));
+    assert.ok(!(ws.pendingImports || []).some(p => p.clientId === row.id));
+    assert.ok(ws.tasks.some(t => t.clientId === row.id && /on hold until the cancellation window/.test(t.title)));
+    assert.ok(!ws.tasks.some(t => /AI already read|AI read the report/.test(t.title)));
+    assert.strictEqual((await owner('POST', `/api/clients/${row.id}/files/x/scan`)).status, 409);
+    assert.strictEqual((await owner('POST', `/api/clients/${row.id}/scan-text`, { text: 'report '.repeat(40) })).status, 409);
+    assert.strictEqual((await owner('POST', `/api/clients/${row.id}/ai-plan`)).status, 409);
+    assert.strictEqual((await owner('POST', '/api/assistant/staff', { clientId: row.id, history: [{ role: 'user', content: 'Summarize this file' }] })).status, 409);
+    assert.strictEqual((await owner('POST', '/api/assistant/staff', { history: [{ role: 'user', content: 'What is a dispute?' }] })).status, 200);
+    const add = await owner('GET', '/api/workspace');
+    add.body.data.clients.push({ id: 'inv-hold', name: 'Invited Person', kind: 'personal', email: 'inv-hold@signup.test', status: 'onboarding', onboarding: {} });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: add.body.version, data: add.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/inv-hold/files/x/scan')).status, 501);
+    assert.strictEqual((await owner('POST', '/api/assistant/staff', { clientId: 'inv-hold', history: [{ role: 'user', content: 'Hello' }] })).status, 200);
+  } finally {
     server.close();
     built.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });

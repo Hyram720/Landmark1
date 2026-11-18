@@ -6,6 +6,7 @@
 import { Business, KB } from './shared.js';
 import { redact } from './redact.js';
 import { aiConfig, chatCompletion, safeAnswer, businessDigest, RAILS } from './ledger-assistant.js';
+import { selfSignupCleared } from './signup-status.js';
 import { rateLimiter } from './auth.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -83,6 +84,7 @@ export function mountCoach(app, { need, workspace, db, commit, activity, portalV
   app.post('/api/coach/:id/chat', need('owner', 'staff'), (req, res) => {
     if (!limit('s:' + req.user.id)) return res.status(429).json({ error: 'Hourly coach limit reached.' });
     const c = find(req.params.id); if (!c) return res.status(404).json({ error: 'Business client not found' });
+    if (c.signupSource === 'self' && !selfSignupCleared(c)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     return ask(c, 'staff', (req.body || {}).message, res, req.user.email);
   });
 

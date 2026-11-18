@@ -434,6 +434,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       cancellation: Law.cancellationNotice(company(), cs.deadline)
     };
   }
+  function documentsForPortal(c) {
+    const docs = documentsFor(c);
+    if (c.signupSource !== 'self') return docs;
+    const consented = !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt;
+    if (consented) return docs;
+    return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
+  }
   const ENROLLMENT_CLOSED = 'Enrollment is not open yet';
   function selfWindow(c, now = new Date()) {
     const o = c.onboarding || {};
@@ -474,7 +481,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         enrollmentClosed: c.signupSource === 'self' && enrollmentBlocksSigning(documentsFor(c)),
         esignConsent: !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt,
         contractPdfId: contractSig ? ((c.onboarding || {}).contractPdfId || null) : null },
-      documents: documentsFor(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
+      documents: documentsForPortal(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
       rentReporting: rentPortalSection(),
       creditMonitoring: creditPortalSection(),
       business: c.kind !== 'personal' ? { name: (c.business || {}).legalName || '', checklist: c.businessChecklist || {}, scores: c.businessScores || [] } : null
@@ -587,7 +594,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       c.onboarding.cancellationWindowEndsAtTs = win.deadlineInstant.toISOString();
       c.onboarding.cancellationWindowEndsAt = win.deadlineDateEt;
       c.onboarding.cancellationRule = 'et-weekdays-6103-actual-and-observed-v1';
-      await sendMail({ to: c.email, subject: 'Your signed Credit Ledger agreement', text: `A copy of your signed agreement is attached in your portal as a PDF.\nDownload id: ${pdfId}\nSHA-256: ${pdfSha}` }).catch(err => logMailFailure('contract copy', err));
+      await sendMail({
+        to: c.email,
+        subject: 'Your signed Credit Ledger agreement',
+        text: `A copy of your signed agreement is attached.\nYou can also open it in your portal: ${publicOrigin}/portal\nSHA-256: ${pdfSha}`,
+        attachments: [{ filename: 'credit-ledger-agreement.pdf', content: built.pdf, contentType: 'application/pdf' }]
+      }).catch(err => logMailFailure('contract copy', err));
     }
     const sig = { id: uid(), clientId: c.id, doc, typedName, at, ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: pdfSha || sha256(pack[doc] || ''), pdfId, consent: doc === 'disclosure' ? 'Signed acknowledgment of the separate 1679c statement' : 'Contract signature' };
     workspace().signatures = workspace().signatures || [];
@@ -811,7 +823,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   const scanningDocs = new Set();
   function sendModel(res, held, body) { if (held) held.send(body); else res.json(body); }
   function failModel(res, held, e) { if (held) held.send({ error: aiMessage(e).error }); else aiError(res, e); }
+  const SERVICE_HOLD = 'On hold until the contract is signed and the cancellation window ends.';
+  function selfSignupOnHold(id) {
+    const c = workspace().clients.find(x => x.id === id);
+    return !!(c && c.signupSource === 'self' && !selfSignupCleared(c));
+  }
   app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
+    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
@@ -831,6 +849,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     finally { scanningDocs.delete(doc.id); }
   });
   app.post('/api/clients/:id/scan-text', need('owner', 'staff'), async (req, res) => {
+    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const text = String((req.body || {}).text || '');
@@ -854,6 +873,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     finally { scanningDocs.delete(lockKey); }
   });
   app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
+    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     let held = null;
@@ -943,6 +963,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   async function autoScan(c, doc) {
     const ws = workspace();
     ws.pendingImports = ws.pendingImports || [];
+    if (c.signupSource === 'self' && !selfSignupCleared(c)) {
+      ws.tasks.push({ id: uid(), clientId: c.id, title: `Credit report from ${c.name} is on hold until the cancellation window ends (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
+      commitWorkspace('system', 'report.uploaded.hold', doc.name);
+      return;
+    }
     if (!assistantConfigured()) {
       ws.tasks.push({ id: uid(), clientId: c.id, title: `Import the credit report ${c.name} uploaded (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'report.uploaded', doc.name);
