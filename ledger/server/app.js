@@ -23,7 +23,7 @@ import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './sign
 import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
-import { cancellationWindow, formatDeadlineEt, formatDocumentTimeEt, etYmd } from './croa-window.js';
+import { cancellationWindow, formatDeadlineDateEt, formatDeadlineEt, formatDocumentTimeEt, etYmd } from './croa-window.js';
 import { buildContractPackagePdf, buildSamplePdf } from './enrollment-pdf.js';
 import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
@@ -695,7 +695,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     let pdfId = null;
     if (doc === 'contract' && c.signupSource === 'self') {
       const win = cancellationWindow(at, atDate);
-      const built = buildContractPackagePdf({ contract: stampContractSignedAt(pack.contract, atDate), notice: stampCancellationDeadline(pack.cancellation, atDate), clientName: c.name, signedLabel: formatDocumentTimeEt(atDate), deadlineLabel: formatDocumentTimeEt(win.deadlineInstant) });
+      const built = buildContractPackagePdf({ contract: stampContractSignedAt(pack.contract, atDate), notice: stampCancellationDeadline(pack.cancellation, atDate), clientName: c.name, signedLabel: formatDocumentTimeEt(atDate), deadlineLabel: formatDeadlineDateEt(win.deadlineInstant) });
       pdfSha = built.sha256;
       pdfId = uid();
       const dir = path.join(filesDir, 'signed');
