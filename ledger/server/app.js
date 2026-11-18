@@ -20,7 +20,7 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './signup-status.js';
-import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256 } from './croa-docs.js';
+import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
 import { cancellationWindow, formatDeadlineEt, formatDocumentTimeEt, etYmd } from './croa-window.js';
@@ -72,13 +72,17 @@ const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
-export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride, env: envOverride, croaDocs: croaDocsOverride } = {}) {
+export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride, env: envOverride, croaDocs: croaDocsOverride, now: nowSource } = {}) {
   const env = envOverride || process.env;
   const resolvedAuthMethod = clientAuthMethod(authMethodOverride);
   const signupAccess = resolveSignupAccess({ env, signupRequested: selfSignupEnabled(env, selfSignupOverride), publicBaseUrl: publicBaseOverride });
   if (signupAccess.warning) console.warn(signupAccess.warning);
   const signupOn = signupAccess.enabled;
   const publicOrigin = signupAccess.baseUrl;
+  const now = () => {
+    const value = typeof nowSource === 'function' ? nowSource() : new Date();
+    return value instanceof Date ? value : new Date(value);
+  };
   const db = openDb({ dir: dataDir, encryptionKey });
   const filesDir = path.join(dataDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -365,7 +369,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (!old || enrollmentSnapshot(old) === enrollmentSnapshot(c)) continue;
       if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the price and Schedule A.' });
       if (contractIsSigned(old)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
-      c.onboarding = Object.assign({}, old.onboarding, c.onboarding, { contractViewedAt: null, contractViewedSha256: null });
+      return res.status(400).json({ error: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' });
     }
     for (const c of data.clients) applySignupStatus(c);
     D().workspace = data;
@@ -374,6 +378,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ version: D().workspaceVersion });
   });
 
+  function invalidateContractView(onboarding) {
+    if (!onboarding) return;
+    if (onboarding.contractViewedAt || onboarding.contractViewedSha256) onboarding.contractViewStale = true;
+    onboarding.contractViewedAt = null;
+    onboarding.contractViewedSha256 = null;
+  }
   function contractIsSigned(c) {
     return !!(c && c.onboarding && (c.onboarding.contractSignedAt || c.onboarding.contractSignedAtTs));
   }
@@ -407,10 +417,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     c.pricePerResult = Math.round(price * 100) / 100;
     c.scheduleA = schedule.rows;
     const newValue = { pricePerResult: c.pricePerResult, scheduleA: c.scheduleA };
-    if (c.onboarding && c.onboarding.contractViewedAt) {
-      c.onboarding.contractViewedAt = null;
-      c.onboarding.contractViewedSha256 = null;
-    }
+    c.onboarding = c.onboarding || {};
+    invalidateContractView(c.onboarding);
     activity(`${req.user.name || req.user.email} set the price per result and Schedule A for ${c.name}`, c.id);
     db.audit({ actor: req.user.email, action: 'client.enrollment_terms', detail: JSON.stringify({ user: req.user.email, at, old: oldValue, new: newValue }) });
     commitWorkspace(req.user.email, 'client.enrollment_terms', c.id);
@@ -479,7 +487,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function portalClient(req) { return workspace().clients.find(c => c.id === req.user.clientId); }
   function documentsFor(c) {
     const cs = Store.croaStatus(c);
-    if (c.signupSource === 'self') return personalizeCroaDocs(croaDocsOverride || croaDocs(), c);
+    if (c.signupSource === 'self') return personalizeCroaDocs(croaDocsOverride || croaDocs(), c, now());
     return {
       disclosure: Law.CROA_DISCLOSURE,
       contract: Law.contractTerms(company(), c, workspace().settings.defaultFee),
@@ -575,10 +583,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const draft = Object.assign({}, c, next);
     if (!mailingAddress(draft)) return res.status(400).json({ error: enrollmentStatus(draft, {}).message });
     Object.assign(c, next);
-    if (c.onboarding && c.onboarding.contractViewedAt) {
-      c.onboarding.contractViewedAt = null;
-      c.onboarding.contractViewedSha256 = null;
-    }
+    c.onboarding = c.onboarding || {};
+    invalidateContractView(c.onboarding);
     activity(`${c.name} saved a New Jersey mailing address`, c.id);
     commitWorkspace(req.user.email, 'portal.address', c.id);
     res.json({ ok: true, address: mailingAddress(c) });
@@ -594,6 +600,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     c.onboarding = c.onboarding || {};
     c.onboarding.contractViewedAt = new Date().toISOString();
     c.onboarding.contractViewedSha256 = sha256(pack.contract || '');
+    c.onboarding.contractViewStale = false;
     activity(`${c.name} viewed the credit services agreement`, c.id);
     commitWorkspace(req.user.email, 'portal.contract_view', c.id);
     res.json({ ok: true, contractViewedAt: c.onboarding.contractViewedAt, contractSha256: c.onboarding.contractViewedSha256 });
@@ -673,7 +680,6 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const status = enrollmentStatus(c, pack);
       if (status.code === 'address' || status.code === 'terms' || status.code === 'closed') return res.status(503).json({ error: status.message });
       if (doc === 'contract' && status.code === 'review') return res.status(400).json({ error: status.message });
-      if (doc === 'contract' && c.onboarding.contractViewedSha256 !== sha256(pack.contract || '')) return res.status(400).json({ error: 'Please read the agreement again before you sign.' });
     }
     if (c.signupSource === 'self' && !signupOn) return res.status(403).json({ error: 'Self-signup signing is turned off.' });
     if (c.signupSource === 'self' && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
@@ -682,13 +688,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (doc === 'contract' && c.signupSource === 'self' && !(workspace().signatures || []).some(s => s.clientId === c.id && s.doc === 'disclosure')) return res.status(400).json({ error: 'Sign the separate Consumer Credit File Rights statement before the contract.' });
     if (doc === 'contract' && c.signupSource !== 'self' && !c.onboarding.disclosureSignedAt) return res.status(400).json({ error: 'Please acknowledge the Consumer Credit File Rights statement first.' });
     if ((workspace().signatures || []).some(s => s.clientId === c.id && s.doc === doc)) return res.status(409).json({ error: 'Already signed' });
-    const at = new Date().toISOString();
+    const atDate = now();
+    const at = atDate.toISOString();
     let text = pack[doc];
     let pdfSha = null;
     let pdfId = null;
     if (doc === 'contract' && c.signupSource === 'self') {
-      const win = cancellationWindow(at, new Date(at));
-      const built = buildContractPackagePdf({ contract: pack.contract, notice: pack.cancellation, clientName: c.name, signedLabel: formatDocumentTimeEt(at), deadlineLabel: formatDocumentTimeEt(win.deadlineInstant) });
+      const win = cancellationWindow(at, atDate);
+      const built = buildContractPackagePdf({ contract: stampContractSignedAt(pack.contract, atDate), notice: stampCancellationDeadline(pack.cancellation, atDate), clientName: c.name, signedLabel: formatDocumentTimeEt(atDate), deadlineLabel: formatDocumentTimeEt(win.deadlineInstant) });
       pdfSha = built.sha256;
       pdfId = uid();
       const dir = path.join(filesDir, 'signed');
@@ -708,6 +715,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       }).catch(err => logMailFailure('contract copy', err));
     }
     const renderedSha = sha256(pack[doc] || '');
+    // documentSha256 is the hash of the agreement text viewed. pdfSha256 is the hash of the signed PDF.
     const sig = { id: uid(), clientId: c.id, doc, typedName, at, ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: doc === 'contract' ? renderedSha : (pdfSha || renderedSha), pdfSha256: pdfSha, pdfId, consent: doc === 'disclosure' ? 'Signed acknowledgment of the separate 1679c statement' : 'Contract signature' };
     workspace().signatures = workspace().signatures || [];
     workspace().signatures.push(sig);

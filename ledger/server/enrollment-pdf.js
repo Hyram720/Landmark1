@@ -2,6 +2,7 @@
 // directly above a single signature block, then the Notice of Cancellation twice.
 // Standard Helvetica with WinAnsiEncoding so § and other Latin-1 characters render.
 import crypto from 'node:crypto';
+import { UNSIGNED_CANCEL_DEADLINE } from './croa-docs.js';
 
 const FONT = 10;
 const LEADING = 15;
@@ -156,7 +157,8 @@ export function contractBodyWithoutSignature(contract) {
 }
 
 function fillNotice(notice, { deadlineLabel }) {
-  return String(notice || '').replace(/\[DATE:[^\]]*\]/g, deadlineLabel || '');
+  const label = deadlineLabel || '';
+  return String(notice || '').replace(/\[DATE:[^\]]*\]/g, label).replaceAll(UNSIGNED_CANCEL_DEADLINE, label);
 }
 
 export function buildContractPackagePdf({ contract, notice, clientName, signedLabel, deadlineLabel }) {

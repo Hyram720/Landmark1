@@ -523,7 +523,9 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
   assert.strictEqual(enrollmentBlocksSigning(two), true);
   assert.match(filled.cancellation, /\[date\]/);
   assert.match(filled.cancellation, /\[purchaser's signature\]/);
+  assert.match(filled.cancellation, /filled when you sign/);
   assert.doesNotMatch(filled.cancellation, /\[DATE:/);
+  assert.doesNotMatch(filled.cancellation, /\d{1,2}:\d{2} [AP]M ET/);
   assert.match(filled.esign, /\/api\/portal\/esign\/sample/);
   assert.doesNotMatch(filled.esign, /\[[^\]]+\]/);
   const live = personalizeCroaDocs(croaDocs(), client);
@@ -533,8 +535,8 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
   assert.strictEqual(mailingAddress({ address: '1 Main St', city: 'Newark', state: 'NJ', zip: '08999' }), '1 Main St, Newark, NJ 08999');
   assert.strictEqual(mailingAddress({ address: '1 Main St', city: 'Newark', state: 'NJ', zip: '06999' }), '');
   assert.strictEqual(mailingAddress({ address: '1 Main St', city: 'Newark', state: 'PA', zip: '19103' }), '');
-  assert.strictEqual(enrollmentStatus({ state: 'NJ' }, { contract: 'x' }).message, 'Your mailing address is needed');
-  assert.strictEqual(enrollmentStatus({ address: '1 Broad St', city: 'Philadelphia', state: 'PA', zip: '19103' }, { contract: 'x' }).message, 'Credit Ledger serves New Jersey residents. Enter a New Jersey address.');
+  assert.strictEqual(enrollmentStatus({ state: 'NJ' }, { contract: 'x' }).message, 'Your mailing address is needed: street, city, ZIP.');
+  assert.strictEqual(enrollmentStatus({ address: '1 Broad St', city: 'Philadelphia', state: 'PA', zip: '19103' }, { contract: 'x' }).message, 'Credit Ledger serves New Jersey residents. Enter a New Jersey address. Check the state and ZIP.');
   assert.strictEqual(enrollmentStatus({ address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' }, { contract: 'x' }).message, 'Your Credit Ledger specialist still needs to add your items and price');
   assert.strictEqual(enrollmentStatus(client, { contract: '[LEGAL NAME, Fred to decide]' }).message, 'Enrollment is not open yet');
   assert.strictEqual(documentBlocksSigning('Terms. [PRICE PER RESULT: Fred to decide].'), true);
@@ -708,15 +710,23 @@ test('uploads stay open while report AI and staff chat wait for the cancellation
 
 test('Eastern document times, staff enrollment terms, address, and the signature page', async () => {
   const { formatDocumentTimeEt } = await import('../server/croa-window.js');
-  const { personalizeCroaDocs } = await import('../server/croa-docs.js');
+  const { personalizeCroaDocs, sha256, stampContractSignedAt } = await import('../server/croa-docs.js');
   const { buildContractPackagePdf, readPdfPages, CANCEL_SENTENCE } = await import('../server/enrollment-pdf.js');
   assert.strictEqual(formatDocumentTimeEt('2026-11-19T02:00:00.000Z'), 'November 18, 2026, 9:00 PM ET');
   assert.strictEqual(formatDocumentTimeEt('2026-11-18T21:30:00.000Z'), 'November 18, 2026, 4:30 PM ET');
-  const evening = personalizeCroaDocs({
-    disclosure: '', contract: 'Date of this agreement: [DATE SIGNED, filled automatically]\n', cancellation: '', esign: ''
-  }, { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' }, new Date('2026-11-19T02:00:00.000Z'));
-  assert.match(evening.contract, /November 18, 2026, 9:00 PM ET/);
-  assert.doesNotMatch(evening.contract, /November 19/);
+  const dateLine = { disclosure: '', contract: 'Date of this agreement: [DATE SIGNED, filled automatically]\nDate signed: __________\n', cancellation: 'before midnight on [DATE: Weekday, Month D, YYYY]\n', esign: '' };
+  const eveningClient = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' };
+  const evening = personalizeCroaDocs(dateLine, eveningClient, new Date('2026-11-19T02:00:00.000Z'));
+  const tenMinutesLater = personalizeCroaDocs(dateLine, eveningClient, new Date('2026-11-19T02:10:00.000Z'));
+  assert.strictEqual(evening.contract, tenMinutesLater.contract);
+  assert.strictEqual(evening.cancellation, tenMinutesLater.cancellation);
+  assert.strictEqual(sha256(evening.contract), sha256(tenMinutesLater.contract));
+  assert.match(evening.contract, /the date and time you sign/);
+  assert.match(evening.cancellation, /filled when you sign/);
+  assert.doesNotMatch(evening.contract + evening.cancellation, /\d{1,2}:\d{2} [AP]M ET|November/);
+  const stamped = stampContractSignedAt(evening.contract, '2026-11-19T02:10:00.000Z');
+  assert.match(stamped, /November 18, 2026, 9:10 PM ET/);
+  assert.doesNotMatch(stamped, /November 19/);
   const contractFile = read('legal/croa-contract-1679d.md');
   const hold = contractFile.split('\n').find(line => line.includes('OPTIONAL HOLD'));
   assert.match(hold, /at least NUMBER days/);
@@ -727,6 +737,8 @@ test('Eastern document times, staff enrollment terms, address, and the signature
   assert.doesNotMatch(partial.contract, /Client mailing address: New Jersey/);
   assert.match(read('js/views.js'), /data-act="enrollment-terms"/);
   assert.match(read('js/app.js'), /enrollment-terms/);
+  assert.match(read('site/privacy.html'), /hash of the agreement text viewed, plus hash of the signed PDF/);
+  assert.doesNotMatch(read('site/privacy.html') + read('js/views.js') + read('server/app.js') + read('server/croa-docs.js'), /PDF the client saw/);
 
   const notice = read('legal/croa-cancellation-1679e.md');
   for (let n = 1; n <= 40; n++) {
@@ -747,11 +759,12 @@ test('Eastern document times, staff enrollment terms, address, and the signature
   const onlyClient = {
     disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nAcknowledgment.\n',
     contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nClient mailing address: [CLIENT ADDRESS]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
-    cancellation: '**Notice of Cancellation**\n\n[date]\n\n[purchaser\'s signature]\n',
+    cancellation: '**Notice of Cancellation**\n\nbefore midnight on [DATE: Weekday, Month D, YYYY]\n\n[date]\n\n[purchaser\'s signature]\n',
     esign: 'Consent to Electronic Records\n\nOpen [LINK TO SAMPLE PDF]. Code [______]\n\n[ ] I agree.\n'
   };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-terms-'));
-  const built = createApp({ dataDir: dir, encryptionKey: 'terms-key-not-a-secret-00', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, croaDocs: onlyClient });
+  let clock = new Date('2026-11-19T02:00:00.000Z');
+  const built = createApp({ dataDir: dir, encryptionKey: 'terms-key-not-a-secret-00', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, croaDocs: onlyClient, now: () => clock });
   const { server, client: makeClient } = listen(built.app);
   const owner = makeClient();
   const pat = makeClient();
@@ -773,6 +786,13 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     const staffCopy = JSON.parse(JSON.stringify(staffWs.body.data));
     staffCopy.clients.find(c => c.id === id).pricePerResult = 99;
     assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: staffWs.body.version, data: staffCopy })).status, 403);
+    const ownerWs = await owner('GET', '/api/workspace');
+    const ownerCopy = JSON.parse(JSON.stringify(ownerWs.body.data));
+    ownerCopy.clients.find(c => c.id === id).pricePerResult = 99;
+    const refusedTerms = await owner('PUT', '/api/workspace', { baseVersion: ownerWs.body.version, data: ownerCopy });
+    assert.strictEqual(refusedTerms.status, 400);
+    assert.match(refusedTerms.body.error, /enrollment-terms/);
+    assert.strictEqual(built.db.data.workspace.clients.find(c => c.id === id).pricePerResult, 25);
     assert.ok(built.db.data.audit.some(a => a.action === 'client.enrollment_terms'));
     assert.strictEqual((await owner('POST', '/api/assistant', { clientId: id, history: [{ role: 'user', content: 'What should we do next?' }] })).status, 409);
     const missingAddress = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
@@ -796,6 +816,9 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     assert.match(shown.body.documents.contract, /Late fee/);
     assert.match(shown.body.documents.contract, /1 Main St, Newark, NJ 07102/);
     assert.match(shown.body.documents.contract, /which is \$50/);
+    const unread = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(unread.status, 400);
+    assert.strictEqual(unread.body.error, 'Please read the agreement before you sign.');
     const viewedOnce = await pat('POST', '/api/portal/contract-view');
     assert.strictEqual(viewedOnce.status, 200);
     const changed = { pricePerResult: 30, scheduleA: terms.scheduleA };
@@ -806,15 +829,24 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     assert.strictEqual(againDetail.new.pricePerResult, 30);
     const again = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
     assert.strictEqual(again.status, 400);
-    assert.match(again.body.error, /read the agreement again/i);
+    assert.strictEqual(again.body.error, 'Please read the agreement again.');
+    clock = new Date('2026-11-19T02:00:00.000Z');
     const viewedTwice = await pat('POST', '/api/portal/contract-view');
     assert.strictEqual(viewedTwice.status, 200);
+    const viewedText = await pat('GET', '/api/portal/me');
+    assert.match(viewedText.body.documents.contract, /the date and time you sign/);
+    assert.match(viewedText.body.documents.cancellation, /filled when you sign/);
+    assert.doesNotMatch(viewedText.body.documents.contract + viewedText.body.documents.cancellation, /\d{1,2}:\d{2} [AP]M ET|November 23/);
+    assert.strictEqual(viewedTwice.body.contractSha256, sha256(viewedText.body.documents.contract));
+    clock = new Date(clock.getTime() + 10 * 60 * 1000);
     const signed = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
     assert.strictEqual(signed.status, 200);
     assert.strictEqual(signed.body.signature.documentSha256, viewedTwice.body.contractSha256);
-    assert.match(signed.body.signature.at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.strictEqual(signed.body.signature.at, '2026-11-19T02:10:00.000Z');
     const pdf = await pat('GET', '/api/portal/signed/' + signed.body.signature.pdfId);
-    assert.match(pdf.body, /\d{1,2}:\d{2} [AP]M ET/);
+    assert.match(pdf.body, /9:10 PM ET/);
+    assert.doesNotMatch(pdf.body, /9:00 PM ET/);
+    assert.match(pdf.body, /November 23, 2026/);
     assert.doesNotMatch(pdf.body, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
     assert.strictEqual((await owner('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 409);
     const locked = await owner('GET', '/api/workspace');

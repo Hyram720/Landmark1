@@ -5,19 +5,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { cancellationWindow, etYmd, formatDocumentTimeEt } from './croa-window.js';
+import { cancellationWindow, formatDocumentTimeEt } from './croa-window.js';
 
 const dir = path.resolve(new URL('../legal/', import.meta.url).pathname);
-const TZ = 'America/New_York';
 
 function read(name) {
   return fs.readFileSync(path.join(dir, name), 'utf8').replace(/^\uFEFF/, '');
-}
-
-function etLongDate(instant) {
-  const when = instant instanceof Date ? instant : new Date(instant);
-  if (Number.isNaN(when.getTime())) return etYmd(new Date());
-  return new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(when);
 }
 
 function clientAddress(client) {
@@ -38,26 +31,44 @@ export function mailingAddress(client) {
   return `${street}, ${city}, NJ ${zip}`;
 }
 
-export function enrollmentStatus(client, docs) {
+function addressGap(client) {
   const c = client || {};
   const street = String(c.address || '').trim();
   const city = String(c.city || '').trim();
   const state = String(c.state || '').trim().toUpperCase();
   const zip = String(c.zip || '').trim();
+  const zipShape = /^\d{5}(-\d{4})?$/.test(zip);
+  const missing = [];
+  if (!street) missing.push('street');
+  if (!city) missing.push('city');
+  if (!state) missing.push('state');
+  if (!zipShape) missing.push('ZIP');
+  if (missing.length) return { code: 'address', message: 'Your mailing address is needed: ' + missing.join(', ') + '.' };
+  const n = Number(zip.slice(0, 5));
+  const invalid = [];
+  if (state !== 'NJ') invalid.push('state');
+  if (n < 7001 || n > 8999) invalid.push('ZIP');
+  if (invalid.length) return { code: 'address', message: 'Credit Ledger serves New Jersey residents. Enter a New Jersey address. Check the ' + invalid.join(' and ') + '.' };
+  return null;
+}
+
+export function enrollmentStatus(client, docs) {
+  const c = client || {};
   if (!mailingAddress(c)) {
-    if ((street || city || zip || state) && (state !== 'NJ' || (zip && (Number(zip.slice(0, 5)) < 7001 || Number(zip.slice(0, 5)) > 8999)))) {
-      return { code: 'address', message: 'Credit Ledger serves New Jersey residents. Enter a New Jersey address.' };
-    }
-    return { code: 'address', message: 'Your mailing address is needed' };
+    return addressGap(c) || { code: 'address', message: 'Your mailing address is needed' };
   }
   if (scheduleAEntries(c).length < 1 || pricePerResult(c) == null) {
     return { code: 'terms', message: 'Your Credit Ledger specialist still needs to add your items and price' };
   }
   if (enrollmentBlocksSigning(docs)) return { code: 'closed', message: 'Enrollment is not open yet' };
-  const viewed = (c.onboarding || {}).contractViewedSha256;
+  const o = c.onboarding || {};
+  const viewed = o.contractViewedSha256;
   const current = sha256((docs && docs.contract) || '');
-  if ((c.onboarding || {}).contractViewedAt && viewed !== current) {
-    return { code: 'review', message: 'Please read the agreement again before you sign.' };
+  if (o.contractViewStale || (o.contractViewedAt && viewed !== current)) {
+    return { code: 'review', message: 'Please read the agreement again.' };
+  }
+  if (!o.contractViewedAt || viewed !== current) {
+    return { code: 'review', message: 'Please read the agreement before you sign.' };
   }
   return { code: '', message: '' };
 }
@@ -106,18 +117,34 @@ function scheduleAText(client) {
   return entries.map(e => [e.item, e.creditor, e.last4 ? 'ending ' + e.last4 : '', e.bureau].filter(Boolean).join(' / ')).join('\n');
 }
 
-/** Replace blanks that belong to this client. Owner blanks are left in place. */
-export function fillPerClientText(text, client, now = new Date()) {
+/** Stable lines in the text the client views. The signed PDF stamps the real values. */
+export const UNSIGNED_DATE_SIGNED = 'the date and time you sign';
+export const UNSIGNED_CANCEL_DEADLINE = 'the cancellation deadline, filled when you sign';
+
+/** Signing time for the Date of this agreement and Date signed lines. Does not change the viewed text. */
+export function stampContractSignedAt(text, instant) {
+  const label = formatDocumentTimeEt(instant);
+  return String(text || '').replaceAll(UNSIGNED_DATE_SIGNED, label).replace(/\[DATE SIGNED[^\]]*\]/g, label);
+}
+
+/** Cancellation deadline from the signing instant. Does not change the viewed text. */
+export function stampCancellationDeadline(text, instant) {
+  const when = instant instanceof Date ? instant : new Date(instant);
+  const win = cancellationWindow(when, when);
+  const label = formatDocumentTimeEt(win.deadlineInstant);
+  return String(text || '').replaceAll(UNSIGNED_CANCEL_DEADLINE, label).replace(/\[DATE:[^\]]*\]/g, label);
+}
+
+/** Replace blanks that belong to this client. Owner blanks are left in place. The clock is not used here. */
+export function fillPerClientText(text, client) {
   const c = client || {};
-  const signedAt = (c.onboarding && (c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt)) || now;
-  const win = cancellationWindow(signedAt, now instanceof Date ? now : new Date(now));
   const name = String(c.name || '').trim() || 'Client';
   let out = String(text || '')
     .replace(/\[CLIENT FULL NAME\]/g, name)
     .replace(/\[CLIENT ADDRESS\]/g, clientAddress(c) || '[CLIENT ADDRESS]')
-    .replace(/\[DATE SIGNED[^\]]*\]/g, formatDocumentTimeEt(signedAt))
+    .replace(/\[DATE SIGNED[^\]]*\]/g, UNSIGNED_DATE_SIGNED)
     .replace(/\[ITEM \/ CREDITOR NAME \/ ACCOUNT ENDING IN LAST 4 ONLY \/ BUREAU\(S\)\]/g, scheduleAText(c))
-    .replace(/\[DATE:[^\]]*\]/g, etLongDate(win.deadlineInstant))
+    .replace(/\[DATE:[^\]]*\]/g, UNSIGNED_CANCEL_DEADLINE)
     .replace(/\[LINK TO SAMPLE PDF\]/g, '/api/portal/esign/sample')
     .replace(/\[______\]/g, 'the 6-character code from the sample PDF')
     .replace(/\[ \]/g, '');
