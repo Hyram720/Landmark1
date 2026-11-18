@@ -49,7 +49,7 @@
     no_response: ['No response', 'b-high'], closed: ['Closed', 'b-low'], blocked: ['Blocked (ID theft)', 'b-ok'], validated: ['Validated', 'b-med']
   };
   const dBadge = s => { const [l, c] = DSTATE[s] || [s, 'b-low']; return `<span class="badge ${c}">${esc(l)}</span>`; };
-  const CSTATE = { lead: ['Lead', 'b-low'], onboarding: ['Onboarding', 'b-info'], active: ['Active', 'b-accent'], paused: ['Paused', 'b-med'], completed: ['Completed', 'b-ok'], cancelled: ['Cancelled', 'b-high'] };
+  const CSTATE = { lead: ['Lead', 'b-low'], pending: ['Pending', 'b-med'], 'contract-signed': ['Contract signed', 'b-info'], onboarding: ['Onboarding', 'b-info'], active: ['Active', 'b-accent'], paused: ['Paused', 'b-med'], completed: ['Completed', 'b-ok'], cancelled: ['Cancelled', 'b-high'] };
   const cBadge = s => { const [l, c] = CSTATE[s] || [s, 'b-low']; return `<span class="badge ${c}">${esc(l)}</span>`; };
 
   let modalEl = null;

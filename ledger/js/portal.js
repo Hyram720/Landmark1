@@ -76,10 +76,10 @@
     return `<div class="small" style="margin-top:4px">${left >= 0 ? `Response due in <b>${left} day${left === 1 ? '' : 's'}</b> (${date(d.dueAt)})` : `<b style="color:var(--high)">Response is ${-left} day${left === -1 ? '' : 's'} late</b> — we’ll follow up`} · bureaus generally have 30 days, up to 45 in some cases</div><div class="deadline-bar ${left < 0 ? 'late' : ''}" role="progressbar" aria-label="Time used of the response period" aria-valuemin="0" aria-valuemax="${Math.round(total)}" aria-valuenow="${Math.round(used)}"><span style="width:${Math.round(used / total * 100)}%"></span></div>`;
   }
 
-  function signBlock(title, doc, text, signed, locked, name) {
-    return `<section class="card"><div class="card-h"><div><h2>${esc(title)}</h2><p>${signed ? 'Signed electronically' : locked ? 'Sign the rights statement first' : 'Please read, then sign'}</p></div>${signed ? '<span class="badge b-ok">Signed</span>' : ''}</div><div class="card-b stack">
+  function signBlock(title, doc, text, signed, locked, name, esign) {
+    return `<section class="card"><div class="card-h"><div><h2>${esc(title)}</h2><p>${signed ? 'Signed electronically' : locked ? 'Read the separate rights statement first' : 'Please read, then sign'}</p></div>${signed ? '<span class="badge b-ok">Signed</span>' : ''}</div><div class="card-b stack">
       <div class="doc-box">${esc(text)}</div>
-      ${signed || locked ? '' : `<form data-sign="${doc}" class="stack"><label class="check small"><input type="checkbox" name="agree"> I agree to sign electronically. Typing my name below is my signature.</label>
+      ${signed || locked ? '' : `<form data-sign="${doc}" class="stack">${esign ? '<label class="check small"><input type="checkbox" name="esignConsent"> I consent to electronic records and signatures (E-SIGN). This is required to sign, and it is not marketing consent.</label>' : ''}<label class="check small"><input type="checkbox" name="agree"> I agree to sign this document. Typing my name below is my signature.</label>
         <div class="row" style="flex-wrap:nowrap">${field('Type your full name', 'typedName', '', { placeholder: name })}<button class="btn primary" style="align-self:flex-end">Sign</button></div></form>`}
     </div></section>`;
   }
@@ -96,8 +96,8 @@
       ${cr.required && cr.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>You can cancel until midnight ${date(cr.deadline)}</b>Cancel for any reason, without penalty, before then. No work starts and no fees are charged until this period ends. <button class="btn sm danger" data-cancel style="margin-left:8px">Cancel my agreement</button></div>` : ''}
       ${cr.cancelled ? '<div class="callout bad" style="margin-bottom:16px"><b>Your agreement is cancelled</b>No further work will be performed or billed. Any amount collected during your 3-business-day cancellation window is returned as federal law requires.</div>' : ''}
       <div class="stack">
-      ${cr.required ? `${signBlock('Consumer Credit File Rights Under State and Federal Law', 'disclosure', me.documents.disclosure, cr.disclosureSigned, false, me.client.name)}
-        ${signBlock('Credit services agreement', 'contract', me.documents.contract + '\n\n' + me.documents.cancellation, cr.contractSigned, !cr.disclosureSigned, me.client.name)}` : ''}
+      ${cr.required ? `${cr.selfSignup && !cr.disclosureViewed ? `<section class="card"><div class="card-h"><div><h2>Consumer Credit File Rights Under State and Federal Law</h2><p>Separate statement. Read it before the contract.</p></div></div><div class="card-b stack"><div class="doc-box">${esc(me.documents.disclosure)}</div><button class="btn primary" type="button" data-view-disclosure>I have read this statement</button></div></section>` : signBlock('Consumer Credit File Rights Under State and Federal Law', 'disclosure', me.documents.disclosure, cr.disclosureSigned, false, me.client.name)}
+        ${signBlock('Credit services agreement', 'contract', me.documents.contract + '\n\n' + me.documents.cancellation, cr.contractSigned, !(cr.disclosureViewed || cr.disclosureSigned), me.client.name, cr.selfSignup)}` : ''}
       ${scoreRows ? `<section class="card"><div class="card-h"><div><h2>Score movement</h2><p>From the reports on your file. Scores vary by model and bureau and can go up or down.</p></div></div><div class="card-b stack"><div class="grid g3">${scoreRows}</div>${history}</div></section>` : ''}
       ${me.wins && me.wins.length ? `<section class="card"><div class="card-h"><div><h2>🎉 Results so far</h2><p>${me.wins.length} item(s) removed or corrected</p></div></div><div class="card-b flush"><ul class="list">${me.wins.map(w => `<li><span class="badge ${w.result === 'deleted' ? 'b-ok' : 'b-info'}">${w.result === 'deleted' ? 'Removed' : 'Corrected'}</span><div class="grow"><b>${esc(w.creditor)}</b> · ${esc(w.bureau)}<div class="meta">${w.at ? date(w.at) : ''}</div></div></li>`).join('')}</ul></div></section>` : ''}
       <section class="card"><div class="card-h"><div><h2>Your documents</h2><p>Upload a photo ID, proof of address, and any letters you get from the bureaus</p></div></div><div class="card-b stack">
@@ -120,7 +120,7 @@
     root.querySelectorAll('[data-sign]').forEach(f => f.addEventListener('submit', async e => {
       e.preventDefault();
       const d = UI.formData(f);
-      try { await api('POST', '/api/portal/sign', { doc: f.dataset.sign, typedName: d.typedName, agree: d.agree }); toast('Signed — thank you'); load(); } catch (err) { toast(err.message); }
+      try { await api('POST', '/api/portal/sign', { doc: f.dataset.sign, typedName: d.typedName, agree: d.agree, esignConsent: d.esignConsent }); toast('Signed — thank you'); load(); } catch (err) { toast(err.message); }
     }));
     document.getElementById('up').addEventListener('submit', async e => {
       e.preventDefault();
@@ -132,6 +132,8 @@
     bindCoach();
     const nt = document.getElementById('notify');
     if (nt) nt.onchange = async () => { try { await api('PUT', '/api/portal/notifications', { email: nt.checked }); toast(nt.checked ? 'Email updates on' : 'Email updates off'); } catch (e) { toast(e.message); nt.checked = !nt.checked; } };
+    const view = root.querySelector('[data-view-disclosure]');
+    if (view) view.onclick = async () => { try { await api('POST', '/api/portal/disclosure-view'); toast('Disclosure recorded'); load(); } catch (err) { toast(err.message); } };
     const cancel = root.querySelector('[data-cancel]');
     if (cancel) cancel.onclick = async () => { if (!UI.ask('Cancel your agreement? This cannot be undone here.')) return; await api('POST', '/api/portal/cancel'); load(); };
   }
@@ -148,7 +150,9 @@
     const invite = (location.hash.match(/invite=([\w-]+)/) || [])[1];
     const reset = (location.hash.match(/reset=([\w-]+)/) || [])[1];
     const magic = (location.hash.match(/magic=([\w-]+)/) || [])[1];
+    const verify = (location.hash.match(/verify=([\w-]+)/) || [])[1];
     if (reset) return authForm('reset', reset);
+    if (verify && !s.user) { try { await api('POST', '/api/signup/verify', { token: verify }); location.hash = ''; location.reload(); } catch (e) { authForm('login', null, e.message); } return; }
     if (magic && !s.user) { try { await api('POST', '/api/auth/magic/verify', { token: magic }); location.hash = ''; location.reload(); } catch (e) { authForm('login', null, e.message); } return; }
     if (invite && !s.user) return authForm('invite', invite);
     if (!s.user) return authForm('login');

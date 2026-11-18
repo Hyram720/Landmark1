@@ -1,4 +1,6 @@
 // Outbound email (Resend) and SMS (Twilio). Each channel is enabled only when its credentials are set.
+import { emailFooter, CAN_SPAM_POSTAL_ADDRESS } from './email-footer.js';
+
 export function commsConfig(env = process.env) {
   return {
     email: Boolean((env.LEDGER_RESEND_KEY || env.RESEND_API_KEY) && env.LEDGER_EMAIL_FROM),
@@ -7,10 +9,11 @@ export function commsConfig(env = process.env) {
 }
 
 export async function sendEmail({ to, subject, text, attachments }, env = process.env) {
+  const body = text && String(text).includes(CAN_SPAM_POSTAL_ADDRESS) ? text : `${text || ''}\n\n${emailFooter()}`;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.LEDGER_RESEND_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(Object.assign({ from: env.LEDGER_EMAIL_FROM, to: [to], subject, text }, attachments && attachments.length ? { attachments } : {}))
+    body: JSON.stringify(Object.assign({ from: env.LEDGER_EMAIL_FROM, to: [to], subject, text: body }, attachments && attachments.length ? { attachments } : {}))
   });
   if (!res.ok) throw new Error(`Email provider error ${res.status}`);
   return (await res.json()).id;

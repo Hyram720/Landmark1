@@ -16,7 +16,7 @@ const RESET_TTL = 30 * 60 * 1000, MAGIC_TTL = 15 * 60 * 1000, OTP_TTL = 10 * 60 
 const NEUTRAL = 'If an account exists for that email, we sent a link. It expires soon and works once.';
 const pageFor = role => (role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app');
 
-export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds }) {
+export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds, authMethod }) {
   const ipLimit = rateLimiter(10, 15 * 60 * 1000);
   const emailLimit = rateLimiter(5, 60 * 60 * 1000);
   const otpLimit = rateLimiter(10, 15 * 60 * 1000);
@@ -46,6 +46,8 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     try { await sendMail({ to: u.email, subject, text }); } catch (e) { console.error(`[mail] ${subject}: ${e.message}`); }
   }
   const company = () => ((workspace().settings || {}).company || {}).name || 'our team';
+  const method = () => (typeof authMethod === 'function' ? authMethod() : 'password');
+  const magicPath = () => !!settings().magicLink || method() === 'magic_link';
 
   // ---------- forgot / reset ----------
   app.post('/api/auth/forgot', async (req, res) => {
@@ -87,7 +89,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
 
   // ---------- magic link ----------
   app.post('/api/auth/magic', async (req, res) => {
-    if (!settings().magicLink) return res.status(404).json({ error: 'Email sign-in links are not turned on.' });
+    if (!magicPath()) return res.status(404).json({ error: 'Email sign-in links are not turned on.' });
     const email = String((req.body || {}).email || '').toLowerCase().slice(0, 200);
     if (!ipLimit(req.ip) || !emailLimit('m:' + email)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const u = userByEmail(email);
@@ -102,6 +104,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     if (!ipLimit('mv:' + req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
     const u = consume('magic', String((req.body || {}).token || ''));
     if (!u) return res.status(400).json({ error: 'This sign-in link is invalid, expired or already used.' });
+    if (u.signupSource === 'self' && !u.emailVerifiedAt) u.emailVerifiedAt = new Date().toISOString();
     db.audit({ actor: u.email, action: 'login.magic', detail: req.ip });
     db.persist();
     startSession(req, res, u);
@@ -147,7 +150,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     res.json(Object.assign({}, settings(), { mailMode: mailMode(), mailEnabled: mailEnabled() }));
   });
   const rememberFor = typeof rememberSeconds === 'function' ? rememberSeconds : () => 30 * 24 * 60 * 60;
-  app.get('/api/auth/options', (req, res) => res.json({ magicLink: !!settings().magicLink && mailEnabled(), forgot: true, rememberDays: Math.max(1, Math.round(rememberFor() / 86400)) }));
+  app.get('/api/auth/options', (req, res) => res.json({ magicLink: !!settings().magicLink && mailEnabled(), clientAuthMethod: method(), forgot: true, rememberDays: Math.max(1, Math.round(rememberFor() / 86400)) }));
 
   // ---------- client notifications ----------
   app.get('/api/portal/notifications', need('client'), (req, res) => res.json({ email: !req.user.notifyOptOut, available: mailEnabled() && settings().notifications !== false }));

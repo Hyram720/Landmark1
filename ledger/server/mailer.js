@@ -5,8 +5,13 @@
 //   resend   sends through Resend: LEDGER_RESEND_KEY (or RESEND_API_KEY) + LEDGER_EMAIL_FROM
 //   smtp     sends through SMTP: LEDGER_SMTP_URL (smtp[s]://user:pass@host:port) + LEDGER_EMAIL_FROM;
 //            needs the optional `nodemailer` package installed
+// AWS SES is not wired on this build. Production access is not approved.
+// LEDGER_MAIL_MODE defaults to off: nothing is sent and links are not logged.
+// Signup verification and portal sign-in links call sendMail, so they stay
+// stubbed until a mail mode is turned on. Do not add SES keys in deploy config.
 // Tests inject their own transport with setTransport().
 import { sendEmail as resendSend } from './comms.js';
+import { emailFooter, CAN_SPAM_POSTAL_ADDRESS } from './email-footer.js';
 
 let override = null;
 export function setTransport(fn) { override = fn; }
@@ -17,23 +22,30 @@ export function mailMode(env = process.env) {
 }
 export function mailEnabled(env = process.env) { return !!override || mailMode(env) !== 'off'; }
 
+function withFooter(text) {
+  const body = String(text || '');
+  if (body.includes(CAN_SPAM_POSTAL_ADDRESS)) return body;
+  return `${body}${body ? '\n\n' : ''}${emailFooter()}`;
+}
+
 /** Returns { sent: boolean, mode }. Never throws for "off"; throws provider errors otherwise. */
 export async function sendMail({ to, subject, text }, env = process.env) {
-  if (override) { await override({ to, subject, text }); return { sent: true, mode: 'test' }; }
+  const full = withFooter(text);
+  if (override) { await override({ to, subject, text: full }); return { sent: true, mode: 'test' }; }
   const mode = mailMode(env);
   if (mode === 'off') return { sent: false, mode };
   if (mode === 'console') {
-    console.log(`[mail:console] to=${to} subject=${JSON.stringify(subject)}\n${text}\n[/mail]`);
+    console.log(`[mail:console] to=${to} subject=${JSON.stringify(subject)}\n${full}\n[/mail]`);
     return { sent: true, mode };
   }
   if (mode === 'resend') {
     if (!(env.LEDGER_RESEND_KEY || env.RESEND_API_KEY) || !env.LEDGER_EMAIL_FROM) throw new Error('Resend is not configured');
-    await resendSend({ to, subject, text }, env);
+    await resendSend({ to, subject, text: full }, env);
     return { sent: true, mode };
   }
   if (!env.LEDGER_SMTP_URL || !env.LEDGER_EMAIL_FROM) throw new Error('SMTP is not configured');
   let nodemailer;
   try { nodemailer = (await import('nodemailer')).default; } catch { throw new Error('SMTP mode needs the nodemailer package (npm i nodemailer)'); }
-  await nodemailer.createTransport(env.LEDGER_SMTP_URL).sendMail({ from: env.LEDGER_EMAIL_FROM, to, subject, text });
+  await nodemailer.createTransport(env.LEDGER_SMTP_URL).sendMail({ from: env.LEDGER_EMAIL_FROM, to, subject, text: full });
   return { sent: true, mode };
 }

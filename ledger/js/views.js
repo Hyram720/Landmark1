@@ -155,7 +155,7 @@
     const filter = params.q || 'all';
     const kindF = params.kind || '';
     const list = S().clients.filter(c => (filter === 'all' || c.status === filter) && (!kindF || c.kind === kindF || (kindF !== 'personal' && c.kind === 'both'))).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    const tabs = ['all', 'lead', 'onboarding', 'active', 'paused', 'completed', 'cancelled'];
+    const tabs = ['all', 'lead', 'pending', 'contract-signed', 'onboarding', 'active', 'paused', 'completed', 'cancelled'];
     const btn = (act, id, label, cls, title) => `<button class="btn sm ${cls || ''}" data-act="${act}" data-id="${id}" title="${title || label}">${label}</button>`;
     return head('Clients', `${S().clients.length} profiles · ${S().clients.filter(c => c.kind !== 'personal').length} with business credit`,
       `<button class="btn" data-act="onboarding-link">${icon('mail')} Client onboarding link</button><button class="btn" data-act="import-client-csv">${icon('upload')} Import</button><button class="btn primary" data-act="new-client">${icon('plus')} Add profile</button>`) +
