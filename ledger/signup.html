@@ -55,9 +55,13 @@
         if (!d.acceptAccountTerms) { msg.textContent = 'Accept the account terms to continue'; return; }
         if (String(d.state || '').toUpperCase() !== 'NJ' || !d.njResident) { msg.textContent = 'Credit Ledger serves New Jersey residents.'; return; }
         if (d.address || d.city || d.zip) {
-          if (!d.address || !d.city || !/^\d{5}(-\d{4})?$/.test(d.zip || '')) { msg.textContent = 'Your mailing address is needed'; return; }
+          var missing = [];
+          if (!d.address) missing.push('street');
+          if (!d.city) missing.push('city');
+          if (!/^\d{5}(-\d{4})?$/.test(d.zip || '')) missing.push('ZIP');
+          if (missing.length) { msg.textContent = 'Your mailing address is needed: ' + missing.join(', ') + '.'; return; }
           var zipNum = Number(String(d.zip).slice(0, 5));
-          if (zipNum < 7001 || zipNum > 8999) { msg.textContent = 'Credit Ledger serves New Jersey residents. Enter a New Jersey address.'; return; }
+          if (zipNum < 7001 || zipNum > 8999) { msg.textContent = 'Credit Ledger serves New Jersey residents. Enter a New Jersey address. Check the ZIP.'; return; }
         }
         fetch('/api/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) })
           .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Could not create the account'); return j; }); })
