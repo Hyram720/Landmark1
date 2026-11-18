@@ -32,6 +32,9 @@ test('final CROA texts are served as written and still block signing on owner br
   assert.doesNotMatch(disclosure, /PLACEHOLDER|PENDING COMPLIANCE REVIEW/);
   assert.match(contract, /Credit Services Agreement/);
   assert.match(cancel, /You may cancel this contract, without any penalty or obligation/);
+  assert.match(cancel, /before midnight of the 3rd day/);
+  assert.match(cancel, /before midnight on \[DATE: Weekday, Month D, YYYY\]/);
+  assert.match(cancel, /before midnight Eastern Time on the date above/);
   assert.match(esign, /Consent to Electronic Records/);
   for (const text of [disclosure, contract, cancel, esign]) {
     assert.match(text, /\[[^\]]+\]/);
@@ -665,6 +668,9 @@ test('full contract PDF keeps one bold cancellation sentence, section signs, and
   assert.strictEqual(flat.split(CANCEL_SENTENCE).length - 1, 1);
   assert.ok(!regular.includes('You may cancel this contract without penalty or obligation'));
   assert.strictEqual(flat.split('Notice of Cancellation').length - 1, 2);
+  assert.strictEqual(flat.split('before midnight Eastern Time on the date above').length - 1, 2);
+  assert.match(notice, /before midnight of the 3rd day/);
+  assert.match(notice, /before midnight on \[DATE: Weekday, Month D, YYYY\]/);
   assert.strictEqual(regular.split('Client typed name (signature):').length - 1, 1);
   assert.ok(!flat.includes('______________________'));
   assert.ok(flat.includes('Pat Example'));

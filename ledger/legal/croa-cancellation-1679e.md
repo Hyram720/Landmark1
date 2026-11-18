@@ -11,4 +11,4 @@
 **[purchaser's signature]**
 
 ---
-You can also cancel in your client portal, or by email to [EMAIL], before midnight on the date above.
+You can also cancel in your client portal, or by email to [EMAIL], before midnight Eastern Time on the date above.
