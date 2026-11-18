@@ -20,7 +20,7 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './signup-status.js';
-import { croaDocs, enrollmentBlocksSigning, sha256 } from './croa-docs.js';
+import { croaDocs, enrollmentBlocksSigning, personalizeCroaDocs, sha256 } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
 import { cancellationWindow, formatDeadlineEt, etYmd } from './croa-window.js';
@@ -72,7 +72,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
-export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride, env: envOverride } = {}) {
+export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride, env: envOverride, croaDocs: croaDocsOverride } = {}) {
   const env = envOverride || process.env;
   const resolvedAuthMethod = clientAuthMethod(authMethodOverride);
   const signupAccess = resolveSignupAccess({ env, signupRequested: selfSignupEnabled(env, selfSignupOverride), publicBaseUrl: publicBaseOverride });
@@ -427,10 +427,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function portalClient(req) { return workspace().clients.find(c => c.id === req.user.clientId); }
   function documentsFor(c) {
     const cs = Store.croaStatus(c);
-    if (c.signupSource === 'self') {
-      const docs = croaDocs();
-      return { disclosure: docs.disclosure, contract: docs.contract, cancellation: docs.cancellation, esign: docs.esign };
-    }
+    if (c.signupSource === 'self') return personalizeCroaDocs(croaDocsOverride || croaDocs(), c);
     return {
       disclosure: Law.CROA_DISCLOSURE,
       contract: Law.contractTerms(company(), c, workspace().settings.defaultFee),
@@ -551,7 +548,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ ok: true, message: 'Paper copies requested. There is no fee.' });
   });
 
-  app.post('/api/portal/sign', need('client'), (req, res) => {
+  function logMailFailure(label, err) {
+    const code = err && typeof err.code === 'string' && err.code ? err.code : (err && err.name) || 'Error';
+    console.error(`[mail] ${label} failed (${String(code).replace(/[^\w.-]/g, '').slice(0, 40) || 'Error'})`);
+  }
+  app.post('/api/portal/sign', need('client'), async (req, res) => {
     if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     const { doc, typedName, agree } = req.body || {};
@@ -586,7 +587,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       c.onboarding.cancellationWindowEndsAtTs = win.deadlineInstant.toISOString();
       c.onboarding.cancellationWindowEndsAt = win.deadlineDateEt;
       c.onboarding.cancellationRule = 'et-weekdays-6103-actual-and-observed-v1';
-      try { sendMail({ to: c.email, subject: 'Your signed Credit Ledger agreement', text: `A copy of your signed agreement is attached in your portal as a PDF.\nDownload id: ${pdfId}\nSHA-256: ${pdfSha}` }); } catch (e) { console.error('[mail] contract copy:', e.message); }
+      await sendMail({ to: c.email, subject: 'Your signed Credit Ledger agreement', text: `A copy of your signed agreement is attached in your portal as a PDF.\nDownload id: ${pdfId}\nSHA-256: ${pdfSha}` }).catch(err => logMailFailure('contract copy', err));
     }
     const sig = { id: uid(), clientId: c.id, doc, typedName, at, ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: pdfSha || sha256(pack[doc] || ''), pdfId, consent: doc === 'disclosure' ? 'Signed acknowledgment of the separate 1679c statement' : 'Contract signature' };
     workspace().signatures = workspace().signatures || [];
@@ -595,7 +596,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       c.onboarding.disclosureAcknowledgedAt = at;
       c.onboarding.disclosureSignedAt = etYmd(new Date(at));
       c.onboarding.retainUntil = new Date(Date.parse(at) + 730 * 86400000).toISOString();
-      try { sendMail({ to: c.email, subject: 'Your Consumer Credit File Rights statement', text: pack.disclosure || '' }); } catch (e) { console.error('[mail] disclosure copy:', e.message); }
+      await sendMail({ to: c.email, subject: 'Your Consumer Credit File Rights statement', text: pack.disclosure || '' }).catch(err => logMailFailure('disclosure copy', err));
     } else {
       c.onboarding.contractSignedAtTs = at;
       c.onboarding.contractSignedAt = etYmd(new Date(at));

@@ -64,12 +64,9 @@ export function buildPdf(pagesText) {
   return Buffer.from(out, 'latin1');
 }
 
-function fillNotice(notice, { clientName, signedLabel, deadlineLabel }) {
+function fillNotice(notice, { deadlineLabel }) {
   return String(notice || '')
-    .replace(/\[DATE:[^\]]*\]/g, deadlineLabel)
-    .replace(/\[date\]/gi, signedLabel)
-    .replace(/\[purchaser's signature\]/gi, clientName)
-    .replace(/\[CLIENT FULL NAME\]/g, clientName);
+    .replace(/\[DATE:[^\]]*\]/g, deadlineLabel);
 }
 
 export function buildContractPackagePdf({ contract, notice, clientName, signedLabel, deadlineLabel }) {

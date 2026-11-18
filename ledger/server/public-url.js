@@ -6,8 +6,14 @@
 
 export const DEV_PUBLIC_BASE_URL = 'http://127.0.0.1:4100';
 
+function nodeEnvUnset(env) {
+  return env.NODE_ENV === undefined || env.NODE_ENV === null || String(env.NODE_ENV).trim() === '';
+}
+
 export function isProductionEnv(env = process.env) {
-  return env.NODE_ENV === 'production';
+  if (env.NODE_ENV === 'production') return true;
+  if (!nodeEnvUnset(env)) return false;
+  return Boolean(String(env.RAILWAY_ENVIRONMENT || '').trim() || String(env.RAILWAY_ENVIRONMENT_NAME || '').trim());
 }
 
 export function readPublicBaseUrl(env = process.env, override) {

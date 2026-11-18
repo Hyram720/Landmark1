@@ -382,6 +382,15 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
   assert.match(resolveSignupAccess({ env: { NODE_ENV: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).warning, /https/);
   assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://ledger.example' }, signupRequested: true }).enabled, true);
   assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://ledger.example' }, signupRequested: true }).warning, '');
+  assert.strictEqual(readPublicBaseUrl({ RAILWAY_ENVIRONMENT: 'production' }), '');
+  assert.strictEqual(readPublicBaseUrl({ RAILWAY_ENVIRONMENT_NAME: 'staging' }), '');
+  assert.strictEqual(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT: 'production' }, signupRequested: true }).enabled, false);
+  assert.match(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT: 'production' }, signupRequested: true }).warning, /not set/);
+  assert.strictEqual(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).enabled, false);
+  assert.match(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).warning, /https/);
+  assert.strictEqual(resolveSignupAccess({ env: { RAILWAY_ENVIRONMENT: 'production', PUBLIC_BASE_URL: 'https://ledger.example' }, signupRequested: true }).enabled, true);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'test', RAILWAY_ENVIRONMENT: 'production' }, signupRequested: true }).enabled, true);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'development', RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).enabled, true);
 
   async function boot(env, publicBaseUrl) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-pub-url-'));
@@ -401,10 +410,12 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
   const unset = await boot({ NODE_ENV: 'production', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
   const http = await boot({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'http://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
   const https = await boot({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
+  const railway = await boot({ RAILWAY_ENVIRONMENT: 'production', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
+  const railwayHttp = await boot({ RAILWAY_ENVIRONMENT_NAME: 'production', PUBLIC_BASE_URL: 'http://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
   const outbox = [];
   setTransport(async m => { outbox.push(m); });
   try {
-    for (const app of [unset, http]) {
+    for (const app of [unset, http, railway, railwayHttp]) {
       const anon = app.client();
       const page = await anon('GET', '/signup');
       const post = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true, state: 'NJ', njResident: true });
@@ -415,6 +426,8 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
     }
     assert.ok(unset.warnings.some(w => /not set/i.test(w)));
     assert.ok(http.warnings.some(w => /https/i.test(w)));
+    assert.ok(railway.warnings.some(w => /not set/i.test(w)));
+    assert.ok(railwayHttp.warnings.some(w => /https/i.test(w)));
     assert.deepStrictEqual(https.warnings, []);
     const anon = https.client();
     assert.strictEqual((await anon('GET', '/signup')).status, 200);
@@ -425,7 +438,7 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
     assert.doesNotMatch(mail.text, /127\.0\.0\.1|evil\.test/);
   } finally {
     setTransport(null);
-    for (const app of [unset, http, https]) {
+    for (const app of [unset, http, https, railway, railwayHttp]) {
       app.server.close();
       app.built.shutdown();
       fs.rmSync(app.dir, { recursive: true, force: true });
@@ -465,8 +478,88 @@ test('contract package PDF bolds the cancellation sentence and repeats the notic
   assert.match(text, /\/F2 10 Tf/);
   assert.match(text, /You may cancel this contract without penalty or obligation/);
   assert.ok(!text.includes('[DATE:'));
+  assert.ok(text.includes('November 23, 2026 at 11:59 PM ET'));
+  assert.ok(text.includes('[date]'));
+  assert.ok(text.includes("[purchaser's signature]"));
+  assert.ok(text.split('[date]').length - 1 >= 2);
+  assert.ok(text.split("[purchaser's signature]").length - 1 >= 2);
   assert.ok(text.includes('Pat Example'));
   const notices = text.split('Notice of Cancellation').length - 1;
   assert.ok(notices >= 2);
+});
+
+test('per-client blanks can be signed, owner blanks still block, and mail failures stay private', async () => {
+  const { personalizeCroaDocs, enrollmentBlocksSigning, croaDocs, documentBlocksSigning } = await import('../server/croa-docs.js');
+  const client = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', scheduleA: [{ creditor: 'Sample Bank', last4: '4242', bureau: 'Equifax' }] };
+  const onlyClient = {
+    disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nI received this statement before any contract.\n',
+    contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nAddress: [CLIENT ADDRESS]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\n',
+    cancellation: '**Notice of Cancellation**\n\nbefore midnight on [DATE: Weekday, Month D, YYYY]\n\nI hereby cancel this transaction,\n\n[date]\n\n[purchaser\'s signature]\n',
+    esign: 'Open this sample PDF: [LINK TO SAMPLE PDF]. Enter the code: [______]\n\n[ ] I agree to electronic records.\n'
+  };
+  const filled = personalizeCroaDocs(onlyClient, client);
+  assert.strictEqual(enrollmentBlocksSigning(filled), false);
+  assert.match(filled.contract, /Pat Example/);
+  assert.match(filled.contract, /1 Main St/);
+  assert.match(filled.contract, /Sample Bank/);
+  assert.doesNotMatch(filled.contract, /\[[^\]]+\]/);
+  assert.match(filled.cancellation, /\[date\]/);
+  assert.match(filled.cancellation, /\[purchaser's signature\]/);
+  assert.doesNotMatch(filled.cancellation, /\[DATE:/);
+  assert.match(filled.esign, /\/api\/portal\/esign\/sample/);
+  assert.doesNotMatch(filled.esign, /\[[^\]]+\]/);
+  const live = personalizeCroaDocs(croaDocs(), client);
+  assert.strictEqual(enrollmentBlocksSigning(live), true);
+  assert.strictEqual(documentBlocksSigning('Terms. [PRICE PER RESULT: Fred to decide].'), true);
+  assert.strictEqual(documentBlocksSigning('PLACEHOLDER still here'), true);
+  assert.strictEqual(documentBlocksSigning('PENDING COMPLIANCE REVIEW'), true);
+  assert.strictEqual(documentBlocksSigning(filled.cancellation), false);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-signable-'));
+  const built = createApp({ dataDir: dir, encryptionKey: 'signable-key-not-a-secret', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, croaDocs: onlyClient });
+  const { server, client: makeClient } = listen(built.app);
+  const pat = makeClient();
+  const logs = [];
+  const origErr = console.error;
+  console.error = (...args) => { logs.push(args.map(String).join(' ')); };
+  setTransport(async m => {
+    if (/^Your /.test(m.subject)) throw Object.assign(new Error('mailbox down for ' + m.to), { code: 'EFAIL' });
+  });
+  try {
+    assert.strictEqual((await pat('POST', '/api/signup', { firstName: 'Pat', lastName: 'Example', email: 'pat-sign@signup.test', password: 'pat password 1', acceptAccountTerms: true, state: 'NJ', njResident: true })).status, 200);
+    const user = built.db.data.users.find(u => u.email === 'pat-sign@signup.test');
+    user.emailVerifiedAt = new Date().toISOString();
+    assert.strictEqual((await pat('POST', '/api/login', { email: 'pat-sign@signup.test', password: 'pat password 1' })).status, 200);
+    const me = await pat('GET', '/api/portal/me');
+    assert.strictEqual(me.body.croa.enrollmentClosed, false);
+    assert.match(me.body.documents.contract, /Pat Example/);
+    assert.match(me.body.documents.cancellation, /\[purchaser's signature\]/);
+    const sample = await pat('GET', '/api/portal/esign/sample');
+    const code = sample.body.match(/Your code is ([A-F0-9]{6})/);
+    assert.ok(code, 'sample PDF shows a code');
+    assert.strictEqual((await pat('POST', '/api/portal/esign/consent', { agree: true, code: code[1] })).status, 200);
+    assert.strictEqual((await pat('POST', '/api/portal/disclosure-view')).status, 200);
+    const disclosure = await pat('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(disclosure.status, 200);
+    const contract = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(contract.status, 200);
+    const saved = built.db.data.workspace.signatures.filter(s => s.doc === 'disclosure' || s.doc === 'contract');
+    assert.strictEqual(saved.length, 2);
+    const pdf = await pat('GET', '/api/portal/signed/' + contract.body.signature.pdfId);
+    assert.strictEqual(pdf.status, 200);
+    assert.ok(pdf.body.includes('[date]'));
+    assert.ok(pdf.body.includes("[purchaser's signature]"));
+    assert.ok(pdf.body.split('[date]').length - 1 >= 2);
+    const logged = logs.join('\n');
+    assert.match(logged, /\[mail\] disclosure copy failed \(EFAIL\)/);
+    assert.match(logged, /\[mail\] contract copy failed \(EFAIL\)/);
+    assert.doesNotMatch(logged, /pat-sign@signup\.test|Pat Example|mailbox down/);
+  } finally {
+    console.error = origErr;
+    setTransport(null);
+    server.close();
+    built.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
