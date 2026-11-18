@@ -803,11 +803,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
     const { clientId, history } = req.body || {};
-    if (clientId && selfSignupOnHold(clientId)) {
-      const ws = workspace();
-      const involvesFile = (ws.reports || []).some(r => r.clientId === clientId) || (ws.disputes || []).some(d => d.clientId === clientId);
-      if (involvesFile) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
-    }
+    if (clientId && selfSignupOnHold(clientId)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
     if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });

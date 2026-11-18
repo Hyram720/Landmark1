@@ -699,9 +699,8 @@ test('uploads stay open while report AI and staff chat wait for the cancellation
 
 test('Eastern document times, staff enrollment terms, address, and the signature page', async () => {
   const { formatDocumentTimeEt } = await import('../server/croa-window.js');
-  const { personalizeCroaDocs, enrollmentBlocksSigning } = await import('../server/croa-docs.js');
+  const { personalizeCroaDocs } = await import('../server/croa-docs.js');
   const { buildContractPackagePdf, readPdfPages, CANCEL_SENTENCE } = await import('../server/enrollment-pdf.js');
-  const { execFileSync } = await import('node:child_process');
   assert.strictEqual(formatDocumentTimeEt('2026-11-19T02:00:00.000Z'), 'November 18, 2026, 9:00 PM ET');
   assert.strictEqual(formatDocumentTimeEt('2026-11-18T21:30:00.000Z'), 'November 18, 2026, 4:30 PM ET');
   const evening = personalizeCroaDocs({
@@ -721,8 +720,6 @@ test('Eastern document times, staff enrollment terms, address, and the signature
   assert.match(read('js/app.js'), /enrollment-terms/);
 
   const notice = read('legal/croa-cancellation-1679e.md');
-  let eightPdf = null;
-  let eightPage = 0;
   for (let n = 1; n <= 40; n++) {
     const scheduleA = Array.from({ length: n }, (_, i) => ({ item: 'Item ' + (i + 1), creditor: 'Bank ' + (i + 1), last4: '4242', bureau: 'Equifax' }));
     const client = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', pricePerResult: 10, scheduleA };
@@ -736,7 +733,6 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     assert.ok(text.includes(CANCEL_SENTENCE), 'sentence incomplete with ' + n + ' rows');
     assert.ok(text.includes('Client typed name (signature):'), 'signature left the sentence page with ' + n + ' rows');
     assert.ok(text.includes('Date signed:'), 'date signed left the sentence page with ' + n + ' rows');
-    if (n === 8) { eightPdf = built.pdf; eightPage = pages.indexOf(sentencePages[0]) + 1; }
   }
 
   const onlyClient = {
@@ -760,6 +756,7 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     assert.strictEqual((await pat('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 403);
     assert.strictEqual((await owner('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 200);
     assert.ok(built.db.data.audit.some(a => a.action === 'client.enrollment_terms'));
+    assert.strictEqual((await owner('POST', '/api/assistant', { clientId: id, history: [{ role: 'user', content: 'What should we do next?' }] })).status, 409);
     const sample = await pat('GET', '/api/portal/esign/sample');
     const code = sample.body.match(/Your code is ([A-F0-9]{6})/)[1];
     assert.strictEqual((await pat('POST', '/api/portal/esign/consent', { agree: true, code })).status, 200);
@@ -799,15 +796,6 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     server.close();
     built.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });
-  }
-
-  if (eightPdf) {
-    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-pdf-8-'));
-    fs.writeFileSync(path.join(out, 'contract.pdf'), eightPdf);
-    execFileSync('pdftoppm', ['-png', '-r', '130', '-f', String(eightPage), '-l', String(eightPage), path.join(out, 'contract.pdf'), path.join(out, 'sig')]);
-    const png = fs.readdirSync(out).find(name => name.endsWith('.png'));
-    fs.mkdirSync('/opt/cursor/artifacts', { recursive: true });
-    fs.copyFileSync(path.join(out, png), '/opt/cursor/artifacts/contract-signature-8-rows.png');
   }
 });
 
