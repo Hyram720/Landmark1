@@ -14,6 +14,7 @@ import { Law } from '../server/shared.js';
 import { CLIENT_AUTH_METHOD } from '../server/auth-method.js';
 import { applySignupStatus } from '../server/signup-status.js';
 import { DEV_PUBLIC_BASE_URL } from '../server/public-url.js';
+import { cancellationWindow } from '../server/croa-window.js';
 
 delete process.env.KIT_API_KEY;
 delete process.env.LEDGER_MAIL_MODE;
@@ -21,21 +22,23 @@ delete process.env.LEDGER_MAIL_MODE;
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 
-test('CROA placeholders are marked for review and do not contain the email address', () => {
-  const disclosure = read('legal/PLACEHOLDER-croa-disclosure.md');
-  const contract = read('legal/PLACEHOLDER-croa-contract.md');
-  const cancel = read('legal/PLACEHOLDER-croa-cancellation.md');
-  assert.match(disclosure, /PLACEHOLDER FOR COMPLIANCE REVIEW/);
-  assert.match(disclosure, /1679c/);
-  assert.match(disclosure, /Consumer Credit File Rights Under State and Federal Law/);
-  assert.match(contract, /PENDING COMPLIANCE REVIEW/);
-  assert.match(contract, /1679d/);
-  assert.match(cancel, /PENDING COMPLIANCE REVIEW/);
-  assert.match(cancel, /1679e/);
-  for (const text of [disclosure, contract, cancel]) {
+test('final CROA texts are served as written and still block signing on owner brackets', () => {
+  const disclosure = read('legal/croa-disclosure-1679c.md');
+  const contract = read('legal/croa-contract-1679d.md');
+  const cancel = read('legal/croa-cancellation-1679e.md');
+  const esign = read('legal/esign-consent-7001c.md');
+  assert.ok(disclosure.startsWith('Consumer Credit File Rights Under State and Federal Law'));
+  assert.match(disclosure, /reported for 10 years/);
+  assert.doesNotMatch(disclosure, /PLACEHOLDER|PENDING COMPLIANCE REVIEW/);
+  assert.match(contract, /Credit Services Agreement/);
+  assert.match(cancel, /You may cancel this contract, without any penalty or obligation/);
+  assert.match(esign, /Consent to Electronic Records/);
+  for (const text of [disclosure, contract, cancel, esign]) {
+    assert.match(text, /\[[^\]]+\]/);
     assert.doesNotMatch(text, /2230 Route 70/);
     assert.doesNotMatch(text, /Cherry Hill/);
   }
+  assert.ok(!fs.existsSync(path.join(root, 'legal/PLACEHOLDER-croa-disclosure.md')));
   assert.strictEqual(CLIENT_AUTH_METHOD, 'password');
   for (const file of ['server/signup.js', 'server/signup-status.js', 'server/newsletter.js', 'server/kit-hook.js', 'server/auth-method.js']) {
     const src = read(file);
@@ -46,10 +49,15 @@ test('CROA placeholders are marked for review and do not contain the email addre
   const page = read('signup.html');
   assert.match(page, /name="acceptAccountTerms"/);
   assert.match(page, /name="marketingConsent"/);
+  assert.match(page, /may include offers/);
   assert.doesNotMatch(page, /name="marketingConsent"[^>]*\bchecked\b/);
   assert.match(page, /name="website"/);
   assert.match(page, /href="\/signup\/terms"/);
   assert.doesNotMatch(page, /href="\/terms"/);
+  const apply = read('apply.html');
+  assert.doesNotMatch(apply, /name="phone"/);
+  assert.doesNotMatch(apply, /sms|consultation/i);
+  assert.doesNotMatch(apply, /href="\/checkout"|href="\/pricing"|href="\/refund-policy"/);
   const terms = read('legal/PLACEHOLDER-client-terms.md');
   assert.match(terms, /PLACEHOLDER FOR COMPLIANCE REVIEW/);
   assert.match(terms, /PENDING/);
@@ -127,22 +135,22 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual((await invited('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'invited password 1' })).status, 200);
     assert.strictEqual((await invited('GET', '/api/portal/me')).body.client.name, 'Invited Person');
 
-    const bad = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'nope', password: 'long password 1', acceptAccountTerms: true });
+    const bad = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'nope', password: 'long password 1', acceptAccountTerms: true, state: 'NJ', njResident: true });
     assert.strictEqual(bad.status, 400);
-    const short = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'short', acceptAccountTerms: true });
+    const short = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'short', acceptAccountTerms: true, state: 'NJ', njResident: true });
     assert.strictEqual(short.status, 400);
     const terms = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: false });
     assert.strictEqual(terms.status, 400);
 
-    const honey = await anon('POST', '/api/signup', { firstName: 'Bot', lastName: 'Bot', email: 'bot@signup.test', password: 'long password 1', acceptAccountTerms: true, website: 'http://spam.test' });
+    const honey = await anon('POST', '/api/signup', { firstName: 'Bot', lastName: 'Bot', email: 'bot@signup.test', password: 'long password 1', acceptAccountTerms: true, state: 'NJ', njResident: true, website: 'http://spam.test' });
     assert.strictEqual(honey.status, 200);
     assert.deepStrictEqual(honey.body, SIGNUP_OK);
 
-    const created = await pat('POST', '/api/signup', { firstName: 'Pat', lastName: 'Example', email: 'pat@signup.test', password: 'pat password 1', acceptAccountTerms: true, marketingConsent: false }, { host: 'evil.test' });
+    const created = await pat('POST', '/api/signup', { firstName: 'Pat', lastName: 'Example', email: 'pat@signup.test', password: 'pat password 1', acceptAccountTerms: true, state: 'NJ', njResident: true, marketingConsent: false }, { host: 'evil.test' });
     assert.strictEqual(created.status, 200);
     assert.deepStrictEqual(created.body, SIGNUP_OK);
     assert.deepStrictEqual(created.body, honey.body);
-    const again = await anon('POST', '/api/signup', { firstName: 'Pat', lastName: 'Example', email: 'pat@signup.test', password: 'other password 99', acceptAccountTerms: true });
+    const again = await anon('POST', '/api/signup', { firstName: 'Pat', lastName: 'Example', email: 'pat@signup.test', password: 'other password 99', acceptAccountTerms: true, state: 'NJ', njResident: true });
     assert.strictEqual(again.status, 200);
     assert.deepStrictEqual(again.body, SIGNUP_OK);
 
@@ -187,30 +195,29 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual(termsPage.status, 200);
     assert.match(termsPage.body, /PLACEHOLDER FOR COMPLIANCE REVIEW/);
 
-    const early = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true, esignConsent: true });
-    assert.strictEqual(early.status, 403);
-    assert.match(early.body.error, /placeholder/i);
+    const early = await pat('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(early.status, 503);
+    assert.match(early.body.error, /not open yet/i);
     const viewed = await pat('POST', '/api/portal/disclosure-view');
     assert.strictEqual(viewed.status, 200);
     assert.match(viewed.body.disclosureViewedAt, /T/);
     let patOn = (await owner('GET', '/api/workspace')).body.data.clients.find(c => c.email === 'pat@signup.test').onboarding;
     assert.strictEqual(patOn.disclosureSignedAt, undefined);
-    assert.strictEqual((await pat('POST', '/api/portal/disclosure-acknowledge')).status, 200);
-    patOn = (await owner('GET', '/api/workspace')).body.data.clients.find(c => c.email === 'pat@signup.test').onboarding;
-    assert.match(patOn.disclosureAcknowledgedAt, /T/);
-    assert.strictEqual(patOn.disclosureSignedAt, undefined);
-    assert.strictEqual(patOn.contractSignedAt, undefined);
-    const blockedSign = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true, esignConsent: true });
-    assert.strictEqual(blockedSign.status, 403);
-    assert.match(blockedSign.body.error, /placeholder/i);
+    assert.strictEqual(patOn.disclosureAcknowledgedAt, undefined);
+    const blockedSign = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(blockedSign.status, 503);
+    assert.match(blockedSign.body.error, /not open yet/i);
     const me = await pat('GET', '/api/portal/me');
-    assert.match(me.body.documents.disclosure, /1679c/);
-    assert.match(me.body.documents.contract, /PENDING COMPLIANCE REVIEW/);
+    assert.ok(me.body.documents.disclosure.startsWith('Consumer Credit File Rights Under State and Federal Law'));
+    assert.match(me.body.documents.contract, /\[PRICE\]/);
     assert.doesNotMatch(me.body.documents.contract, /Cherry Hill/);
-    assert.match(me.body.documents.cancellation, /1679e/);
+    assert.match(me.body.documents.cancellation, /You may cancel this contract, without any penalty or obligation/);
     assert.strictEqual(me.body.client.status, 'pending');
-    assert.strictEqual(me.body.croa.disclosureAcknowledged, true);
+    assert.strictEqual(me.body.croa.disclosureAcknowledged, false);
     assert.strictEqual(me.body.croa.disclosureSigned, false);
+    assert.strictEqual(me.body.croa.enrollmentClosed, true);
+    const consent = await pat('POST', '/api/portal/esign/consent', { agree: true, code: 'ABC123' });
+    assert.strictEqual(consent.status, 503);
 
     const held = await owner('GET', '/api/workspace');
     const patClient = held.body.data.clients.find(c => c.email === 'pat@signup.test');
@@ -224,7 +231,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     const signedRow = (await owner('GET', '/api/workspace')).body.data.clients.find(c => c.email === 'pat@signup.test');
     assert.strictEqual(signedRow.status, 'contract-signed');
     assert.notStrictEqual(signedRow.status, 'active');
-    assert.strictEqual(signedRow.onboarding.cancellationWindowEndsAt, Law.croaCancelDeadline(signedRow.onboarding.contractSignedAt));
+    assert.strictEqual(signedRow.onboarding.cancellationWindowEndsAt, cancellationWindow(signedRow.onboarding.contractSignedAtTs).deadlineDateEt);
     assert.strictEqual((await pat('POST', '/api/portal/cancel')).status, 200);
     const cancelled = await owner('GET', '/api/workspace');
     const patRow = cancelled.body.data.clients.find(c => c.email === 'pat@signup.test');
@@ -235,7 +242,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual((await owner('GET', '/api/workspace')).body.data.clients.find(c => c.email === 'pat@signup.test').status, 'paused');
 
     assert.strictEqual(kitCalls().length, 0, 'unchecked marketing consent does not post');
-    const sam = await anon('POST', '/api/signup', { firstName: 'Sam', lastName: 'List', email: 'sam@signup.test', password: 'sam password 1', acceptAccountTerms: true, marketingConsent: true });
+    const sam = await anon('POST', '/api/signup', { firstName: 'Sam', lastName: 'List', email: 'sam@signup.test', password: 'sam password 1', acceptAccountTerms: true, state: 'NJ', njResident: true, marketingConsent: true });
     assert.strictEqual(sam.status, 200);
     assert.ok(kitCalls().some(c => c.email === 'sam@signup.test' && c.path === KIT_FORM_PATH && c.formId === KIT_FORM_ID && c.mode === 'stub'));
 
@@ -246,25 +253,20 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual(sub.status, 200);
     assert.strictEqual(outbox.length, beforeMail, 'Kit double opt-in: our mailer does not send a confirmation');
     assert.ok(kitCalls().some(c => c.op === 'subscribe' && c.formId === KIT_FORM_ID && c.email === 'reader@signup.test'));
-    const issued = kitCalls().find(c => c.email === 'reader@signup.test' && c.local);
+    const issued = kitCalls().find(c => c.email === 'reader@signup.test');
     assert.ok(issued);
-    const confirm = await anon('POST', '/api/newsletter/confirm', { token: issued.local.confirm });
-    assert.strictEqual(confirm.status, 200);
-    assert.strictEqual(confirm.body.via, 'kit');
-    assert.strictEqual(outbox.length, beforeMail);
-    assert.ok(kitCalls().some(c => c.op === 'confirm' && c.email === 'reader@signup.test'));
-    const unsub = await anon('POST', '/api/newsletter/unsubscribe', { token: issued.local.unsubscribe });
-    assert.strictEqual(unsub.status, 200);
-    assert.strictEqual(unsub.body.unsubscribed, true);
-    const unsubGet = await anon('GET', '/api/newsletter/unsubscribe?token=' + encodeURIComponent(issued.local.unsubscribe));
-    assert.strictEqual(unsubGet.status, 200);
-    assert.match(unsubGet.body, /unsubscribed/i);
-    assert.strictEqual((await anon('POST', '/api/newsletter/unsubscribe', { token: 'nope' })).status, 400);
+    const confirm = await anon('POST', '/api/newsletter/confirm', {});
+    assert.strictEqual(confirm.status, 501);
+    const unsub = await anon('POST', '/api/newsletter/unsubscribe', { email: 'reader@signup.test' });
+    assert.strictEqual(unsub.status, 501);
+    assert.strictEqual(unsub.body.unsubscribed, undefined);
+    const unsubGet = await anon('GET', '/api/newsletter/unsubscribe');
+    assert.strictEqual(unsubGet.status, 405);
     const trap = await anon('POST', '/api/newsletter/subscribe', { email: 'trap@signup.test', consent: true, website: 'spam' });
     assert.strictEqual(trap.status, 200);
     assert.ok(!kitCalls().some(c => c.email === 'trap@signup.test'));
 
-    const made = await riley('POST', '/api/signup', { firstName: 'Riley', lastName: 'Active', email: 'riley@signup.test', password: 'riley password 1', acceptAccountTerms: true });
+    const made = await riley('POST', '/api/signup', { firstName: 'Riley', lastName: 'Active', email: 'riley@signup.test', password: 'riley password 1', acceptAccountTerms: true, state: 'NJ', njResident: true });
     assert.strictEqual(made.status, 200);
     const rileyMail = outbox.find(m => m.to === 'riley@signup.test');
     assert.strictEqual((await riley('POST', '/api/signup/verify', { token: rileyMail.text.match(/verify=([\w-]+)/)[1] })).status, 200);
@@ -273,8 +275,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     pre.body.data.disputes.push({ id: 'd-riley', clientId: rileyId, recipient: 'Experian', type: 'cra_611', round: 1, status: 'draft', items: [] });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: pre.body.version, data: pre.body.data })).status, 409);
     assert.strictEqual((await riley('POST', '/api/portal/disclosure-view')).status, 200);
-    assert.strictEqual((await riley('POST', '/api/portal/disclosure-acknowledge')).status, 200);
-    assert.strictEqual((await riley('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Riley Active', agree: true, esignConsent: true })).status, 403);
+    assert.strictEqual((await riley('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Riley Active', agree: true })).status, 503);
     const mid = await owner('GET', '/api/workspace');
     const row = mid.body.data.clients.find(c => c.email === 'riley@signup.test');
     assert.strictEqual(row.status, 'pending');
@@ -286,6 +287,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual((await owner('GET', '/api/workspace')).body.data.clients.find(c => c.email === 'riley@signup.test').status, 'paused');
     const promote = await owner('GET', '/api/workspace');
     const promoteRow = promote.body.data.clients.find(c => c.email === 'riley@signup.test');
+    promoteRow.onboarding.disclosureAcknowledgedAt = '2026-10-01T15:00:00.000Z';
     promoteRow.status = 'pending';
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: promote.body.version, data: promote.body.data })).status, 200);
     const after = await owner('GET', '/api/workspace');
@@ -311,7 +313,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     const who = magicLive.client();
     assert.strictEqual((await who('GET', '/api/auth/options')).body.clientAuthMethod, 'magic_link');
     assert.strictEqual((await who('POST', '/api/setup', { name: 'Owner', email: 'owner@magic.test', password: 'owner password 1' })).status, 200);
-    const joined = await who('POST', '/api/signup', { firstName: 'Link', lastName: 'User', email: 'link@signup.test', acceptAccountTerms: true });
+    const joined = await who('POST', '/api/signup', { firstName: 'Link', lastName: 'User', email: 'link@signup.test', acceptAccountTerms: true, state: 'NJ', njResident: true });
     assert.strictEqual(joined.status, 200);
     const linkMail = magicBox.find(m => m.to === 'link@signup.test');
     assert.match(linkMail.text, /sign in/i);
@@ -358,7 +360,7 @@ test('self-signup routes stay closed when the flag is off', async () => {
   try {
     assert.strictEqual((await anon('GET', '/signup')).status, 404);
     assert.strictEqual((await anon('GET', '/signup/terms')).status, 404);
-    const closed = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true });
+    const closed = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true, state: 'NJ', njResident: true });
     assert.strictEqual(closed.status, 404);
     assert.match(closed.body.error, /disabled/i);
     assert.match((await anon('GET', '/signup')).body, /disabled/i);
@@ -405,7 +407,7 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
     for (const app of [unset, http]) {
       const anon = app.client();
       const page = await anon('GET', '/signup');
-      const post = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true });
+      const post = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true, state: 'NJ', njResident: true });
       assert.strictEqual(page.status, 404);
       assert.match(page.body, /disabled/i);
       assert.strictEqual(post.status, 404);
@@ -416,7 +418,7 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
     assert.deepStrictEqual(https.warnings, []);
     const anon = https.client();
     assert.strictEqual((await anon('GET', '/signup')).status, 200);
-    const created = await anon('POST', '/api/signup', { firstName: 'Ada', lastName: 'Https', email: 'ada@signup.test', password: 'ada password 1', acceptAccountTerms: true }, { host: 'evil.test' });
+    const created = await anon('POST', '/api/signup', { firstName: 'Ada', lastName: 'Https', email: 'ada@signup.test', password: 'ada password 1', acceptAccountTerms: true, state: 'NJ', njResident: true }, { host: 'evil.test' });
     assert.strictEqual(created.status, 200);
     const mail = outbox.find(m => m.to === 'ada@signup.test');
     assert.match(mail.text, /https:\/\/ledger\.example\/portal#verify=/);
@@ -430,3 +432,41 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
     }
   }
 });
+
+test('cancellation window skips weekends and observed holidays in Eastern time', () => {
+  const evening = cancellationWindow('2026-11-19T02:00:00.000Z');
+  assert.strictEqual(evening.signingDateEt, '2026-11-18');
+  assert.strictEqual(evening.deadlineDateEt, '2026-11-23');
+  assert.strictEqual(evening.deadlineInstant.toISOString(), '2026-11-24T04:59:59.999Z');
+  const july = cancellationWindow('2026-07-02T16:00:00.000Z');
+  assert.strictEqual(july.deadlineDateEt, '2026-07-08');
+  const yearEnd = cancellationWindow('2027-12-29T17:00:00.000Z');
+  assert.strictEqual(yearEnd.signingDateEt, '2027-12-29');
+  assert.notStrictEqual(yearEnd.deadlineDateEt, '2028-01-01');
+  assert.strictEqual(yearEnd.deadlineDateEt, '2028-01-04');
+  assert.strictEqual(yearEnd.deadlineInstant.toISOString(), '2028-01-05T04:59:59.999Z');
+  const justAfter = cancellationWindow('2026-11-18T17:00:00.000Z', new Date('2026-11-24T05:00:00.000Z'));
+  assert.strictEqual(justAfter.open, false);
+  const onTheInstant = cancellationWindow('2026-11-18T17:00:00.000Z', new Date('2026-11-24T04:59:59.999Z'));
+  assert.strictEqual(onTheInstant.open, true);
+});
+
+test('contract package PDF bolds the cancellation sentence and repeats the notice', async () => {
+  const { buildContractPackagePdf } = await import('../server/enrollment-pdf.js');
+  const built = buildContractPackagePdf({
+    clientName: 'Pat Example',
+    signedLabel: 'November 18, 2026',
+    deadlineLabel: 'November 23, 2026 at 11:59 PM ET',
+    contract: 'Services are described here.',
+    notice: '**Notice of Cancellation**\n\nYou may cancel this contract, without any penalty or obligation, at any time before midnight of the 3rd day which begins after the date the contract is signed by you.\n\nTo cancel this contract, mail or deliver a signed, dated copy of this cancellation notice, or any other written notice before midnight on [DATE: Weekday, Month D, YYYY]\n\n[date]\n\n[purchaser\'s signature]'
+  });
+  const text = Buffer.from(built.pdf).toString('latin1');
+  assert.match(text, /^%PDF-1\.4/);
+  assert.match(text, /\/F2 10 Tf/);
+  assert.match(text, /You may cancel this contract without penalty or obligation/);
+  assert.ok(!text.includes('[DATE:'));
+  assert.ok(text.includes('Pat Example'));
+  const notices = text.split('Notice of Cancellation').length - 1;
+  assert.ok(notices >= 2);
+});
+

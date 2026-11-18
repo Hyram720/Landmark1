@@ -135,10 +135,14 @@ test('public business pages are served as drafts (noindex) and linked from the p
   assert.ok(co.body.includes('/api/intake'), 'checkout submits to the existing intake');
   assert.ok(co.body.includes('Consumer Credit File Rights Under State and Federal Law'));
   assert.ok(!co.body.includes('id="sig"'), 'no unrecorded e-signature on the checkout page');
-  for (const p of ['/apply', '/portal', '/partner']) {
+  for (const p of ['/portal', '/partner']) {
     const r = await anon('GET', p);
     for (const l of ['/pricing', '/terms', '/refund-policy', '/privacy']) assert.ok(r.body.includes(`href="${l}"`), `${p} links ${l}`);
   }
+  const apply = await anon('GET', '/apply');
+  assert.ok(apply.body.includes('href="/terms"'), '/apply links /terms');
+  assert.ok(apply.body.includes('href="/privacy"'), '/apply links /privacy');
+  assert.ok(!apply.body.includes('href="/pricing"') && !apply.body.includes('href="/refund-policy"') && !apply.body.includes('href="/checkout"'), '/apply does not link pricing, refunds, or checkout');
 });
 
 test('the server refuses invoices over the 12-month term / $1,188 cap', async () => {

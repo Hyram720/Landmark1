@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Free Credit Consultation</title>
-  <meta name="description" content="Request a free consultation for personal or business credit.">
+  <title>Email Credit Ledger</title>
+  <meta name="description" content="Send Credit Ledger a question by email.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -23,10 +23,10 @@
   </style>
 </head>
 <body data-helper="apply">
-  <header class="hero"><h1>Get clear on your credit — personal and business</h1><p>Tell us where you are and where you want to go. We’ll review your situation and explain your options in a free, no-obligation consultation.</p></header>
+  <header class="hero"><h1>Get clear on your credit, personal and business</h1><p>Tell us where you are and where you want to go. We will reply by email. This form does not start services and does not charge anything.</p></header>
   <main id="main">
   <div class="wrap">
-    <p class="small" style="margin:0 0 12px"><a href="/signup">Create a portal account</a> if you are ready to sign up. This consultation form does not open an account.</p>
+    <p class="small" style="margin:0 0 12px"><a href="/signup">Create a portal account</a> if you are ready to sign up. This email form does not open an account.</p>
     <form class="card" id="intake" novalidate aria-describedby="intake-rights"><div class="card-b stack">
       <fieldset style="border:0;padding:0;margin:0"><legend class="small" style="font-weight:600">What do you need help with?</legend>
         <div class="kinds" style="margin-top:8px">
@@ -38,7 +38,6 @@
         <label class="field"><span>First name</span><input name="firstName" required maxlength="60" autocomplete="given-name" aria-required="true"></label>
         <label class="field"><span>Last name</span><input name="lastName" required maxlength="60" autocomplete="family-name" aria-required="true"></label>
         <label class="field"><span>Email</span><input name="email" type="email" required maxlength="120" autocomplete="email" aria-required="true"></label>
-        <label class="field"><span>Phone</span><input name="phone" type="tel" inputmode="tel" maxlength="25" autocomplete="tel"></label>
         <label class="field"><span>State</span><input name="state" maxlength="2" pattern="[A-Za-z]{2}" placeholder="NJ" autocomplete="address-level1" title="2-letter state abbreviation"></label>
         <label class="field"><span>How did you hear about us?</span><input name="source"></label>
       </div>
@@ -47,21 +46,20 @@
         <label class="field"><span>Entity type</span><select name="entityType"><option></option><option>LLC</option><option>S-Corp</option><option>C-Corp</option><option>Partnership</option><option>Sole proprietor</option></select></label>
         <label class="field span2"><span>Business website</span><input name="businessWebsite"></label>
       </div>
-      <label class="field"><span>Your goals</span><textarea name="goals" rows="3" maxlength="1000" placeholder="e.g. buy a home next year, qualify for an equipment loan…"></textarea></label>
+      <label class="field"><span>Your goals</span><textarea name="goals" rows="3" maxlength="1000" placeholder="For example, a home purchase next year, or an equipment loan."></textarea></label>
       <input name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
-      <label class="check small"><input type="checkbox" name="consent" aria-required="true"> I agree to be contacted by email or phone about my request. (Required.)</label>
-      <label class="check small"><input type="checkbox" name="smsConsent"> Optional: you may also text me about my request at the number above. Message and data rates may apply. Message frequency varies. Reply STOP to opt out. Consent is not a condition of service.</label>
-      <p class="small muted">Please don’t enter your Social Security number, date of birth or account numbers on this form.</p>
+      <label class="check small"><input type="checkbox" name="consent" aria-required="true"> I agree to be contacted by email about my request. (Required.)</label>
+      <p class="small muted">Please do not enter your Social Security number, date of birth, or account numbers on this form.</p>
       <div id="msg" class="small" role="alert" aria-live="assertive"></div>
-      <button class="btn primary" style="height:42px">Request my free consultation</button>
+      <button class="btn primary" style="height:42px">Send my question</button>
       <div id="intake-rights" class="small muted stack" style="gap:6px">
         <p>You have the right to dispute inaccurate information in your credit report with the credit bureaus directly, for free, and to get free credit reports at <a href="https://www.annualcreditreport.com/" target="_blank" rel="noopener">AnnualCreditReport.com</a>. No one can legally remove accurate, current and verifiable information, and we do not promise any particular result or score change.</p>
-        <p>Submitting this form doesn’t sign you up for anything. If you decide to work with us, you’ll first receive the written “Consumer Credit File Rights” statement and a written contract, you may cancel within 3 business days, and we never charge for a service before it has been fully performed.</p>
+        <p>Submitting this form does not sign you up for anything. If you decide to work with us, you will first receive the written Consumer Credit File Rights statement and a written contract, you may cancel within 3 business days, and we do not charge before a documented result.</p>
       </div>
     </div></form>
   </div>
   </main>
-  <footer class="small muted" style="text-align:center;padding:16px 16px 32px"><a href="/pricing">Pricing</a> · <a href="/terms">Terms of Service</a> · <a href="/refund-policy">Refund &amp; Cancellation Policy</a> · <a href="/privacy">Privacy Policy</a> · <a href="/checkout">Enroll</a></footer>
+  <footer class="small muted" style="text-align:center;padding:16px 16px 32px"><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a></footer>
   <script src="js/ui.js"></script>
   <script src="js/helper.js"></script>
   <script>
@@ -71,14 +69,14 @@
       f.addEventListener('submit', function (e) {
         e.preventDefault();
         var msg0 = document.getElementById('msg');
-        var bad = !f.elements.firstName.value.trim() ? 'Enter your first name' : !f.elements.lastName.value.trim() ? 'Enter your last name' : !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(f.elements.email.value.trim()) ? 'Enter a valid email' : (f.elements.state.value && !/^[A-Za-z]{2}$/.test(f.elements.state.value)) ? 'Use the 2-letter state abbreviation' : !f.elements.consent.checked ? 'Please agree to be contacted' : (f.elements.smsConsent.checked && !f.elements.phone.value.trim()) ? 'Add a phone number to receive texts' : '';
+        var bad = !f.elements.firstName.value.trim() ? 'Enter your first name' : !f.elements.lastName.value.trim() ? 'Enter your last name' : !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(f.elements.email.value.trim()) ? 'Enter a valid email' : (f.elements.state.value && !/^[A-Za-z]{2}$/.test(f.elements.state.value)) ? 'Use the 2-letter state abbreviation' : !f.elements.consent.checked ? 'Please agree to be contacted by email' : '';
         if (bad) { msg0.style.color = 'var(--high)'; msg0.textContent = bad; return; }
         var d = UI.formData(f); d.kind = f.elements.kind.value; d.ref = new URLSearchParams(location.search).get('ref') || '';
         var msg = document.getElementById('msg');
         fetch('/api/intake', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) })
           .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error); return j; }); })
-          .then(function () { f.innerHTML = '<div class="card-b"><h2>Thank you!</h2><p class="muted">We received your request and will contact you within one business day.</p></div>'; })
-          .catch(function (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message === 'Failed to fetch' || !err.message ? 'Preview only — this form submits when running on the Ledger server.' : err.message; });
+          .then(function () { f.innerHTML = '<div class="card-b"><h2>Thank you</h2><p class="muted">We received your question and will reply by email.</p></div>'; })
+          .catch(function (err) { msg.style.color = 'var(--high)'; msg.textContent = err.message === 'Failed to fetch' || !err.message ? 'Preview only. This form submits when running on the Ledger server.' : err.message; });
       });
     })();
   </script>

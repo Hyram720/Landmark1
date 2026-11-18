@@ -1,42 +1,18 @@
-// Marketing capture. Kit form 10172923 owns the list and the double opt-in.
-// These routes do not store a subscriber table. Confirm and unsubscribe tokens
-// are signed so a CAN-SPAM unsubscribe link can be checked without a local list.
-// Our mailer does not send a second confirmation.
-import crypto from 'node:crypto';
+// Marketing capture. Kit form 10172923 owns the list, the double opt-in, and the unsubscribe link.
+// This app does not put its own unsubscribe link in email and does not claim a local opt-out.
 import { rateLimiter } from './auth.js';
-import { postKitForm, noteKitEvent } from './kit-hook.js';
+import { postKitForm } from './kit-hook.js';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-const OK = { ok: true, message: 'Check your email to confirm. Kit sends that message when the list is connected.' };
+const OK = { ok: true, message: 'Check your email to confirm. Kit sends that message when the list is connected. Use the unsubscribe link in that email.' };
+const KIT_ONLY = 'Marketing email is sent by Kit. Use the unsubscribe link in that email. This app does not keep a suppression list yet.';
 
 function yes(v) {
   return v === true || v === 1 || v === '1' || v === 'true' || v === 'on' || v === 'yes';
 }
-function sign(secret, payload) {
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
-  return `${body}.${sig}`;
-}
-function open(secret, raw) {
-  const [body, sig] = String(raw || '').split('.');
-  if (!body || !sig) return null;
-  const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  try { return JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); } catch { return null; }
-}
 
-export function mountNewsletter(app, { D, db }) {
+export function mountNewsletter(app, { db }) {
   const limit = rateLimiter(20, 60 * 60 * 1000);
-
-  function tokensFor(email) {
-    const exp = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    return {
-      confirm: sign(D().secret, { e: email, p: 'confirm', exp }),
-      unsubscribe: sign(D().secret, { e: email, p: 'unsub', exp })
-    };
-  }
 
   app.post('/api/newsletter/subscribe', async (req, res) => {
     if (!limit(req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
@@ -46,9 +22,8 @@ export function mountNewsletter(app, { D, db }) {
     const firstName = String(b.firstName || '').trim().slice(0, 80);
     if (!EMAIL.test(email)) return res.status(400).json({ error: 'A valid email is required.' });
     if (!yes(b.consent)) return res.status(400).json({ error: 'Marketing consent is required. It is separate from any account terms.' });
-    const tokens = tokensFor(email);
     try {
-      await postKitForm({ email, firstName, source: String(b.source || 'newsletter').slice(0, 80), local: tokens });
+      await postKitForm({ email, firstName, source: String(b.source || 'newsletter').slice(0, 80) });
     } catch (e) {
       console.error('[kit] newsletter:', e.message);
     }
@@ -57,34 +32,15 @@ export function mountNewsletter(app, { D, db }) {
     res.json(OK);
   });
 
-  function take(raw, purpose) {
-    const data = open(D().secret, raw);
-    if (!data || data.p !== purpose || !(data.exp > Date.now()) || !data.e) return null;
-    return data;
-  }
-
   app.post('/api/newsletter/confirm', (req, res) => {
-    const data = take((req.body || {}).token, 'confirm');
-    if (!data) return res.status(400).json({ error: 'This confirmation link is invalid or expired.' });
-    noteKitEvent('confirm', data.e);
-    db.audit({ actor: 'public', action: 'newsletter.confirm', detail: 'kit double opt-in stub; no mail sent' });
-    db.persist();
-    res.json({ ok: true, via: 'kit', message: 'Confirmation is Kit’s double opt-in. No second email was sent.' });
+    res.status(501).json({ error: 'Confirmation is Kit\'s double opt-in. This app does not record a second confirmation.' });
   });
 
-  function unsubscribe(req, res) {
-    const raw = (req.body && req.body.token) || req.query.token;
-    const data = take(raw, 'unsub');
-    if (!data) {
-      if (req.method === 'GET') return res.status(400).type('text/plain').send('This unsubscribe link is invalid or expired.');
-      return res.status(400).json({ error: 'This unsubscribe link is invalid or expired.' });
-    }
-    noteKitEvent('unsubscribe', data.e);
-    db.audit({ actor: 'public', action: 'newsletter.unsubscribe', detail: 'token' });
-    db.persist();
-    if (req.method === 'GET') return res.type('text/plain').send('You are unsubscribed from Credit Ledger marketing email.');
-    res.json({ ok: true, unsubscribed: true });
-  }
-  app.post('/api/newsletter/unsubscribe', unsubscribe);
-  app.get('/api/newsletter/unsubscribe', unsubscribe);
+  app.post('/api/newsletter/unsubscribe', (req, res) => {
+    res.status(501).json({ error: KIT_ONLY });
+  });
+
+  app.get('/api/newsletter/unsubscribe', (req, res) => {
+    res.status(405).type('text/plain').send(KIT_ONLY);
+  });
 }

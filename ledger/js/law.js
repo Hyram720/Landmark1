@@ -41,7 +41,7 @@
   }
   const isHoliday = d => federalHolidays(d.getFullYear()).has(iso(d));
 
-  /** CROA business day: any calendar day except Sunday or a legal public holiday (15 U.S.C. § 1679a). */
+  /** Self-signup uses ledger/server/croa-window.js (weekdays, America/New_York). This older helper still counts Saturday and is not the self-signup rule. § 1679a does not define business day. */
   const isCroaBusinessDay = d => d.getDay() !== 0 && !isHoliday(d);
   /** General business day (Mon–Fri, excluding federal holidays) used for FCRA business-day periods. */
   const isBusinessDay = d => d.getDay() !== 0 && d.getDay() !== 6 && !isHoliday(d);

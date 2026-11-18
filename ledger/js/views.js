@@ -188,7 +188,7 @@
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
       `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}${c.status === 'lead' ? `<button class="btn" data-act="analysis" data-id="${c.id}">${icon('print')} Credit analysis</button>` : `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button>`}${c.kind === 'personal' ? `<button class="btn" data-act="biz-enable" data-id="${c.id}">+ Business credit</button>` : ''}<button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
-      (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>Cancellation period open until midnight ${date(cs.deadline)}</b>No services may be performed and no fees collected until it ends (15 U.S.C. §§ 1679d(a)(2), 1679e).</div>` : '') +
+      (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>On hold until ${(c.onboarding || {}).cancellationWindowEndsAtTs ? '11:59:59 PM Eastern Time on ' + date(cs.deadline) : 'midnight ' + date(cs.deadline)}</b>No services may be performed and nothing is billed until it ends.</div>` : '') +
       `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/clients/${c.id}/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'audit' && nFind ? ` <span class="badge b-high plain">${nFind}</span>` : ''}</a>`).join('')}</div>` + body;
   }
 
@@ -286,7 +286,7 @@
         ${UI.field('Disclosure acknowledged', 'disclosureSignedAt', o.disclosureSignedAt, { type: 'date', help: 'Must be given as a separate document before the contract' })}
         ${UI.field('Contract signed', 'contractSignedAt', o.contractSignedAt, { type: 'date', help: cs.deadline ? 'Cancellation deadline: midnight ' + date(cs.deadline) : '' })}
         ${UI.field('Authorization to prepare disputes', 'authorizationAt', o.authorizationAt, { type: 'date' })}
-        ${UI.field('Cancelled on', 'cancelledAt', o.cancelledAt, { type: 'date', help: 'If cancelled, refund anything paid' })}
+        ${UI.field('Cancelled on', 'cancelledAt', o.cancelledAt, { type: 'date', help: 'If cancelled, confirm no invoice was issued' })}
         ${UI.field('Photo ID received', 'idReceived', o.idReceived, { type: 'date' })}
         ${UI.field('Proof of address received', 'addressProofReceived', o.addressProofReceived, { type: 'date' })}
       </div><div class="row" style="margin-top:14px"><button class="btn primary">Save record</button>${cs.retainUntil ? `<span class="small muted">Retain signed disclosure until ${date(cs.retainUntil)} (§ 1679c(c))</span>` : ''}</div></form>`)}

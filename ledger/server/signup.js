@@ -17,6 +17,8 @@ export const SIGNUP_OK = {
   message: 'Check your email for the next step. If this address can be used, a message is on its way.'
 };
 export const SIGNUP_DISABLED = 'Self-signup is disabled.';
+export const MARKETING_CONSENT_TEXT = 'Email me occasional credit tips and Credit Ledger news, which may include offers. Optional.';
+const ACCOUNT_TERMS_VERSION = 'placeholder-client-terms-2026-11-18';
 
 function cleanName(v) {
   return String(v || '').trim().replace(/\s+/g, ' ').slice(0, 60);
@@ -71,6 +73,7 @@ export function mountSignup(app, deps) {
     const email = String(b.email || '').trim().toLowerCase().slice(0, 120);
     if (!first || !last || !EMAIL.test(email)) return res.status(400).json({ error: 'First name, last name, and a valid email are required.' });
     if (!yes(b.acceptAccountTerms)) return res.status(400).json({ error: 'Accept the account terms to create a portal account.' });
+    if (String(b.state || '').trim().toUpperCase() !== 'NJ' || !yes(b.njResident)) return res.status(400).json({ error: 'Credit Ledger serves New Jersey residents. Confirm that you live in New Jersey.' });
     const mode = method();
     let passwordHash;
     if (mode === 'password') {
@@ -96,15 +99,22 @@ export function mountSignup(app, deps) {
       kind: 'personal',
       email,
       phone: '',
-      address: '', city: '', state: '', zip: '', dob: '', ssnLast4: '',
+      address: '', city: '',       state: 'NJ', zip: '', dob: '', ssnLast4: '',
       status: 'pending',
       signupSource: 'self',
       addedBy: 'Self-signup',
       createdAt: now,
       notes: 'Self-signup. No service work until the contract is signed and the cancellation window ends.',
       onboarding: {},
+      njResidentAt: now,
       marketingConsent: yes(b.marketingConsent),
-      marketingConsentAt: yes(b.marketingConsent) ? now : null
+      marketingConsentAt: yes(b.marketingConsent) ? now : null,
+      marketingConsentText: yes(b.marketingConsent) ? MARKETING_CONSENT_TEXT : '',
+      marketingConsentSha256: yes(b.marketingConsent) ? sha(MARKETING_CONSENT_TEXT) : '',
+      accountTermsVersion: ACCOUNT_TERMS_VERSION,
+      accountTermsSha256: sha(ACCOUNT_TERMS_VERSION),
+      signupIp: req.ip,
+      signupUserAgent: String(req.get('user-agent') || '').slice(0, 300)
     };
     const user = {
       id: uid(),
