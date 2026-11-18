@@ -7,6 +7,7 @@ import { hashPassword, passwordProblem, rateLimiter } from './auth.js';
 import { sendMail, mailMode } from './mailer.js';
 import { clientAuthMethod } from './auth-method.js';
 import { postKitForm } from './kit-hook.js';
+import { mailingAddress, enrollmentStatus } from './croa-docs.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -74,6 +75,13 @@ export function mountSignup(app, deps) {
     if (!first || !last || !EMAIL.test(email)) return res.status(400).json({ error: 'First name, last name, and a valid email are required.' });
     if (!yes(b.acceptAccountTerms)) return res.status(400).json({ error: 'Accept the account terms to create a portal account.' });
     if (String(b.state || '').trim().toUpperCase() !== 'NJ' || !yes(b.njResident)) return res.status(400).json({ error: 'Credit Ledger serves New Jersey residents. Confirm that you live in New Jersey.' });
+    const street = String(b.address || '').trim().slice(0, 120);
+    const city = String(b.city || '').trim().slice(0, 60);
+    const zip = String(b.zip || '').trim().slice(0, 10);
+    if (street || city || zip) {
+      const draft = { address: street, city, state: 'NJ', zip };
+      if (!mailingAddress(draft)) return res.status(400).json({ error: enrollmentStatus(draft, {}).message });
+    }
     const mode = method();
     let passwordHash;
     if (mode === 'password') {
@@ -99,7 +107,7 @@ export function mountSignup(app, deps) {
       kind: 'personal',
       email,
       phone: '',
-      address: '', city: '',       state: 'NJ', zip: '', dob: '', ssnLast4: '',
+      address: street, city, state: 'NJ', zip, dob: '', ssnLast4: '',
       status: 'pending',
       signupSource: 'self',
       addedBy: 'Self-signup',

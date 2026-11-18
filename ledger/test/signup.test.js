@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/app.js';
 import { setTransport } from '../server/mailer.js';
-import { verifyPassword } from '../server/auth.js';
+import { verifyPassword, hashPassword } from '../server/auth.js';
 import { SIGNUP_OK } from '../server/signup.js';
 import { CAN_SPAM_POSTAL_ADDRESS } from '../server/email-footer.js';
 import { kitCalls, resetKitCalls, setKitFetch, postKitForm, KIT_FORM_ID, KIT_FORM_PATH } from '../server/kit-hook.js';
@@ -198,7 +198,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
 
     const early = await pat('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Pat Example', agree: true });
     assert.strictEqual(early.status, 503);
-    assert.match(early.body.error, /not open yet/i);
+    assert.match(early.body.error, /mailing address is needed/i);
     const viewed = await pat('POST', '/api/portal/disclosure-view');
     assert.strictEqual(viewed.status, 200);
     assert.match(viewed.body.disclosureViewedAt, /T/);
@@ -207,7 +207,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual(patOn.disclosureAcknowledgedAt, undefined);
     const blockedSign = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
     assert.strictEqual(blockedSign.status, 503);
-    assert.match(blockedSign.body.error, /not open yet/i);
+    assert.match(blockedSign.body.error, /mailing address is needed/i);
     const me = await pat('GET', '/api/portal/me');
     assert.strictEqual(me.body.documents.disclosure, '');
     assert.strictEqual(me.body.documents.contract, '');
@@ -496,7 +496,7 @@ test('contract package PDF bolds the cancellation sentence and repeats the notic
 });
 
 test('per-client blanks can be signed, owner blanks still block, and mail failures stay private', async () => {
-  const { personalizeCroaDocs, enrollmentBlocksSigning, croaDocs, documentBlocksSigning } = await import('../server/croa-docs.js');
+  const { personalizeCroaDocs, enrollmentBlocksSigning, croaDocs, documentBlocksSigning, enrollmentStatus, mailingAddress } = await import('../server/croa-docs.js');
   const client = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', pricePerResult: 40, scheduleA: [{ creditor: 'Sample Bank', last4: '4242', bureau: 'Equifax' }] };
   const onlyClient = {
     disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nI received this statement before any contract.\n',
@@ -529,6 +529,14 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
   const live = personalizeCroaDocs(croaDocs(), client);
   assert.strictEqual(enrollmentBlocksSigning(live), true);
   assert.match(live.contract, /\[LEGAL NAME/);
+  assert.strictEqual(mailingAddress({ address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07001' }), '1 Main St, Newark, NJ 07001');
+  assert.strictEqual(mailingAddress({ address: '1 Main St', city: 'Newark', state: 'NJ', zip: '08999' }), '1 Main St, Newark, NJ 08999');
+  assert.strictEqual(mailingAddress({ address: '1 Main St', city: 'Newark', state: 'NJ', zip: '06999' }), '');
+  assert.strictEqual(mailingAddress({ address: '1 Main St', city: 'Newark', state: 'PA', zip: '19103' }), '');
+  assert.strictEqual(enrollmentStatus({ state: 'NJ' }, { contract: 'x' }).message, 'Your mailing address is needed');
+  assert.strictEqual(enrollmentStatus({ address: '1 Broad St', city: 'Philadelphia', state: 'PA', zip: '19103' }, { contract: 'x' }).message, 'Credit Ledger serves New Jersey residents. Enter a New Jersey address.');
+  assert.strictEqual(enrollmentStatus({ address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' }, { contract: 'x' }).message, 'Your Credit Ledger specialist still needs to add your items and price');
+  assert.strictEqual(enrollmentStatus(client, { contract: '[LEGAL NAME, Fred to decide]' }).message, 'Enrollment is not open yet');
   assert.strictEqual(documentBlocksSigning('Terms. [PRICE PER RESULT: Fred to decide].'), true);
   assert.strictEqual(documentBlocksSigning('PLACEHOLDER still here'), true);
   assert.strictEqual(documentBlocksSigning('PENDING COMPLIANCE REVIEW'), true);
@@ -577,6 +585,7 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
     assert.strictEqual((await pat('POST', '/api/portal/disclosure-view')).status, 200);
     const disclosure = await pat('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Pat Example', agree: true });
     assert.strictEqual(disclosure.status, 200);
+    assert.strictEqual((await pat('POST', '/api/portal/contract-view')).status, 200);
     const contract = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
     assert.strictEqual(contract.status, 200);
     const saved = built.db.data.workspace.signatures.filter(s => s.doc === 'disclosure' || s.doc === 'contract');
@@ -737,7 +746,7 @@ test('Eastern document times, staff enrollment terms, address, and the signature
 
   const onlyClient = {
     disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nAcknowledgment.\n',
-    contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
+    contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nClient mailing address: [CLIENT ADDRESS]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
     cancellation: '**Notice of Cancellation**\n\n[date]\n\n[purchaser\'s signature]\n',
     esign: 'Consent to Electronic Records\n\nOpen [LINK TO SAMPLE PDF]. Code [______]\n\n[ ] I agree.\n'
   };
@@ -752,28 +761,57 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     built.db.data.users.find(u => u.email === 'pat-terms@signup.test').emailVerifiedAt = new Date().toISOString();
     assert.strictEqual((await pat('POST', '/api/login', { email: 'pat-terms@signup.test', password: 'pat password 1' })).status, 200);
     const id = built.db.data.workspace.clients.find(c => c.email === 'pat-terms@signup.test').id;
+    built.db.data.users.push({ id: 'staff-terms', name: 'Staff Person', email: 'staff-terms@signup.test', role: 'staff', password: hashPassword('staff password 1'), sessionEpoch: 1, createdAt: new Date().toISOString(), emailVerifiedAt: new Date().toISOString() });
+    const staff = makeClient();
+    assert.strictEqual((await staff('POST', '/api/login', { email: 'staff-terms@signup.test', password: 'staff password 1' })).status, 200);
     const terms = { pricePerResult: 25, scheduleA: [{ item: 'Late fee', creditor: 'North Bank', bureau: 'Equifax', last4: '4242' }, { item: 'Late fee', furnisher: 'North Bank', bureau: 'Experian' }] };
+    assert.match((await pat('POST', '/api/signup', { firstName: 'Pa', lastName: 'Zip', email: 'pa-zip@signup.test', password: 'pat password 1', acceptAccountTerms: true, state: 'NJ', njResident: true, address: '1 Broad St', city: 'Philadelphia', zip: '19103' })).body.error, /New Jersey address/);
     assert.strictEqual((await pat('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 403);
+    assert.strictEqual((await staff('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 403);
     assert.strictEqual((await owner('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 200);
+    const staffWs = await staff('GET', '/api/workspace');
+    const staffCopy = JSON.parse(JSON.stringify(staffWs.body.data));
+    staffCopy.clients.find(c => c.id === id).pricePerResult = 99;
+    assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: staffWs.body.version, data: staffCopy })).status, 403);
     assert.ok(built.db.data.audit.some(a => a.action === 'client.enrollment_terms'));
     assert.strictEqual((await owner('POST', '/api/assistant', { clientId: id, history: [{ role: 'user', content: 'What should we do next?' }] })).status, 409);
+    const missingAddress = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(missingAddress.status, 503);
+    assert.match(missingAddress.body.error, /mailing address is needed/i);
+    assert.match((await pat('POST', '/api/portal/address', { address: '1 Broad St', city: 'Philadelphia', state: 'PA', zip: '19103' })).body.error, /New Jersey/);
+    assert.match((await pat('POST', '/api/portal/address', { address: '1 Main St', city: 'Newark', state: 'NJ', zip: '10001' })).body.error, /New Jersey/);
+    assert.strictEqual((await pat('POST', '/api/portal/address', { address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' })).status, 200);
+    const logged = built.db.data.audit.find(a => a.action === 'client.enrollment_terms' && String(a.detail).startsWith('{'));
+    const detail = JSON.parse(logged.detail);
+    assert.strictEqual(detail.user, 'owner-terms@signup.test');
+    assert.match(detail.at, /T/);
+    assert.strictEqual(detail.old.pricePerResult, null);
+    assert.strictEqual(detail.new.pricePerResult, 25);
     const sample = await pat('GET', '/api/portal/esign/sample');
     const code = sample.body.match(/Your code is ([A-F0-9]{6})/)[1];
     assert.strictEqual((await pat('POST', '/api/portal/esign/consent', { agree: true, code })).status, 200);
     assert.strictEqual((await pat('POST', '/api/portal/disclosure-view')).status, 200);
     assert.strictEqual((await pat('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Pat Example', agree: true })).status, 200);
-    const missingAddress = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
-    assert.strictEqual(missingAddress.status, 400);
-    assert.match(missingAddress.body.error, /street, city, state, and ZIP/i);
-    const row = built.db.data.workspace.clients.find(c => c.id === id);
-    row.address = '1 Main St';
-    row.city = 'Newark';
-    row.zip = '07102';
     const shown = await pat('GET', '/api/portal/me');
     assert.match(shown.body.documents.contract, /Late fee/);
+    assert.match(shown.body.documents.contract, /1 Main St, Newark, NJ 07102/);
     assert.match(shown.body.documents.contract, /which is \$50/);
+    const viewedOnce = await pat('POST', '/api/portal/contract-view');
+    assert.strictEqual(viewedOnce.status, 200);
+    const changed = { pricePerResult: 30, scheduleA: terms.scheduleA };
+    assert.strictEqual((await owner('PUT', '/api/clients/' + id + '/enrollment-terms', changed)).status, 200);
+    const relog = built.db.data.audit.find(a => a.action === 'client.enrollment_terms' && String(a.detail).startsWith('{'));
+    const againDetail = JSON.parse(relog.detail);
+    assert.strictEqual(againDetail.old.pricePerResult, 25);
+    assert.strictEqual(againDetail.new.pricePerResult, 30);
+    const again = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(again.status, 400);
+    assert.match(again.body.error, /read the agreement again/i);
+    const viewedTwice = await pat('POST', '/api/portal/contract-view');
+    assert.strictEqual(viewedTwice.status, 200);
     const signed = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
     assert.strictEqual(signed.status, 200);
+    assert.strictEqual(signed.body.signature.documentSha256, viewedTwice.body.contractSha256);
     assert.match(signed.body.signature.at, /^\d{4}-\d{2}-\d{2}T/);
     const pdf = await pat('GET', '/api/portal/signed/' + signed.body.signature.pdfId);
     assert.match(pdf.body, /\d{1,2}:\d{2} [AP]M ET/);

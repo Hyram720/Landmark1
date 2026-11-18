@@ -18,7 +18,12 @@
           <label class="field"><span>Last name</span><input name="lastName" required maxlength="60" autocomplete="family-name"></label>
         </div>
         <label class="field"><span>Email</span><input name="email" type="email" required maxlength="120" autocomplete="email"></label>
-        <label class="field"><span>State</span><input name="state" maxlength="2" value="NJ" required autocomplete="address-level1"></label>
+        <label class="field"><span>Street</span><input name="address" maxlength="120" autocomplete="street-address"></label>
+        <div class="form-grid">
+          <label class="field"><span>City</span><input name="city" maxlength="60" autocomplete="address-level2"></label>
+          <label class="field"><span>State</span><input name="state" maxlength="2" value="NJ" required autocomplete="address-level1"></label>
+          <label class="field"><span>ZIP</span><input name="zip" maxlength="10" autocomplete="postal-code"></label>
+        </div>
         <label class="check small"><input type="checkbox" name="njResident"> I live in New Jersey. Required.</label>
         <label class="field" id="pw-field"><span>Password</span><input name="password" type="password" minlength="10" autocomplete="new-password"><span class="small muted">At least 10 characters.</span></label>
         <input name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
@@ -49,6 +54,11 @@
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email || '')) { msg.textContent = 'Enter a valid email'; return; }
         if (!d.acceptAccountTerms) { msg.textContent = 'Accept the account terms to continue'; return; }
         if (String(d.state || '').toUpperCase() !== 'NJ' || !d.njResident) { msg.textContent = 'Credit Ledger serves New Jersey residents.'; return; }
+        if (d.address || d.city || d.zip) {
+          if (!d.address || !d.city || !/^\d{5}(-\d{4})?$/.test(d.zip || '')) { msg.textContent = 'Your mailing address is needed'; return; }
+          var zipNum = Number(String(d.zip).slice(0, 5));
+          if (zipNum < 7001 || zipNum > 8999) { msg.textContent = 'Credit Ledger serves New Jersey residents. Enter a New Jersey address.'; return; }
+        }
         fetch('/api/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) })
           .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Could not create the account'); return j; }); })
           .then(function (j) { form.innerHTML = '<div class="card-b"><h2>Check your email</h2><p class="muted">' + j.message + '</p></div>'; })

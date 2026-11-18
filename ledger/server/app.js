@@ -20,7 +20,7 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './signup-status.js';
-import { croaDocs, enrollmentBlocksSigning, mailingAddress, personalizeCroaDocs, sha256 } from './croa-docs.js';
+import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256 } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
 import { cancellationWindow, formatDeadlineEt, formatDocumentTimeEt, etYmd } from './croa-window.js';
@@ -362,10 +362,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const c of data.clients) {
       if (!c || c.signupSource !== 'self') continue;
       const old = priorClients.get(c.id);
-      if (!old || !contractIsSigned(old)) continue;
-      if (enrollmentSnapshot(old) !== enrollmentSnapshot(c)) {
-        return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
-      }
+      if (!old || enrollmentSnapshot(old) === enrollmentSnapshot(c)) continue;
+      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the price and Schedule A.' });
+      if (contractIsSigned(old)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
+      c.onboarding = Object.assign({}, old.onboarding, c.onboarding, { contractViewedAt: null, contractViewedSha256: null });
     }
     for (const c of data.clients) applySignupStatus(c);
     D().workspace = data;
@@ -393,7 +393,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     return { rows: out };
   }
-  app.put('/api/clients/:id/enrollment-terms', need('owner', 'staff'), (req, res) => {
+  app.put('/api/clients/:id/enrollment-terms', need('owner'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
     if (!c) return res.status(404).json({ error: 'Client not found' });
     if (c.signupSource !== 'self') return res.status(400).json({ error: 'Price and Schedule A are set here for self-signup clients.' });
@@ -402,12 +402,17 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ error: 'Enter a price per result greater than zero.' });
     const schedule = normalizeScheduleA((req.body || {}).scheduleA);
     if (schedule.error) return res.status(400).json({ error: schedule.error });
-    const before = enrollmentSnapshot(c);
+    const at = new Date().toISOString();
+    const oldValue = { pricePerResult: c.pricePerResult ?? null, scheduleA: c.scheduleA || [] };
     c.pricePerResult = Math.round(price * 100) / 100;
     c.scheduleA = schedule.rows;
-    const after = enrollmentSnapshot(c);
+    const newValue = { pricePerResult: c.pricePerResult, scheduleA: c.scheduleA };
+    if (c.onboarding && c.onboarding.contractViewedAt) {
+      c.onboarding.contractViewedAt = null;
+      c.onboarding.contractViewedSha256 = null;
+    }
     activity(`${req.user.name || req.user.email} set the price per result and Schedule A for ${c.name}`, c.id);
-    db.audit({ actor: req.user.email, action: 'client.enrollment_terms', detail: `${c.id} ${before === after ? 'unchanged' : 'updated'} price ${c.pricePerResult} items ${c.scheduleA.length}` });
+    db.audit({ actor: req.user.email, action: 'client.enrollment_terms', detail: JSON.stringify({ user: req.user.email, at, old: oldValue, new: newValue }) });
     commitWorkspace(req.user.email, 'client.enrollment_terms', c.id);
     res.json({ ok: true, pricePerResult: c.pricePerResult, scheduleA: c.scheduleA });
   });
@@ -484,6 +489,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function documentsForPortal(c) {
     const docs = documentsFor(c);
     if (c.signupSource !== 'self') return docs;
+    if (!mailingAddress(c)) return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
     const consented = !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt;
     if (consented) return docs;
     return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
@@ -516,8 +522,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const win = c.signupSource === 'self' ? selfWindow(c) : null;
     const disclosureSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'disclosure');
     const contractSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'contract');
+    const pack = documentsFor(c);
+    const block = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
     res.json({
-      client: { name: c.name, kind: c.kind, status: c.status },
+      client: { name: c.name, kind: c.kind, status: c.status, address: c.address || '', city: c.city || '', state: c.state || '', zip: c.zip || '' },
       company: { name: company().name, phone: c.status === 'active' ? company().phone : '', email: company().email },
       croa: { required: cs.required, steps: cs.steps.map(s => ({ label: s.label, done: s.done, date: s.date })), deadline: win ? win.deadlineDateEt : cs.deadline, inWindow: win ? win.open && !c.onboarding?.cancelledAt : cs.inWindow, cancelled: cs.cancelled,
         disclosureSigned: !!disclosureSig, disclosureViewed: !!(c.onboarding || {}).disclosureViewedAt,
@@ -525,7 +533,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         contractSigned: !!contractSig, selfSignup: c.signupSource === 'self', signupStatus: c.status,
         cancellationWindowEndsAt: win ? win.deadlineInstant.toISOString() : ((c.onboarding || {}).cancellationWindowEndsAt || cs.deadline || null),
         deadlineText: win ? formatDeadlineEt(win.deadlineInstant) : null,
-        enrollmentClosed: c.signupSource === 'self' && enrollmentBlocksSigning(documentsFor(c)),
+        enrollmentClosed: !!block.code && block.code !== 'review',
+        enrollmentMessage: block.message,
+        addressComplete: !!mailingAddress(c),
+        contractViewed: !!(c.onboarding || {}).contractViewedAt && (c.onboarding || {}).contractViewedSha256 === sha256(pack.contract || ''),
         esignConsent: !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt,
         contractPdfId: contractSig ? ((c.onboarding || {}).contractPdfId || null) : null },
       documents: documentsForPortal(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
@@ -548,6 +559,46 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ ok: true, disclosureViewedAt: c.onboarding.disclosureViewedAt });
   });
 
+  app.post('/api/portal/address', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    if (c.signupSource !== 'self') return res.status(400).json({ error: 'This address step is for self-signup accounts.' });
+    if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed.' });
+    const b = req.body || {};
+    const next = {
+      address: String(b.address || b.street || '').trim().slice(0, 120),
+      city: String(b.city || '').trim().slice(0, 60),
+      state: String(b.state || '').trim().toUpperCase().slice(0, 2),
+      zip: String(b.zip || '').trim().slice(0, 10)
+    };
+    const draft = Object.assign({}, c, next);
+    if (!mailingAddress(draft)) return res.status(400).json({ error: enrollmentStatus(draft, {}).message });
+    Object.assign(c, next);
+    if (c.onboarding && c.onboarding.contractViewedAt) {
+      c.onboarding.contractViewedAt = null;
+      c.onboarding.contractViewedSha256 = null;
+    }
+    activity(`${c.name} saved a New Jersey mailing address`, c.id);
+    commitWorkspace(req.user.email, 'portal.address', c.id);
+    res.json({ ok: true, address: mailingAddress(c) });
+  });
+
+  app.post('/api/portal/contract-view', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    const pack = documentsFor(c);
+    const status = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
+    if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
+    c.onboarding = c.onboarding || {};
+    c.onboarding.contractViewedAt = new Date().toISOString();
+    c.onboarding.contractViewedSha256 = sha256(pack.contract || '');
+    activity(`${c.name} viewed the credit services agreement`, c.id);
+    commitWorkspace(req.user.email, 'portal.contract_view', c.id);
+    res.json({ ok: true, contractViewedAt: c.onboarding.contractViewedAt, contractSha256: c.onboarding.contractViewedSha256 });
+  });
+
   app.get('/api/portal/esign/sample', need('client'), (req, res) => {
     if (!portalVerified(req, res)) return;
     const c = portalClient(req);
@@ -565,7 +616,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
     const pack = documentsFor(c);
-    if (c.signupSource === 'self' && enrollmentBlocksSigning(pack)) return res.status(503).json({ error: ENROLLMENT_CLOSED });
+    if (c.signupSource === 'self') {
+      const status = enrollmentStatus(c, pack);
+      if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
+    }
     const { agree, code } = req.body || {};
     if (agree !== true) return res.status(400).json({ error: 'Consent is required before any document is shown for signature.' });
     if (!c.onboarding?.esignDemoCodeSha256 || sha256(String(code || '').trim().toUpperCase()) !== c.onboarding.esignDemoCodeSha256) {
@@ -615,8 +669,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!agree || String(typedName || '').trim().toLowerCase() !== String(c.name).trim().toLowerCase()) return res.status(400).json({ error: `Type your full name exactly as "${c.name}" and check the box to sign.` });
     c.onboarding = c.onboarding || {};
     const pack = documentsFor(c);
-    if (c.signupSource === 'self' && enrollmentBlocksSigning(pack)) return res.status(503).json({ error: ENROLLMENT_CLOSED });
-    if (doc === 'contract' && c.signupSource === 'self' && !mailingAddress(c)) return res.status(400).json({ error: 'A street, city, state, and ZIP are required before the contract can be signed.' });
+    if (c.signupSource === 'self') {
+      const status = enrollmentStatus(c, pack);
+      if (status.code === 'address' || status.code === 'terms' || status.code === 'closed') return res.status(503).json({ error: status.message });
+      if (doc === 'contract' && status.code === 'review') return res.status(400).json({ error: status.message });
+      if (doc === 'contract' && c.onboarding.contractViewedSha256 !== sha256(pack.contract || '')) return res.status(400).json({ error: 'Please read the agreement again before you sign.' });
+    }
     if (c.signupSource === 'self' && !signupOn) return res.status(403).json({ error: 'Self-signup signing is turned off.' });
     if (c.signupSource === 'self' && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
     if (c.signupSource === 'self' && c.onboarding.esignWithdrawnAt) return res.status(400).json({ error: 'Electronic consent was withdrawn. Ask for paper copies. There is no fee.' });
@@ -649,7 +707,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         attachments: [{ filename: 'credit-ledger-agreement.pdf', content: built.pdf, contentType: 'application/pdf' }]
       }).catch(err => logMailFailure('contract copy', err));
     }
-    const sig = { id: uid(), clientId: c.id, doc, typedName, at, ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: pdfSha || sha256(pack[doc] || ''), pdfId, consent: doc === 'disclosure' ? 'Signed acknowledgment of the separate 1679c statement' : 'Contract signature' };
+    const renderedSha = sha256(pack[doc] || '');
+    const sig = { id: uid(), clientId: c.id, doc, typedName, at, ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: doc === 'contract' ? renderedSha : (pdfSha || renderedSha), pdfSha256: pdfSha, pdfId, consent: doc === 'disclosure' ? 'Signed acknowledgment of the separate 1679c statement' : 'Contract signature' };
     workspace().signatures = workspace().signatures || [];
     workspace().signatures.push(sig);
     if (doc === 'disclosure') {

@@ -28,10 +28,38 @@ export function mailingAddress(client) {
   const c = client || {};
   const street = String(c.address || '').trim();
   const city = String(c.city || '').trim();
-  const state = String(c.state || '').trim();
+  const state = String(c.state || '').trim().toUpperCase();
   const zip = String(c.zip || '').trim();
-  if (!street || !city || !/^[A-Za-z]{2}$/.test(state) || !/^\d{5}(-\d{4})?$/.test(zip)) return '';
-  return `${street}, ${city}, ${state.toUpperCase()} ${zip}`;
+  const zip5 = zip.slice(0, 5);
+  if (!street || !city || !/^[A-Z]{2}$/.test(state) || !/^\d{5}(-\d{4})?$/.test(zip)) return '';
+  if (state !== 'NJ') return '';
+  const n = Number(zip5);
+  if (n < 7001 || n > 8999) return '';
+  return `${street}, ${city}, NJ ${zip}`;
+}
+
+export function enrollmentStatus(client, docs) {
+  const c = client || {};
+  const street = String(c.address || '').trim();
+  const city = String(c.city || '').trim();
+  const state = String(c.state || '').trim().toUpperCase();
+  const zip = String(c.zip || '').trim();
+  if (!mailingAddress(c)) {
+    if ((street || city || zip || state) && (state !== 'NJ' || (zip && (Number(zip.slice(0, 5)) < 7001 || Number(zip.slice(0, 5)) > 8999)))) {
+      return { code: 'address', message: 'Credit Ledger serves New Jersey residents. Enter a New Jersey address.' };
+    }
+    return { code: 'address', message: 'Your mailing address is needed' };
+  }
+  if (scheduleAEntries(c).length < 1 || pricePerResult(c) == null) {
+    return { code: 'terms', message: 'Your Credit Ledger specialist still needs to add your items and price' };
+  }
+  if (enrollmentBlocksSigning(docs)) return { code: 'closed', message: 'Enrollment is not open yet' };
+  const viewed = (c.onboarding || {}).contractViewedSha256;
+  const current = sha256((docs && docs.contract) || '');
+  if ((c.onboarding || {}).contractViewedAt && viewed !== current) {
+    return { code: 'review', message: 'Please read the agreement again before you sign.' };
+  }
+  return { code: '', message: '' };
 }
 
 function money(n) {
