@@ -46,7 +46,8 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_OPENAI_MODEL` | Model for the above (default `gpt-5-mini`) |
 | `LEDGER_AI_LETTERS_PER_HOUR` | Abuse ceiling per staff user for AI letter polish (default 300); templates are always unlimited |
 | `LEDGER_MAIL_MODE` | `off` (default), `console` (dev: prints emails to the log), `resend` or `smtp`. Needed for password-reset emails, magic links, sign-in codes, client update emails, and self-signup verification. **Default `off` sends nothing** (AWS SES is not wired; do not add SES keys). Kit form posts also stay stubbed while this is `off`. |
-| `LEDGER_SELF_SIGNUP_ENABLED` | `off` by default. Set to `true` only to open `/signup` and self-signup account creation. Contract signing stays blocked while the CROA files still contain `PLACEHOLDER`. Not set in deploy config by this change. |
+| `LEDGER_SELF_SIGNUP_ENABLED` | `off` by default. Set to `true` only to open `/signup`. In production this stays off unless `PUBLIC_BASE_URL` is an https origin. Not set in deploy config by this change. |
+| `PUBLIC_BASE_URL` | Public https origin for email links (no trailing path required). Read from the environment. Outside production, unset falls back to `http://127.0.0.1:4100`. In production there is no localhost default: unset or http keeps self-signup disabled. Not added to Railway; set the domain when it is ready. |
 | `LEDGER_SMTP_URL` | SMTP connection URL when `LEDGER_MAIL_MODE=smtp` (needs the optional `nodemailer` package) |
 | `LEDGER_BACKUPS` / `LEDGER_BACKUP_DAYS` | Daily encrypted DB snapshot in `<data dir>/backups` (on by default; `off` disables); days kept (default 14) |
 | `LEDGER_TRUST_PROXY_HOPS` | Proxy hops in front of the app (default 1 for Railway); used for client IPs in rate limits |

@@ -7,7 +7,6 @@ import { hashPassword, passwordProblem, rateLimiter } from './auth.js';
 import { sendMail, mailMode } from './mailer.js';
 import { clientAuthMethod } from './auth-method.js';
 import { postKitForm } from './kit-hook.js';
-import { publicBaseUrl } from './public-url.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -17,6 +16,7 @@ export const SIGNUP_OK = {
   ok: true,
   message: 'Check your email for the next step. If this address can be used, a message is on its way.'
 };
+export const SIGNUP_DISABLED = 'Self-signup is disabled.';
 
 function cleanName(v) {
   return String(v || '').trim().replace(/\s+/g, ' ').slice(0, 60);
@@ -35,7 +35,7 @@ export function mountSignup(app, deps) {
   const { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod, signupRateLimit, enabled, publicBaseUrl: baseOverride } = deps;
   const method = () => clientAuthMethod(typeof authMethod === 'function' ? authMethod() : authMethod);
   const limit = rateLimiter(signupRateLimit || 8, 15 * 60 * 1000);
-  const origin = () => publicBaseUrl(baseOverride);
+  const origin = () => String(baseOverride || '').replace(/\/+$/, '');
 
   function issueVerify(user) {
     const raw = crypto.randomBytes(32).toString('base64url');
@@ -58,7 +58,7 @@ export function mountSignup(app, deps) {
   }
 
   app.post('/api/signup', async (req, res) => {
-    if (!enabled) return res.status(404).json({ error: 'Not found' });
+    if (!enabled) return res.status(404).json({ error: SIGNUP_DISABLED });
     if (!limit(req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
     const b = req.body || {};
     if (String(b.website || b.company_website || '').trim()) {

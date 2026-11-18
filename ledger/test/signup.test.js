@@ -13,7 +13,7 @@ import { kitCalls, resetKitCalls, setKitFetch, postKitForm, KIT_FORM_ID, KIT_FOR
 import { Law } from '../server/shared.js';
 import { CLIENT_AUTH_METHOD } from '../server/auth-method.js';
 import { applySignupStatus } from '../server/signup-status.js';
-import { PUBLIC_BASE_URL } from '../server/public-url.js';
+import { DEV_PUBLIC_BASE_URL } from '../server/public-url.js';
 
 delete process.env.KIT_API_KEY;
 delete process.env.LEDGER_MAIL_MODE;
@@ -96,7 +96,7 @@ function listen(app) {
 
 test('signup, CROA gate, invite still works, newsletter, magic link, rate limit', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-signup-'));
-  const built = createApp({ dataDir: dir, encryptionKey: 'signup-test-key-not-a-secret', selfSignupEnabled: true });
+  const built = createApp({ dataDir: dir, encryptionKey: 'signup-test-key-not-a-secret', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } });
   const { server, client } = listen(built.app);
   const owner = client();
   const pat = client();
@@ -164,7 +164,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     const mail = outbox.find(m => m.to === 'pat@signup.test');
     assert.ok(mail, 'verification handed to the mailer');
     assert.match(mail.text, new RegExp(CAN_SPAM_POSTAL_ADDRESS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(mail.text, new RegExp(PUBLIC_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/portal#verify='));
+    assert.match(mail.text, new RegExp(DEV_PUBLIC_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/portal#verify='));
     assert.doesNotMatch(mail.text, /evil\.test/);
     const token = mail.text.match(/verify=([\w-]+)/)[1];
     assert.ok(!JSON.stringify(built.db.data.authTokens).includes(token), 'verify token is stored hashed');
@@ -294,7 +294,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: after.body.version, data: after.body.data })).status, 200);
     assert.strictEqual((await owner('GET', '/api/workspace')).body.data.invoices.length, 0);
 
-    const rate = createApp({ dataDir: rateDir, encryptionKey: 'signup-rate-key-not-a-secret', signupRateLimit: 3, selfSignupEnabled: true });
+    const rate = createApp({ dataDir: rateDir, encryptionKey: 'signup-rate-key-not-a-secret', signupRateLimit: 3, selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } });
     const rateLive = listen(rate.app);
     rateServer = rateLive.server;
     const hit = rateLive.client();
@@ -303,7 +303,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     assert.strictEqual(last.status, 429);
     rate.shutdown();
 
-    const magic = createApp({ dataDir: magicDir, encryptionKey: 'signup-magic-key-not-a-secret', clientAuthMethod: 'magic_link', selfSignupEnabled: true });
+    const magic = createApp({ dataDir: magicDir, encryptionKey: 'signup-magic-key-not-a-secret', clientAuthMethod: 'magic_link', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } });
     const magicLive = listen(magic.app);
     magicServer = magicLive.server;
     const magicBox = [];
@@ -360,9 +360,73 @@ test('self-signup routes stay closed when the flag is off', async () => {
     assert.strictEqual((await anon('GET', '/signup/terms')).status, 404);
     const closed = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true });
     assert.strictEqual(closed.status, 404);
+    assert.match(closed.body.error, /disabled/i);
+    assert.match((await anon('GET', '/signup')).body, /disabled/i);
   } finally {
     server.close();
     built.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('production PUBLIC_BASE_URL: unset and http disable signup; https is used in the verify link', async () => {
+  const { readPublicBaseUrl, resolveSignupAccess } = await import('../server/public-url.js');
+  assert.strictEqual(readPublicBaseUrl({ NODE_ENV: 'production' }), '');
+  assert.strictEqual(readPublicBaseUrl({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }), 'http://ledger.example');
+  assert.strictEqual(readPublicBaseUrl({ NODE_ENV: 'test' }), DEV_PUBLIC_BASE_URL);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'production' }, signupRequested: true }).enabled, false);
+  assert.match(resolveSignupAccess({ env: { NODE_ENV: 'production' }, signupRequested: true }).warning, /not set/);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).enabled, false);
+  assert.match(resolveSignupAccess({ env: { NODE_ENV: 'production', PUBLIC_BASE_URL: 'http://ledger.example' }, signupRequested: true }).warning, /https/);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://ledger.example' }, signupRequested: true }).enabled, true);
+  assert.strictEqual(resolveSignupAccess({ env: { NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://ledger.example' }, signupRequested: true }).warning, '');
+
+  async function boot(env, publicBaseUrl) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-pub-url-'));
+    const warnings = [];
+    const orig = console.warn;
+    console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+    let built;
+    try {
+      built = createApp({ dataDir: dir, encryptionKey: 'pub-url-key-not-a-secret-00', selfSignupEnabled: true, env, publicBaseUrl });
+    } finally {
+      console.warn = orig;
+    }
+    const live = listen(built.app);
+    return { dir, warnings, built, ...live };
+  }
+
+  const unset = await boot({ NODE_ENV: 'production', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
+  const http = await boot({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'http://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
+  const https = await boot({ NODE_ENV: 'production', PUBLIC_BASE_URL: 'https://ledger.example', LEDGER_SELF_SIGNUP_ENABLED: 'true' });
+  const outbox = [];
+  setTransport(async m => { outbox.push(m); });
+  try {
+    for (const app of [unset, http]) {
+      const anon = app.client();
+      const page = await anon('GET', '/signup');
+      const post = await anon('POST', '/api/signup', { firstName: 'A', lastName: 'B', email: 'a@signup.test', password: 'long password 1', acceptAccountTerms: true });
+      assert.strictEqual(page.status, 404);
+      assert.match(page.body, /disabled/i);
+      assert.strictEqual(post.status, 404);
+      assert.match(post.body.error, /disabled/i);
+    }
+    assert.ok(unset.warnings.some(w => /not set/i.test(w)));
+    assert.ok(http.warnings.some(w => /https/i.test(w)));
+    assert.deepStrictEqual(https.warnings, []);
+    const anon = https.client();
+    assert.strictEqual((await anon('GET', '/signup')).status, 200);
+    const created = await anon('POST', '/api/signup', { firstName: 'Ada', lastName: 'Https', email: 'ada@signup.test', password: 'ada password 1', acceptAccountTerms: true }, { host: 'evil.test' });
+    assert.strictEqual(created.status, 200);
+    const mail = outbox.find(m => m.to === 'ada@signup.test');
+    assert.match(mail.text, /https:\/\/ledger\.example\/portal#verify=/);
+    assert.doesNotMatch(mail.text, /127\.0\.0\.1|evil\.test/);
+  } finally {
+    setTransport(null);
+    for (const app of [unset, http, https]) {
+      app.server.close();
+      app.built.shutdown();
+      fs.rmSync(app.dir, { recursive: true, force: true });
+    }
   }
 });

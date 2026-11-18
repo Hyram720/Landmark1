@@ -21,8 +21,8 @@ import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, serviceWorkBlocked } from './signup-status.js';
 import { croaPlaceholderDocs, croaSetIsPlaceholder } from './croa-docs.js';
-import { selfSignupEnabled } from './signup.js';
-import { publicBaseUrl } from './public-url.js';
+import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
+import { resolveSignupAccess } from './public-url.js';
 import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter, verifyLobWebhook, letterEventName, isReturnedLetterEvent, LOB_WEBHOOK_PATH } from './mail.js';
@@ -70,10 +70,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
-export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride } = {}) {
+export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride, env: envOverride } = {}) {
+  const env = envOverride || process.env;
   const resolvedAuthMethod = clientAuthMethod(authMethodOverride);
-  const signupOn = selfSignupEnabled(process.env, selfSignupOverride);
-  const publicOrigin = publicBaseUrl(publicBaseOverride);
+  const signupAccess = resolveSignupAccess({ env, signupRequested: selfSignupEnabled(env, selfSignupOverride), publicBaseUrl: publicBaseOverride });
+  if (signupAccess.warning) console.warn(signupAccess.warning);
+  const signupOn = signupAccess.enabled;
+  const publicOrigin = signupAccess.baseUrl;
   const db = openDb({ dir: dataDir, encryptionKey });
   const filesDir = path.join(dataDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -1206,11 +1209,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
   app.get('/signup', (req, res) => {
-    if (!signupOn) return res.status(404).type('text/plain').send('Not found');
+    if (!signupOn) return res.status(404).type('text/plain').send(SIGNUP_DISABLED);
     return page('signup.html')(req, res);
   });
   app.get('/signup/terms', (req, res) => {
-    if (!signupOn) return res.status(404).type('text/plain').send('Not found');
+    if (!signupOn) return res.status(404).type('text/plain').send(SIGNUP_DISABLED);
     const text = fs.readFileSync(path.join(ledgerDir, 'legal', 'PLACEHOLDER-client-terms.md'), 'utf8');
     res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' }).send(text);
   });

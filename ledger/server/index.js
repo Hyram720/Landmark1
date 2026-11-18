@@ -15,7 +15,12 @@ if (production && !key) {
 }
 if (key && key.length < 24) console.warn('[config] LEDGER_ENCRYPTION_KEY is shorter than 24 characters. Use a long random value (e.g. 32+ random bytes, base64).');
 
-const { app, db, shutdown } = createApp({ dataDir, encryptionKey: key });
+const { app, db, shutdown } = createApp({
+  dataDir,
+  encryptionKey: key,
+  env: process.env,
+  publicBaseUrl: process.env.PUBLIC_BASE_URL
+});
 
 const server = app.listen(port, () => {
   console.log(`Ledger running on http://localhost:${port}`);
