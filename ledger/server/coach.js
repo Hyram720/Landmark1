@@ -33,7 +33,7 @@ export function coachText(st, audience) {
   return P.join('\n\n');
 }
 
-export function mountCoach(app, { need, workspace, db, commit, activity }) {
+export function mountCoach(app, { need, workspace, db, commit, activity, portalVerified }) {
   const limit = rateLimiter(120, 60 * 60 * 1000);
   const find = id => (workspace().clients || []).find(c => c.id === id && c.kind !== 'personal');
   const view = (c, audience) => {
@@ -88,8 +88,12 @@ export function mountCoach(app, { need, workspace, db, commit, activity }) {
 
   // ---------- client (own file only) ----------
   const own = req => find(req.user.clientId);
-  app.get('/api/portal/coach', need('client'), (req, res) => { const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' }); res.json(view(c, 'client')); });
+  app.get('/api/portal/coach', need('client'), (req, res) => {
+    if (portalVerified && !portalVerified(req, res)) return;
+    const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' }); res.json(view(c, 'client'));
+  });
   app.post('/api/portal/coach/step', need('client'), (req, res) => {
+    if (portalVerified && !portalVerified(req, res)) return;
     const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' });
     const key = String((req.body || {}).key || '');
     const step = Business.FAST_TRACK.find(s => s.key === key); if (!step) return res.status(400).json({ error: 'Unknown step' });
@@ -101,6 +105,7 @@ export function mountCoach(app, { need, workspace, db, commit, activity }) {
     res.json(Object.assign(view(c, 'client'), { message: 'Thanks! Your advisor will review this step and mark it complete.' }));
   });
   app.post('/api/portal/coach/chat', need('client'), (req, res) => {
+    if (portalVerified && !portalVerified(req, res)) return;
     if (!limit('c:' + req.user.id)) return res.status(429).json({ error: 'You’ve asked a lot of questions — your advisor can help.' });
     const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' });
     return ask(c, 'client', (req.body || {}).message, res, req.user.email);

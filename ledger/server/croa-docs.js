@@ -9,6 +9,15 @@ function read(name) {
   return fs.readFileSync(path.join(dir, name), 'utf8');
 }
 
+export function isPlaceholderDoc(text) {
+  return /PLACEHOLDER/.test(String(text || ''));
+}
+
+export function croaSetIsPlaceholder(docs) {
+  const set = docs || {};
+  return ['disclosure', 'contract', 'cancellation'].some(key => isPlaceholderDoc(set[key]));
+}
+
 let cache = null;
 export function croaPlaceholderDocs() {
   if (!cache) {

@@ -29,14 +29,13 @@ function open(secret, raw) {
 
 export function mountNewsletter(app, { D, db }) {
   const limit = rateLimiter(20, 60 * 60 * 1000);
-  const issued = [];
 
   function tokensFor(email) {
     const exp = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    const confirm = sign(D().secret, { e: email, p: 'confirm', exp });
-    const unsubscribe = sign(D().secret, { e: email, p: 'unsub', exp });
-    issued.push({ email, confirm, unsubscribe, at: new Date().toISOString() });
-    return { confirm, unsubscribe };
+    return {
+      confirm: sign(D().secret, { e: email, p: 'confirm', exp }),
+      unsubscribe: sign(D().secret, { e: email, p: 'unsub', exp })
+    };
   }
 
   app.post('/api/newsletter/subscribe', async (req, res) => {
@@ -49,15 +48,12 @@ export function mountNewsletter(app, { D, db }) {
     if (!yes(b.consent)) return res.status(400).json({ error: 'Marketing consent is required. It is separate from any account terms.' });
     const tokens = tokensFor(email);
     try {
-      await postKitForm({ email, firstName, source: String(b.source || 'newsletter').slice(0, 80) });
+      await postKitForm({ email, firstName, source: String(b.source || 'newsletter').slice(0, 80), local: tokens });
     } catch (e) {
       console.error('[kit] newsletter:', e.message);
     }
     db.audit({ actor: 'public', action: 'newsletter.subscribe', detail: 'kit form 10172923' });
     db.persist();
-    // Tokens stay on the server stub log for tests and for a later email footer.
-    // The HTTP body does not include them, and we do not send our own confirmation.
-    void tokens;
     res.json(OK);
   });
 
@@ -91,7 +87,4 @@ export function mountNewsletter(app, { D, db }) {
   }
   app.post('/api/newsletter/unsubscribe', unsubscribe);
   app.get('/api/newsletter/unsubscribe', unsubscribe);
-
-  // Test helper hangs off the app so tests can read tokens without a table.
-  app.locals.newsletterIssued = issued;
 }

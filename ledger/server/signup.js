@@ -7,6 +7,7 @@ import { hashPassword, passwordProblem, rateLimiter } from './auth.js';
 import { sendMail, mailMode } from './mailer.js';
 import { clientAuthMethod } from './auth-method.js';
 import { postKitForm } from './kit-hook.js';
+import { publicBaseUrl } from './public-url.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -24,11 +25,17 @@ function yes(v) {
   return v === true || v === 1 || v === '1' || v === 'true' || v === 'on' || v === 'yes';
 }
 
+export function selfSignupEnabled(env = process.env, override) {
+  if (typeof override === 'boolean') return override;
+  const v = String(env.LEDGER_SELF_SIGNUP_ENABLED || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'on' || v === 'yes';
+}
+
 export function mountSignup(app, deps) {
-  const { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod, signupRateLimit } = deps;
+  const { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod, signupRateLimit, enabled, publicBaseUrl: baseOverride } = deps;
   const method = () => clientAuthMethod(typeof authMethod === 'function' ? authMethod() : authMethod);
   const limit = rateLimiter(signupRateLimit || 8, 15 * 60 * 1000);
-  const origin = req => `${req.protocol}://${req.get('host')}`;
+  const origin = () => publicBaseUrl(baseOverride);
 
   function issueVerify(user) {
     const raw = crypto.randomBytes(32).toString('base64url');
@@ -37,8 +44,8 @@ export function mountSignup(app, deps) {
     return raw;
   }
 
-  async function sendVerify(req, user, raw) {
-    const link = `${origin(req)}/portal#verify=${raw}`;
+  async function sendVerify(user, raw) {
+    const link = `${origin()}/portal#verify=${raw}`;
     const verb = method() === 'magic_link'
       ? `Confirm your email and sign in (works once, expires in 24 hours):\n${link}\n\nThis link is how you sign in. If you did not ask for it, ignore this email.`
       : `Confirm your email (works once, expires in 24 hours):\n${link}\n\nAfter you confirm, sign in with the password you chose. If you did not ask for this, ignore this email.`;
@@ -51,6 +58,7 @@ export function mountSignup(app, deps) {
   }
 
   app.post('/api/signup', async (req, res) => {
+    if (!enabled) return res.status(404).json({ error: 'Not found' });
     if (!limit(req.ip)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
     const b = req.body || {};
     if (String(b.website || b.company_website || '').trim()) {
@@ -117,7 +125,7 @@ export function mountSignup(app, deps) {
     activity(`Self-signup pending: ${client.name}. No service work until CROA onboarding clears.`, clientId);
     db.audit({ actor: email, action: 'signup.create', detail: mode });
     commitWorkspace('public', 'signup.create', clientId);
-    await sendVerify(req, user, raw);
+    await sendVerify(user, raw);
     if (yes(b.marketingConsent)) {
       try { await postKitForm({ email, firstName: first, source: 'account-signup' }); }
       catch (e) { console.error('[kit] signup:', e.message); }

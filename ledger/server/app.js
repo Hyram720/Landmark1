@@ -20,7 +20,9 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, serviceWorkBlocked } from './signup-status.js';
-import { croaPlaceholderDocs } from './croa-docs.js';
+import { croaPlaceholderDocs, croaSetIsPlaceholder } from './croa-docs.js';
+import { selfSignupEnabled } from './signup.js';
+import { publicBaseUrl } from './public-url.js';
 import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter, verifyLobWebhook, letterEventName, isReturnedLetterEvent, LOB_WEBHOOK_PATH } from './mail.js';
@@ -68,8 +70,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
-export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit } = {}) {
+export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride } = {}) {
   const resolvedAuthMethod = clientAuthMethod(authMethodOverride);
+  const signupOn = selfSignupEnabled(process.env, selfSignupOverride);
+  const publicOrigin = publicBaseUrl(publicBaseOverride);
   const db = openDb({ dir: dataDir, encryptionKey });
   const filesDir = path.join(dataDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -456,6 +460,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       company: { name: company().name, phone: company().phone, email: company().email },
       croa: { required: cs.required, steps: cs.steps.map(s => ({ label: s.label, done: s.done, date: s.date })), deadline: cs.deadline, inWindow: cs.inWindow, cancelled: cs.cancelled,
         disclosureSigned: !!(c.onboarding || {}).disclosureSignedAt, disclosureViewed: !!(c.onboarding || {}).disclosureViewedAt,
+        disclosureAcknowledged: !!(c.onboarding || {}).disclosureAcknowledgedAt,
         contractSigned: !!(c.onboarding || {}).contractSignedAt, selfSignup: c.signupSource === 'self', signupStatus: c.status,
         cancellationWindowEndsAt: (c.onboarding || {}).cancellationWindowEndsAt || cs.deadline || null },
       documents: documentsFor(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
@@ -472,11 +477,24 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     c.onboarding = c.onboarding || {};
     if (!c.onboarding.disclosureViewedAt) {
       c.onboarding.disclosureViewedAt = new Date().toISOString();
-      c.onboarding.disclosureSignedAt = c.onboarding.disclosureSignedAt || today();
       activity(`${c.name} viewed the separate Consumer Credit File Rights statement`, c.id);
       commitWorkspace(req.user.email, 'portal.disclosure_view', c.id);
     }
     res.json({ ok: true, disclosureViewedAt: c.onboarding.disclosureViewedAt });
+  });
+
+  app.post('/api/portal/disclosure-acknowledge', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    c.onboarding = c.onboarding || {};
+    if (!c.onboarding.disclosureViewedAt) return res.status(400).json({ error: 'Open the separate Consumer Credit File Rights statement before acknowledging it.' });
+    if (!c.onboarding.disclosureAcknowledgedAt) {
+      c.onboarding.disclosureAcknowledgedAt = new Date().toISOString();
+      activity(`${c.name} acknowledged reading the separate Consumer Credit File Rights statement`, c.id);
+      commitWorkspace(req.user.email, 'portal.disclosure_ack', c.id);
+    }
+    res.json({ ok: true, disclosureAcknowledgedAt: c.onboarding.disclosureAcknowledgedAt });
   });
 
   app.post('/api/portal/sign', need('client'), (req, res) => {
@@ -487,11 +505,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!['disclosure', 'contract'].includes(doc)) return res.status(400).json({ error: 'Unknown document' });
     if (!agree || String(typedName || '').trim().toLowerCase() !== String(c.name).trim().toLowerCase()) return res.status(400).json({ error: `Type your full name exactly as “${c.name}” and check the box to sign.` });
     c.onboarding = c.onboarding || {};
-    if (doc === 'contract' && c.signupSource === 'self' && !c.onboarding.disclosureViewedAt) return res.status(400).json({ error: 'Read the separate Consumer Credit File Rights statement before signing the contract.' });
+    const pack = documentsFor(c);
+    if (croaSetIsPlaceholder(pack)) return res.status(403).json({ error: 'This document is still a placeholder and cannot be signed.' });
+    if (c.signupSource === 'self' && !signupOn) return res.status(403).json({ error: 'Self-signup signing is turned off.' });
+    if (doc === 'contract' && c.signupSource === 'self' && !c.onboarding.disclosureAcknowledgedAt) return res.status(400).json({ error: 'Acknowledge the separate Consumer Credit File Rights statement before signing the contract.' });
     if (doc === 'contract' && c.signupSource === 'self' && esignConsent !== true) return res.status(400).json({ error: 'E-SIGN consent is required to sign the contract electronically.' });
-    if (doc === 'contract' && !c.onboarding.disclosureSignedAt) return res.status(400).json({ error: 'Please acknowledge the Consumer Credit File Rights statement first.' });
+    if (doc === 'contract' && c.signupSource !== 'self' && !c.onboarding.disclosureSignedAt) return res.status(400).json({ error: 'Please acknowledge the Consumer Credit File Rights statement first.' });
     if (c.onboarding[doc === 'disclosure' ? 'disclosureSignedAt' : 'contractSignedAt']) return res.status(409).json({ error: 'Already signed' });
-    const text = documentsFor(c)[doc];
+    const text = pack[doc];
     const sig = { id: uid(), clientId: c.id, doc, typedName, at: new Date().toISOString(), ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: sha(text), consent: 'E-SIGN consent to sign electronically' };
     workspace().signatures.push(sig);
     if (doc === 'disclosure') c.onboarding.disclosureSignedAt = today();
@@ -815,6 +836,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ doc, version: D().workspaceVersion });
   });
   app.post('/api/portal/files', need('client'), upload.single('file'), (req, res) => {
+    if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     const file = normalizeUpload(req.file);
     if (!c || !file) return res.status(400).json({ error: 'Choose a PDF or image under 15 MB' });
@@ -1157,14 +1179,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       commission: { type: r.commissionType || 'none', amount: r.commissionAmount || '', terms: r.commission || '', earned: com.earned, paid: com.paid, owed: com.owed, payouts: r.payouts || [] } });
   });
 
-  mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit });
+  mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit, enabled: signupOn, publicBaseUrl: publicOrigin });
   mountNewsletter(app, { D, db });
-  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod });
+  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod, portalVerified });
 
   // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
   mountLedgerAssistant(app, { need, workspace, db, D, uid });
   mountPartnerLinks(app, { need, workspace, db, D, currentUser });
-  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity });
+  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity, portalVerified });
 
   // ---------- static ----------
   // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old
@@ -1183,7 +1205,15 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   app.get(['/', '/app'], page('index.html'));
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
-  app.get('/signup', page('signup.html'));
+  app.get('/signup', (req, res) => {
+    if (!signupOn) return res.status(404).type('text/plain').send('Not found');
+    return page('signup.html')(req, res);
+  });
+  app.get('/signup/terms', (req, res) => {
+    if (!signupOn) return res.status(404).type('text/plain').send('Not found');
+    const text = fs.readFileSync(path.join(ledgerDir, 'legal', 'PLACEHOLDER-client-terms.md'), 'utf8');
+    res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' }).send(text);
+  });
   app.get('/partner', page('partner.html'));
   // Public business pages (pricing, policies, enrollment). Still DRAFT: each page carries a DRAFT
   // banner and noindex until the owner approves publishing. Phone, contact email and effective date are filled in.

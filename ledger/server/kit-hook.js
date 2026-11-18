@@ -9,9 +9,13 @@
 // that client uses. No key is added by this change, and with no key there is
 // no HTTP call.
 
+import { mailMode } from './mailer.js';
+
 export const KIT_FORM_ID = '10172923';
 export const KIT_FORM_PATH = `/v4/forms/${KIT_FORM_ID}/subscribers`;
 
+// Bounded test log only. Not the subscriber list.
+const CALL_CAP = 8;
 const calls = [];
 let fetchOverride = null;
 
@@ -19,7 +23,17 @@ export function kitCalls() { return calls.slice(); }
 export function resetKitCalls() { calls.length = 0; }
 export function setKitFetch(fn) { fetchOverride = fn; }
 
-export async function postKitForm({ email, firstName, source } = {}, env = process.env) {
+function remember(record) {
+  calls.push(record);
+  if (calls.length > CALL_CAP) calls.splice(0, calls.length - CALL_CAP);
+}
+
+/** A real Kit request requires outbound mail to be on. Off (the default) always stubs. */
+export function kitLiveEnabled(env = process.env) {
+  return mailMode(env) !== 'off' && !!String(env.KIT_API_KEY || '').trim();
+}
+
+export async function postKitForm({ email, firstName, source, local } = {}, env = process.env) {
   const record = {
     op: 'subscribe',
     email: String(email || '').trim().toLowerCase(),
@@ -30,13 +44,14 @@ export async function postKitForm({ email, firstName, source } = {}, env = proce
     at: new Date().toISOString(),
     doubleOptIn: 'kit'
   };
-  const key = String(env.KIT_API_KEY || '').trim();
-  if (!key) {
+  if (!kitLiveEnabled(env)) {
     record.mode = 'stub';
-    calls.push(record);
-    console.info(`[kit] stub ${KIT_FORM_PATH} (no HTTP request)`);
+    if (local) record.local = local;
+    remember(record);
+    console.info(`[kit] stub ${KIT_FORM_PATH} (no HTTP request; mail mode ${mailMode(env)})`);
     return record;
   }
+  const key = String(env.KIT_API_KEY || '').trim();
   const doFetch = fetchOverride || globalThis.fetch;
   const res = await doFetch('https://api.kit.com' + KIT_FORM_PATH, {
     method: 'POST',
@@ -45,13 +60,13 @@ export async function postKitForm({ email, firstName, source } = {}, env = proce
   });
   record.mode = 'kit';
   record.status = res.status;
-  calls.push(record);
+  remember(record);
   if (res.status < 200 || res.status >= 300) throw new Error(`Kit form post failed (${res.status})`);
   return record;
 }
 
 export function noteKitEvent(op, email) {
   const record = { op, email: String(email || '').trim().toLowerCase(), formId: KIT_FORM_ID, path: KIT_FORM_PATH, at: new Date().toISOString(), mode: 'stub' };
-  calls.push(record);
+  remember(record);
   return record;
 }

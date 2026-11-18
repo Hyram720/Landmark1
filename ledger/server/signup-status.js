@@ -3,22 +3,39 @@
 // TODO(billing): do not charge from this path. Credit Ledger does not charge a
 // client until results show on the client's credit report. Do not import
 // ledger/js/billing.js or any payment provider here.
-import { Law, Store } from './shared.js';
+import { Law } from './shared.js';
+
+const MOVABLE = new Set(['pending', 'contract-signed', 'contract_signed']);
+
+function onDateOrToday(onDate) {
+  return onDate || new Date().toISOString().slice(0, 10);
+}
+
+/** Disclosure acknowledged, contract signed, and the cancellation window has ended. */
+export function selfSignupCleared(c, onDate) {
+  const o = (c && c.onboarding) || {};
+  if (!o.disclosureAcknowledgedAt || !o.contractSignedAt || o.cancelledAt) return false;
+  const deadline = Law.croaCancelDeadline(o.contractSignedAt);
+  return !!deadline && onDateOrToday(onDate) > deadline;
+}
 
 export function applySignupStatus(c, onDate) {
   if (!c || c.signupSource !== 'self') return false;
+  // Staff may set paused, active, lead, completed, or cancelled. Do not pull those back.
+  if (!MOVABLE.has(c.status)) return false;
   const o = c.onboarding = c.onboarding || {};
   const beforeStatus = c.status;
   const beforeEnd = o.cancellationWindowEndsAt || null;
   if (o.cancelledAt) {
     c.status = 'cancelled';
   } else if (!o.contractSignedAt) {
-    c.status = 'pending';
+    if (c.status === 'contract_signed') c.status = 'contract-signed';
   } else {
     const deadline = Law.croaCancelDeadline(o.contractSignedAt);
     o.cancellationWindowEndsAt = deadline;
-    const cs = Store.croaStatus(c, onDate);
-    c.status = cs.cleared && !cs.cancelled ? 'active' : 'contract-signed';
+    const windowOpen = !!deadline && onDateOrToday(onDate) <= deadline;
+    if (selfSignupCleared(c, onDate)) c.status = 'active';
+    else if (c.status === 'pending' || windowOpen) c.status = 'contract-signed';
   }
   return c.status !== beforeStatus || (o.cancellationWindowEndsAt || null) !== beforeEnd;
 }
@@ -30,8 +47,7 @@ export function serviceWorkBlocked(before, after) {
     if (c.signupSource !== 'self') continue;
     const o = c.onboarding || {};
     if (o.cancelledAt) continue;
-    const cs = Store.croaStatus(c);
-    if (cs.cleared && !cs.cancelled) continue;
+    if (selfSignupCleared(c)) continue;
     const id = c.id;
     const count = list => (list || []).filter(d => d && d.clientId === id).length;
     if (count(after.disputes) > count(priorDisputes)) {
