@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { cancellationWindow, etYmd } from './croa-window.js';
+import { cancellationWindow, etYmd, formatDocumentTimeEt } from './croa-window.js';
 
 const dir = path.resolve(new URL('../legal/', import.meta.url).pathname);
 const TZ = 'America/New_York';
@@ -21,10 +21,17 @@ function etLongDate(instant) {
 }
 
 function clientAddress(client) {
+  return mailingAddress(client);
+}
+
+export function mailingAddress(client) {
   const c = client || {};
-  const cityLine = [c.city, c.state, c.zip].filter(Boolean).join(' ');
-  const line = [c.address, cityLine].filter(Boolean).join(', ');
-  return line || 'New Jersey';
+  const street = String(c.address || '').trim();
+  const city = String(c.city || '').trim();
+  const state = String(c.state || '').trim();
+  const zip = String(c.zip || '').trim();
+  if (!street || !city || !/^[A-Za-z]{2}$/.test(state) || !/^\d{5}(-\d{4})?$/.test(zip)) return '';
+  return `${street}, ${city}, ${state.toUpperCase()} ${zip}`;
 }
 
 function money(n) {
@@ -43,8 +50,9 @@ export function scheduleAEntries(client) {
     if (!creditor) return;
     const last4 = String(row.last4 || '').replace(/\D/g, '').slice(-4);
     const listed = Array.isArray(row.bureaus) ? row.bureaus : String(row.bureau || '').split(/[,/]/);
+    const item = String(row.item || '').trim();
     listed.map(b => String(b || '').trim()).filter(Boolean).forEach(bureau => {
-      entries.push({ creditor, last4, bureau });
+      entries.push({ item, creditor, last4, bureau });
     });
   });
   return entries;
@@ -67,7 +75,7 @@ export function maximumTotal(client) {
 function scheduleAText(client) {
   const entries = scheduleAEntries(client);
   if (!entries.length) return 'None listed yet.';
-  return entries.map(e => [e.creditor, e.last4 ? 'ending ' + e.last4 : '', e.bureau].filter(Boolean).join(' / ')).join('\n');
+  return entries.map(e => [e.item, e.creditor, e.last4 ? 'ending ' + e.last4 : '', e.bureau].filter(Boolean).join(' / ')).join('\n');
 }
 
 /** Replace blanks that belong to this client. Owner blanks are left in place. */
@@ -78,8 +86,8 @@ export function fillPerClientText(text, client, now = new Date()) {
   const name = String(c.name || '').trim() || 'Client';
   let out = String(text || '')
     .replace(/\[CLIENT FULL NAME\]/g, name)
-    .replace(/\[CLIENT ADDRESS\]/g, clientAddress(c))
-    .replace(/\[DATE SIGNED[^\]]*\]/g, etLongDate(signedAt))
+    .replace(/\[CLIENT ADDRESS\]/g, clientAddress(c) || '[CLIENT ADDRESS]')
+    .replace(/\[DATE SIGNED[^\]]*\]/g, formatDocumentTimeEt(signedAt))
     .replace(/\[ITEM \/ CREDITOR NAME \/ ACCOUNT ENDING IN LAST 4 ONLY \/ BUREAU\(S\)\]/g, scheduleAText(c))
     .replace(/\[DATE:[^\]]*\]/g, etLongDate(win.deadlineInstant))
     .replace(/\[LINK TO SAMPLE PDF\]/g, '/api/portal/esign/sample')

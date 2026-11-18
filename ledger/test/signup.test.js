@@ -588,6 +588,9 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
     assert.ok(pdf.body.includes('[date]'));
     assert.ok(pdf.body.includes("[purchaser's signature]"));
     assert.ok(pdf.body.split('[date]').length - 1 >= 2);
+    assert.match(pdf.body, /\d{1,2}:\d{2} [AP]M ET/);
+    assert.doesNotMatch(pdf.body, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+    assert.match(contract.body.signature.at, /^\d{4}-\d{2}-\d{2}T/);
     const contractMail = mailed.find(m => m.subject === 'Your signed Credit Ledger agreement');
     const disclosureMail = mailed.find(m => m.subject === 'Your Consumer Credit File Rights statement');
     assert.ok(contractMail.attachments[0].content.includes('%PDF'));
@@ -691,6 +694,120 @@ test('uploads stay open while report AI and staff chat wait for the cancellation
     server.close();
     built.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Eastern document times, staff enrollment terms, address, and the signature page', async () => {
+  const { formatDocumentTimeEt } = await import('../server/croa-window.js');
+  const { personalizeCroaDocs, enrollmentBlocksSigning } = await import('../server/croa-docs.js');
+  const { buildContractPackagePdf, readPdfPages, CANCEL_SENTENCE } = await import('../server/enrollment-pdf.js');
+  const { execFileSync } = await import('node:child_process');
+  assert.strictEqual(formatDocumentTimeEt('2026-11-19T02:00:00.000Z'), 'November 18, 2026, 9:00 PM ET');
+  assert.strictEqual(formatDocumentTimeEt('2026-11-18T21:30:00.000Z'), 'November 18, 2026, 4:30 PM ET');
+  const evening = personalizeCroaDocs({
+    disclosure: '', contract: 'Date of this agreement: [DATE SIGNED, filled automatically]\n', cancellation: '', esign: ''
+  }, { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' }, new Date('2026-11-19T02:00:00.000Z'));
+  assert.match(evening.contract, /November 18, 2026, 9:00 PM ET/);
+  assert.doesNotMatch(evening.contract, /November 19/);
+  const contractFile = read('legal/croa-contract-1679d.md');
+  const hold = contractFile.split('\n').find(line => line.includes('OPTIONAL HOLD'));
+  assert.match(hold, /at least NUMBER days/);
+  assert.doesNotMatch(hold, /\[NUMBER\]/);
+  assert.strictEqual(hold.match(/\[[^\]]+\]/g).length, 1);
+  const partial = personalizeCroaDocs({ disclosure: '', contract: contractFile, cancellation: '', esign: '' }, { name: 'Pat Example', state: 'NJ', pricePerResult: 10, scheduleA: [{ creditor: 'Bank', bureau: 'Equifax' }] });
+  assert.match(partial.contract, /\[CLIENT ADDRESS\]/);
+  assert.doesNotMatch(partial.contract, /Client mailing address: New Jersey/);
+  assert.match(read('js/views.js'), /data-act="enrollment-terms"/);
+  assert.match(read('js/app.js'), /enrollment-terms/);
+
+  const notice = read('legal/croa-cancellation-1679e.md');
+  let eightPdf = null;
+  let eightPage = 0;
+  for (let n = 1; n <= 40; n++) {
+    const scheduleA = Array.from({ length: n }, (_, i) => ({ item: 'Item ' + (i + 1), creditor: 'Bank ' + (i + 1), last4: '4242', bureau: 'Equifax' }));
+    const client = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', pricePerResult: 10, scheduleA };
+    const docs = personalizeCroaDocs({ disclosure: '', contract: contractFile, cancellation: notice, esign: '' }, client, new Date('2026-11-19T02:00:00.000Z'));
+    const built = buildContractPackagePdf({ contract: docs.contract, notice: docs.cancellation, clientName: client.name, signedLabel: 'November 18, 2026, 9:00 PM ET', deadlineLabel: 'November 23, 2026, 11:59 PM ET' });
+    const pages = readPdfPages(built.pdf);
+    const marker = '3rd business day after the date on which you signed';
+    const sentencePages = pages.filter(lines => lines.map(line => line.text).join(' ').includes(marker));
+    assert.strictEqual(sentencePages.length, 1, 'sentence split with ' + n + ' rows');
+    const text = sentencePages[0].map(line => line.text).join(' ').replace(/\s+/g, ' ');
+    assert.ok(text.includes(CANCEL_SENTENCE), 'sentence incomplete with ' + n + ' rows');
+    assert.ok(text.includes('Client typed name (signature):'), 'signature left the sentence page with ' + n + ' rows');
+    assert.ok(text.includes('Date signed:'), 'date signed left the sentence page with ' + n + ' rows');
+    if (n === 8) { eightPdf = built.pdf; eightPage = pages.indexOf(sentencePages[0]) + 1; }
+  }
+
+  const onlyClient = {
+    disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nAcknowledgment.\n',
+    contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
+    cancellation: '**Notice of Cancellation**\n\n[date]\n\n[purchaser\'s signature]\n',
+    esign: 'Consent to Electronic Records\n\nOpen [LINK TO SAMPLE PDF]. Code [______]\n\n[ ] I agree.\n'
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-terms-'));
+  const built = createApp({ dataDir: dir, encryptionKey: 'terms-key-not-a-secret-00', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, croaDocs: onlyClient });
+  const { server, client: makeClient } = listen(built.app);
+  const owner = makeClient();
+  const pat = makeClient();
+  try {
+    assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner-terms@signup.test', password: 'owner password 1' })).status, 200);
+    assert.strictEqual((await pat('POST', '/api/signup', { firstName: 'Pat', lastName: 'Example', email: 'pat-terms@signup.test', password: 'pat password 1', acceptAccountTerms: true, state: 'NJ', njResident: true })).status, 200);
+    built.db.data.users.find(u => u.email === 'pat-terms@signup.test').emailVerifiedAt = new Date().toISOString();
+    assert.strictEqual((await pat('POST', '/api/login', { email: 'pat-terms@signup.test', password: 'pat password 1' })).status, 200);
+    const id = built.db.data.workspace.clients.find(c => c.email === 'pat-terms@signup.test').id;
+    const terms = { pricePerResult: 25, scheduleA: [{ item: 'Late fee', creditor: 'North Bank', bureau: 'Equifax', last4: '4242' }, { item: 'Late fee', furnisher: 'North Bank', bureau: 'Experian' }] };
+    assert.strictEqual((await pat('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 403);
+    assert.strictEqual((await owner('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 200);
+    assert.ok(built.db.data.audit.some(a => a.action === 'client.enrollment_terms'));
+    const sample = await pat('GET', '/api/portal/esign/sample');
+    const code = sample.body.match(/Your code is ([A-F0-9]{6})/)[1];
+    assert.strictEqual((await pat('POST', '/api/portal/esign/consent', { agree: true, code })).status, 200);
+    assert.strictEqual((await pat('POST', '/api/portal/disclosure-view')).status, 200);
+    assert.strictEqual((await pat('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Pat Example', agree: true })).status, 200);
+    const missingAddress = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(missingAddress.status, 400);
+    assert.match(missingAddress.body.error, /street, city, state, and ZIP/i);
+    const row = built.db.data.workspace.clients.find(c => c.id === id);
+    row.address = '1 Main St';
+    row.city = 'Newark';
+    row.zip = '07102';
+    const shown = await pat('GET', '/api/portal/me');
+    assert.match(shown.body.documents.contract, /Late fee/);
+    assert.match(shown.body.documents.contract, /which is \$50/);
+    const signed = await pat('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Pat Example', agree: true });
+    assert.strictEqual(signed.status, 200);
+    assert.match(signed.body.signature.at, /^\d{4}-\d{2}-\d{2}T/);
+    const pdf = await pat('GET', '/api/portal/signed/' + signed.body.signature.pdfId);
+    assert.match(pdf.body, /\d{1,2}:\d{2} [AP]M ET/);
+    assert.doesNotMatch(pdf.body, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+    assert.strictEqual((await owner('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 409);
+    const locked = await owner('GET', '/api/workspace');
+    locked.body.data.clients.find(c => c.id === id).pricePerResult = 99;
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: locked.body.version, data: locked.body.data })).status, 409);
+    const ws = await owner('GET', '/api/workspace');
+    ws.body.data.reports.push({ id: 'r-hold', clientId: id, bureau: 'Equifax', date: '2026-11-01', accounts: [], scores: {} });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ws.body.version, data: ws.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/assistant', { clientId: id, history: [{ role: 'user', content: 'What is on this report?' }] })).status, 409);
+    const general = await owner('GET', '/api/workspace');
+    general.body.data.clients.push({ id: 'inv-terms', name: 'Invited Person', kind: 'personal', email: 'inv-terms@signup.test', status: 'onboarding', onboarding: {}, reports: [] });
+    general.body.data.reports.push({ id: 'r-inv', clientId: 'inv-terms', bureau: 'Equifax', date: '2026-11-01', accounts: [], scores: {} });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: general.body.version, data: general.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/assistant', { clientId: 'inv-terms', history: [{ role: 'user', content: 'What next?' }] })).status, 501);
+    assert.strictEqual((await owner('PUT', '/api/clients/inv-terms/enrollment-terms', terms)).status, 400);
+  } finally {
+    server.close();
+    built.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  if (eightPdf) {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-pdf-8-'));
+    fs.writeFileSync(path.join(out, 'contract.pdf'), eightPdf);
+    execFileSync('pdftoppm', ['-png', '-r', '130', '-f', String(eightPage), '-l', String(eightPage), path.join(out, 'contract.pdf'), path.join(out, 'sig')]);
+    const png = fs.readdirSync(out).find(name => name.endsWith('.png'));
+    fs.mkdirSync('/opt/cursor/artifacts', { recursive: true });
+    fs.copyFileSync(path.join(out, png), '/opt/cursor/artifacts/contract-signature-8-rows.png');
   }
 });
 

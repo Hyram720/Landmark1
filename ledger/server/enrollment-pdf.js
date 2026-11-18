@@ -120,6 +120,27 @@ export function buildPdf(pageLines) {
   return Buffer.from(out, 'latin1');
 }
 
+function paginateKeeping(bodyLines, closingLines) {
+  const pages = [];
+  let page = [];
+  let y = TOP;
+  const pushPage = () => { if (page.length) pages.push(page); page = []; y = TOP; };
+  bodyLines.forEach(line => {
+    if (y < BOTTOM) pushPage();
+    page.push({ text: line.text, bold: line.bold, y });
+    y -= LEADING;
+  });
+  const lastY = y - Math.max(0, closingLines.length - 1) * LEADING;
+  if (page.length && lastY < BOTTOM) pushPage();
+  closingLines.forEach(line => {
+    if (y < BOTTOM) pushPage();
+    page.push({ text: line.text, bold: line.bold, y });
+    y -= LEADING;
+  });
+  if (page.length) pages.push(page);
+  return pages.length ? pages : [[]];
+}
+
 function layout(blocks) {
   return paginate(wrapBlocks(blocks));
 }
@@ -141,13 +162,13 @@ function fillNotice(notice, { deadlineLabel }) {
 export function buildContractPackagePdf({ contract, notice, clientName, signedLabel, deadlineLabel }) {
   const body = contractBodyWithoutSignature(contract);
   const signature = `Client typed name (signature): ${clientName}\nDate signed: ${signedLabel}`;
-  const contractPages = layout([
-    { text: body, bold: false },
+  const closingLines = wrapBlocks([
     { text: '', bold: false },
     { text: CANCEL_SENTENCE, bold: true },
     { text: '', bold: false },
     { text: signature, bold: false }
   ]);
+  const contractPages = paginateKeeping(wrapBlocks([{ text: body, bold: false }]), closingLines);
   const filled = fillNotice(notice, { deadlineLabel });
   const noticePages = layout([{ text: filled, bold: true }]);
   const pdf = buildPdf([...contractPages, ...noticePages, ...noticePages]);

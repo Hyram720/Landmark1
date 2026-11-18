@@ -34,7 +34,7 @@ a. You pay only for a result we can document. A "result" is a specific item list
 b. These are not results, and you will not be charged for them: an item removed because it reached the end of the period it may be reported (15 U.S.C. § 1681c); an item that changed because a debt was paid, settled, or otherwise resolved; an item you had changed on your own; and any item not listed in Schedule A.
 c. Price: $[PRICE PER RESULT: Fred to decide] for each result, per item, per credit bureau.
 d. Total amount of all payments: The most you can owe under this agreement is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL]. There is no signup, setup, audit, monthly, or other fee, and you do not have to pay any other person.
-e. When we bill: We send an invoice for a result only after (1) your cancellation period has ended and (2) we have the dated report or letter showing the result. We include a copy of that report or letter with the invoice. [OPTIONAL HOLD, Fred to decide: We also wait until a later report, dated at least [NUMBER] days after the first, still shows the result.]
+e. When we bill: We send an invoice for a result only after (1) your cancellation period has ended and (2) we have the dated report or letter showing the result. We include a copy of that report or letter with the invoice. [OPTIONAL HOLD, Fred to decide: We also wait until a later report, dated at least NUMBER days after the first, still shows the result.]
 f. How to pay: [PAYMENT METHOD: Fred to decide].
 
 5. Electronic records

@@ -128,9 +128,16 @@ export function cancellationWindow(signedAt, now = new Date()) {
   return { signingDateEt, deadlineDateEt: ymd, deadlineInstant, open: now.getTime() <= deadlineInstant.getTime() };
 }
 
+export function formatDocumentTimeEt(instant) {
+  const p = etParts(instant instanceof Date ? instant : new Date(instant));
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const hour24 = p.hour;
+  const ampm = hour24 >= 12 ? 'PM' : 'AM';
+  const hour = hour24 % 12 || 12;
+  const minute = String(p.minute).padStart(2, '0');
+  return `${months[p.month - 1]} ${p.day}, ${p.year}, ${hour}:${minute} ${ampm} ET`;
+}
+
 export function formatDeadlineEt(instant) {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short'
-  }).format(instant);
+  return formatDocumentTimeEt(instant);
 }

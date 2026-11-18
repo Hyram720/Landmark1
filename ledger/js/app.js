@@ -293,6 +293,33 @@
   }
 
   // ---------- modals ----------
+  function enrollmentTermsModal(c) {
+    if (!c || c.signupSource !== 'self') return;
+    const locked = !!(c.onboarding && (c.onboarding.contractSignedAt || c.onboarding.contractSignedAtTs));
+    const lines = (Array.isArray(c.scheduleA) ? c.scheduleA : []).map(r => [r.item, r.creditor || r.furnisher, r.bureau, r.last4].filter(Boolean).join(' | ')).join('\n');
+    modal({
+      title: 'Price and Schedule A',
+      body: `<p class="small" style="margin-top:0">These fill this client's contract. One row per line: item | creditor or furnisher | bureau | last 4 (optional).</p>
+        <div class="form-grid">${field('Price per result, per item, per bureau', 'pricePerResult', c.pricePerResult || '', { attrs: locked ? 'disabled' : '' })}
+        ${field('Schedule A', 'rows', lines, { type: 'textarea', rows: 6, cls: 'span2', attrs: locked ? 'disabled' : '' })}</div>
+        ${locked ? '<p class="small">The contract is signed, so these cannot be changed.</p>' : ''}`,
+      foot: `<button type="button" class="btn" data-close>Close</button>${locked ? '' : '<button class="btn primary">Save</button>'}`,
+      onSubmit: (d, f) => {
+        if (locked) return false;
+        const price = Number(d.pricePerResult);
+        if (!Number.isFinite(price) || price <= 0) { UI.fieldError(f, 'pricePerResult', 'Enter a price greater than zero'); return false; }
+        const scheduleA = String(d.rows || '').split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+          const parts = line.split('|').map(s => s.trim());
+          return { item: parts[0] || '', creditor: parts[1] || '', bureau: parts[2] || '', last4: parts[3] || '' };
+        });
+        if (!scheduleA.length || scheduleA.some(r => !r.item || !r.creditor || !r.bureau)) { UI.fieldError(f, 'rows', 'Each row needs an item, a creditor or furnisher, and a bureau'); return false; }
+        const apply = () => { c.pricePerResult = price; c.scheduleA = scheduleA; Store.log('Updated price and Schedule A for ' + c.name, c.id); Store.save(); toast('Saved'); };
+        if (!Store.remote) { apply(); return; }
+        api('PUT', '/api/clients/' + c.id + '/enrollment-terms', { pricePerResult: price, scheduleA }).then(() => Remote.reload().then(() => toast('Saved'))).catch(e => toast(e.message));
+      }
+    });
+  }
+
   function clientModal(c, defaults) {
     const isNew = !c;
     c = c || Object.assign({ status: 'lead', kind: 'personal' }, defaults || {});
@@ -994,6 +1021,7 @@
     'use-template': el => templateModal(el.dataset.tpl, el.dataset.client),
     'new-client': () => clientModal(),
     'edit-client': el => clientModal(Store.get.client(el.dataset.id)),
+    'enrollment-terms': el => enrollmentTermsModal(Store.get.client(el.dataset.id)),
     'load-demo': () => { if (S().clients.length && !UI.ask('Replace the current workspace with demo data?')) return; Store.replace(Sample.build()); toast('Demo workspace loaded'); go('#/'); },
     'reset': () => { if (!UI.ask('Erase every client, report, dispute and invoice in this browser? Export a backup first.')) return; Store.replace(Store.empty()); go('#/'); },
     'export': () => { UI.download(`ledger-workspace-${T()}.json`, JSON.stringify(S(), null, 2)); Store.log('Exported workspace backup'); Store.save(); },

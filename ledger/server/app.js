@@ -20,10 +20,10 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './signup-status.js';
-import { croaDocs, enrollmentBlocksSigning, personalizeCroaDocs, sha256 } from './croa-docs.js';
+import { croaDocs, enrollmentBlocksSigning, mailingAddress, personalizeCroaDocs, sha256 } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
-import { cancellationWindow, formatDeadlineEt, etYmd } from './croa-window.js';
+import { cancellationWindow, formatDeadlineEt, formatDocumentTimeEt, etYmd } from './croa-window.js';
 import { buildContractPackagePdf, buildSamplePdf } from './enrollment-pdf.js';
 import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
@@ -358,11 +358,58 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     // TODO(billing): signup does not create or collect invoices. Cap checks above stay in billing.js.
     const held = serviceWorkBlocked(before, data);
     if (held) return res.status(409).json({ error: held });
+    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
+    for (const c of data.clients) {
+      if (!c || c.signupSource !== 'self') continue;
+      const old = priorClients.get(c.id);
+      if (!old || !contractIsSigned(old)) continue;
+      if (enrollmentSnapshot(old) !== enrollmentSnapshot(c)) {
+        return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
+      }
+    }
     for (const c of data.clients) applySignupStatus(c);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
     try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }
     res.json({ version: D().workspaceVersion });
+  });
+
+  function contractIsSigned(c) {
+    return !!(c && c.onboarding && (c.onboarding.contractSignedAt || c.onboarding.contractSignedAtTs));
+  }
+  function enrollmentSnapshot(c) {
+    return JSON.stringify({ pricePerResult: c && c.pricePerResult != null ? c.pricePerResult : null, scheduleA: (c && c.scheduleA) || [] });
+  }
+  function normalizeScheduleA(rows) {
+    if (!Array.isArray(rows) || !rows.length) return { error: 'Add at least one Schedule A item.' };
+    const out = [];
+    for (const row of rows) {
+      const item = String((row && row.item) || '').trim().slice(0, 160);
+      const creditor = String((row && (row.creditor || row.furnisher)) || '').trim().slice(0, 160);
+      const bureau = String((row && row.bureau) || '').trim().slice(0, 40);
+      const last4 = String((row && row.last4) || '').replace(/\D/g, '').slice(-4);
+      if (!item || !creditor || !bureau) return { error: 'Each Schedule A row needs an item, a creditor or furnisher, and a bureau.' };
+      out.push({ item, creditor, bureau, last4 });
+    }
+    return { rows: out };
+  }
+  app.put('/api/clients/:id/enrollment-terms', need('owner', 'staff'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    if (c.signupSource !== 'self') return res.status(400).json({ error: 'Price and Schedule A are set here for self-signup clients.' });
+    if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
+    const price = Number((req.body || {}).pricePerResult);
+    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ error: 'Enter a price per result greater than zero.' });
+    const schedule = normalizeScheduleA((req.body || {}).scheduleA);
+    if (schedule.error) return res.status(400).json({ error: schedule.error });
+    const before = enrollmentSnapshot(c);
+    c.pricePerResult = Math.round(price * 100) / 100;
+    c.scheduleA = schedule.rows;
+    const after = enrollmentSnapshot(c);
+    activity(`${req.user.name || req.user.email} set the price per result and Schedule A for ${c.name}`, c.id);
+    db.audit({ actor: req.user.email, action: 'client.enrollment_terms', detail: `${c.id} ${before === after ? 'unchanged' : 'updated'} price ${c.pricePerResult} items ${c.scheduleA.length}` });
+    commitWorkspace(req.user.email, 'client.enrollment_terms', c.id);
+    res.json({ ok: true, pricePerResult: c.pricePerResult, scheduleA: c.scheduleA });
   });
 
   // ---------- team & invites ----------
@@ -569,6 +616,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     c.onboarding = c.onboarding || {};
     const pack = documentsFor(c);
     if (c.signupSource === 'self' && enrollmentBlocksSigning(pack)) return res.status(503).json({ error: ENROLLMENT_CLOSED });
+    if (doc === 'contract' && c.signupSource === 'self' && !mailingAddress(c)) return res.status(400).json({ error: 'A street, city, state, and ZIP are required before the contract can be signed.' });
     if (c.signupSource === 'self' && !signupOn) return res.status(403).json({ error: 'Self-signup signing is turned off.' });
     if (c.signupSource === 'self' && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
     if (c.signupSource === 'self' && c.onboarding.esignWithdrawnAt) return res.status(400).json({ error: 'Electronic consent was withdrawn. Ask for paper copies. There is no fee.' });
@@ -582,7 +630,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     let pdfId = null;
     if (doc === 'contract' && c.signupSource === 'self') {
       const win = cancellationWindow(at, new Date(at));
-      const built = buildContractPackagePdf({ contract: pack.contract, notice: pack.cancellation, clientName: c.name, signedLabel: at, deadlineLabel: formatDeadlineEt(win.deadlineInstant) });
+      const built = buildContractPackagePdf({ contract: pack.contract, notice: pack.cancellation, clientName: c.name, signedLabel: formatDocumentTimeEt(at), deadlineLabel: formatDocumentTimeEt(win.deadlineInstant) });
       pdfSha = built.sha256;
       pdfId = uid();
       const dir = path.join(filesDir, 'signed');
@@ -754,9 +802,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   });
 
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
+    const { clientId, history } = req.body || {};
+    if (clientId && selfSignupOnHold(clientId)) {
+      const ws = workspace();
+      const involvesFile = (ws.reports || []).some(r => r.clientId === clientId) || (ws.disputes || []).some(d => d.clientId === clientId);
+      if (involvesFile) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
+    }
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
-    const { clientId, history } = req.body || {};
     if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });
     try {
       const out = await askAssistant({ ws: workspace(), clientId, history });
