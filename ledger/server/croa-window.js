@@ -138,6 +138,12 @@ export function formatDocumentTimeEt(instant) {
   return `${months[p.month - 1]} ${p.day}, ${p.year}, ${hour}:${minute} ${ampm} ET`;
 }
 
+/** Consumer-facing cancellation date: "Tuesday, December 1, 2026". No clock and no time zone. */
+export function formatDeadlineDateEt(instant) {
+  const when = instant instanceof Date ? instant : new Date(instant);
+  return new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(when);
+}
+
 export function formatDeadlineEt(instant) {
-  return formatDocumentTimeEt(instant);
+  return formatDeadlineDateEt(instant);
 }

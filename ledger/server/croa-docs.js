@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { cancellationWindow, formatDocumentTimeEt } from './croa-window.js';
+import { cancellationWindow, formatDeadlineDateEt, formatDocumentTimeEt } from './croa-window.js';
 
 const dir = path.resolve(new URL('../legal/', import.meta.url).pathname);
 
@@ -131,7 +131,7 @@ export function stampContractSignedAt(text, instant) {
 export function stampCancellationDeadline(text, instant) {
   const when = instant instanceof Date ? instant : new Date(instant);
   const win = cancellationWindow(when, when);
-  const label = formatDocumentTimeEt(win.deadlineInstant);
+  const label = formatDeadlineDateEt(win.deadlineInstant);
   return String(text || '').replaceAll(UNSIGNED_CANCEL_DEADLINE, label).replace(/\[DATE:[^\]]*\]/g, label);
 }
 

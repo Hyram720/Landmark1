@@ -32,6 +32,9 @@ test('final CROA texts are served as written and still block signing on owner br
   assert.doesNotMatch(disclosure, /PLACEHOLDER|PENDING COMPLIANCE REVIEW/);
   assert.match(contract, /Credit Services Agreement/);
   assert.match(cancel, /You may cancel this contract, without any penalty or obligation/);
+  assert.match(cancel, /before midnight of the 3rd day/);
+  assert.match(cancel, /before midnight on \[DATE: Weekday, Month D, YYYY\]/);
+  assert.match(cancel, /before midnight Eastern Time on the date above/);
   assert.match(esign, /Consent to Electronic Records/);
   for (const text of [disclosure, contract, cancel, esign]) {
     assert.match(text, /\[[^\]]+\]/);
@@ -452,11 +455,27 @@ test('production PUBLIC_BASE_URL: unset and http disable signup; https is used i
   }
 });
 
-test('cancellation window skips weekends and observed holidays in Eastern time', () => {
+test('cancellation window skips weekends and observed holidays in Eastern time', async () => {
+  const { formatDeadlineDateEt, etEndInstant } = await import('../server/croa-window.js');
+  const { stampCancellationDeadline } = await import('../server/croa-docs.js');
   const evening = cancellationWindow('2026-11-19T02:00:00.000Z');
   assert.strictEqual(evening.signingDateEt, '2026-11-18');
   assert.strictEqual(evening.deadlineDateEt, '2026-11-23');
   assert.strictEqual(evening.deadlineInstant.toISOString(), '2026-11-24T04:59:59.999Z');
+  assert.strictEqual(formatDeadlineDateEt(evening.deadlineInstant), 'Monday, November 23, 2026');
+  const thanksgivingEve = cancellationWindow('2026-11-26T02:00:00.000Z');
+  assert.strictEqual(thanksgivingEve.signingDateEt, '2026-11-25');
+  assert.strictEqual(thanksgivingEve.deadlineDateEt, '2026-12-01');
+  assert.strictEqual(thanksgivingEve.deadlineInstant.toISOString(), etEndInstant('2026-12-01').toISOString());
+  assert.strictEqual(formatDeadlineDateEt(thanksgivingEve.deadlineInstant), 'Tuesday, December 1, 2026');
+  assert.strictEqual(stampCancellationDeadline('before midnight on [DATE: Weekday, Month D, YYYY]', '2026-11-26T02:00:00.000Z'), 'before midnight on Tuesday, December 1, 2026');
+  const christmasEve = cancellationWindow('2026-12-25T02:00:00.000Z');
+  assert.strictEqual(christmasEve.signingDateEt, '2026-12-24');
+  assert.strictEqual(christmasEve.deadlineDateEt, '2026-12-30');
+  assert.strictEqual(christmasEve.deadlineInstant.toISOString(), etEndInstant('2026-12-30').toISOString());
+  assert.strictEqual(formatDeadlineDateEt(christmasEve.deadlineInstant), 'Wednesday, December 30, 2026');
+  assert.strictEqual(stampCancellationDeadline('before midnight on [DATE: Weekday, Month D, YYYY]', '2026-12-25T02:00:00.000Z'), 'before midnight on Wednesday, December 30, 2026');
+  assert.doesNotMatch(formatDeadlineDateEt(thanksgivingEve.deadlineInstant) + formatDeadlineDateEt(christmasEve.deadlineInstant), /11:59|ET|PM/);
   const july = cancellationWindow('2026-07-02T16:00:00.000Z');
   assert.strictEqual(july.deadlineDateEt, '2026-07-08');
   const yearEnd = cancellationWindow('2027-12-29T17:00:00.000Z');
@@ -475,7 +494,7 @@ test('contract package PDF bolds the cancellation sentence and repeats the notic
   const built = buildContractPackagePdf({
     clientName: 'Pat Example',
     signedLabel: 'November 18, 2026',
-    deadlineLabel: 'November 23, 2026 at 11:59 PM ET',
+    deadlineLabel: 'Monday, November 23, 2026',
     contract: 'Services are described here.',
     notice: '**Notice of Cancellation**\n\nYou may cancel this contract, without any penalty or obligation, at any time before midnight of the 3rd day which begins after the date the contract is signed by you.\n\nTo cancel this contract, mail or deliver a signed, dated copy of this cancellation notice, or any other written notice before midnight on [DATE: Weekday, Month D, YYYY]\n\n[date]\n\n[purchaser\'s signature]'
   });
@@ -485,7 +504,9 @@ test('contract package PDF bolds the cancellation sentence and repeats the notic
   assert.match(raw, /\/F2 10 Tf/);
   assert.match(text, /You may cancel this contract without penalty or obligation/);
   assert.ok(!text.includes('[DATE:'));
-  assert.ok(text.includes('November 23, 2026 at 11:59 PM ET'));
+  assert.ok(text.includes('before midnight on Monday, November 23, 2026'));
+  assert.ok(!text.includes('11:59'));
+  assert.ok(!/\bET\b/.test(text));
   assert.ok(text.includes('[date]'));
   assert.ok(text.includes("[purchaser's signature]"));
   assert.ok(text.split('[date]').length - 1 >= 2);
@@ -647,6 +668,9 @@ test('full contract PDF keeps one bold cancellation sentence, section signs, and
   assert.strictEqual(flat.split(CANCEL_SENTENCE).length - 1, 1);
   assert.ok(!regular.includes('You may cancel this contract without penalty or obligation'));
   assert.strictEqual(flat.split('Notice of Cancellation').length - 1, 2);
+  assert.strictEqual(flat.split('before midnight Eastern Time on the date above').length - 1, 2);
+  assert.match(notice, /before midnight of the 3rd day/);
+  assert.match(notice, /before midnight on \[DATE: Weekday, Month D, YYYY\]/);
   assert.strictEqual(regular.split('Client typed name (signature):').length - 1, 1);
   assert.ok(!flat.includes('______________________'));
   assert.ok(flat.includes('Pat Example'));
@@ -738,6 +762,8 @@ test('Eastern document times, staff enrollment terms, address, and the signature
   assert.match(read('js/views.js'), /data-act="enrollment-terms"/);
   assert.match(read('js/app.js'), /enrollment-terms/);
   assert.match(read('site/privacy.html'), /hash of the agreement text viewed, plus hash of the signed PDF/);
+  assert.doesNotMatch(read('site/privacy.html'), /\u2014/);
+  assert.match(read('js/portal.js'), /before midnight on \$\{/);
   assert.doesNotMatch(read('site/privacy.html') + read('js/views.js') + read('server/app.js') + read('server/croa-docs.js'), /PDF the client saw/);
 
   const notice = read('legal/croa-cancellation-1679e.md');
@@ -745,7 +771,7 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     const scheduleA = Array.from({ length: n }, (_, i) => ({ item: 'Item ' + (i + 1), creditor: 'Bank ' + (i + 1), last4: '4242', bureau: 'Equifax' }));
     const client = { name: 'Pat Example', address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102', pricePerResult: 10, scheduleA };
     const docs = personalizeCroaDocs({ disclosure: '', contract: contractFile, cancellation: notice, esign: '' }, client, new Date('2026-11-19T02:00:00.000Z'));
-    const built = buildContractPackagePdf({ contract: docs.contract, notice: docs.cancellation, clientName: client.name, signedLabel: 'November 18, 2026, 9:00 PM ET', deadlineLabel: 'November 23, 2026, 11:59 PM ET' });
+    const built = buildContractPackagePdf({ contract: docs.contract, notice: docs.cancellation, clientName: client.name, signedLabel: 'November 18, 2026, 9:00 PM ET', deadlineLabel: 'Monday, November 23, 2026' });
     const pages = readPdfPages(built.pdf);
     const marker = '3rd business day after the date on which you signed';
     const sentencePages = pages.filter(lines => lines.map(line => line.text).join(' ').includes(marker));
@@ -846,7 +872,9 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     const pdf = await pat('GET', '/api/portal/signed/' + signed.body.signature.pdfId);
     assert.match(pdf.body, /9:10 PM ET/);
     assert.doesNotMatch(pdf.body, /9:00 PM ET/);
-    assert.match(pdf.body, /November 23, 2026/);
+    assert.match(pdf.body, /before midnight on Monday, November 23, 2026/);
+    assert.doesNotMatch(pdf.body, /11:59/);
+    assert.strictEqual(pdf.body.split('before midnight on Monday, November 23, 2026').length - 1, 2);
     assert.doesNotMatch(pdf.body, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
     assert.strictEqual((await owner('PUT', '/api/clients/' + id + '/enrollment-terms', terms)).status, 409);
     const locked = await owner('GET', '/api/workspace');
