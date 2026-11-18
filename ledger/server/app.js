@@ -16,6 +16,15 @@ import { mountPartnerLinks } from './partner-links.js';
 import { mountRentReporting, rentPortalSection } from './rent.js';
 import { mountCreditMonitoring, creditPortalSection } from './credit-monitoring.js';
 import { mountClientAuth } from './client-auth.js';
+import { clientAuthMethod } from './auth-method.js';
+import { mountSignup } from './signup.js';
+import { mountNewsletter } from './newsletter.js';
+import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './signup-status.js';
+import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
+import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
+import { resolveSignupAccess } from './public-url.js';
+import { cancellationWindow, formatDeadlineDateEt, formatDeadlineEt, formatDocumentTimeEt, etYmd } from './croa-window.js';
+import { buildContractPackagePdf, buildSamplePdf } from './enrollment-pdf.js';
 import { sendMail, mailEnabled } from './mailer.js';
 import { Law, Partners, Store, Sales, Invoices, Billing } from './shared.js';
 import { parseAddress, checkLobKey, sendLetter, getLetter, verifyLobWebhook, letterEventName, isReturnedLetterEvent, LOB_WEBHOOK_PATH } from './mail.js';
@@ -63,7 +72,17 @@ const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
-export function createApp({ dataDir, encryptionKey } = {}) {
+export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethodOverride, signupRateLimit, selfSignupEnabled: selfSignupOverride, publicBaseUrl: publicBaseOverride, env: envOverride, croaDocs: croaDocsOverride, now: nowSource } = {}) {
+  const env = envOverride || process.env;
+  const resolvedAuthMethod = clientAuthMethod(authMethodOverride);
+  const signupAccess = resolveSignupAccess({ env, signupRequested: selfSignupEnabled(env, selfSignupOverride), publicBaseUrl: publicBaseOverride });
+  if (signupAccess.warning) console.warn(signupAccess.warning);
+  const signupOn = signupAccess.enabled;
+  const publicOrigin = signupAccess.baseUrl;
+  const now = () => {
+    const value = typeof nowSource === 'function' ? nowSource() : new Date();
+    return value instanceof Date ? value : new Date(value);
+  };
   const db = openDb({ dir: dataDir, encryptionKey });
   const filesDir = path.join(dataDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -153,7 +172,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   const bigJson = express.json({ limit: '10mb' });
   // Signature verification needs the exact bytes Lob signed. Parsing JSON first would change them.
   const webhookRaw = express.raw({ type: () => true, limit: '1mb' });
-  const PUBLIC_POSTS = new Set(['/api/intake', '/api/login', '/api/setup', '/api/invites/accept', '/api/assistant/public']);
+  const PUBLIC_POSTS = new Set(['/api/intake', '/api/login', '/api/setup', '/api/invites/accept', '/api/assistant/public', '/api/signup', '/api/signup/verify', '/api/newsletter/subscribe', '/api/newsletter/confirm', '/api/newsletter/unsubscribe']);
   app.use((req, res, next) => {
     if (req.method === 'POST' && req.path === LOB_WEBHOOK_PATH) return webhookRaw(req, res, next);
     return (PUBLIC_POSTS.has(req.path) || req.path.startsWith('/api/auth/') ? smallJson : bigJson)(req, res, next);
@@ -251,13 +270,26 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   function activity(text, clientId) {
     workspace().activity.unshift({ id: uid(), at: new Date().toISOString(), text, clientId: clientId || null });
   }
+  function refreshSelfSignupStatuses() {
+    const ws = workspace();
+    let changed = false;
+    for (const c of ws.clients || []) if (applySignupStatus(c)) changed = true;
+    if (changed) commitWorkspace('system', 'signup.status', 'cancellation window');
+  }
+  function portalVerified(req, res) {
+    if (req.user && req.user.signupSource === 'self' && !req.user.emailVerifiedAt) {
+      res.status(403).json({ error: 'Confirm your email before using the portal.' });
+      return false;
+    }
+    return true;
+  }
 
   // Forgot password, magic links, email codes and client notifications (server/client-auth.js).
   let auth = null;
 
   // Renew before the route runs. Skip routes that issue or clear a session themselves so a
   // login response carries one cookie, not a renewal of the previous one plus the new one.
-  const NO_RENEW = new Set(['/api/logout', '/api/login', '/api/setup', '/api/invites/accept', '/api/auth/reset', '/api/auth/magic/verify', '/api/auth/otp']);
+  const NO_RENEW = new Set(['/api/logout', '/api/login', '/api/setup', '/api/invites/accept', '/api/auth/reset', '/api/auth/magic/verify', '/api/auth/otp', '/api/signup/verify']);
   app.use((req, res, next) => {
     if (req.path.startsWith('/api/') && !NO_RENEW.has(req.path)) {
       const session = readSession(req);
@@ -296,6 +328,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const u = D().users.find(x => x.email === addr && !x.disabled);
     if (!u) { burnPasswordCheck(password); return res.status(401).json({ error: 'Email or password is incorrect' }); }
     if (!verifyPassword(password, u.password)) return res.status(401).json({ error: 'Email or password is incorrect' });
+    if (u.signupSource === 'self' && !u.emailVerifiedAt) return res.status(403).json({ error: 'Confirm your email before signing in.' });
     if (auth.otpRequired(u)) { db.audit({ actor: u.email, action: 'login.password_ok_otp_sent', detail: req.ip }); return auth.startOtp(req, res, u, { remember: wantsRemember((req.body || {}).remember) }); }
     db.audit({ actor: u.email, action: 'login', detail: req.ip });
     db.persist();
@@ -309,7 +342,10 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   });
 
   // ---------- staff workspace ----------
-  app.get('/api/workspace', need('owner', 'staff'), (req, res) => res.json({ version: D().workspaceVersion, data: workspace() }));
+  app.get('/api/workspace', need('owner', 'staff'), (req, res) => {
+    refreshSelfSignupStatuses();
+    res.json({ version: D().workspaceVersion, data: workspace() });
+  });
   app.get('/api/workspace/version', need('owner', 'staff'), (req, res) => res.json({ version: D().workspaceVersion }));
   app.put('/api/workspace', need('owner', 'staff'), (req, res) => {
     const { baseVersion, data } = req.body || {};
@@ -323,10 +359,70 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       db.audit({ actor: req.user.email, action: 'invoice.cap_blocked', detail: over.map(v => v.invoice.id).join(',').slice(0, 200) });
       return res.status(422).json({ error: `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`, violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })) });
     }
+    // TODO(billing): signup does not create or collect invoices. Cap checks above stay in billing.js.
+    const held = serviceWorkBlocked(before, data);
+    if (held) return res.status(409).json({ error: held });
+    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
+    for (const c of data.clients) {
+      if (!c || c.signupSource !== 'self') continue;
+      const old = priorClients.get(c.id);
+      if (!old || enrollmentSnapshot(old) === enrollmentSnapshot(c)) continue;
+      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the price and Schedule A.' });
+      if (contractIsSigned(old)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
+      return res.status(400).json({ error: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' });
+    }
+    for (const c of data.clients) applySignupStatus(c);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
     try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }
     res.json({ version: D().workspaceVersion });
+  });
+
+  function invalidateContractView(onboarding) {
+    if (!onboarding) return;
+    if (onboarding.contractViewedAt || onboarding.contractViewedSha256) onboarding.contractViewStale = true;
+    onboarding.contractViewedAt = null;
+    onboarding.contractViewedSha256 = null;
+  }
+  function contractIsSigned(c) {
+    return !!(c && c.onboarding && (c.onboarding.contractSignedAt || c.onboarding.contractSignedAtTs));
+  }
+  function enrollmentSnapshot(c) {
+    return JSON.stringify({ pricePerResult: c && c.pricePerResult != null ? c.pricePerResult : null, scheduleA: (c && c.scheduleA) || [] });
+  }
+  function normalizeScheduleA(rows) {
+    if (!Array.isArray(rows) || !rows.length) return { error: 'Add at least one Schedule A item.' };
+    const out = [];
+    for (const row of rows) {
+      const item = String((row && row.item) || '').trim().slice(0, 160);
+      const creditor = String((row && (row.creditor || row.furnisher)) || '').trim().slice(0, 160);
+      const bureau = String((row && row.bureau) || '').trim().slice(0, 40);
+      const last4 = String((row && row.last4) || '').replace(/\D/g, '').slice(-4);
+      if (!item || !creditor || !bureau) return { error: 'Each Schedule A row needs an item, a creditor or furnisher, and a bureau.' };
+      out.push({ item, creditor, bureau, last4 });
+    }
+    return { rows: out };
+  }
+  app.put('/api/clients/:id/enrollment-terms', need('owner'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    if (c.signupSource !== 'self') return res.status(400).json({ error: 'Price and Schedule A are set here for self-signup clients.' });
+    if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
+    const price = Number((req.body || {}).pricePerResult);
+    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ error: 'Enter a price per result greater than zero.' });
+    const schedule = normalizeScheduleA((req.body || {}).scheduleA);
+    if (schedule.error) return res.status(400).json({ error: schedule.error });
+    const at = new Date().toISOString();
+    const oldValue = { pricePerResult: c.pricePerResult ?? null, scheduleA: c.scheduleA || [] };
+    c.pricePerResult = Math.round(price * 100) / 100;
+    c.scheduleA = schedule.rows;
+    const newValue = { pricePerResult: c.pricePerResult, scheduleA: c.scheduleA };
+    c.onboarding = c.onboarding || {};
+    invalidateContractView(c.onboarding);
+    activity(`${req.user.name || req.user.email} set the price per result and Schedule A for ${c.name}`, c.id);
+    db.audit({ actor: req.user.email, action: 'client.enrollment_terms', detail: JSON.stringify({ user: req.user.email, at, old: oldValue, new: newValue }) });
+    commitWorkspace(req.user.email, 'client.enrollment_terms', c.id);
+    res.json({ ok: true, pricePerResult: c.pricePerResult, scheduleA: c.scheduleA });
   });
 
   // ---------- team & invites ----------
@@ -391,13 +487,31 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   function portalClient(req) { return workspace().clients.find(c => c.id === req.user.clientId); }
   function documentsFor(c) {
     const cs = Store.croaStatus(c);
+    if (c.signupSource === 'self') return personalizeCroaDocs(croaDocsOverride || croaDocs(), c, now());
     return {
       disclosure: Law.CROA_DISCLOSURE,
       contract: Law.contractTerms(company(), c, workspace().settings.defaultFee),
       cancellation: Law.cancellationNotice(company(), cs.deadline)
     };
   }
+  function documentsForPortal(c) {
+    const docs = documentsFor(c);
+    if (c.signupSource !== 'self') return docs;
+    if (!mailingAddress(c)) return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
+    const consented = !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt;
+    if (consented) return docs;
+    return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
+  }
+  const ENROLLMENT_CLOSED = 'Enrollment is not open yet';
+  function selfWindow(c, now = new Date()) {
+    const o = c.onboarding || {};
+    const signed = o.contractSignedAtTs || o.contractSignedAt;
+    if (!signed) return null;
+    return cancellationWindow(signed, now);
+  }
   app.get('/api/portal/me', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    refreshSelfSignupStatuses();
     const ws = workspace();
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Your file is not available. Contact us.' });
@@ -413,50 +527,244 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       const o = ws.offers.find(x => x.id === r.offerId) || {};
       return { id: r.id, name: o.name, category: o.category, why: r.note || o.note, url: `/go/${r.id}`, status: r.status };
     });
+    const win = c.signupSource === 'self' ? selfWindow(c) : null;
+    const disclosureSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'disclosure');
+    const contractSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'contract');
+    const pack = documentsFor(c);
+    const block = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
     res.json({
-      client: { name: c.name, kind: c.kind, status: c.status },
-      company: { name: company().name, phone: company().phone, email: company().email },
-      croa: { required: cs.required, steps: cs.steps.map(s => ({ label: s.label, done: s.done, date: s.date })), deadline: cs.deadline, inWindow: cs.inWindow, cancelled: cs.cancelled,
-        disclosureSigned: !!(c.onboarding || {}).disclosureSignedAt, contractSigned: !!(c.onboarding || {}).contractSignedAt },
-      documents: documentsFor(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
+      client: { name: c.name, kind: c.kind, status: c.status, address: c.address || '', city: c.city || '', state: c.state || '', zip: c.zip || '' },
+      company: { name: company().name, phone: c.status === 'active' ? company().phone : '', email: company().email },
+      croa: { required: cs.required, steps: cs.steps.map(s => ({ label: s.label, done: s.done, date: s.date })), deadline: win ? win.deadlineDateEt : cs.deadline, inWindow: win ? win.open && !c.onboarding?.cancelledAt : cs.inWindow, cancelled: cs.cancelled,
+        disclosureSigned: !!disclosureSig, disclosureViewed: !!(c.onboarding || {}).disclosureViewedAt,
+        disclosureAcknowledged: !!(c.onboarding || {}).disclosureAcknowledgedAt && !!disclosureSig,
+        contractSigned: !!contractSig, selfSignup: c.signupSource === 'self', signupStatus: c.status,
+        cancellationWindowEndsAt: win ? win.deadlineInstant.toISOString() : ((c.onboarding || {}).cancellationWindowEndsAt || cs.deadline || null),
+        deadlineText: win ? formatDeadlineEt(win.deadlineInstant) : null,
+        enrollmentClosed: !!block.code && block.code !== 'review',
+        enrollmentMessage: block.message,
+        addressComplete: !!mailingAddress(c),
+        contractViewed: !!(c.onboarding || {}).contractViewedAt && (c.onboarding || {}).contractViewedSha256 === sha256(pack.contract || ''),
+        esignConsent: !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt,
+        contractPdfId: contractSig ? ((c.onboarding || {}).contractPdfId || null) : null },
+      documents: documentsForPortal(c), wins: removed, uploads: (ws.documents || []).filter(d => d.clientId === c.id).map(d => ({ id: d.id, name: d.name, type: d.type, uploadedAt: d.uploadedAt })), scores, disputes, recommendations: recs, referralDisclosure: Partners.DISCLOSURE,
       rentReporting: rentPortalSection(),
       creditMonitoring: creditPortalSection(),
       business: c.kind !== 'personal' ? { name: (c.business || {}).legalName || '', checklist: c.businessChecklist || {}, scores: c.businessScores || [] } : null
     });
   });
 
-  app.post('/api/portal/sign', need('client'), (req, res) => {
+  app.post('/api/portal/disclosure-view', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    c.onboarding = c.onboarding || {};
+    if (!c.onboarding.disclosureViewedAt) {
+      c.onboarding.disclosureViewedAt = new Date().toISOString();
+      activity(`${c.name} viewed the separate Consumer Credit File Rights statement`, c.id);
+      commitWorkspace(req.user.email, 'portal.disclosure_view', c.id);
+    }
+    res.json({ ok: true, disclosureViewedAt: c.onboarding.disclosureViewedAt });
+  });
+
+  app.post('/api/portal/address', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    if (c.signupSource !== 'self') return res.status(400).json({ error: 'This address step is for self-signup accounts.' });
+    if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed.' });
+    const b = req.body || {};
+    const next = {
+      address: String(b.address || b.street || '').trim().slice(0, 120),
+      city: String(b.city || '').trim().slice(0, 60),
+      state: String(b.state || '').trim().toUpperCase().slice(0, 2),
+      zip: String(b.zip || '').trim().slice(0, 10)
+    };
+    const draft = Object.assign({}, c, next);
+    if (!mailingAddress(draft)) return res.status(400).json({ error: enrollmentStatus(draft, {}).message });
+    Object.assign(c, next);
+    c.onboarding = c.onboarding || {};
+    invalidateContractView(c.onboarding);
+    activity(`${c.name} saved a New Jersey mailing address`, c.id);
+    commitWorkspace(req.user.email, 'portal.address', c.id);
+    res.json({ ok: true, address: mailingAddress(c) });
+  });
+
+  app.post('/api/portal/contract-view', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    const pack = documentsFor(c);
+    const status = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
+    if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
+    c.onboarding = c.onboarding || {};
+    c.onboarding.contractViewedAt = new Date().toISOString();
+    c.onboarding.contractViewedSha256 = sha256(pack.contract || '');
+    c.onboarding.contractViewStale = false;
+    activity(`${c.name} viewed the credit services agreement`, c.id);
+    commitWorkspace(req.user.email, 'portal.contract_view', c.id);
+    res.json({ ok: true, contractViewedAt: c.onboarding.contractViewedAt, contractSha256: c.onboarding.contractViewedSha256 });
+  });
+
+  app.get('/api/portal/esign/sample', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    const code = crypto.randomBytes(3).toString('hex').slice(0, 6).toUpperCase();
+    c.onboarding = c.onboarding || {};
+    c.onboarding.esignDemoCodeSha256 = sha256(code);
+    db.persist();
+    const { pdf } = buildSamplePdf(code);
+    res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="esign-sample.pdf"' }).send(pdf);
+  });
+
+  app.post('/api/portal/esign/consent', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    const pack = documentsFor(c);
+    if (c.signupSource === 'self') {
+      const status = enrollmentStatus(c, pack);
+      if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
+    }
+    const { agree, code } = req.body || {};
+    if (agree !== true) return res.status(400).json({ error: 'Consent is required before any document is shown for signature.' });
+    if (!c.onboarding?.esignDemoCodeSha256 || sha256(String(code || '').trim().toUpperCase()) !== c.onboarding.esignDemoCodeSha256) {
+      return res.status(400).json({ error: 'Open the sample PDF and enter the code from it.' });
+    }
+    const at = new Date().toISOString();
+    c.onboarding.esignConsentAt = at;
+    c.onboarding.esignConsentSha256 = sha256(pack.esign || '');
+    c.onboarding.esignDemoPassed = true;
+    c.onboarding.esignIp = req.ip;
+    c.onboarding.esignUserAgent = String(req.get('user-agent') || '').slice(0, 300);
+    commitWorkspace(req.user.email, 'portal.esign', c.id);
+    res.json({ ok: true, esignConsentAt: at });
+  });
+
+  app.post('/api/portal/esign/withdraw', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    c.onboarding = c.onboarding || {};
+    c.onboarding.esignWithdrawnAt = new Date().toISOString();
+    commitWorkspace(req.user.email, 'portal.esign_withdraw', c.id);
+    res.json({ ok: true, paper: true, message: 'Consent withdrawn. We can mail paper copies. There is no fee.' });
+  });
+
+  app.post('/api/portal/esign/paper', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    c.onboarding = c.onboarding || {};
+    c.onboarding.paperRequestedAt = new Date().toISOString();
+    workspace().tasks.push({ id: uid(), clientId: c.id, title: `Mail paper copies to ${c.name}. No fee.`, due: today(), done: false, createdAt: new Date().toISOString() });
+    commitWorkspace(req.user.email, 'portal.paper_request', c.id);
+    res.json({ ok: true, message: 'Paper copies requested. There is no fee.' });
+  });
+
+  function logMailFailure(label, err) {
+    const code = err && typeof err.code === 'string' && err.code ? err.code : (err && err.name) || 'Error';
+    console.error(`[mail] ${label} failed (${String(code).replace(/[^\w.-]/g, '').slice(0, 40) || 'Error'})`);
+  }
+  app.post('/api/portal/sign', need('client'), async (req, res) => {
+    if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     const { doc, typedName, agree } = req.body || {};
     if (!c) return res.status(404).json({ error: 'Not found' });
     if (!['disclosure', 'contract'].includes(doc)) return res.status(400).json({ error: 'Unknown document' });
-    if (!agree || String(typedName || '').trim().toLowerCase() !== String(c.name).trim().toLowerCase()) return res.status(400).json({ error: `Type your full name exactly as “${c.name}” and check the box to sign.` });
+    if (!agree || String(typedName || '').trim().toLowerCase() !== String(c.name).trim().toLowerCase()) return res.status(400).json({ error: `Type your full name exactly as "${c.name}" and check the box to sign.` });
     c.onboarding = c.onboarding || {};
-    if (doc === 'contract' && !c.onboarding.disclosureSignedAt) return res.status(400).json({ error: 'Please acknowledge the Consumer Credit File Rights statement first.' });
-    if (c.onboarding[doc === 'disclosure' ? 'disclosureSignedAt' : 'contractSignedAt']) return res.status(409).json({ error: 'Already signed' });
-    const text = documentsFor(c)[doc];
-    const sig = { id: uid(), clientId: c.id, doc, typedName, at: new Date().toISOString(), ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: sha(text), consent: 'E-SIGN consent to sign electronically' };
+    const pack = documentsFor(c);
+    if (c.signupSource === 'self') {
+      const status = enrollmentStatus(c, pack);
+      if (status.code === 'address' || status.code === 'terms' || status.code === 'closed') return res.status(503).json({ error: status.message });
+      if (doc === 'contract' && status.code === 'review') return res.status(400).json({ error: status.message });
+    }
+    if (c.signupSource === 'self' && !signupOn) return res.status(403).json({ error: 'Self-signup signing is turned off.' });
+    if (c.signupSource === 'self' && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
+    if (c.signupSource === 'self' && c.onboarding.esignWithdrawnAt) return res.status(400).json({ error: 'Electronic consent was withdrawn. Ask for paper copies. There is no fee.' });
+    if (doc === 'disclosure' && c.signupSource === 'self' && !c.onboarding.disclosureViewedAt) return res.status(400).json({ error: 'Open the separate Consumer Credit File Rights statement before signing it.' });
+    if (doc === 'contract' && c.signupSource === 'self' && !(workspace().signatures || []).some(s => s.clientId === c.id && s.doc === 'disclosure')) return res.status(400).json({ error: 'Sign the separate Consumer Credit File Rights statement before the contract.' });
+    if (doc === 'contract' && c.signupSource !== 'self' && !c.onboarding.disclosureSignedAt) return res.status(400).json({ error: 'Please acknowledge the Consumer Credit File Rights statement first.' });
+    if ((workspace().signatures || []).some(s => s.clientId === c.id && s.doc === doc)) return res.status(409).json({ error: 'Already signed' });
+    const atDate = now();
+    const at = atDate.toISOString();
+    let text = pack[doc];
+    let pdfSha = null;
+    let pdfId = null;
+    if (doc === 'contract' && c.signupSource === 'self') {
+      const win = cancellationWindow(at, atDate);
+      const built = buildContractPackagePdf({ contract: stampContractSignedAt(pack.contract, atDate), notice: stampCancellationDeadline(pack.cancellation, atDate), clientName: c.name, signedLabel: formatDocumentTimeEt(atDate), deadlineLabel: formatDeadlineDateEt(win.deadlineInstant) });
+      pdfSha = built.sha256;
+      pdfId = uid();
+      const dir = path.join(filesDir, 'signed');
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(dir, pdfId + '.pdf'), built.pdf, { mode: 0o600 });
+      text = built.pdf.toString('latin1');
+      c.onboarding.contractPdfId = pdfId;
+      c.onboarding.contractPdfSha256 = pdfSha;
+      c.onboarding.cancellationWindowEndsAtTs = win.deadlineInstant.toISOString();
+      c.onboarding.cancellationWindowEndsAt = win.deadlineDateEt;
+      c.onboarding.cancellationRule = 'et-weekdays-6103-actual-and-observed-v1';
+      await sendMail({
+        to: c.email,
+        subject: 'Your signed Credit Ledger agreement',
+        text: `A copy of your signed agreement is attached.\nYou can also open it in your portal: ${publicOrigin}/portal\nSHA-256: ${pdfSha}`,
+        attachments: [{ filename: 'credit-ledger-agreement.pdf', content: built.pdf, contentType: 'application/pdf' }]
+      }).catch(err => logMailFailure('contract copy', err));
+    }
+    const renderedSha = sha256(pack[doc] || '');
+    // documentSha256 is the hash of the agreement text viewed. pdfSha256 is the hash of the signed PDF.
+    const sig = { id: uid(), clientId: c.id, doc, typedName, at, ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0, 300), documentSha256: doc === 'contract' ? renderedSha : (pdfSha || renderedSha), pdfSha256: pdfSha, pdfId, consent: doc === 'disclosure' ? 'Signed acknowledgment of the separate 1679c statement' : 'Contract signature' };
+    workspace().signatures = workspace().signatures || [];
     workspace().signatures.push(sig);
-    if (doc === 'disclosure') c.onboarding.disclosureSignedAt = today();
-    else {
-      c.onboarding.contractSignedAt = today();
-      c.onboarding.authorizationAt = c.onboarding.authorizationAt || today();
+    if (doc === 'disclosure') {
+      c.onboarding.disclosureAcknowledgedAt = at;
+      c.onboarding.disclosureSignedAt = etYmd(new Date(at));
+      c.onboarding.retainUntil = new Date(Date.parse(at) + 730 * 86400000).toISOString();
+      await sendMail({ to: c.email, subject: 'Your Consumer Credit File Rights statement', text: pack.disclosure || '' }).catch(err => logMailFailure('disclosure copy', err));
+    } else {
+      c.onboarding.contractSignedAtTs = at;
+      c.onboarding.contractSignedAt = etYmd(new Date(at));
+      c.onboarding.authorizationAt = c.onboarding.authorizationAt || c.onboarding.contractSignedAt;
+      if (!c.onboarding.cancellationWindowEndsAtTs) {
+        const win = cancellationWindow(at, new Date(at));
+        c.onboarding.cancellationWindowEndsAtTs = win.deadlineInstant.toISOString();
+        c.onboarding.cancellationWindowEndsAt = win.deadlineDateEt;
+      }
       if (c.status === 'lead') c.status = 'onboarding';
     }
-    activity(`${c.name} e-signed the ${doc === 'disclosure' ? 'rights disclosure' : 'services agreement'} in the portal`, c.id);
+    if (c.signupSource === 'self') applySignupStatus(c);
+    activity(`${c.name} signed the ${doc === 'disclosure' ? 'rights disclosure' : 'services agreement'}`, c.id);
     commitWorkspace(req.user.email, 'portal.sign', `${doc} ${sig.documentSha256.slice(0, 12)}`);
     res.json({ ok: true, signature: sig });
   });
 
+  app.get('/api/portal/signed/:id', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
+    const c = portalClient(req);
+    if (!c || (c.onboarding || {}).contractPdfId !== req.params.id) return res.status(404).json({ error: 'Not found' });
+    const file = path.join(filesDir, 'signed', req.params.id + '.pdf');
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Not found' });
+    res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
+  });
+
   app.post('/api/portal/cancel', need('client'), (req, res) => {
+    if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
     c.onboarding = c.onboarding || {};
     if (c.onboarding.cancelledAt) return res.json({ ok: true });
+    if (c.signupSource === 'self' && (c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt)) {
+      const win = cancellationWindow(c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt, new Date());
+      if (!win.open) return res.status(400).json({ error: 'The 3-business-day cancellation window has ended.' });
+    }
     c.onboarding.cancelledAt = today();
+    c.onboarding.cancelledAtTs = new Date().toISOString();
     c.status = 'cancelled';
-    activity(`${c.name} cancelled through the portal — refund anything paid`, c.id);
-    workspace().tasks.push({ id: uid(), clientId: c.id, title: `Process cancellation for ${c.name} (refund any payments)`, due: today(), done: false, createdAt: new Date().toISOString() });
+    activity(`${c.name} cancelled through the portal. Confirm no invoice was issued.`, c.id);
+    workspace().tasks.push({ id: uid(), clientId: c.id, title: `Process cancellation for ${c.name}. Confirm no invoice was issued.`, due: today(), done: false, createdAt: new Date().toISOString() });
     commitWorkspace(req.user.email, 'portal.cancel', c.id);
     res.json({ ok: true });
   });
@@ -561,9 +869,10 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   });
 
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
+    const { clientId, history } = req.body || {};
+    if (clientId && selfSignupOnHold(clientId)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
-    const { clientId, history } = req.body || {};
     if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });
     try {
       const out = await askAssistant({ ws: workspace(), clientId, history });
@@ -630,7 +939,13 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   const scanningDocs = new Set();
   function sendModel(res, held, body) { if (held) held.send(body); else res.json(body); }
   function failModel(res, held, e) { if (held) held.send({ error: aiMessage(e).error }); else aiError(res, e); }
+  const SERVICE_HOLD = 'On hold until the contract is signed and the cancellation window ends.';
+  function selfSignupOnHold(id) {
+    const c = workspace().clients.find(x => x.id === id);
+    return !!(c && c.signupSource === 'self' && !selfSignupCleared(c));
+  }
   app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
+    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
@@ -650,6 +965,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     finally { scanningDocs.delete(doc.id); }
   });
   app.post('/api/clients/:id/scan-text', need('owner', 'staff'), async (req, res) => {
+    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const text = String((req.body || {}).text || '');
@@ -673,6 +989,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     finally { scanningDocs.delete(lockKey); }
   });
   app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
+    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     let held = null;
@@ -748,6 +1065,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     res.json({ doc, version: D().workspaceVersion });
   });
   app.post('/api/portal/files', need('client'), upload.single('file'), (req, res) => {
+    if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     const file = normalizeUpload(req.file);
     if (!c || !file) return res.status(400).json({ error: 'Choose a PDF or image under 15 MB' });
@@ -761,6 +1079,11 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   async function autoScan(c, doc) {
     const ws = workspace();
     ws.pendingImports = ws.pendingImports || [];
+    if (c.signupSource === 'self' && !selfSignupCleared(c)) {
+      ws.tasks.push({ id: uid(), clientId: c.id, title: `Credit report from ${c.name} is on hold until the cancellation window ends (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
+      commitWorkspace('system', 'report.uploaded.hold', doc.name);
+      return;
+    }
     if (!assistantConfigured()) {
       ws.tasks.push({ id: uid(), clientId: c.id, title: `Import the credit report ${c.name} uploaded (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'report.uploaded', doc.name);
@@ -871,7 +1194,7 @@ export function createApp({ dataDir, encryptionKey } = {}) {
     const letter = ws.letters.find(l => l.id === d.letterId);
     if (!c || !letter || !letter.text) return res.status(400).json({ error: 'Generate the letter first' });
     if (letter.status !== 'approved') return res.status(400).json({ error: 'Approve the letter (client confirmed every statement) before mailing' });
-    if (!Store.croaStatus(c).cleared) return res.status(400).json({ error: 'Blocked until onboarding and the cancellation period are complete' });
+    if (!Store.croaStatus(c).cleared || (c.signupSource === 'self' && !selfSignupCleared(c))) return res.status(400).json({ error: 'Blocked until onboarding and the cancellation period are complete' });
     const rc = recipientAddressFor(d);
     const to = parseAddress(rc.name, rc.address);
     if (!to) return res.status(400).json({ error: `Recipient address must end with “City, ST 12345”. Edit the recipient address for ${d.recipient}.` });
@@ -1090,12 +1413,14 @@ export function createApp({ dataDir, encryptionKey } = {}) {
       commission: { type: r.commissionType || 'none', amount: r.commissionAmount || '', terms: r.commission || '', earned: com.earned, paid: com.paid, owed: com.owed, payouts: r.payouts || [] } });
   });
 
-  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember });
+  mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit, enabled: signupOn, publicBaseUrl: publicOrigin });
+  mountNewsletter(app, { db });
+  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod, portalVerified });
 
   // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
   mountLedgerAssistant(app, { need, workspace, db, D, uid });
   mountPartnerLinks(app, { need, workspace, db, D, currentUser });
-  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity });
+  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity, portalVerified });
 
   // ---------- static ----------
   // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old
@@ -1114,6 +1439,15 @@ export function createApp({ dataDir, encryptionKey } = {}) {
   app.get(['/', '/app'], page('index.html'));
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
+  app.get('/signup', (req, res) => {
+    if (!signupOn) return res.status(404).type('text/plain').send(SIGNUP_DISABLED);
+    return page('signup.html')(req, res);
+  });
+  app.get('/signup/terms', (req, res) => {
+    if (!signupOn) return res.status(404).type('text/plain').send(SIGNUP_DISABLED);
+    const text = fs.readFileSync(path.join(ledgerDir, 'legal', 'PLACEHOLDER-client-terms.md'), 'utf8');
+    res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' }).send(text);
+  });
   app.get('/partner', page('partner.html'));
   // Public business pages (pricing, policies, enrollment). Still DRAFT: each page carries a DRAFT
   // banner and noindex until the owner approves publishing. Phone, contact email and effective date are filled in.

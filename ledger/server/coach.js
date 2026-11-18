@@ -6,6 +6,7 @@
 import { Business, KB } from './shared.js';
 import { redact } from './redact.js';
 import { aiConfig, chatCompletion, safeAnswer, businessDigest, RAILS } from './ledger-assistant.js';
+import { selfSignupCleared } from './signup-status.js';
 import { rateLimiter } from './auth.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -33,7 +34,7 @@ export function coachText(st, audience) {
   return P.join('\n\n');
 }
 
-export function mountCoach(app, { need, workspace, db, commit, activity }) {
+export function mountCoach(app, { need, workspace, db, commit, activity, portalVerified }) {
   const limit = rateLimiter(120, 60 * 60 * 1000);
   const find = id => (workspace().clients || []).find(c => c.id === id && c.kind !== 'personal');
   const view = (c, audience) => {
@@ -83,13 +84,18 @@ export function mountCoach(app, { need, workspace, db, commit, activity }) {
   app.post('/api/coach/:id/chat', need('owner', 'staff'), (req, res) => {
     if (!limit('s:' + req.user.id)) return res.status(429).json({ error: 'Hourly coach limit reached.' });
     const c = find(req.params.id); if (!c) return res.status(404).json({ error: 'Business client not found' });
+    if (c.signupSource === 'self' && !selfSignupCleared(c)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     return ask(c, 'staff', (req.body || {}).message, res, req.user.email);
   });
 
   // ---------- client (own file only) ----------
   const own = req => find(req.user.clientId);
-  app.get('/api/portal/coach', need('client'), (req, res) => { const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' }); res.json(view(c, 'client')); });
+  app.get('/api/portal/coach', need('client'), (req, res) => {
+    if (portalVerified && !portalVerified(req, res)) return;
+    const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' }); res.json(view(c, 'client'));
+  });
   app.post('/api/portal/coach/step', need('client'), (req, res) => {
+    if (portalVerified && !portalVerified(req, res)) return;
     const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' });
     const key = String((req.body || {}).key || '');
     const step = Business.FAST_TRACK.find(s => s.key === key); if (!step) return res.status(400).json({ error: 'Unknown step' });
@@ -101,6 +107,7 @@ export function mountCoach(app, { need, workspace, db, commit, activity }) {
     res.json(Object.assign(view(c, 'client'), { message: 'Thanks! Your advisor will review this step and mark it complete.' }));
   });
   app.post('/api/portal/coach/chat', need('client'), (req, res) => {
+    if (portalVerified && !portalVerified(req, res)) return;
     if (!limit('c:' + req.user.id)) return res.status(429).json({ error: 'You’ve asked a lot of questions — your advisor can help.' });
     const c = own(req); if (!c) return res.status(404).json({ error: 'No business credit plan on your file' });
     return ask(c, 'client', (req.body || {}).message, res, req.user.email);

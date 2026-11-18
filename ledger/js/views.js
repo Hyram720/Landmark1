@@ -155,7 +155,7 @@
     const filter = params.q || 'all';
     const kindF = params.kind || '';
     const list = S().clients.filter(c => (filter === 'all' || c.status === filter) && (!kindF || c.kind === kindF || (kindF !== 'personal' && c.kind === 'both'))).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    const tabs = ['all', 'lead', 'onboarding', 'active', 'paused', 'completed', 'cancelled'];
+    const tabs = ['all', 'lead', 'pending', 'contract-signed', 'onboarding', 'active', 'paused', 'completed', 'cancelled'];
     const btn = (act, id, label, cls, title) => `<button class="btn sm ${cls || ''}" data-act="${act}" data-id="${id}" title="${title || label}">${label}</button>`;
     return head('Clients', `${S().clients.length} profiles · ${S().clients.filter(c => c.kind !== 'personal').length} with business credit`,
       `<button class="btn" data-act="onboarding-link">${icon('mail')} Client onboarding link</button><button class="btn" data-act="import-client-csv">${icon('upload')} Import</button><button class="btn primary" data-act="new-client">${icon('plus')} Add profile</button>`) +
@@ -188,7 +188,7 @@
     return head(`${esc(c.name)} ${cBadge(c.status)} ${kindBadge(c.kind)}`, [c.business && c.business.legalName, c.email, c.phone, [c.city, c.state].filter(Boolean).join(', ')].filter(Boolean).map(esc).join(' · '),
       `<button class="btn" data-act="ai" data-id="${c.id}">✦ Ask AI</button>${Store.remote ? `<button class="btn" data-act="portal-invite" data-id="${c.id}">Invite to portal</button>` : ''}${c.status === 'lead' ? `<button class="btn" data-act="analysis" data-id="${c.id}">${icon('print')} Credit analysis</button>` : `<button class="btn" data-act="progress-report" data-id="${c.id}">${icon('print')} Progress report</button>`}${c.kind === 'personal' ? `<button class="btn" data-act="biz-enable" data-id="${c.id}">+ Business credit</button>` : ''}<button class="btn" data-act="edit-client" data-id="${c.id}">Edit</button><button class="btn primary" data-act="upload-report" data-id="${c.id}">${icon('upload')} Upload credit report</button>`,
       `<a href="#/clients">Clients</a> / ${esc(c.name)}`) +
-      (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>Cancellation period open until midnight ${date(cs.deadline)}</b>No services may be performed and no fees collected until it ends (15 U.S.C. §§ 1679d(a)(2), 1679e).</div>` : '') +
+      (cs.inWindow ? `<div class="callout" style="margin-bottom:16px"><b>On hold until ${(c.onboarding || {}).cancellationWindowEndsAtTs ? '11:59:59 PM Eastern Time on ' + date(cs.deadline) : 'midnight ' + date(cs.deadline)}</b>No services may be performed and nothing is billed until it ends.</div>` : '') +
       `<div class="tabs">${tabs.map(([k, l]) => `<a href="#/clients/${c.id}/${k}" class="${k === tab ? 'active' : ''}">${l}${k === 'audit' && nFind ? ` <span class="badge b-high plain">${nFind}</span>` : ''}</a>`).join('')}</div>` + body;
   }
 
@@ -221,6 +221,7 @@
         <div class="row between"><span class="muted">SSN</span><span class="mono">${c.ssnLast4 ? '•••-••-' + esc(c.ssnLast4) : '—'}</span></div>
         <div class="row between"><span class="muted">Referred by</span><span>${ref ? esc(ref.name) : '—'}</span></div>
         ${c.notes ? `<div><span class="muted">Notes</span><br>${esc(c.notes)}</div>` : ''}</div>`)}
+      ${c.signupSource === 'self' ? card('Price and Schedule A', `<div class="small stack" style="--gap:6px"><div class="row between"><span class="muted">Price per result</span><span>${c.pricePerResult ? money(c.pricePerResult) : 'Not set'}</span></div><div>${(Array.isArray(c.scheduleA) && c.scheduleA.length) ? c.scheduleA.map(r => `<div>${esc(r.item || '')} · ${esc(r.creditor || r.furnisher || '')} · ${esc(r.bureau || '')}</div>`).join('') : '<span class="muted">No Schedule A items yet. The contract cannot be signed until these are set.</span>'}</div></div>`, { actions: (c.onboarding && (c.onboarding.contractSignedAt || c.onboarding.contractSignedAtTs)) ? '<span class="small muted">Signed</span>' : `<button class="btn sm" data-act="enrollment-terms" data-id="${c.id}">Edit</button>` }) : ''}
       ${card('Open tasks', tasks.length ? `<ul class="list">${tasks.map(x => `<li><input type="checkbox" data-act="toggle-task" data-id="${x.id}" style="margin-top:4px"><div class="grow">${esc(x.title)}<div class="meta">due ${date(x.due)}</div></div></li>`).join('')}</ul>` : empty('No open tasks', ''), { flush: true, actions: `<button class="btn sm" data-act="new-task" data-client="${c.id}">${icon('plus')}</button>` })}
     </div></div>`;
   }
@@ -286,7 +287,7 @@
         ${UI.field('Disclosure acknowledged', 'disclosureSignedAt', o.disclosureSignedAt, { type: 'date', help: 'Must be given as a separate document before the contract' })}
         ${UI.field('Contract signed', 'contractSignedAt', o.contractSignedAt, { type: 'date', help: cs.deadline ? 'Cancellation deadline: midnight ' + date(cs.deadline) : '' })}
         ${UI.field('Authorization to prepare disputes', 'authorizationAt', o.authorizationAt, { type: 'date' })}
-        ${UI.field('Cancelled on', 'cancelledAt', o.cancelledAt, { type: 'date', help: 'If cancelled, refund anything paid' })}
+        ${UI.field('Cancelled on', 'cancelledAt', o.cancelledAt, { type: 'date', help: 'If cancelled, confirm no invoice was issued' })}
         ${UI.field('Photo ID received', 'idReceived', o.idReceived, { type: 'date' })}
         ${UI.field('Proof of address received', 'addressProofReceived', o.addressProofReceived, { type: 'date' })}
       </div><div class="row" style="margin-top:14px"><button class="btn primary">Save record</button>${cs.retainUntil ? `<span class="small muted">Retain signed disclosure until ${date(cs.retainUntil)} (§ 1679c(c))</span>` : ''}</div></form>`)}
@@ -306,7 +307,7 @@
     const sigs = (S().signatures || []).filter(x => x.clientId === c.id);
     return `<div class="grid g-main"><div>${card('Documents', docs.length ? `<ul class="list">${docs.map(d => `<li><div class="grow"><b>${esc(d.name)}</b><div class="meta">${esc(DOC_LABEL[d.type] || d.type)} · ${Math.max(1, Math.round(d.size / 1024))} KB · ${date(d.uploadedAt)} · by ${esc(d.uploadedBy || '')}</div></div>${Store.remote && d.type === 'report' ? `<button class="btn sm primary" data-act="ai-scan" data-client="${c.id}" data-id="${d.id}">✦ Scan with AI</button>` : ''}${Store.remote ? `<a class="btn sm" href="/api/files/${d.id}">${icon('download')} Download</a>` : ''}</li>`).join('')}</ul>` : empty('No documents yet', Store.remote ? 'Upload credit reports, ID, proof of address and bureau responses. Clients can also upload from their portal.' : 'File uploads are stored on the Ledger server. Run it with npm run ledger.'),
       { flush: true, actions: `<button class="btn sm primary" data-act="upload-doc" data-id="${c.id}">${icon('upload')} Upload</button>` })}</div>
-      <div>${card('E-signatures', sigs.length ? `<ul class="list">${sigs.map(x => `<li><div class="grow"><b>${x.doc === 'disclosure' ? 'Rights disclosure' : 'Services agreement'}</b><div class="meta">Signed “${esc(x.typedName)}” · ${date(x.at)} ${new Date(x.at).toLocaleTimeString()} · IP ${esc(x.ip)}</div><div class="meta mono">SHA-256 ${esc(x.documentSha256.slice(0, 16))}…</div></div></li>`).join('')}</ul>` : empty('No e-signatures', 'Invite the client to the portal to sign electronically.'), { flush: true })}</div></div>`;
+      <div>${card('E-signatures', sigs.length ? `<ul class="list">${sigs.map(x => `<li><div class="grow"><b>${x.doc === 'disclosure' ? 'Rights disclosure' : 'Services agreement'}</b><div class="meta">Signed “${esc(x.typedName)}” · ${date(x.at)} ${new Date(x.at).toLocaleTimeString()} · IP ${esc(x.ip)}</div><div class="meta mono">${x.pdfSha256 ? 'hash of the agreement text viewed, plus hash of the signed PDF' : 'SHA-256'} ${esc((x.documentSha256 || '').slice(0, 16))}…</div></div></li>`).join('')}</ul>` : empty('No e-signatures', 'Invite the client to the portal to sign electronically.'), { flush: true })}</div></div>`;
   }
   function clientMessages(c) {
     const msgs = (S().messages || []).filter(m => m.clientId === c.id);

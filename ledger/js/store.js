@@ -163,11 +163,12 @@
     const o = c.onboarding || {};
     const t = onDate || today();
     const required = c.kind !== 'business';
-    const deadline = o.contractSignedAt ? Law.croaCancelDeadline(o.contractSignedAt) : null;
+    const deadline = o.cancellationWindowEndsAt || (o.contractSignedAt ? Law.croaCancelDeadline(o.contractSignedAt) : null);
+    const instantOpen = o.cancellationWindowEndsAtTs ? Date.now() <= Date.parse(o.cancellationWindowEndsAtTs) : null;
     const steps = [
       { key: 'disclosureSignedAt', label: 'Rights disclosure acknowledged (§ 1679c)', done: !!o.disclosureSignedAt, date: o.disclosureSignedAt },
       { key: 'contractSignedAt', label: 'Written contract signed (§ 1679d)', done: !!o.contractSignedAt, date: o.contractSignedAt },
-      { key: 'cancelWindow', label: 'Cancellation period ended (§ 1679e)', done: !!deadline && t > deadline && !o.cancelledAt, date: deadline },
+      { key: 'cancelWindow', label: 'Cancellation period ended (§ 1679e)', done: !!deadline && (instantOpen === null ? t > deadline : !instantOpen) && !o.cancelledAt, date: deadline },
       { key: 'idReceived', label: 'Photo ID received', done: !!o.idReceived, date: o.idReceived },
       { key: 'addressProofReceived', label: 'Proof of address received', done: !!o.addressProofReceived, date: o.addressProofReceived },
       { key: 'authorizationAt', label: 'Signed authorization to prepare disputes', done: !!o.authorizationAt, date: o.authorizationAt }
@@ -177,7 +178,7 @@
     return {
       steps, deadline, cancelled: !!o.cancelledAt, disclosureOrder,
       required, cleared: !required || (requiredSteps.every(s => s.done) && disclosureOrder),
-      inWindow: required && !!deadline && t <= deadline && !o.cancelledAt,
+      inWindow: required && !!deadline && (instantOpen === null ? t <= deadline : instantOpen) && !o.cancelledAt,
       retainUntil: o.disclosureSignedAt ? Law.addDays(o.disclosureSignedAt, 730) : null
     };
   }

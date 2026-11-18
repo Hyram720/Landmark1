@@ -45,7 +45,9 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_AI_ENABLED` + `OPENAI_API_KEY` | Turns on the OpenAI-backed Ledger Assistant, AI-polished Metro 2 letters and the website helper. Off unless `LEDGER_AI_ENABLED=true`. See `docs/assistant-spec.md` |
 | `LEDGER_OPENAI_MODEL` | Model for the above (default `gpt-5-mini`) |
 | `LEDGER_AI_LETTERS_PER_HOUR` | Abuse ceiling per staff user for AI letter polish (default 300); templates are always unlimited |
-| `LEDGER_MAIL_MODE` | `off` (default), `console` (dev: prints emails to the log), `resend` or `smtp`. Needed for password-reset emails, magic links, sign-in codes and client update emails |
+| `LEDGER_MAIL_MODE` | `off` (default), `console` (dev: prints emails to the log), `resend` or `smtp`. Needed for password-reset emails, magic links, sign-in codes, client update emails, and self-signup verification. **Default `off` sends nothing** (AWS SES is not wired; do not add SES keys). Kit form posts also stay stubbed while this is `off`. |
+| `LEDGER_SELF_SIGNUP_ENABLED` | `off` by default. Set to `true` only to open `/signup`. In production this stays off unless `PUBLIC_BASE_URL` is an https origin. Not set in deploy config by this change. |
+| `PUBLIC_BASE_URL` | Public https origin for email links (no trailing path required). Read from the environment. Outside production, unset falls back to `http://127.0.0.1:4100`. In production there is no localhost default: unset or http keeps self-signup disabled. Not added to Railway; set the domain when it is ready. |
 | `LEDGER_SMTP_URL` | SMTP connection URL when `LEDGER_MAIL_MODE=smtp` (needs the optional `nodemailer` package) |
 | `LEDGER_BACKUPS` / `LEDGER_BACKUP_DAYS` | Daily encrypted DB snapshot in `<data dir>/backups` (on by default; `off` disables); days kept (default 14) |
 | `LEDGER_TRUST_PROXY_HOPS` | Proxy hops in front of the app (default 1 for Railway); used for client IPs in rate limits |
@@ -58,6 +60,8 @@ Then open http://localhost:4100. The first visit creates the **owner** account.
 | `LEDGER_RENT_SELF_URL` | Where a Self rent-reporting click goes (default `https://www.self.inc/rent-and-bills-reporting`) |
 | `LEDGER_CREDIT_MFSN_URL` | Where a MyFreeScoreNow click goes (default `https://app.myfreescorenow.com/enroll/B04C9729`). The plan is $39.90/month after a 7-day trial. Only an https URL is used; anything else is ignored |
 | `LEDGER_CREDIT_SMARTCREDIT_URL` | Where a SmartCredit click goes (default `https://www.smartcredit.com/?PID=72556`). Pricing is shown at sign-up. Only an https URL is used; anything else is ignored |
+
+Public self-signup (`POST /api/signup`, page `/signup`) uses that same mail flag. Verification and magic-link sign-in go through `sendMail` and are stubbed while the flag is `off`. The sign-in switch is the constant `CLIENT_AUTH_METHOD` in `ledger/server/auth-method.js` (`password` by default, or `magic_link`). It is not a deploy variable. Marketing email posts to Kit form `10172923` only when outbound mail is already on (`LEDGER_MAIL_MODE` not `off`) and `KIT_API_KEY` is already in the process. This build does not add that key, does not add a deploy variable, and does not call Kit while mail is off. Email footers use 2230 Route 70 West, Suite 1194, Cherry Hill, NJ 08002. That address is not part of the CROA contract placeholder.
 
 Deploy it like the main site: one Node service with a persistent volume mounted at `LEDGER_DATA_DIR`, served over HTTPS. Back up that volume.
 
