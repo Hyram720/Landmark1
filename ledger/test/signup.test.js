@@ -723,8 +723,8 @@ test('uploads stay open while report AI and staff chat wait for the cancellation
     const add = await owner('GET', '/api/workspace');
     add.body.data.clients.push({ id: 'inv-hold', name: 'Invited Person', kind: 'personal', email: 'inv-hold@signup.test', status: 'onboarding', onboarding: {} });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: add.body.version, data: add.body.data })).status, 200);
-    assert.strictEqual((await owner('POST', '/api/clients/inv-hold/files/x/scan')).status, 501);
-    assert.strictEqual((await owner('POST', '/api/assistant/staff', { clientId: 'inv-hold', history: [{ role: 'user', content: 'Hello' }] })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/inv-hold/files/x/scan')).status, 409);
+    assert.strictEqual((await owner('POST', '/api/assistant/staff', { clientId: 'inv-hold', history: [{ role: 'user', content: 'Hello' }] })).status, 409);
   } finally {
     server.close();
     built.shutdown();
@@ -888,12 +888,103 @@ test('Eastern document times, staff enrollment terms, address, and the signature
     general.body.data.clients.push({ id: 'inv-terms', name: 'Invited Person', kind: 'personal', email: 'inv-terms@signup.test', status: 'onboarding', onboarding: {}, reports: [] });
     general.body.data.reports.push({ id: 'r-inv', clientId: 'inv-terms', bureau: 'Equifax', date: '2026-11-01', accounts: [], scores: {} });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: general.body.version, data: general.body.data })).status, 200);
-    assert.strictEqual((await owner('POST', '/api/assistant', { clientId: 'inv-terms', history: [{ role: 'user', content: 'What next?' }] })).status, 501);
-    assert.strictEqual((await owner('PUT', '/api/clients/inv-terms/enrollment-terms', terms)).status, 400);
+    assert.strictEqual((await owner('POST', '/api/assistant', { clientId: 'inv-terms', history: [{ role: 'user', content: 'What next?' }] })).status, 409);
+    assert.strictEqual((await owner('PUT', '/api/clients/inv-terms/enrollment-terms', terms)).status, 200);
   } finally {
     server.close();
     built.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('invited clients use the final CROA texts, the bracket gate, and the cancellation hold', async () => {
+  assert.doesNotMatch(read('js/law.js'), /up to 10 years/);
+  const openDocs = {
+    disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nBankruptcy information can be reported for 10 years.\n',
+    contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
+    cancellation: '**Notice of Cancellation**\n\nbefore midnight on [DATE: Weekday, Month D, YYYY]\n\n[date]\n\n[purchaser\'s signature]\n\nYou can also cancel before midnight Eastern Time on the date above.\n',
+    esign: 'Consent to Electronic Records\n\nOpen [LINK TO SAMPLE PDF]. Code [______]\n\n[ ] I agree.\n'
+  };
+  const closedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-invite-closed-'));
+  const closed = createApp({ dataDir: closedDir, encryptionKey: 'invite-closed-key-not-secret', selfSignupEnabled: false, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } });
+  const closedListen = listen(closed.app);
+  const closedOwner = closedListen.client();
+  const closedAda = closedListen.client();
+  const openDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-invite-open-'));
+  const opened = createApp({ dataDir: openDir, encryptionKey: 'invite-open-key-not-a-secret', selfSignupEnabled: false, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, croaDocs: openDocs });
+  const openListen = listen(opened.app);
+  const owner = openListen.client();
+  const ada = openListen.client();
+  try {
+    assert.strictEqual((await closedOwner('POST', '/api/setup', { name: 'Owner', email: 'owner-closed@signup.test', password: 'owner password 1' })).status, 200);
+    assert.strictEqual((await closedAda('POST', '/api/signup', { firstName: 'Ada', lastName: 'Invite', email: 'ada-closed@signup.test', password: 'ada password 1', acceptAccountTerms: true, state: 'NJ', njResident: true })).status, 404);
+    const closedWs = await closedOwner('GET', '/api/workspace');
+    closedWs.body.data.clients.push({ id: 'inv-closed', name: 'Ada Invite', kind: 'personal', email: 'ada-closed@signup.test', status: 'onboarding', onboarding: {} });
+    assert.strictEqual((await closedOwner('PUT', '/api/workspace', { baseVersion: closedWs.body.version, data: closedWs.body.data })).status, 200);
+    const closedInv = await closedOwner('POST', '/api/invites', { role: 'client', clientId: 'inv-closed', email: 'ada-closed@signup.test' });
+    assert.strictEqual((await closedAda('POST', '/api/invites/accept', { token: closedInv.body.url.split('invite=')[1], password: 'ada password 1' })).status, 200);
+    const terms = { pricePerResult: 20, scheduleA: [{ item: 'Late fee', creditor: 'North Bank', bureau: 'Equifax', last4: '4242' }] };
+    assert.strictEqual((await closedOwner('PUT', '/api/clients/inv-closed/enrollment-terms', terms)).status, 200);
+    const closedSign = await closedAda('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Ada Invite', agree: true });
+    assert.strictEqual(closedSign.status, 503);
+    assert.match(closedSign.body.error, /not open yet/);
+    assert.doesNotMatch(JSON.stringify((await closedAda('GET', '/api/portal/me')).body.documents), /up to 10 years/);
+
+    assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner-open@signup.test', password: 'owner password 1' })).status, 200);
+    const ws = await owner('GET', '/api/workspace');
+    ws.body.data.clients.push({ id: 'inv-open', name: 'Ada Invite', kind: 'personal', email: 'ada-open@signup.test', status: 'onboarding', onboarding: {} });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ws.body.version, data: ws.body.data })).status, 200);
+    const inv = await owner('POST', '/api/invites', { role: 'client', clientId: 'inv-open', email: 'ada-open@signup.test' });
+    assert.strictEqual((await ada('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'ada password 1' })).status, 200);
+    assert.strictEqual((await owner('PUT', '/api/clients/inv-open/enrollment-terms', terms)).status, 200);
+    assert.strictEqual((await ada('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Ada Invite', agree: true })).status, 400);
+    const sample = await ada('GET', '/api/portal/esign/sample');
+    const code = sample.body.match(/Your code is ([A-F0-9]{6})/)[1];
+    assert.strictEqual((await ada('POST', '/api/portal/esign/consent', { agree: true, code })).status, 200);
+    const shown = await ada('GET', '/api/portal/me');
+    assert.match(shown.body.documents.disclosure, /reported for 10 years/);
+    assert.match(shown.body.documents.cancellation, /before midnight Eastern Time on the date above/);
+    assert.doesNotMatch(JSON.stringify(shown.body.documents), /up to 10 years/);
+    assert.strictEqual((await ada('POST', '/api/portal/disclosure-view')).status, 200);
+    assert.strictEqual((await ada('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Ada Invite', agree: true })).status, 200);
+    assert.strictEqual((await ada('POST', '/api/portal/contract-view')).status, 200);
+    const signed = await ada('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Ada Invite', agree: true });
+    assert.strictEqual(signed.status, 200);
+    const pdf = await ada('GET', '/api/portal/signed/' + signed.body.signature.pdfId);
+    assert.match(pdf.body, /before midnight on /);
+    assert.match(pdf.body, /before midnight Eastern Time on the date above/);
+    assert.strictEqual(pdf.body.split('Notice of Cancellation').length - 1, 2);
+    const holdRoutes = [
+      ['POST', '/api/clients/inv-open/files/x/scan'],
+      ['POST', '/api/clients/inv-open/scan-text', { text: 'report '.repeat(40) }],
+      ['POST', '/api/clients/inv-open/ai-plan'],
+      ['POST', '/api/assistant', { clientId: 'inv-open', history: [{ role: 'user', content: 'Next?' }] }],
+      ['POST', '/api/assistant/staff', { clientId: 'inv-open', history: [{ role: 'user', content: 'Next?' }] }],
+      ['GET', '/api/clients/inv-open/dispute-suggestions'],
+      ['POST', '/api/letters/draft', { clientId: 'inv-open', recipient: 'Equifax', items: [] }]
+    ];
+    for (const [method, url, body] of holdRoutes) assert.strictEqual((await owner(method, url, body)).status, 409, url);
+    opened.db.data.workspace.disputes = opened.db.data.workspace.disputes || [];
+    opened.db.data.workspace.letters = opened.db.data.workspace.letters || [];
+    opened.db.data.workspace.disputes.push({ id: 'd-inv', clientId: 'inv-open', letterId: 'l-inv', recipient: 'Equifax', items: [] });
+    opened.db.data.workspace.letters.push({ id: 'l-inv', clientId: 'inv-open', text: 'Letter', status: 'approved' });
+    assert.strictEqual((await owner('POST', '/api/disputes/d-inv/mail')).status, 409);
+    const row = opened.db.data.workspace.clients.find(c => c.id === 'inv-open');
+    row.onboarding.cancellationWindowEndsAtTs = '2020-01-02T04:59:59.999Z';
+    row.onboarding.cancellationWindowEndsAt = '2020-01-01';
+    assert.strictEqual((await owner('POST', '/api/clients/inv-open/files/x/scan')).status, 501);
+    assert.strictEqual((await owner('POST', '/api/assistant', { clientId: 'inv-open', history: [{ role: 'user', content: 'Next?' }] })).status, 501);
+    assert.strictEqual((await owner('POST', '/api/assistant/staff', { clientId: 'inv-open', history: [{ role: 'user', content: 'Next?' }] })).status, 200);
+    assert.strictEqual((await owner('GET', '/api/clients/inv-open/dispute-suggestions')).status, 200);
+    assert.notStrictEqual((await owner('POST', '/api/letters/draft', { clientId: 'inv-open', recipient: 'Equifax', items: [] })).status, 409);
+    assert.strictEqual((await owner('POST', '/api/disputes/d-inv/mail')).status, 501);
+  } finally {
+    closedListen.server.close();
+    closed.shutdown();
+    openListen.server.close();
+    opened.shutdown();
+    fs.rmSync(closedDir, { recursive: true, force: true });
+    fs.rmSync(openDir, { recursive: true, force: true });
   }
 });
 

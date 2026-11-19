@@ -111,7 +111,7 @@ test('setup disputes that were mailed through Lob', async () => {
   assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner@lob.test', password: 'correct horse battery' })).status, 200);
   const g = await owner('GET', '/api/workspace');
   const w = g.body.data;
-  w.clients.push({ id: 'c-lob', name: 'Ada Letter', firstName: 'Ada', lastName: 'Letter', kind: 'personal', status: 'active', email: 'ada@lob.test', onboarding: {} });
+  w.clients.push({ id: 'c-lob', name: 'Ada Letter', firstName: 'Ada', lastName: 'Letter', kind: 'personal', status: 'active', email: 'ada@lob.test', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } });
   const kinds = [];
   for (const prefix of ['letter', 'letter.certified']) {
     for (const suffix of ['mailed', 'in_transit', 'delivered', 're-routed', 'returned_to_sender']) {
@@ -293,7 +293,7 @@ test('returned mail is flagged on the dashboard and in alerts', () => {
   }
   ctx.Store.load();
   const s = ctx.Store.state;
-  s.clients.push({ id: 'c1', name: 'Ada Letter', firstName: 'Ada', lastName: 'Letter', kind: 'personal', status: 'active', onboarding: {}, createdAt: '2026-01-01' });
+  s.clients.push({ id: 'c1', name: 'Ada Letter', firstName: 'Ada', lastName: 'Letter', kind: 'personal', status: 'active', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' }, createdAt: '2026-01-01' });
   s.disputes.push({
     id: 'd1', clientId: 'c1', type: 'cra_611', round: 1, recipient: 'Experian', status: 'sent',
     sentAt: '2026-10-01', receivedAt: RECEIVED, dueAt: DUE, outcome: null, items: [],

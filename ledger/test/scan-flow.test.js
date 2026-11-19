@@ -73,7 +73,7 @@ test('report upload accepts a mislabeled PDF, rejects non-files, and enforces 15
   assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner@scan.test', password: 'scan owner pass 1' })).status, 200);
   const g = await owner('GET', '/api/workspace');
   const ws = g.body.data;
-  ws.clients.push({ id: 'c1', name: 'Jordan Sample', firstName: 'Jordan', lastName: 'Sample', kind: 'personal', email: 'jordan@example.test', status: 'active', onboarding: {} });
+  ws.clients.push({ id: 'c1', name: 'Jordan Sample', firstName: 'Jordan', lastName: 'Sample', kind: 'personal', email: 'jordan@example.test', status: 'active', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } });
   assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
 
   const pdf = await owner('POST', '/api/clients/c1/files', formFile('equifax.pdf', Buffer.from('%PDF-1.4\nreport text'), 'application/octet-stream'));

@@ -4,6 +4,7 @@
 // client until results show on the client's credit report. Do not import
 // ledger/js/billing.js or any payment provider here.
 import { cancellationWindow } from './croa-window.js';
+import { Store } from './shared.js';
 
 const MOVABLE = new Set(['pending', 'contract-signed', 'contract_signed']);
 
@@ -46,6 +47,15 @@ export function applySignupStatus(c, onDate) {
     else if (c.status === 'pending' || win.open) c.status = 'contract-signed';
   }
   return c.status !== beforeStatus || (o.cancellationWindowEndsAtTs || null) !== beforeEnd;
+}
+
+/** Self-signup uses the Eastern instant. Every other CROA client is held while Store.croaStatus is required and not cleared. */
+export function clientServiceOnHold(c, onDate) {
+  if (!c) return false;
+  if (c.signupSource === 'self' && !selfSignupCleared(c, onDate)) return true;
+  const when = onDate instanceof Date ? undefined : onDate;
+  const cs = Store.croaStatus(c, when);
+  return !!(cs.required && !cs.cleared);
 }
 
 /** New disputes for a self-signup client who is not active yet. */

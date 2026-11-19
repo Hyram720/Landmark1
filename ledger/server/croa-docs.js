@@ -52,9 +52,10 @@ function addressGap(client) {
   return null;
 }
 
-export function enrollmentStatus(client, docs) {
+export function enrollmentStatus(client, docs, opts) {
   const c = client || {};
-  if (!mailingAddress(c)) {
+  const requireAddress = !opts || opts.requireAddress !== false;
+  if (requireAddress && !mailingAddress(c)) {
     return addressGap(c) || { code: 'address', message: 'Your mailing address is needed' };
   }
   if (scheduleAEntries(c).length < 1 || pricePerResult(c) == null) {

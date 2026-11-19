@@ -914,7 +914,7 @@
     const co = S().settings.company;
     const c = cid ? Store.get.client(cid) : { name: '[Client name]', onboarding: {} };
     const cs = cid ? Store.croaStatus(c) : {};
-    if (kind === 'disclosure') return UI.printDoc('Consumer Credit File Rights', Law.CROA_DISCLOSURE + `\n\n\nAcknowledgment of receipt\n\nI received this statement before signing any contract.\n\n${c.name}\n\nSignature: ______________________   Date: __________`);
+    if (kind === 'disclosure') return UI.printDoc('Consumer Credit File Rights', Law.CROA_DISCLOSURE);
     if (kind === 'contract') return UI.printDoc('Credit services agreement', Law.contractTerms(co, c, S().settings.defaultFee));
     if (kind === 'cancel') { const n = Law.cancellationNotice(co, cs.deadline ? UI.date(cs.deadline) : null); return UI.printDoc('Notice of Cancellation', n + '\n\n\n— — — — — — — — — — duplicate copy — — — — — — — — — —\n\n' + n); }
   }

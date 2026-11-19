@@ -27,6 +27,18 @@ const owner = client();
 const portal = client();
 const anon = client();
 let ws, clientId;
+function clearDemoCroa() {
+  const c = db.data.workspace.clients.find(x => x.id === clientId);
+  const signed = '2020-01-06';
+  c.onboarding = Object.assign({}, c.onboarding, {
+    disclosureSignedAt: signed,
+    disclosureAcknowledgedAt: signed + 'T00:00:00.000Z',
+    contractSignedAt: signed,
+    contractSignedAtTs: signed + 'T15:00:00.000Z',
+    cancellationWindowEndsAt: '2020-01-09',
+    cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z'
+  });
+}
 
 test('first run requires setup; data is encrypted at rest', async () => {
   const s = await anon('GET', '/api/session');
@@ -74,21 +86,12 @@ test('client portal invite, CROA e-sign order, cancellation', async () => {
   assert.strictEqual((await portal('GET', '/api/workspace')).status, 403, 'clients cannot read the workspace');
   const me = await portal('GET', '/api/portal/me');
   assert.strictEqual(me.body.client.name, 'Jordan Sample');
-  assert.match(me.body.documents.disclosure, /Consumer Credit File Rights/);
+  assert.match(me.body.documents.esign, /Consent to Electronic Records/);
+  assert.strictEqual(me.body.documents.disclosure, '');
+  assert.doesNotMatch(JSON.stringify(me.body.documents), /up to 10 years/);
   assert.strictEqual(me.body.recommendations[0].url, '/go/r1');
-  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true })).status, 400, 'contract before disclosure is refused');
-  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Someone Else', agree: true })).status, 400);
-  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'jordan sample', agree: true })).status, 200);
-  const c = await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true });
-  assert.strictEqual(c.status, 200);
-  assert.match(c.body.signature.documentSha256, /^[0-9a-f]{64}$/);
-  const me2 = await portal('GET', '/api/portal/me');
-  assert.strictEqual(me2.body.croa.inWindow, true);
-  await portal('POST', '/api/portal/cancel');
-  const g = await owner('GET', '/api/workspace');
-  const jc = g.body.data.clients.find(x => x.id === clientId);
-  assert.strictEqual(jc.status, 'cancelled');
-  assert.strictEqual(g.body.data.signatures.length, 2);
+  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'jordan sample', agree: true })).status, 503);
+  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true })).status, 503);
 });
 
 test('tracked referral link redirects and records the click', async () => {
@@ -110,7 +113,7 @@ test('staff invites are owner-only and audit log records actions', async () => {
   assert.strictEqual((await staff('POST', '/api/invites', { role: 'staff', email: 'x@example.test' })).status, 403);
   assert.strictEqual((await staff('GET', '/api/audit')).status, 403);
   const audit = await owner('GET', '/api/audit');
-  ['setup', 'workspace.save', 'intake', 'portal.sign', 'portal.cancel', 'referral.click'].forEach(a => assert.ok(audit.body.some(x => x.action === a), a));
+  ['setup', 'workspace.save', 'intake', 'invite.accept', 'referral.click'].forEach(a => assert.ok(audit.body.some(x => x.action === a), a));
 });
 
 test('login rejects wrong password and static pages are served', async () => {
@@ -192,6 +195,7 @@ test('documents upload encrypted and are isolated per client', async () => {
 });
 
 test('Ledger AI needs an API key and sees the client file', async () => {
+  clearDemoCroa();
   const saved = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   const r = await owner('POST', '/api/assistant', { clientId, history: [{ role: 'user', content: 'What next?' }] });
@@ -206,6 +210,7 @@ test('Ledger AI needs an API key and sees the client file', async () => {
 });
 
 test('AI scan and round plan are gated on an API key; HTML reports are flattened to text', async () => {
+  clearDemoCroa();
   const saved = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   assert.strictEqual((await owner('POST', `/api/clients/${clientId}/ai-plan`)).status, 501);
@@ -218,6 +223,7 @@ test('AI scan and round plan are gated on an API key; HTML reports are flattened
 });
 
 test('pasted-text AI scan is gated on an API key and validates input', async () => {
+  clearDemoCroa();
   const saved = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   assert.strictEqual((await owner('POST', `/api/clients/${clientId}/scan-text`, { text: 'x'.repeat(500) })).status, 501);

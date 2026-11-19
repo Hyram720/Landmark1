@@ -19,7 +19,7 @@ import { mountClientAuth } from './client-auth.js';
 import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
-import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './signup-status.js';
+import { applySignupStatus, clientServiceOnHold, serviceWorkBlocked } from './signup-status.js';
 import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
@@ -406,7 +406,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   app.put('/api/clients/:id/enrollment-terms', need('owner'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
     if (!c) return res.status(404).json({ error: 'Client not found' });
-    if (c.signupSource !== 'self') return res.status(400).json({ error: 'Price and Schedule A are set here for self-signup clients.' });
+    if (c.kind === 'business') return res.status(400).json({ error: 'Price and Schedule A are set here for personal clients.' });
     if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
     const price = Number((req.body || {}).pricePerResult);
     if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ error: 'Enter a price per result greater than zero.' });
@@ -485,19 +485,18 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   // ---------- client portal ----------
   const company = () => workspace().settings.company || {};
   function portalClient(req) { return workspace().clients.find(c => c.id === req.user.clientId); }
+  function croaClient(c) { return !!(c && c.kind !== 'business'); }
+  function signingStatus(c, pack) {
+    if (!croaClient(c)) return { code: '', message: '' };
+    return enrollmentStatus(c, pack, { requireAddress: c.signupSource === 'self' });
+  }
   function documentsFor(c) {
-    const cs = Store.croaStatus(c);
-    if (c.signupSource === 'self') return personalizeCroaDocs(croaDocsOverride || croaDocs(), c, now());
-    return {
-      disclosure: Law.CROA_DISCLOSURE,
-      contract: Law.contractTerms(company(), c, workspace().settings.defaultFee),
-      cancellation: Law.cancellationNotice(company(), cs.deadline)
-    };
+    return personalizeCroaDocs(croaDocsOverride || croaDocs(), c, now());
   }
   function documentsForPortal(c) {
     const docs = documentsFor(c);
-    if (c.signupSource !== 'self') return docs;
-    if (!mailingAddress(c)) return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
+    if (!croaClient(c)) return docs;
+    if (c.signupSource === 'self' && !mailingAddress(c)) return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
     const consented = !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt;
     if (consented) return docs;
     return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
@@ -527,11 +526,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const o = ws.offers.find(x => x.id === r.offerId) || {};
       return { id: r.id, name: o.name, category: o.category, why: r.note || o.note, url: `/go/${r.id}`, status: r.status };
     });
-    const win = c.signupSource === 'self' ? selfWindow(c) : null;
+    const win = selfWindow(c);
     const disclosureSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'disclosure');
     const contractSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'contract');
     const pack = documentsFor(c);
-    const block = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
+    const block = signingStatus(c, pack);
     res.json({
       client: { name: c.name, kind: c.kind, status: c.status, address: c.address || '', city: c.city || '', state: c.state || '', zip: c.zip || '' },
       company: { name: company().name, phone: c.status === 'active' ? company().phone : '', email: company().email },
@@ -595,7 +594,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
     const pack = documentsFor(c);
-    const status = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
+    const status = signingStatus(c, pack);
     if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
     c.onboarding = c.onboarding || {};
     c.onboarding.contractViewedAt = new Date().toISOString();
@@ -623,8 +622,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
     const pack = documentsFor(c);
-    if (c.signupSource === 'self') {
-      const status = enrollmentStatus(c, pack);
+    if (croaClient(c)) {
+      const status = signingStatus(c, pack);
       if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
     }
     const { agree, code } = req.body || {};
@@ -676,24 +675,23 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!agree || String(typedName || '').trim().toLowerCase() !== String(c.name).trim().toLowerCase()) return res.status(400).json({ error: `Type your full name exactly as "${c.name}" and check the box to sign.` });
     c.onboarding = c.onboarding || {};
     const pack = documentsFor(c);
-    if (c.signupSource === 'self') {
-      const status = enrollmentStatus(c, pack);
+    if (croaClient(c)) {
+      const status = signingStatus(c, pack);
       if (status.code === 'address' || status.code === 'terms' || status.code === 'closed') return res.status(503).json({ error: status.message });
       if (doc === 'contract' && status.code === 'review') return res.status(400).json({ error: status.message });
     }
     if (c.signupSource === 'self' && !signupOn) return res.status(403).json({ error: 'Self-signup signing is turned off.' });
-    if (c.signupSource === 'self' && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
-    if (c.signupSource === 'self' && c.onboarding.esignWithdrawnAt) return res.status(400).json({ error: 'Electronic consent was withdrawn. Ask for paper copies. There is no fee.' });
-    if (doc === 'disclosure' && c.signupSource === 'self' && !c.onboarding.disclosureViewedAt) return res.status(400).json({ error: 'Open the separate Consumer Credit File Rights statement before signing it.' });
-    if (doc === 'contract' && c.signupSource === 'self' && !(workspace().signatures || []).some(s => s.clientId === c.id && s.doc === 'disclosure')) return res.status(400).json({ error: 'Sign the separate Consumer Credit File Rights statement before the contract.' });
-    if (doc === 'contract' && c.signupSource !== 'self' && !c.onboarding.disclosureSignedAt) return res.status(400).json({ error: 'Please acknowledge the Consumer Credit File Rights statement first.' });
+    if (croaClient(c) && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
+    if (croaClient(c) && c.onboarding.esignWithdrawnAt) return res.status(400).json({ error: 'Electronic consent was withdrawn. Ask for paper copies. There is no fee.' });
+    if (doc === 'disclosure' && croaClient(c) && !c.onboarding.disclosureViewedAt) return res.status(400).json({ error: 'Open the separate Consumer Credit File Rights statement before signing it.' });
+    if (doc === 'contract' && croaClient(c) && !(workspace().signatures || []).some(s => s.clientId === c.id && s.doc === 'disclosure')) return res.status(400).json({ error: 'Sign the separate Consumer Credit File Rights statement before the contract.' });
     if ((workspace().signatures || []).some(s => s.clientId === c.id && s.doc === doc)) return res.status(409).json({ error: 'Already signed' });
     const atDate = now();
     const at = atDate.toISOString();
     let text = pack[doc];
     let pdfSha = null;
     let pdfId = null;
-    if (doc === 'contract' && c.signupSource === 'self') {
+    if (doc === 'contract' && croaClient(c)) {
       const win = cancellationWindow(at, atDate);
       const built = buildContractPackagePdf({ contract: stampContractSignedAt(pack.contract, atDate), notice: stampCancellationDeadline(pack.cancellation, atDate), clientName: c.name, signedLabel: formatDocumentTimeEt(atDate), deadlineLabel: formatDeadlineDateEt(win.deadlineInstant) });
       pdfSha = built.sha256;
@@ -756,7 +754,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!c) return res.status(404).json({ error: 'Not found' });
     c.onboarding = c.onboarding || {};
     if (c.onboarding.cancelledAt) return res.json({ ok: true });
-    if (c.signupSource === 'self' && (c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt)) {
+    if (croaClient(c) && (c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt)) {
       const win = cancellationWindow(c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt, new Date());
       if (!win.open) return res.status(400).json({ error: 'The 3-business-day cancellation window has ended.' });
     }
@@ -870,7 +868,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
     const { clientId, history } = req.body || {};
-    if (clientId && selfSignupOnHold(clientId)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
+    if (clientId && clientServiceOnHold(workspace().clients.find(x => x.id === clientId))) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
     if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });
@@ -940,12 +938,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function sendModel(res, held, body) { if (held) held.send(body); else res.json(body); }
   function failModel(res, held, e) { if (held) held.send({ error: aiMessage(e).error }); else aiError(res, e); }
   const SERVICE_HOLD = 'On hold until the contract is signed and the cancellation window ends.';
-  function selfSignupOnHold(id) {
-    const c = workspace().clients.find(x => x.id === id);
-    return !!(c && c.signupSource === 'self' && !selfSignupCleared(c));
+  function serviceOnHold(id) {
+    return clientServiceOnHold(workspace().clients.find(x => x.id === id));
   }
   app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
-    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
+    if (serviceOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
@@ -965,7 +962,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     finally { scanningDocs.delete(doc.id); }
   });
   app.post('/api/clients/:id/scan-text', need('owner', 'staff'), async (req, res) => {
-    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
+    if (serviceOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const text = String((req.body || {}).text || '');
@@ -989,7 +986,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     finally { scanningDocs.delete(lockKey); }
   });
   app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
-    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
+    if (serviceOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     let held = null;
@@ -1079,7 +1076,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   async function autoScan(c, doc) {
     const ws = workspace();
     ws.pendingImports = ws.pendingImports || [];
-    if (c.signupSource === 'self' && !selfSignupCleared(c)) {
+    if (clientServiceOnHold(c)) {
       ws.tasks.push({ id: uid(), clientId: c.id, title: `Credit report from ${c.name} is on hold until the cancellation window ends (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'report.uploaded.hold', doc.name);
       return;
@@ -1184,17 +1181,17 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function recipientAddressFor(d) { const b = Law.BUREAUS[d.recipient]; return b ? { name: b.name, address: b.address } : { name: d.recipient, address: d.recipientAddress || '' }; }
 
   app.post('/api/disputes/:id/mail', need('owner', 'staff'), async (req, res) => {
-    const key = secrets().lobKey;
-    if (!key) return res.status(501).json({ error: 'Online mailing is off. The owner can add a Lob API key in Settings → Print & mail.' });
     const ws = workspace();
     const d = ws.disputes.find(x => x.id === req.params.id);
     if (!d) return res.status(404).json({ error: 'Dispute not found' });
-    if (d.sentAt) return res.status(409).json({ error: 'Already mailed' });
     const c = ws.clients.find(x => x.id === d.clientId);
+    if (c && clientServiceOnHold(c)) return res.status(409).json({ error: SERVICE_HOLD });
+    const key = secrets().lobKey;
+    if (!key) return res.status(501).json({ error: 'Online mailing is off. The owner can add a Lob API key in Settings → Print & mail.' });
+    if (d.sentAt) return res.status(409).json({ error: 'Already mailed' });
     const letter = ws.letters.find(l => l.id === d.letterId);
     if (!c || !letter || !letter.text) return res.status(400).json({ error: 'Generate the letter first' });
     if (letter.status !== 'approved') return res.status(400).json({ error: 'Approve the letter (client confirmed every statement) before mailing' });
-    if (!Store.croaStatus(c).cleared || (c.signupSource === 'self' && !selfSignupCleared(c))) return res.status(400).json({ error: 'Blocked until onboarding and the cancellation period are complete' });
     const rc = recipientAddressFor(d);
     const to = parseAddress(rc.name, rc.address);
     if (!to) return res.status(400).json({ error: `Recipient address must end with “City, ST 12345”. Edit the recipient address for ${d.recipient}.` });
