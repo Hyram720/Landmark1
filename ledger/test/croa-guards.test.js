@@ -1924,29 +1924,33 @@ test('the browser names a structured refusal and does not retry it as offline', 
   const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
   const views = fs.readFileSync(path.join(import.meta.dirname, '../js/views.js'), 'utf8');
   const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
+  assert.match(flush, /Store\.applyServerSave\(r\.data, sent/);
   assert.match(flush, /e\.body && e\.body\.data/);
-  assert.match(flush, /Not allowed: /);
+  assert.match(appJs, /giveUpRefusals/);
+  assert.match(appJs, /Not allowed: /);
   assert.match(flush, /status === 400 \|\| e\.status === 403/);
   assert.match(flush, /!e\.status \|\| e\.status >= 500/);
   assert.doesNotMatch(appJs, /Billing\.payToken\(\)/);
-  assert.doesNotMatch(appJs, /beforeunload/);
-  assert.doesNotMatch(appJs, /sessionStorage/);
   const voidAct = appJs.slice(appJs.indexOf("'invoice-void'"), appJs.indexOf("'invoice-print'"));
   assert.match(voidAct, /find\(x => x && x\.id === id\)/);
   assert.match(views, /ledgerUser && root\.ledgerUser\.role === 'owner'/);
 });
 
-test('a 409 with data adopts the server copy and does not re-save over a new client or task', () => {
-  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
-  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  const conflict = flush.slice(flush.indexOf('e.status === 409 && e.body && e.body.data'), flush.indexOf('else if (refused)'));
-  assert.match(conflict, /Store\.adopt\(e\.body\.data\)/);
-  assert.match(conflict, /Someone else updated this\. Redo your last change\./);
-  assert.match(conflict, /requeue = false/);
-  assert.match(conflict, /this\.pending = false/);
-  assert.doesNotMatch(conflict, /applyServerSave/);
-  assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
+test('a 409 keeps another user\'s new client and task while the local edit stays', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'ada', name: 'Ada', zip: '' }], tasks: [] });
+  Store.state.clients[0].zip = '08002';
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients[0].notes = 'typed after';
+  const server = JSON.parse(JSON.stringify(sent));
+  server.clients.push({ id: 'new', name: 'Owner Client', kind: 'personal' });
+  server.tasks = [{ id: 't1', clientId: 'new', title: 'Owner task', done: false }];
+  const applied = Store.applyServerSave(server, sent);
+  assert.ok(Store.state.clients.some(row => row.id === 'new' && row.name === 'Owner Client'));
+  assert.ok((Store.state.tasks || []).some(row => row.id === 't1'));
+  assert.strictEqual(Store.state.clients.find(row => row.id === 'ada').zip, '08002');
+  assert.strictEqual(Store.state.clients.find(row => row.id === 'ada').notes, 'typed after');
+  assert.strictEqual(applied.requeue, true);
 });
 
 test('a held client dispute cannot be moved to a cleared client and marked sent', async () => {
@@ -2068,26 +2072,27 @@ test('a held dispute outcome and a letter tied to that dispute cannot advance', 
 });
 
 test('a 409 keeps the other user city and dispute recipient instead of re-saving', () => {
-  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
-  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  const conflict = flush.slice(flush.indexOf('e.status === 409 && e.body && e.body.data'), flush.indexOf('else if (refused)'));
-  assert.match(conflict, /Store\.adopt\(e\.body\.data\)/);
-  assert.match(conflict, /Someone else updated this\. Redo your last change\./);
-  assert.match(conflict, /this\.pending = false/);
-  assert.match(conflict, /requeue = false/);
-  assert.doesNotMatch(conflict, /applyServerSave/);
-  assert.doesNotMatch(conflict, /this\.pending = true/);
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'ada', name: 'Ada', city: '' }], disputes: [{ id: 'd', clientId: 'ada', recipient: 'Equifax' }] });
+  Store.state.clients[0].zip = '08002';
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  const server = JSON.parse(JSON.stringify(sent));
+  server.clients[0].city = 'Cherry Hill';
+  server.disputes[0].recipient = 'Experian';
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(Store.state.clients[0].city, 'Cherry Hill');
+  assert.strictEqual(Store.state.disputes[0].recipient, 'Experian');
+  assert.strictEqual(Store.state.clients[0].zip, '08002');
+  assert.strictEqual(applied.requeue, true);
 });
 
 test('a refusal leaves Not allowed on the status and names the other dropped edits', () => {
   const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
-  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  const refused = flush.slice(flush.indexOf('else if (refused)'), flush.indexOf('else if (e.status === 401)'));
-  assert.match(refused, /setSync\('conflict'\)/);
-  assert.match(refused, /Not allowed: /);
-  assert.match(refused, /Dropped: /);
-  assert.match(refused, /droppedEdits\(/);
-  assert.doesNotMatch(refused, /setSync\('saving'\)/);
+  const applied = appJs.slice(appJs.indexOf('finishApplied(applied, fromConflict)'), appJs.indexOf('async flush()'));
+  assert.match(applied, /Not allowed: /);
+  assert.match(applied, /dropped\.length/);
+  assert.match(applied, /setSync\(/);
+  assert.match(applied, /this\.pending = false/);
 });
 
 test('a null client row is refused when new and a stored one can be removed', async () => {
@@ -2195,8 +2200,8 @@ test('a wrong list shape is a 400 and an id-less violations key is a 422', async
 test('the browser adopts the saved workspace and does not mint pay tokens', () => {
   const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
   const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
-  assert.match(flush, /renderWhenSafe\(\)/);
+  assert.match(flush, /Store\.applyServerSave\(r\.data, sent/);
+  assert.match(appJs, /renderWhenSafe\(\)/);
   assert.match(flush, /e\.body && e\.body\.data/);
   assert.match(flush, /await this\.reload\(\)/);
   assert.doesNotMatch(appJs, /Billing\.payToken\(\)/);
@@ -3070,6 +3075,40 @@ test('a stored dispute that cites a held client report cannot be mailed, and tha
     gone.body.data.disputes = gone.body.data.disputes.filter(row => row.id !== 'd-ben');
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: gone.body.version, data: gone.body.data })).status, 200);
   });
+
+test('a repeated whole-list refusal stops retrying and a later edit is kept', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', zip: '', pricePerResult: 50 }], activity: [{ id: 'a1', text: 'Kept', clientId: 'c' }] });
+  Store.state.activity[0].text = 'Changed';
+  Store.state.clients[0].zip = '08002';
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients[0].notes = 'typed after';
+  const server = JSON.parse(JSON.stringify(sent));
+  server.activity[0].text = 'Kept';
+  server.clients[0].zip = '';
+  server.clients[0].notes = '';
+  const applied = Store.applyServerSave(server, sent, { rejected: true, refused: [{ key: 'clients', id: 'c', field: 'pricePerResult', reason: 'Only the owner can change the price.' }, { key: 'activity', id: '', field: '', reason: 'The activity list was refused.' }] });
+  assert.strictEqual(Store.state.clients.find(row => row.id === 'c').zip, '08002');
+  assert.strictEqual(Store.state.clients.find(row => row.id === 'c').notes, 'typed after');
+  assert.strictEqual(Store.state.clients.find(row => row.id === 'c').pricePerResult, 50);
+  assert.match(applied.refused.join(' '), /pricePerResult/);
+  Store.giveUpRefusals(['activity/']);
+  assert.strictEqual(Store.state.activity.find(row => row.id === 'a1').text, 'Kept');
+  const again = Store.dirtySnapshot().map(row => row.key + '/' + row.id);
+  assert.ok(!again.some(token => token.indexOf('activity/') === 0));
+});
+
+test('a delete during a conflict ignores blank fields the server filled', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada' }] });
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients = [];
+  const server = JSON.parse(JSON.stringify(sent));
+  server.clients[0].onboarding = { disclosureSignedAt: null, contractSignedAt: null };
+  const applied = Store.applyServerSave(server, sent);
+  assert.ok(!Store.state.clients.some(row => row.id === 'c'));
+  assert.strictEqual(applied.dropped.length, 0);
+  assert.strictEqual(applied.requeue, true);
 });
 
 test('startup migration binds existing logins, and a stale save cannot restore a deleted client', async () => {
