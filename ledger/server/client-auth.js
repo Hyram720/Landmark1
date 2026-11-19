@@ -181,8 +181,11 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     if (settings().notifications === false || sent()[key]) return;
     const ws = workspace();
     const client = ((ws && ws.clients) || []).find(c => c && c.id === clientId);
-    if (!client || (clientServiceOnHold(client, undefined, (ws && ws.signatures) || []) && disputeNotice(subject, line))) {
+    const heldDispute = client && clientServiceOnHold(client, undefined, (ws && ws.signatures) || []) && disputeNotice(subject, line);
+    if (!client || heldDispute) {
       sent()[key] = new Date().toISOString();
+      const actor = req && req.user && req.user.email;
+      if (actor) db.audit({ actor, action: 'notify.skipped', detail: key + (!client ? ' client missing' : ' client on hold') });
       return;
     }
     sent()[key] = new Date().toISOString();
@@ -190,16 +193,6 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     const link = req ? `${origin(req)}/portal` : 'your client portal';
     for (const u of users) await mail(u, subject, `${line}\n\nSign in to see the details: ${link}\n\nYou can turn these emails off in the portal.`);
     db.audit({ actor: 'system', action: 'notify', detail: `${key} → ${users.length}` });
-  }
-
-  function disableGonePortalUsers(after) {
-    const ids = new Set(((after && after.clients) || []).filter(c => c && c.id).map(c => c.id));
-    (D().users || []).forEach(u => {
-      if (!u || u.role !== 'client' || !u.clientId || u.disabled) return;
-      if (ids.has(u.clientId)) return;
-      u.disabled = true;
-      db.audit({ actor: 'system', action: 'portal.user.disabled', detail: `${u.email || u.id} client ${u.clientId} is gone` });
-    });
   }
 
   function passiveResponse(d, after) {
@@ -220,7 +213,6 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
         if (['deleted', 'corrected'].includes(it.result) && it.result !== was.result) notifyClient(d.clientId, `item:${d.id}:${i}:${it.result}`, 'Good news on your credit file', `An item you disputed with ${d.recipient || 'a bureau'} was ${it.result === 'deleted' ? 'removed' : 'corrected'}.`, req);
       });
     });
-    disableGonePortalUsers(after);
     db.persistSoon();
   }
 

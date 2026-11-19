@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 import { createApp } from '../server/app.js';
 import { setTransport } from '../server/mailer.js';
+import { hashPassword } from '../server/auth.js';
 import { cancellationWindow } from '../server/croa-window.js';
 import { seedSignedClient } from './seed-croa.js';
 
@@ -2665,7 +2666,7 @@ test('recording a bureau response on a held or missing client does not notify, b
       built.db.data.users.push({ id: 'held-user', name: 'Held Client', email: 'held-resp@guard.test', role: 'client', clientId: 'held', password: 'x', sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
       built.db.data.users.push({ id: 'clear-user', name: 'Clear Client', email: 'clear-resp@guard.test', role: 'client', clientId: 'clear', password: 'x', sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
       built.db.data.workspace.disputes = [
-        { id: 'held-d', clientId: 'held', recipient: 'TransUnion', status: 'sent', sentAt: '2026-11-01', outcome: null, items: [] },
+        { id: 'held-d', clientId: 'held', recipient: 'TransUnion', status: 'sent', sentAt: '2026-11-01', outcome: null, items: [{ id: 'item-1', creditor: 'North Bank', result: null }] },
         { id: 'gone-d', clientId: 'gone', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-01', outcome: null, items: [] },
         { id: 'clear-d', clientId: 'clear', recipient: 'Experian', status: 'sent', sentAt: '2026-11-01', outcome: null, items: [] }
       ];
@@ -2677,6 +2678,7 @@ test('recording a bureau response on a held or missing client does not notify, b
       sent.disputes.find(row => row.id === 'held-d').outcome = 'deleted';
       sent.disputes.find(row => row.id === 'held-d').respondedAt = '2026-11-18';
       sent.disputes.find(row => row.id === 'held-d').receivedDate = '2026-11-18';
+      sent.disputes.find(row => row.id === 'held-d').items[0].result = 'deleted';
       sent.disputes.find(row => row.id === 'gone-d').outcome = 'deleted';
       sent.disputes.find(row => row.id === 'gone-d').respondedAt = '2026-11-18';
       const saved = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
@@ -2688,7 +2690,7 @@ test('recording a bureau response on a held or missing client does not notify, b
       assert.strictEqual((saved.body.data.letters || []).length, letterCount);
       const audit = await owner('GET', '/api/audit');
       const rows = audit.body.filter(row => row.action === 'dispute.bureau_response');
-      assert.ok(rows.some(row => row.actor === 'owner@guard.test' && row.at && /held-d/.test(row.detail)));
+      assert.ok(rows.some(row => row.actor === 'owner@guard.test' && row.at && /held-d/.test(row.detail) && /items\.result/.test(row.detail) && /"result":"deleted"/.test(row.detail)));
       assert.ok(rows.some(row => row.actor === 'owner@guard.test' && row.at && /gone-d/.test(row.detail)));
       const billed = JSON.parse(JSON.stringify(saved.body.data));
       billed.invoices = billed.invoices || [];
@@ -2764,9 +2766,9 @@ test('a held client can be sent a contract message, not a dispute result, and a 
   const out = [];
   setTransport(async message => { out.push(message); });
   try {
-    await withOwner(async ({ built, owner }) => {
+    await withOwner(async ({ built, owner, live }) => {
       await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-msg@guard.test', status: 'lead' });
-      built.db.data.users.push({ id: 'held-portal', name: 'Held Client', email: 'held-msg@guard.test', role: 'client', clientId: 'held', password: 'x', sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
+      built.db.data.users.push({ id: 'held-portal', name: 'Held Client', email: 'held-msg@guard.test', role: 'client', clientId: 'held', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
       built.db.data.workspace.disputes = [{ id: 'due-d', clientId: 'held', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-01', dueAt: new Date().toISOString().slice(0, 10), outcome: null, items: [] }];
       await built.auth.deadlineSweep();
       await new Promise(resolve => setTimeout(resolve, 30));
@@ -2776,10 +2778,21 @@ test('a held client can be sent a contract message, not a dispute result, and a 
       assert.match(dispute.body.error, /on hold/);
       const contract = await owner('POST', '/api/messages', { clientId: 'held', channel: 'email', subject: 'Your contract', body: 'Please sign your contract.', purpose: 'contract' });
       assert.strictEqual(contract.status, 501, JSON.stringify(contract.body));
-      seedSignedClient(built.db.data.workspace, 'held');
-      await built.auth.deadlineSweep();
-      await new Promise(resolve => setTimeout(resolve, 30));
-      assert.ok(!out.some(message => message.to === 'held-msg@guard.test'));
+      const disguised = [
+        { channel: 'email', purpose: 'contract', body: 'Experian removed the account.' },
+        { channel: 'email', purpose: 'CONTRACT', body: 'Experian removed the account.' },
+        { channel: 'email', purpose: 'onboarding', body: 'Experian removed X' },
+        { channel: 'sms', purpose: 'contract', body: 'Equifax deleted the tradeline.' },
+        { channel: 'email', purpose: '', body: 'We sent your letters to Experian. Contract attached.' }
+      ];
+      for (const row of disguised) {
+        const sent = await owner('POST', '/api/messages', { clientId: 'held', channel: row.channel, subject: 'Your contract', body: row.body, purpose: row.purpose });
+        assert.strictEqual(sent.status, 409, JSON.stringify(sent.body));
+        assert.match(sent.body.error, /on hold/);
+      }
+      const portal = live.client();
+      assert.strictEqual((await portal('POST', '/api/login', { email: 'held-msg@guard.test', password: 'portal password 1' })).status, 200);
+      assert.strictEqual((await portal('GET', '/api/portal/me')).status, 200);
       const before = await owner('GET', '/api/workspace');
       const drop = JSON.parse(JSON.stringify(before.body.data));
       drop.clients = drop.clients.filter(row => row.id !== 'held');
@@ -2787,7 +2800,21 @@ test('a held client can be sent a contract message, not a dispute result, and a 
       const removed = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: drop });
       assert.strictEqual(removed.status, 200, JSON.stringify(removed.body));
       const user = built.db.data.users.find(row => row.id === 'held-portal');
-      assert.strictEqual(user.disabled, true);
+      assert.strictEqual(user.disabled, false);
+      const audit = await owner('GET', '/api/audit');
+      assert.ok(!audit.body.some(row => row.action === 'portal.user.disabled'));
+      assert.strictEqual((await portal('GET', '/api/portal/me')).status, 404);
+      const back = await owner('GET', '/api/workspace');
+      const again = JSON.parse(JSON.stringify(back.body.data));
+      again.clients.push({ id: 'held', name: 'Held Client', kind: 'personal', email: 'held-msg@guard.test', status: 'lead' });
+      const restored = await owner('PUT', '/api/workspace', { baseVersion: back.body.version, data: again });
+      assert.strictEqual(restored.status, 200, JSON.stringify(restored.body));
+      assert.strictEqual(built.db.data.users.find(row => row.id === 'held-portal').disabled, false);
+      assert.strictEqual((await portal('GET', '/api/portal/me')).status, 200);
+      seedSignedClient(built.db.data.workspace, 'held');
+      await built.auth.deadlineSweep();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.ok(!out.some(message => message.to === 'held-msg@guard.test'));
     });
   } finally {
     setTransport(null);

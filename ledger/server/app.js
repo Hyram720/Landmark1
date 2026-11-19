@@ -577,6 +577,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const mailed = !!(old.sentAt || old.sentDate || String(old.status || '') === 'sent');
       if (!mailed) continue;
       const changed = fields.filter(name => String(old[name] == null ? '' : old[name]) !== String(d[name] == null ? '' : d[name]));
+      const itemResults = (list) => (list || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || null, result: it.result == null || it.result === '' ? null : it.result }));
+      const nextItems = itemResults(d.items);
+      const prevItems = itemResults(old.items);
+      if (JSON.stringify(prevItems) !== JSON.stringify(nextItems)) changed.push('items.result');
       if (!changed.length) continue;
       const client = clients.find(c => c && c.id === d.clientId);
       if (client && !clientServiceOnHold(client, undefined, signatures)) continue;
@@ -584,7 +588,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       audits.push({
         actor: user.email,
         action: 'dispute.bureau_response',
-        detail: JSON.stringify({ user: user.email, at, disputeId: d.id, clientId: d.clientId || null, fields: changed, outcome: d.outcome || null, respondedAt: d.respondedAt || null, receivedDate: d.receivedDate || null })
+        detail: JSON.stringify({ user: user.email, at, disputeId: d.id, clientId: d.clientId || null, fields: changed, outcome: d.outcome || null, respondedAt: d.respondedAt || null, receivedDate: d.receivedDate || null, items: nextItems })
       });
     }
     return audits;
@@ -1429,12 +1433,16 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       res.status(status).json({ error: status === 429 ? 'The AI service is busy. Try again in a minute.' : `Assistant error: ${e.message}` });
     }
   });
-  function heldMessageAllowed(subject, body, purpose) {
-    const named = String(purpose || '').toLowerCase();
-    if (named === 'contract' || named === 'cancellation' || named === 'onboarding') return true;
-    if (named === 'dispute' || named === 'result' || named === 'automation') return false;
+  function disputeResultWording(subject, body) {
     const text = (String(subject || '') + '\n' + String(body || '')).toLowerCase();
-    if (/dispute|were mailed|good news|results arrived|update on your credit file|round mailed|deadline|bureau response/.test(text)) return false;
+    return /dispute|letter|bureau|result|removed|deletion|deleted|experian|equifax|transunion|mailed|good news|deadline/.test(text);
+  }
+  function heldMessageAllowed(subject, body, purpose) {
+    if (disputeResultWording(subject, body)) return false;
+    const named = String(purpose || '').toLowerCase();
+    if (named === 'dispute' || named === 'result' || named === 'automation') return false;
+    if (named === 'contract' || named === 'cancellation' || named === 'onboarding') return true;
+    const text = (String(subject || '') + '\n' + String(body || '')).toLowerCase();
     return /contract|cancellation|notice of cancellation|onboarding|disclosure|enrollment|e-sign|esign/.test(text);
   }
   app.post('/api/messages', need('owner', 'staff'), async (req, res) => {
