@@ -142,7 +142,7 @@ export function fillPerClientText(text, client) {
   const c = client || {};
   const plain = value => String(value || '').replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim();
   const name = plain(c.name) || 'Client';
-  const address = plain(clientAddress(c));
+  const address = plain(c.mailAddress) || plain(clientAddress(c));
   let out = String(text || '')
     .replace(/\[CLIENT FULL NAME\]/g, name)
     .replace(/\[CLIENT ADDRESS\]/g, address || '[CLIENT ADDRESS]')

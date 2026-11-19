@@ -20,7 +20,7 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, clientServiceOnHold, mailingBlocked, serviceWorkBlocked } from './signup-status.js';
-import { HELD_TEMPLATE_IDS, renderHeldMessage, safeLine } from './held-messages.js';
+import { HELD_TEMPLATE_IDS, renderHeldMessage, safeLine, snapshotProblem, templateClient } from './held-messages.js';
 import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
@@ -96,17 +96,33 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const bound = [];
     const unbound = [];
     if (ws && Array.isArray(ws.clients)) {
+      const idCount = new Map();
+      for (const c of ws.clients) if (c && c.id) idCount.set(c.id, (idCount.get(c.id) || 0) + 1);
+      const ambiguous = new Set([...idCount].filter(([, count]) => count > 1).map(([id]) => id));
       for (const c of ws.clients) {
-        if (!c || !c.id || c.identity) continue;
+        if (!c || !c.id) continue;
+        if (!c.mailName) c.mailName = safeLine(c.name, 80);
+        if (!c.mailAddress) c.mailAddress = safeLine([c.address, c.city, c.state, c.zip].filter(Boolean).join(', '), 120);
+        if (ambiguous.has(c.id)) {
+          c.identityAmbiguous = true;
+          unbound.push('ambiguous ' + c.id);
+          continue;
+        }
+        if (c.identity) continue;
         c.identity = uid();
         bound.push('client ' + c.id);
       }
-      const byId = new Map(ws.clients.filter(c => c && c.id).map(c => [c.id, c]));
+      const byId = new Map(ws.clients.filter(c => c && c.id && !ambiguous.has(c.id)).map(c => [c.id, c]));
       for (const u of D().users || []) {
         if (!u || u.role !== 'client' || u.clientIdentity || !u.clientId) continue;
         const c = byId.get(u.clientId);
         const loginEmail = String(u.email || '').toLowerCase().trim();
         const clientEmail = c ? String(c.email || '').toLowerCase().trim() : '';
+        if (ambiguous.has(u.clientId)) {
+          u.portalLinkNeedsInvite = true;
+          unbound.push(loginEmail || u.id || u.clientId);
+          continue;
+        }
         if (c && c.identity && loginEmail && loginEmail === clientEmail) {
           u.clientIdentity = c.identity;
           bound.push('login ' + loginEmail);
@@ -541,12 +557,18 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const identityOwner = new Map();
     for (const old of priorClients.values()) if (old.identity) identityOwner.set(String(old.identity), old.id);
     const seenIdentity = new Set();
+    const idCount = new Map();
+    for (const c of data.clients || []) if (isRecord(c) && c.id) idCount.set(c.id, (idCount.get(c.id) || 0) + 1);
+    const ambiguousIds = new Set([...idCount].filter(([, count]) => count > 1).map(([id]) => id));
     for (const c of data.clients || []) {
       if (!isRecord(c) || !c.id) continue;
       const old = priorClients.get(c.id);
       const submitted = String(c.identity || '');
-      if (old && old.identity) {
-        if (submitted && submitted !== String(old.identity)) identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'The client identity does not match this id.' });
+      if (ambiguousIds.has(c.id)) {
+        c.identityAmbiguous = true;
+        c.identity = submitted && !seenIdentity.has(submitted) ? submitted : uid();
+      } else if (old && old.identity) {
+        if (!submitted || submitted !== String(old.identity)) identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'The client identity does not match this id.' });
         c.identity = old.identity;
         if (old.createdAt) c.createdAt = old.createdAt;
       } else if (submitted && identityOwner.has(submitted) && identityOwner.get(submitted) !== c.id) {
@@ -559,12 +581,27 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       seenIdentity.add(c.identity);
       const snapName = safeLine(c.name, 80);
       const snapAddress = safeLine([c.address, c.city, c.state, c.zip].filter(Boolean).join(', '), 120);
-      if (old && old.mailName) c.mailName = old.mailName;
-      else c.mailName = snapName;
-      if (old && old.mailAddress) c.mailAddress = old.mailAddress;
-      else c.mailAddress = snapAddress;
+      const ownerEdit = req.user.role === 'owner' && old && (safeLine(old.name, 80) !== snapName || safeLine([old.address, old.city, old.state, old.zip].filter(Boolean).join(', '), 120) !== snapAddress);
+      if (!old || !old.mailName || ownerEdit) {
+        const problem = snapshotProblem(snapName, snapAddress);
+        if (problem) identityRefused.push({ key: 'clients', id: c.id, field: 'name', reason: problem });
+        else {
+          c.mailName = snapName;
+          c.mailAddress = snapAddress;
+        }
+      } else {
+        c.mailName = old.mailName;
+        c.mailAddress = old.mailAddress;
+      }
     }
     if (identityRefused.length) return reject(409, identityRefused[0].reason, identityRefused);
+    if (ambiguousIds.size) {
+      for (const u of D().users || []) {
+        if (!u || u.role !== 'client' || !ambiguousIds.has(u.clientId)) continue;
+        u.clientIdentity = null;
+        u.portalLinkNeedsInvite = true;
+      }
+    }
     for (const entry of pendingAudits) db.audit(entry);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
@@ -706,6 +743,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         clearReason: row.clearReason || ''
       });
     }
+    const nextDisputeIds = new Set((data.disputes || []).filter(d => d && d.id).map(d => d.id));
+    for (const oldDispute of (before && before.disputes) || []) {
+      if (!oldDispute || !oldDispute.id || nextDisputeIds.has(oldDispute.id)) continue;
+      if (wasSent(oldDispute)) push(oldDispute.id, 'id', 'A mailed dispute cannot be deleted.');
+    }
     for (const d of data.disputes || []) {
       if (!d || !d.id) continue;
       const old = prior.get(d.id);
@@ -721,8 +763,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         d.sentDate = old.sentDate == null ? null : old.sentDate;
         d.serverSentAt = previous;
       } else if (wasSent(d)) {
-        const typed = earliestDay([d.sentAt, d.sentDate]);
-        d.serverSentAt = typed && typed < today ? typed : today;
+        d.serverSentAt = today;
       } else {
         delete d.serverSentAt;
       }
@@ -1047,7 +1088,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     return enrollmentStatus(c, pack, { requireAddress: true });
   }
   function documentsFor(c) {
-    return personalizeCroaDocs(croaDocsOverride || croaDocs(), c, now());
+    return personalizeCroaDocs(croaDocsOverride || croaDocs(), templateClient(c), now());
   }
   function alreadySigned(c) {
     const o = (c && c.onboarding) || {};
@@ -1143,6 +1184,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const draft = Object.assign({}, c, next);
     if (!mailingAddress(draft)) return res.status(400).json({ error: enrollmentStatus(draft, {}).message });
     Object.assign(c, next);
+    c.mailAddress = safeLine(mailingAddress(c), 160);
     c.onboarding = c.onboarding || {};
     invalidateContractView(c.onboarding);
     activity(`${c.name} saved a New Jersey mailing address`, c.id);

@@ -608,6 +608,7 @@ test('per-client blanks can be signed, owner blanks still block, and mail failur
     row.address = '1 Main St';
     row.city = 'Newark';
     row.zip = '07102';
+    row.mailAddress = '1 Main St, Newark, NJ 07102';
     row.pricePerResult = 40;
     row.scheduleA = [{ creditor: 'Sample Bank', last4: '4242', bureaus: ['Equifax', 'Experian'] }];
     const stillHidden = await pat('GET', '/api/portal/me');

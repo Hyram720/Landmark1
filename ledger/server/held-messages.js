@@ -20,6 +20,9 @@ export const HELD_TEMPLATE_IDS = [
 const ADMIN = new Set(['invite', 'login', 'reset', 'verify']);
 const POSTMARK = new Set(['timely', 'late']);
 
+const SNAPSHOT_WORDS = /\b(experian|equifax|transunion|deleted|deletion|collection|dispute|disputed|score|tradeline|removed|bureau)\b/i;
+const SNAPSHOT_URL = /https?:\/\/|www\.|\b[\p{L}\p{N}.-]+\.(com|net|org|io|co|test)\b/iu;
+
 export function safeLine(value, max) {
   return String(value || '')
     .replace(/[^\p{L}\p{N}\s.'’,#/-]/gu, '')
@@ -28,15 +31,25 @@ export function safeLine(value, max) {
     .slice(0, max);
 }
 
+export function snapshotProblem(name, address) {
+  const text = `${name || ''} ${address || ''}`;
+  if (SNAPSHOT_URL.test(text)) return 'The name and address on file cannot include a web address.';
+  if (SNAPSHOT_WORDS.test(text)) return 'The name and address on file cannot include credit-file wording.';
+  return '';
+}
+
 export function templateClient(client) {
   const c = Object.assign({}, client || {});
-  c.name = safeLine(c.mailName || c.name, 80) || 'Client';
-  c.firstName = safeLine(c.firstName, 40);
-  c.lastName = safeLine(c.lastName, 40);
-  c.address = safeLine(c.mailAddress || c.address, 80);
-  c.city = safeLine(c.city, 40);
-  c.state = safeLine(c.state, 20);
-  c.zip = String(c.zip || '').replace(/[^\d-]/g, '').slice(0, 10);
+  const mailed = snapshotProblem('', c.mailAddress) ? '' : safeLine(c.mailAddress, 160);
+  const named = snapshotProblem(c.mailName, '') ? '' : safeLine(c.mailName, 80);
+  c.name = named || 'Client';
+  c.firstName = '';
+  c.lastName = '';
+  c.mailAddress = mailed;
+  c.address = mailed;
+  c.city = mailed ? '' : safeLine(c.city, 40);
+  c.state = mailed ? '' : safeLine(c.state, 20);
+  c.zip = mailed ? '' : String(c.zip || '').replace(/[^\d-]/g, '').slice(0, 10);
   if (Array.isArray(c.scheduleA)) {
     c.scheduleA = c.scheduleA.map(row => {
       if (!row || typeof row !== 'object') return row;
