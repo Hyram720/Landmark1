@@ -99,6 +99,17 @@ function mailedReviewReport(ws) {
     const held = bureaus.filter(bureau => heldKeys.has(String(dispute.clientId || '') + '\n' + bureau));
     if (held.length) heldUndated.push({ id: dispute.id, clientId: dispute.clientId || '', bureaus: held });
   }
+  for (const tomb of workspace.mailedDisputeTombstones || []) {
+    if (!tomb || tomb.retired || day(tomb.serverSentAt)) continue;
+    unstampedMailed += 1;
+    const bureaus = [];
+    for (const item of tomb.items || []) {
+      const bureau = item && bureauOf(item.bureau);
+      if (bureau && !bureaus.includes(bureau)) bureaus.push(bureau);
+    }
+    const held = bureaus.filter(bureau => heldKeys.has(String(tomb.clientId || '') + '\n' + bureau));
+    if (held.length) heldUndated.push({ id: tomb.id, clientId: tomb.clientId || '', bureaus: held, tombstone: true });
+  }
   return { unstampedMailed, heldUndated };
 }
 

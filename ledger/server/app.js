@@ -915,6 +915,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       tombs.set(oldDispute.id, stamp);
       const orphan = oldDispute.clientId && !priorClientIds.has(oldDispute.clientId);
       if (orphan && actor && actor.role === 'owner') {
+        if (!recordedDay(oldDispute.serverSentAt)) {
+          tombs.delete(oldDispute.id);
+          push(oldDispute.id, 'id', 'Date or retire this mailed dispute before deleting it.');
+          continue;
+        }
         orphanDeletes.push({ id: oldDispute.id, clientId: oldDispute.clientId || '' });
         continue;
       }
@@ -1119,6 +1124,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         .some(row => row && row.clientId === inv.clientId && (row.items || []).some(it => it && it.id !== item.id && it.resultRecordedOnHold && bureauEnum(it.bureau) === itemBureau && !accountLast4(it)));
       if (noAccountHeld && !inv.noAccountHoldConfirmedBy) return stop(inv, 'itemId', 'The owner must confirm this deletion before it can be invoiced.');
       if (item.resultRecordedOnHold || heldOutcome || copiedHeld) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
+      const bureauHasHeldWork = !!heldOutcome || []
+        .concat(data.disputes || [], (data.mailedDisputeTombstones || []).map(tomb => tomb && { clientId: tomb.clientId, items: tomb.items }))
+        .some(row => row && row.clientId === inv.clientId && (row.items || []).some(it => it && it.id !== item.id && it.resultRecordedOnHold && bureauEnum(it.bureau) === itemBureau));
+      if (!accountLast4(item) && bureauHasHeldWork && !inv.noAccountHoldConfirmedBy) return stop(inv, 'itemId', 'The owner must confirm this deletion before it can be invoiced.');
       if (!mailedDay || (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && mailedDay <= deadline)) return stop(inv, 'sentAt', 'The dispute must have been mailed after the cancellation window.');
       if (resultDay < mailedDay) return stop(inv, 'bureauResultAt', 'The bureau result date must be on or after the mailed date.');
       const price = Number(billed.pricePerResult);
@@ -1376,47 +1385,57 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   }
   app.post('/api/disputes/:id/legacy-mailed', need('owner'), (req, res) => {
     const ws = workspace();
+    ws.mailedDisputeTombstones = Array.isArray(ws.mailedDisputeTombstones) ? ws.mailedDisputeTombstones : [];
     const dispute = (ws.disputes || []).find(row => row && row.id === req.params.id);
-    if (!dispute) return res.status(404).json({ error: 'Dispute not found' });
-    if (!wasSent(dispute)) return res.status(409).json({ error: 'Only a mailed dispute can be reviewed here.' });
-    if (recordedDay(dispute.serverSentAt)) return res.status(409).json({ error: 'This dispute already has a server mailed date.' });
+    const tombstone = ws.mailedDisputeTombstones.find(row => row && row.id === req.params.id && !row.retired && !recordedDay(row.serverSentAt));
+    const target = dispute || tombstone;
+    if (!target) return res.status(404).json({ error: 'Dispute not found' });
+    if (dispute && !wasSent(dispute)) return res.status(409).json({ error: 'Only a mailed dispute can be reviewed here.' });
+    if (recordedDay(target.serverSentAt)) return res.status(409).json({ error: 'This dispute already has a server mailed date.' });
     const reason = String((req.body || {}).reason || '').trim().slice(0, 500);
     if (!reason) return res.status(400).json({ error: 'A reason is required.' });
     const retire = (req.body || {}).retire === true;
     if (retire) {
-      ws.mailedDisputeTombstones = Array.isArray(ws.mailedDisputeTombstones) ? ws.mailedDisputeTombstones : [];
-      ws.mailedDisputeTombstones.push({
-        id: dispute.id,
-        clientId: dispute.clientId || '',
-        serverSentAt: '',
-        retired: true,
-        retiredAt: new Date().toISOString(),
-        retiredBy: req.user.email,
-        reason,
-        items: (dispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: true, result: it.result || '' }))
-      });
-      ws.disputes = ws.disputes.filter(row => row && row.id !== dispute.id);
-      db.audit({ actor: req.user.email, action: 'dispute.legacy_retire', detail: JSON.stringify({ disputeId: dispute.id, clientId: dispute.clientId || '', reason }) });
-      commitWorkspace(req.user.email, 'dispute.legacy_retire', dispute.id);
+      if (tombstone && !dispute) {
+        tombstone.retired = true;
+        tombstone.retiredAt = new Date().toISOString();
+        tombstone.retiredBy = req.user.email;
+        tombstone.reason = reason;
+        for (const item of tombstone.items || []) if (item) item.resultRecordedOnHold = true;
+      } else {
+        ws.mailedDisputeTombstones.push({
+          id: dispute.id,
+          clientId: dispute.clientId || '',
+          serverSentAt: '',
+          retired: true,
+          retiredAt: new Date().toISOString(),
+          retiredBy: req.user.email,
+          reason,
+          items: (dispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: true, result: it.result || '' }))
+        });
+        ws.disputes = ws.disputes.filter(row => row && row.id !== dispute.id);
+      }
+      db.audit({ actor: req.user.email, action: 'dispute.legacy_retire', detail: JSON.stringify({ disputeId: target.id, clientId: target.clientId || '', reason }) });
+      commitWorkspace(req.user.email, 'dispute.legacy_retire', target.id);
       return res.json({ ok: true, retired: true });
     }
     const mailed = recordedDay((req.body || {}).mailedAt);
     if (!mailed) return res.status(400).json({ error: 'Name the mailed date as YYYY-MM-DD.' });
     if (mailed > todayEtYmd()) return res.status(400).json({ error: 'The mailed date cannot be after today.' });
-    const client = (ws.clients || []).find(row => row && row.id === dispute.clientId);
+    const client = (ws.clients || []).find(row => row && row.id === target.clientId);
     const end = windowEndDay(client);
     const signed = client && client.onboarding ? recordedDay(client.onboarding.contractSignedAt || client.onboarding.contractSignedAtTs) : '';
     const inside = !!(end && mailed <= end);
     const beforeContract = !!(signed && mailed < signed);
     const held = !client || client.kind === 'business' ? false : (!end || inside || beforeContract);
-    dispute.serverSentAt = mailed;
+    target.serverSentAt = mailed;
     if (held) {
-      dispute.legacyMailedUnbillable = true;
-      for (const item of dispute.items || []) if (item && (item.result === 'deleted' || item.result === 'corrected')) item.resultRecordedOnHold = true;
-      for (const bureau of holdBureaus(dispute)) placeBureauHold(ws, dispute.clientId, bureau, mailed, beforeContract && !inside ? 'before-contract' : 'mailed');
+      target.legacyMailedUnbillable = true;
+      for (const item of target.items || []) if (item && (item.result === 'deleted' || item.result === 'corrected')) item.resultRecordedOnHold = true;
+      for (const bureau of holdBureaus(target)) placeBureauHold(ws, target.clientId, bureau, mailed, beforeContract && !inside ? 'before-contract' : 'mailed');
     }
-    db.audit({ actor: req.user.email, action: 'dispute.legacy_mailed', detail: JSON.stringify({ disputeId: dispute.id, clientId: dispute.clientId || '', mailedAt: mailed, held, reason }) });
-    commitWorkspace(req.user.email, 'dispute.legacy_mailed', dispute.id);
+    db.audit({ actor: req.user.email, action: 'dispute.legacy_mailed', detail: JSON.stringify({ disputeId: target.id, clientId: target.clientId || '', mailedAt: mailed, held, reason }) });
+    commitWorkspace(req.user.email, 'dispute.legacy_mailed', target.id);
     res.json({ ok: true, mailedAt: mailed, held });
   });
   function croaClient(c) { return !!(c && c.kind !== 'business'); }
