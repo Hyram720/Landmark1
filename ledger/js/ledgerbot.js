@@ -49,7 +49,7 @@
         if (!d.confirmed) { toast('Client confirmation is required'); return false; }
         const by = {};
         picked.forEach(it => { const k = it.bureau + '|' + it.letterType; (by[k] = by[k] || []).push(it); });
-        let made = 0; const problems = [];
+        const made = []; const problems = [];
         for (const list of Object.values(by)) {
           const recipient = list[0].bureau, letterType = list[0].letterType;
           let text = null, warnings = [];
@@ -68,11 +68,11 @@
           S().disputes.push(disp);
           App().generateLetter(disp); // template letter (also validates specificity)
           if (text) { const l = Store.get.letter(disp.letterId); if (l) { l.text = text; l.status = 'draft'; } }
-          made += 1;
+          made.push(disp);
         }
-        if (made) App().commit(`Drafted ${made} Metro 2 letter(s) — review and approve before mailing`, cid);
+        if (made.length) App().commit(`Drafted ${made.length} Metro 2 letter(s) — review and approve before mailing`, cid, made.map(row => 'disputes/' + row.id));
         if (problems.length) toast(problems.join(' · '));
-        else toast(`${made} draft letter(s) created. Review, edit and approve each one before mailing.`);
+        else toast(`${made.length} draft letter(s) created. Review, edit and approve each one before mailing.`);
         App().go(`#/clients/${cid}/disputes`);
       } });
   }
@@ -162,7 +162,7 @@
         r.inquiries = lines(d.inquiries).map((l, i) => { const [creditor, date, kind, flag] = l.split('|').map(x => (x || '').trim()); return { id: 'inq-' + i + '-' + (creditor || '').toLowerCase().replace(/\W+/g, '').slice(0, 12), creditor, date, kind: /soft/i.test(kind || '') ? 'soft' : 'hard', clientSays: /unrec/i.test(flag || '') ? 'unrecognized' : 'authorized' }; });
         c.aka = lines(d.aka); c.previousAddresses = lines(d.previousAddresses); c.employers = lines(d.clientEmployers);
         (r.accounts || []).forEach(t => { const v = d['says:' + t.id]; if (v) t.clientSays = v; else delete t.clientSays; t.clientExplanation = String(d['why:' + t.id] || '').trim(); if (!t.clientExplanation) delete t.clientExplanation; });
-        App().commit(`Updated personal info & inquiries for ${c.name} (${r.bureau})`, cid);
+        App().commit(`Updated personal info & inquiries for ${c.name} (${r.bureau})`, cid, 'reports/' + r.id);
         App().go(`#/clients/${cid}/audit`);
       } });
   }
@@ -193,7 +193,7 @@
         const tl = lines(d.tradelines).map((l, i) => { const [creditor, last4, status, balance, limit, opened, lastReported, closedOn] = l.split('|').map(x => (x || '').trim()); return { id: `${id}-t${i}`, creditor, accountNumber: last4, status: (status || 'open').toLowerCase(), balance, limit, opened, lastReported, closedOn }; });
         const pr = lines(d.records).map((l, i) => { const [type, filedOn, status, securedParty, amount, clientSatisfiedOn, docRef] = l.split('|').map(x => (x || '').trim()); return { id: `${id}-p${i}`, type: (type || '').toLowerCase(), filedOn, status: (status || 'open').toLowerCase(), securedParty, amount, clientSatisfiedOn, docRef }; });
         c.businessReports.push({ id, bureau: d.bureau, date: d.date, profile: { name: d.name, address: d.address, phone: d.phone, formedOn: d.formedOn, yearsInBusiness: d.yearsInBusiness, naics: d.naics, sic: d.sic }, tradelines: tl, publicRecords: pr });
-        App().commit(`Added ${d.bureau} business report for ${c.name}`, cid);
+        App().commit(`Added ${d.bureau} business report for ${c.name}`, cid, 'clients/' + c.id);
         const n = DisputeReasons.suggestionsFor(S(), cid).filter(x => x.business).length;
         toast(n ? `${n} business item(s) ready for a correction letter — use ✦ Dispute letters` : 'Saved. No business inaccuracies found.');
         App().go(`#/clients/${cid}/business`);

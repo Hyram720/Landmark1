@@ -109,7 +109,20 @@
     return names.slice(0, 8);
   }
   const Remote = {
-    version: 0, timer: null, pending: false, sending: false, savedWaiters: [], user: null,
+    version: 0, timer: null, pending: false, sending: false, refusalCounts: null, savedWaiters: [], user: null,
+    noteRefusals(tokens) {
+      if (!this.refusalCounts) this.refusalCounts = new Map();
+      const repeated = [];
+      const seen = new Set();
+      (tokens || []).forEach(token => {
+        if (!token || seen.has(token)) return;
+        seen.add(token);
+        const n = (this.refusalCounts.get(token) || 0) + 1;
+        this.refusalCounts.set(token, n);
+        if (n >= 2) repeated.push(token);
+      });
+      return repeated;
+    },
     afterSave(fn) { this.savedWaiters.push(fn); },
     finishWaiters() { const fns = this.savedWaiters.splice(0); fns.forEach(fn => fn()); },
     async start(user) {
@@ -118,58 +131,151 @@
       const r = await api('GET', '/api/workspace');
       this.version = r.version;
       Store.adopt(r.data);
+      this.restoreDirty();
       Store.setRemote(this);
-      setInterval(() => this.poll().catch(() => {}), 15000);
+      this.ensurePoll();
+    },
+    ensurePoll() {
+      if (this.pollTimer) return;
+      this.pollTimer = setInterval(() => this.poll().catch(() => {}), 15000);
+    },
+    dirtyStorageKey() {
+      const id = this.user && (this.user.id || this.user.email) || '';
+      return 'ledger-dirty:' + id;
+    },
+    clearDirtyStores() {
+      try {
+        if (!root.sessionStorage) return;
+        root.sessionStorage.removeItem('ledger-dirty');
+        const keys = [];
+        for (let i = 0; i < root.sessionStorage.length; i++) {
+          const key = root.sessionStorage.key(i);
+          if (key && key.indexOf('ledger-dirty:') === 0) keys.push(key);
+        }
+        keys.forEach(key => root.sessionStorage.removeItem(key));
+      } catch (e) { /* private mode */ }
+    },
+    rememberDirty() {
+      try {
+        if (!root.sessionStorage) return;
+        const key = this.dirtyStorageKey();
+        root.sessionStorage.removeItem('ledger-dirty');
+        if (!Store.unsaved || !(this.user && (this.user.id || this.user.email))) { root.sessionStorage.removeItem(key); return; }
+        root.sessionStorage.setItem(key, JSON.stringify({ userId: this.user.id || this.user.email, records: Store.dirtySnapshot() }));
+      } catch (e) { /* private mode */ }
+    },
+    restoreDirty() {
+      try {
+        if (!root.sessionStorage || !(this.user && (this.user.id || this.user.email))) return;
+        root.sessionStorage.removeItem('ledger-dirty');
+        const mine = this.dirtyStorageKey();
+        const keys = [];
+        for (let i = 0; i < root.sessionStorage.length; i++) {
+          const key = root.sessionStorage.key(i);
+          if (key && key.indexOf('ledger-dirty:') === 0 && key !== mine) keys.push(key);
+        }
+        keys.forEach(key => root.sessionStorage.removeItem(key));
+        const raw = root.sessionStorage.getItem(mine);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        const userId = this.user.id || this.user.email;
+        if (!saved || saved.userId !== userId || !Array.isArray(saved.records)) { root.sessionStorage.removeItem(mine); return; }
+        Store.applyDirtySnapshot(saved.records);
+      } catch (e) { /* ignore a damaged draft */ }
     },
     async flushNow() { clearTimeout(this.timer); if (this.pending) await this.flush(); },
-    async reload() { const w = await api('GET', '/api/workspace'); this.version = w.version; Store.adopt(w.data); render(); },
-    push() { this.pending = true; setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
+    async reload() {
+      this.rememberDirty();
+      if ((this.pending || Store.unsaved) && !this.sending) {
+        try { await this.flushNow(); } catch (e) { /* refresh around whatever is still dirty */ }
+      }
+      const local = JSON.parse(JSON.stringify(Store.state));
+      const dirty = Store.unsaved;
+      const w = await api('GET', '/api/workspace');
+      this.version = w.version;
+      if (dirty) Store.applyServerSave(w.data, local);
+      else Store.adopt(w.data);
+      this.rememberDirty();
+      render();
+      this.ensurePoll();
+    },
+    push() { this.pending = true; this.rememberDirty(); setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
+    finishApplied(applied, fromConflict) {
+      const dropped = applied.dropped || [];
+      const refused = applied.refused || [];
+      const reverted = applied.reverted || [];
+      const repeated = applied.repeated || [];
+      if (repeated.length) {
+        Store.revertTokens(repeated);
+        Store.giveUpRefusals(repeated);
+      }
+      this.rememberDirty();
+      this.requeue = repeated.length ? !!Store.unsaved : !!(applied.requeue || Store.unsaved);
+      if (repeated.length && !this.requeue) toast('Saving stopped after a repeated refusal.');
+      if (refused.length) toast('Not allowed: ' + refused.join('; '));
+      if (reverted.length) toast('Not saved: ' + reverted.join(', ') + '.');
+      if (dropped.length) toast('Someone else updated ' + dropped.join(', ') + '. Loaded the latest version. Please redo that change.');
+      else if (fromConflict && !refused.length && !reverted.length && !this.requeue) toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
+      if (this.requeue) { this.pending = true; setSync('saving'); return; }
+      this.pending = false;
+      clearTimeout(this.timer);
+      setSync(dropped.length || refused.length || reverted.length || fromConflict ? 'conflict' : 'saved');
+      if (!dropped.length && !refused.length && !fromConflict) this.finishWaiters();
+      renderWhenSafe();
+      this.ensurePoll();
+    },
     async flush() {
       if (this.sending) return;
       this.sending = true;
+      this.requeue = false;
       clearTimeout(this.timer);
       const sent = JSON.parse(JSON.stringify(Store.state));
-      let requeue = false;
       try {
         const r = await api('PUT', '/api/workspace', { baseVersion: this.version, data: sent });
         this.version = r.version;
-        requeue = r.data ? Store.applyServerSave(r.data, sent) : false;
-        if (requeue) { this.pending = true; setSync('saving'); }
-        else { this.pending = false; clearTimeout(this.timer); setSync('saved'); renderWhenSafe(); this.finishWaiters(); }
+        this.refusalCounts = new Map();
+        const applied = r.data ? Store.applyServerSave(r.data, sent, { accepted: true }) : { requeue: false, conflict: false, dropped: [], refused: [], reverted: [] };
+        this.finishApplied(applied, false);
       } catch (e) {
-        const refused = e.status === 400 || e.status === 403 || e.status === 422 || (e.status === 409 && !(e.body && e.body.data));
+        const refusal = e.status === 400 || e.status === 403 || e.status === 422 || (e.status === 409 && !(e.body && e.body.data));
         if (e.status === 409 && e.body && e.body.data) {
           this.version = e.body.version;
-          Store.adopt(e.body.data);
-          this.pending = false;
-          requeue = false;
-          setSync('conflict');
-          toast('Someone else updated this. Redo your last change.');
-          renderWhenSafe();
-        } else if (refused) {
-          this.pending = false;
-          requeue = false;
-          const reasons = Array.isArray(e.body && e.body.refused) ? e.body.refused.map(row => row && row.reason).filter(Boolean) : [];
-          const reasonText = reasons.length ? reasons.join('; ') : ((e.body && e.body.error) || 'Change refused.');
-          const localSnap = JSON.parse(JSON.stringify(Store.state));
-          setSync('conflict');
-          const syncEl = document.getElementById('sync');
-          if (syncEl) syncEl.textContent = 'Not allowed: ' + reasonText;
-          try { await this.reload(); } catch (err) { setSync('conflict'); }
-          const dropped = droppedEdits(localSnap, Store.state);
-          toast(dropped.length ? 'Not allowed: ' + reasonText + ' Dropped: ' + dropped.join('; ') + '.' : 'Not allowed: ' + reasonText);
+          const applied = Store.applyServerSave(e.body.data, sent);
+          this.finishApplied(applied, true);
+        } else if (refusal) {
+          try {
+            const w = await api('GET', '/api/workspace');
+            this.version = w.version;
+            const listed = Array.isArray(e.body && e.body.refused) ? e.body.refused : null;
+            const applied = Store.applyServerSave(w.data, sent, listed ? { rejected: true, refused: listed } : { rejected: true });
+            applied.repeated = this.noteRefusals(applied.refusedTokens);
+            this.finishApplied(applied, true);
+          } catch (err) {
+            this.pending = false;
+            setSync('conflict');
+            toast('Not allowed: ' + ((e.body && e.body.error) || 'Change refused.'));
+            await this.reload();
+          }
         } else if (e.status === 401) location.reload();
         else if (!e.status || e.status >= 500) { setSync('offline'); this.pending = true; this.timer = setTimeout(() => this.flush(), 5000); }
-        else { this.pending = false; requeue = false; setSync('conflict'); toast((e.body && e.body.error) || 'Change refused.'); await this.reload(); }
+        else { this.pending = false; this.requeue = false; setSync('conflict'); toast('Not allowed: ' + ((e.body && e.body.error) || 'Change refused.')); await this.reload(); }
       } finally {
         this.sending = false;
-        if (this.pending && requeue) this.push();
+        this.rememberDirty();
+        if (this.pending && this.requeue) this.push();
+        this.ensurePoll();
       }
     },
     async poll() {
-      if (this.pending || document.querySelector('.overlay') || document.activeElement && document.activeElement.matches('textarea,input')) return;
+      if (this.sending || this.pending || document.querySelector('.overlay') || document.activeElement && document.activeElement.matches('textarea,input')) return;
       const r = await api('GET', '/api/workspace/version');
-      if (r.version !== this.version) { const w = await api('GET', '/api/workspace'); this.version = w.version; Store.adopt(w.data); render(); }
+      if (r.version === this.version) return;
+      const w = await api('GET', '/api/workspace');
+      this.version = w.version;
+      if (Store.unsaved) Store.applyServerSave(w.data, JSON.parse(JSON.stringify(Store.state)));
+      else Store.adopt(w.data);
+      this.rememberDirty();
+      render();
     }
   };
 
@@ -379,7 +485,7 @@
           return { item: parts[0] || '', creditor: parts[1] || '', bureau: parts[2] || '', last4: parts[3] || '' };
         });
         if (!scheduleA.length || scheduleA.some(r => !r.item || !r.creditor || !r.bureau)) { UI.fieldError(f, 'rows', 'Each row needs an item, a creditor or furnisher, and a bureau'); return false; }
-        const apply = () => { c.pricePerResult = price; c.scheduleA = scheduleA; Store.log('Updated price and Schedule A for ' + c.name, c.id); Store.save(); toast('Saved'); };
+        const apply = () => { c.pricePerResult = price; c.scheduleA = scheduleA; Store.log('Updated price and Schedule A for ' + c.name, c.id, 'clients/' + c.id); Store.save(); toast('Saved'); };
         if (!Store.remote) { apply(); return; }
         api('PUT', '/api/clients/' + c.id + '/enrollment-terms', { pricePerResult: price, scheduleA }).then(() => Remote.reload().then(() => toast('Saved'))).catch(e => toast(e.message));
       }
@@ -414,7 +520,7 @@
         <label class="check span2"><input type="checkbox" name="shareWithReferrer" ${c.shareWithReferrer ? 'checked' : ''}> Client agreed to share their progress with the person who referred them</label>
         ${field('Notes', 'notes', c.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Delete client</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
-      onOpen: f => { f.elements.kind.onchange = () => { f.querySelector('[data-biz]').hidden = f.elements.kind.value === 'personal'; }; const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const current = Store.get.client(clientId); if (current && UI.ask(`Delete ${current.name} and all their reports, disputes and invoices?`)) { const id = current.id; ['reports', 'disputes', 'letters', 'tasks', 'invoices'].forEach(k => { S()[k] = S()[k].filter(x => x.clientId !== id); }); S().clients = S().clients.filter(x => x.id !== id); UI.close(); Store.log('Deleted client ' + current.name); Store.save(); go('#/clients'); } }; },
+      onOpen: f => { f.elements.kind.onchange = () => { f.querySelector('[data-biz]').hidden = f.elements.kind.value === 'personal'; }; const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const current = Store.get.client(clientId); if (current && UI.ask(`Delete ${current.name} and all their reports, disputes and invoices?`)) { const id = current.id; ['reports', 'disputes', 'letters', 'tasks', 'invoices'].forEach(k => { S()[k] = S()[k].filter(x => x.clientId !== id); }); S().clients = S().clients.filter(x => x.id !== id); UI.close(); Store.log('Deleted client ' + current.name, current.id, 'clients/' + current.id); Store.save(); go('#/clients'); } }; },
       onSubmit: (d, f) => {
         const current = isNew ? c : Store.get.client(clientId);
         if (!current) { toast('That client is no longer in the workspace.'); return false; }
@@ -427,7 +533,7 @@
         Object.assign(current, d, { name: `${d.firstName} ${d.lastName}`.trim() || biz.legalName });
         if (d.kind !== 'personal') current.business = Object.assign(current.business || {}, biz);
         if (isNew) { Object.assign(current, { id: Store.uid(), createdAt: Store.now(), onboarding: {}, addedBy: Remote.user ? Remote.user.name : 'Me' }); S().clients.push(current); }
-        Store.log((isNew ? 'Added ' : 'Updated ') + current.name, current.id);
+        Store.log((isNew ? 'Added ' : 'Updated ') + current.name, current.id, 'clients/' + current.id);
         Store.save();
         go(`#/clients/${current.id}`);
       }
@@ -458,7 +564,7 @@
         Object.assign(live, { bureau: d.bureau, date: d.date, source: d.source, scores: d.score ? { [d.bureau]: Number(d.score) } : {} });
         if (isNew) { Object.assign(live, { id: Store.uid(), clientId: cid, accounts }); S().reports.push(live); }
         const wins = isNew ? root.AIFlow.afterImport([live]) : [];
-        commit(isNew ? `Imported ${live.bureau} report (${accounts.length} tradelines)` : `Updated ${live.bureau} report`, cid);
+        commit(isNew ? `Imported ${live.bureau} report (${accounts.length} tradelines)` : `Updated ${live.bureau} report`, cid, 'reports/' + live.id);
         if (isNew) { go(`#/clients/${cid}/reports`); if (wins.length) setTimeout(() => root.AIFlow.showWins(cid, wins), 50); }
       }
     });
@@ -485,7 +591,7 @@
         ${field('Consumer-reported issue', 'issue', t.issue, { type: 'textarea', rows: 2, cls: 'span2', help: 'What the consumer says is wrong, in their words' })}
         ${field('Evidence', 'evidence', t.evidence, { type: 'textarea', rows: 2, cls: 'span2', help: 'Statements, payoff letters, receipts' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Remove</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
-      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const report = Store.get.report(reportId); if (!report) return; report.accounts = report.accounts.filter(a => a.id !== id); UI.close(); commit(`Removed ${t.creditor} tradeline`, report.clientId); }; },
+      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const report = Store.get.report(reportId); if (!report) return; report.accounts = report.accounts.filter(a => a.id !== id); UI.close(); commit(`Removed ${t.creditor} tradeline`, report.clientId, 'reports/' + report.id); }; },
       onSubmit: d => {
         if (!d.creditor) { toast('Creditor is required'); return false; }
         const report = Store.get.report(reportId);
@@ -499,7 +605,7 @@
           if (!live) { toast('That tradeline is no longer on the report.'); return false; }
           Object.assign(live, upd);
         }
-        commit(`${isNew ? 'Added' : 'Updated'} tradeline ${d.creditor} (${report.bureau})`, report.clientId);
+        commit(`${isNew ? 'Added' : 'Updated'} tradeline ${d.creditor} (${report.bureau})`, report.clientId, 'reports/' + report.id);
       }
     });
   }
@@ -534,7 +640,7 @@
           S().disputes.push(disp);
           return disp;
         });
-        Store.log(`Created ${made.length} dispute draft(s) from the Metro 2 audit`, cid);
+        Store.log(`Created ${made.length} dispute draft(s) from the Metro 2 audit`, cid, made.map(row => 'disputes/' + row.id));
         Store.save();
         go(made.length === 1 ? `#/disputes/${made[0].id}` : `#/clients/${cid}/disputes`);
       }
@@ -557,7 +663,7 @@
         if (d.recipientAddress && !Law.BUREAUS[d.recipient]) root.Furnishers.remember(S(), d.recipient, d.recipientAddress);
         const disp = { id: Store.uid(), clientId: d.clientId, type: d.type, round: nextRound(d.clientId, d.recipient), recipient: d.recipient, recipientAddress: d.recipientAddress, status: 'draft', items: preset.items || [], letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: preset.notes || '' };
         S().disputes.push(disp);
-        Store.log(`Created ${Law.typeInfo(d.type).label.toLowerCase()} draft to ${d.recipient}`, d.clientId);
+        Store.log(`Created ${Law.typeInfo(d.type).label.toLowerCase()} draft to ${d.recipient}`, d.clientId, 'disputes/' + d.id);
         Store.save();
         go(`#/disputes/${disp.id}`);
       }
@@ -600,7 +706,7 @@
     let l = d.letterId && Store.get.letter(d.letterId);
     if (!l) { l = { id: Store.uid(), clientId: d.clientId, disputeId: d.id, type: d.type, status: 'draft', createdAt: Store.now(), approvedAt: null }; S().letters.push(l); d.letterId = l.id; }
     l.text = res.text;
-    commit(`Generated ${Law.typeInfo(d.type).label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
+    commit(`Generated ${Law.typeInfo(d.type).label.toLowerCase()} letter to ${d.recipient}`, d.clientId, d.letterId ? ['disputes/' + d.id, 'letters/' + d.letterId] : 'disputes/' + d.id);
   }
 
   function aqModal(clientId, dealId) {
@@ -625,7 +731,7 @@
         if (!deal) { toast('That business is no longer on the client.'); return false; }
         Object.assign(deal, x);
         if (isNew) { Object.assign(deal, { id: Store.uid(), createdAt: Store.now(), checks: {} }); live.deals.push(deal); }
-        Store.log(`${isNew ? 'Added' : 'Updated'} acquisition target ${x.name}`, live.id);
+        Store.log(`${isNew ? 'Added' : 'Updated'} acquisition target ${x.name}`, live.id, 'clients/' + live.id);
         Store.save();
         go(`#/clients/${live.id}/acquisition?deal=${deal.id}`);
       }
@@ -666,7 +772,7 @@
           invoicePdf(id);
           location.href = `mailto:${encodeURIComponent(d.to)}?subject=${encodeURIComponent(`Invoice ${root.Invoices.number(inv)} from ${co.name || ''}`)}&body=${encodeURIComponent(body)}`;
           inv.emailedAt = Store.now(); inv.emailedTo = d.to;
-          commit(`Prepared invoice email to ${d.to}`, inv.clientId);
+          commit(`Prepared invoice email to ${d.to}`, inv.clientId, 'invoices/' + inv.id);
         }
       }
     });
@@ -693,7 +799,7 @@
       const capBlocked = [];
       const bills = root.Billing.due(S(), today, capBlocked).filter(i => !Store.serviceHold(S(), i.clientId));
       if (capBlocked.length && manual) setTimeout(() => toast(`${capBlocked.length} invoice${capBlocked.length > 1 ? 's' : ''} not issued: ${capBlocked[0].client}: ${capBlocked[0].reason}`), 900);
-      bills.forEach(i => { S().invoices.push(i); Store.log(`Invoice issued automatically: ${UI.money(i.amount)} — ${i.description}`, i.clientId); });
+      bills.forEach(i => { S().invoices.push(i); Store.log(`Invoice issued automatically: ${UI.money(i.amount)} — ${i.description}`, i.clientId, 'invoices/' + i.id); });
       n += bills.length;
       // 2. Automation rules.
       const origin = location.protocol.startsWith('http') ? location.origin : '';
@@ -745,7 +851,7 @@
         let saved = list.find(x => x.id === id);
         if (!saved) { saved = Object.assign({}, r); list.push(saved); }
         Object.assign(saved, { delayDays: Number(d.delayDays) || 0, channel: d.channel, subject: d.subject, body: d.body });
-        commit('Updated automation “' + (Au.TRIGGERS[r.trigger] || r.trigger) + '”');
+        commit('Updated automation “' + (Au.TRIGGERS[r.trigger] || r.trigger) + '”', null, 'automations/' + saved.id);
       }
     });
   }
@@ -889,7 +995,7 @@
           generateLetter(disp);
           return disp;
         });
-        Store.log(`Generated ${made.length} “${t.title}” letter${made.length > 1 ? 's' : ''} from a template${sq ? ' and started a dispute sequence' : ''}`, d.clientId);
+        Store.log(`Generated ${made.length} “${t.title}” letter${made.length > 1 ? 's' : ''} from a template${sq ? ' and started a dispute sequence' : ''}`, d.clientId, made.map(row => 'disputes/' + row.id));
         Store.save();
         toast(`${made.length} letter${made.length > 1 ? 's' : ''} generated — review, approve and print`);
         go(sq ? '#/sequences' : made.length === 1 ? `#/disputes/${made[0].id}` : `#/clients/${d.clientId}/disputes`);
@@ -901,11 +1007,14 @@
   function runSequences(onlyId) {
     const Sq = root.Sequences, t = T();
     let n = 0;
+    const tokens = [];
     (S().sequences || []).filter(q => q.status !== 'stopped' && (!onlyId || q.id === onlyId)).forEach(q => {
       Sq.plan(S(), q, t).forEach(p => {
         const disp = { id: Store.uid(), clientId: q.clientId, type: p.type, round: nextRound(q.clientId, p.recipient), recipient: p.recipient, recipientAddress: p.recipientAddress, status: 'draft', items: p.items, letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: `Sequence “${q.title}” — Letter ${p.step}, after ${p.parent.recipient} ${p.parent.outcome ? 'answered: ' + p.parent.outcome.replace('_', ' ') : 'did not answer by the deadline'}.`, seqId: q.id, parentId: p.parent.id, strategyStep: Math.min(p.step, 3) };
         S().disputes.push(disp);
         buildLetter(disp);
+        tokens.push('disputes/' + disp.id);
+        if (q.id) tokens.push('sequences/' + q.id);
         n++;
       });
       const st = Sq.status(S(), q, t);
@@ -913,12 +1022,12 @@
         const c = Store.get.client(q.clientId);
         S().tasks.push({ id: Store.uid(), clientId: q.clientId, title: `Attorney review: “${q.title}” still reported after Letter 3 — offer ${c ? c.name : 'the client'} a consumer attorney referral (FCRA §§ 616–617)`, due: t, done: false, createdAt: Store.now() });
         q.attorneyTaskAt = Store.now();
-        Store.log(`Sequence “${q.title}” reached attorney review`, q.clientId);
+        Store.log(`Sequence “${q.title}” reached attorney review`, q.clientId, 'sequences/' + q.id);
         n++;
       }
-      if (st.state === 'won' && !q.completedAt) { q.completedAt = Store.now(); Store.log(`Sequence “${q.title}” completed — items removed or corrected`, q.clientId); }
+      if (st.state === 'won' && !q.completedAt) { q.completedAt = Store.now(); Store.log(`Sequence “${q.title}” completed — items removed or corrected`, q.clientId, 'sequences/' + q.id); }
     });
-    if (n) { Store.log(`Sequences: drafted ${n} due letter(s) / step(s)`); Store.save(); }
+    if (n) { Store.log(`Sequences: drafted ${n} due letter(s) / step(s)`, null, tokens); Store.save(); }
     return n;
   }
 
@@ -995,7 +1104,7 @@
         const inv = { id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), dueAt: d.dueAt || null, notes: d.notes || '', paidAt: null };
         inv.number = root.Invoices.number(inv);
         S().invoices.push(inv);
-        commit(`Issued invoice ${inv.number} ${UI.money(d.amount)} — ${d.description}`, d.clientId);
+        commit(`Issued invoice ${inv.number} ${UI.money(d.amount)} — ${d.description}`, d.clientId, 'invoices/' + inv.id);
         setTimeout(() => invoiceReady(inv.id), 50);
       }
     });
@@ -1016,20 +1125,20 @@
     toast('The agreement and cancellation notice are printed from the signed file. This browser copy cannot print them.');
   }
 
-  function progressReport(cid) { UI.printHtml(root.Reports.progress(S(), cid, T())); Store.log('Printed progress report', cid); }
+  function progressReport(cid) { UI.printHtml(root.Reports.progress(S(), cid, T())); Store.log('Printed progress report', cid, 'clients/' + cid); }
 
 
   // ---------- actions ----------
   const A = {
     'biz-new': () => clientModal(null, { kind: 'business', status: 'lead' }),
-    'biz-enable': el => { const c = Store.get.client(el.dataset.id); if (!UI.ask(`Add business credit services for ${c.name}? Their client type becomes “Personal + business” and the Business credit and Buy a business tabs appear.`)) return; c.kind = 'both'; c.business = c.business || {}; commit(`Added business credit services for ${c.name}`, c.id); go(`#/clients/${c.id}/business`); },
+    'biz-enable': el => { const c = Store.get.client(el.dataset.id); if (!UI.ask(`Add business credit services for ${c.name}? Their client type becomes “Personal + business” and the Business credit and Buy a business tabs appear.`)) return; c.kind = 'both'; c.business = c.business || {}; commit(`Added business credit services for ${c.name}`, c.id, 'clients/' + c.id); go(`#/clients/${c.id}/business`); },
     'biz-open-plan': () => { const id = (document.getElementById('biz-client') || {}).value; if (id) go(`#/clients/${id}/business`); },
     'biz-open-buy': () => { const id = (document.getElementById('biz-client') || {}).value; if (id) go(`#/clients/${id}/acquisition`); },
     'plan-start': el => {
       const c = Store.get.client(el.dataset.id);
       c.creditPlan = { startedAt: T(), done: {} };
       root.Business.FAST_TRACK.forEach(st => S().tasks.push({ id: Store.uid(), clientId: c.id, title: `Business credit plan · Day ${st.day}: ${st.title}`, due: Law.addDays(T(), st.day), done: false, createdAt: Store.now(), planKey: st.key }));
-      commit(`Started the 90-day business credit plan (${root.Business.FAST_TRACK.length} dated tasks)`, c.id);
+      commit(`Started the 90-day business credit plan (${root.Business.FAST_TRACK.length} dated tasks)`, c.id, 'clients/' + c.id);
     },
     'plan-step': el => {
       const c = Store.get.client(el.dataset.id);
@@ -1067,29 +1176,29 @@
       } });
     },
     'aq-print': el => { const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal); UI.printDoc('Due diligence — ' + d.name, root.Acquisition.report(d, c, T(), S().settings.company)); },
-    'aq-delete': el => { const c = Store.get.client(el.dataset.id); if (!UI.ask('Remove this business and its checklist?')) return; c.deals = c.deals.filter(x => x.id !== el.dataset.deal); commit('Removed acquisition target', c.id); go(`#/clients/${c.id}/acquisition`); },
+    'aq-delete': el => { const c = Store.get.client(el.dataset.id); if (!UI.ask('Remove this business and its checklist?')) return; c.deals = c.deals.filter(x => x.id !== el.dataset.deal); commit('Removed acquisition target', c.id, 'clients/' + c.id); go(`#/clients/${c.id}/acquisition`); },
     'invoice-pdf': el => invoicePdf(el.dataset.id),
     'invoice-email': el => invoiceEmail(el.dataset.id),
-    analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id); },
+    analysis: el => { const html = root.Reports.analysis(S(), el.dataset.id, T()); if (!html) { toast('Add a credit report for this lead first'); return; } UI.printHtml(html); const c = Store.get.client(el.dataset.id); if (c.status === 'lead' && ['new', 'contacted', 'consult', undefined].includes(c.leadStage)) c.leadStage = 'analysis'; commit('Prepared a free credit analysis', c.id, 'clients/' + c.id); },
     'bill-now': () => { runEngine(true).then(n => { toast(n ? `${n} item(s) created` : 'Nothing due'); render(); }); },
     'invoice-link': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const url = `${location.origin}/pay/${i.payToken}`; copyText(url, 'Payment link', 'Payment link copied'); },
     'invoice-check': el => { Remote.flushNow().then(() => api('POST', `/api/invoices/${el.dataset.id}/check`)).then(r => Remote.reload().then(() => toast(r.paid ? 'Payment found — marked paid' : 'No payment found yet')), e => toast(e.message)); },
     'pending-import': el => { const p = (S().pendingImports || []).find(x => x.id === el.dataset.id); if (!p) return; root.AIFlow.reviewScan(p.clientId, p.result, p.docName, p.docId); },
     'pending-dismiss': el => { S().pendingImports = (S().pendingImports || []).filter(x => x.id !== el.dataset.id); commit(); },
-    'auto-toggle': el => { setRule(el.dataset.id, el.checked); commit(`${el.checked ? 'Turned on' : 'Turned off'} an automation`); },
-    'auto-all': () => { root.Automations.rules(S()).forEach(r => setRule(r.id, true)); commit('Turned on all recommended automations'); toast('Automations on — they apply to events from now on'); },
+    'auto-toggle': el => { setRule(el.dataset.id, el.checked); commit(`${el.checked ? 'Turned on' : 'Turned off'} an automation`, null, 'automations/' + el.dataset.id); },
+    'auto-all': () => { root.Automations.rules(S()).forEach(r => setRule(r.id, true)); commit('Turned on all recommended automations', null, 'settings/automations'); toast('Automations on — they apply to events from now on'); },
     'auto-run': () => { runEngine(true).then(n => { toast(n ? `${n} action(s) ran` : 'Nothing due right now'); render(); }); },
     'auto-edit': el => autoEdit(el.dataset.id),
-    'vio-packet': el => { const c = Store.get.client(el.dataset.client); if (!UI.ask(`Print the attorney packet for ${c.name}? Share it only with the client’s written permission.`)) return; UI.printDoc('Attorney packet — ' + c.name, root.Violations.packet(S(), c.id, null, T(), S().settings.company)); Store.log('Prepared attorney review packet', c.id); Store.save(); },
+    'vio-packet': el => { const c = Store.get.client(el.dataset.client); if (!UI.ask(`Print the attorney packet for ${c.name}? Share it only with the client’s written permission.`)) return; UI.printDoc('Attorney packet — ' + c.name, root.Violations.packet(S(), c.id, null, T(), S().settings.company)); Store.log('Prepared attorney review packet', c.id, 'clients/' + c.id); Store.save(); },
     'vio-attorney': el => {
       const keys = root.Violations.scan(S(), T(), el.dataset.client).map(x => x.key);
       const cur = (S().violations || {})[keys[0]] || {};
       modal({ title: 'Attorney referral', body: `<div class="form-grid">${field('Attorney / firm', 'attorney', cur.attorney || '', { cls: 'span2' })}${field('Date sent', 'sentAt', cur.sentAt || T(), { type: 'date' })}${field('Notes', 'notes', cur.notes || '', { type: 'textarea', rows: 3, cls: 'span2' })}</div><label class="check small" style="margin-top:10px"><input type="checkbox" name="consent"> The client gave written permission to share their file with this attorney</label>`,
-        onSubmit: d => { if (!d.consent) { toast('Get the client’s permission first'); return false; } S().violations = S().violations || {}; keys.forEach(k => { S().violations[k] = Object.assign(S().violations[k] || { status: 'new' }, { attorney: d.attorney, sentAt: d.sentAt, notes: d.notes, status: 'referred' }); }); commit(`Referred to attorney ${d.attorney}`, el.dataset.client); } });
+        onSubmit: d => { if (!d.consent) { toast('Get the client’s permission first'); return false; } S().violations = S().violations || {}; keys.forEach(k => { S().violations[k] = Object.assign(S().violations[k] || { status: 'new' }, { attorney: d.attorney, sentAt: d.sentAt, notes: d.notes, status: 'referred' }); }); commit(`Referred to attorney ${d.attorney}`, el.dataset.client, 'clients/' + el.dataset.client); } });
     },
     'addr-add': () => modal({ title: 'Add a creditor address', body: `<div class="form-grid">${field('Company name (as it appears on reports)', 'name', '', { required: true, cls: 'span2' })}${field('Dispute / correspondence address', 'address', '', { type: 'textarea', rows: 3, cls: 'span2', help: 'Last line: City, ST 12345' })}${field('Type', 'category', '', { type: 'select', options: ['collection agency', 'debt buyer', 'card issuer', 'bank', 'auto lender', 'student loan servicer', 'mortgage servicer', 'specialty bureau', 'other'] })}</div>`,
-      onSubmit: d => { if (!d.name || !d.address) return false; root.Furnishers.remember(S(), d.name, d.address, d.category); commit('Saved address for ' + d.name); } }),
-    'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId); } },
+      onSubmit: d => { if (!d.name || !d.address) return false; root.Furnishers.remember(S(), d.name, d.address, d.category); commit('Saved address for ' + d.name, null, 'settings/address-book'); } }),
+    'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId, 'disputes/' + d.id); } },
     'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; copyText(url, 'Partner sign-up link', 'Sign-up link copied'); },
     'ref-invite': el => { const r = S().referrals.find(x => x.id === el.dataset.id); Remote.flushNow().then(() => api('POST', '/api/invites', { role: 'partner', referralId: r.id, name: r.name, email: r.email })).then(x => modal({ title: 'Partner portal invitation', body: `<p class="small">Send this one-time link to ${esc(r.name)}. It expires in ${x.expiresInDays} days.</p><input readonly value="${esc(x.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); },
     'ref-payout': el => {
@@ -1103,7 +1212,7 @@
         if (!(Number(d.amount) > 0)) return false;
         live.payouts = live.payouts || [];
         live.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note });
-        commit(`Recorded ${UI.money(d.amount)} payout to ${live.name}`);
+        commit(`Recorded ${UI.money(d.amount)} payout to ${live.name}`, null, 'referrals/' + live.id);
       } });
     },
     'mail-lob': el => {
@@ -1121,8 +1230,8 @@
     'mail-refresh': el => { Remote.flushNow().then(() => api('POST', `/api/disputes/${el.dataset.id}/mail/refresh`)).then(r => Remote.reload().then(() => toast(r.deliveredAt ? 'Delivered ' + r.deliveredAt + ' — deadline updated' : `${r.events.length} tracking update(s)`)), e => toast(e.message)); },
     templates: el => templatePicker(el.dataset.client, !!el.dataset.seq),
     'seq-run': el => { const n = runSequences(el.dataset.id); toast(n ? `${n} letter(s) drafted — review, approve and add to Send round` : 'Nothing is due yet'); render(); },
-    'seq-stop': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q && UI.ask('Stop this sequence? Letters already drafted stay; no new letters will be drafted.')) { q.status = 'stopped'; commit(`Stopped sequence “${q.title}”`, q.clientId); } },
-    'seq-resume': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q) { q.status = 'active'; commit(`Resumed sequence “${q.title}”`, q.clientId); } },
+    'seq-stop': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q && UI.ask('Stop this sequence? Letters already drafted stay; no new letters will be drafted.')) { q.status = 'stopped'; commit(`Stopped sequence “${q.title}”`, q.clientId, 'sequences/' + q.id); } },
+    'seq-resume': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q) { q.status = 'active'; commit(`Resumed sequence “${q.title}”`, q.clientId, 'sequences/' + q.id); } },
     'seq-preview': el => { const q = S().sequences.find(x => x.id === el.dataset.id); if (q) seqPreview(q); },
     'seq-start': el => {
       const d = Store.get.dispute(el.dataset.id);
@@ -1136,7 +1245,7 @@
           const q = { id: Store.uid(), clientId: d.clientId, title: `${Law.typeInfo(d.type).label} — ${(d.items[0] || {}).creditor || d.recipient}`, furnisher: x.fname && x.faddress ? { name: x.fname, address: x.faddress } : null, status: 'active', startedAt: Store.now() };
           S().sequences.push(q);
           d.seqId = q.id;
-          commit(`Started a dispute sequence from round ${d.round} to ${d.recipient}`, d.clientId);
+          commit(`Started a dispute sequence from round ${d.round} to ${d.recipient}`, d.clientId, 'sequences/' + q.id);
         }
       });
     },
@@ -1155,7 +1264,7 @@
     'enrollment-terms': el => enrollmentTermsModal(Store.get.client(el.dataset.id)),
     'load-demo': () => { if (S().clients.length && !UI.ask('Replace the current workspace with demo data?')) return; Store.replace(Sample.build()); toast('Demo workspace loaded'); go('#/'); },
     'reset': () => { if (!UI.ask('Erase every client, report, dispute and invoice in this browser? Export a backup first.')) return; Store.replace(Store.empty()); go('#/'); },
-    'export': () => { UI.download(`ledger-workspace-${T()}.json`, JSON.stringify(S(), null, 2)); Store.log('Exported workspace backup'); Store.save(); },
+    'export': () => { UI.download(`ledger-workspace-${T()}.json`, JSON.stringify(S(), null, 2)); Store.log('Exported workspace backup', null, 'settings/export'); Store.save(); },
     'import': () => pickFile('.json,application/json', txt => {
       try {
         const ws = Store.migrate(JSON.parse(txt));
@@ -1166,28 +1275,29 @@
     'csv-template': () => UI.download('ledger-tradelines-template.csv', TRADELINE_COLS.join(',') + '\nExample Bank,XXXX1234,R,11,250,1000,800,0,,2018-03-01,,2026-09-01,,2026-09-30,1,,,000000000000000000000000,,,\n', 'text/csv'),
     'import-client-csv': () => pickFile('.csv,text/csv', txt => {
       const rows = parseCSV(txt).filter(r => r.firstName || r.name);
-      rows.forEach(r => { const [fn, ...ln] = (r.name || '').split(' '); const first = r.firstName || fn, last = r.lastName || ln.join(' '); S().clients.push({ id: Store.uid(), name: `${first} ${last}`.trim(), firstName: first, lastName: last, kind: 'personal', email: r.email || '', phone: r.phone || '', address: r.address || '', city: r.city || '', state: r.state || '', zip: r.zip || '', dob: '', ssnLast4: '', status: 'lead', createdAt: Store.now(), notes: '', referralId: '', onboarding: {} }); });
-      commit(`Imported ${rows.length} lead(s) from CSV`); toast(`Imported ${rows.length} lead(s). Columns: firstName,lastName,email,phone,address,city,state,zip`);
+      const added = [];
+      rows.forEach(r => { const [fn, ...ln] = (r.name || '').split(' '); const first = r.firstName || fn, last = r.lastName || ln.join(' '); const id = Store.uid(); added.push('clients/' + id); S().clients.push({ id, name: `${first} ${last}`.trim(), firstName: first, lastName: last, kind: 'personal', email: r.email || '', phone: r.phone || '', address: r.address || '', city: r.city || '', state: r.state || '', zip: r.zip || '', dob: '', ssnLast4: '', status: 'lead', createdAt: Store.now(), notes: '', referralId: '', onboarding: {} }); });
+      commit(`Imported ${rows.length} lead(s) from CSV`, null, added.length ? added : 'settings/import'); toast(`Imported ${rows.length} lead(s). Columns: firstName,lastName,email,phone,address,city,state,zip`);
     }),
     'new-task': el => modal({
       title: 'New task',
       body: `<div class="form-grid">${field('Task', 'title', '', { required: true, cls: 'span2' })}${field('Client', 'clientId', el.dataset.client || '', { type: 'select', options: [['', '—']].concat(S().clients.map(c => [c.id, c.name])) })}${field('Due', 'due', Law.addDays(T(), 3), { type: 'date' })}</div>`,
-      onSubmit: d => { if (!d.title) return false; S().tasks.push({ id: Store.uid(), title: d.title, clientId: d.clientId || null, due: d.due, done: false, createdAt: Store.now() }); commit('Task added: ' + d.title, d.clientId); }
+      onSubmit: d => { if (!d.title) return false; S().tasks.push({ id: Store.uid(), title: d.title, clientId: d.clientId || null, due: d.due, done: false, createdAt: Store.now() }); commit('Task added: ' + d.title, d.clientId, 'tasks/' + S().tasks[S().tasks.length - 1].id); }
     }),
     'toggle-task': el => {
       const t = S().tasks.find(x => x.id === el.dataset.id);
       if (!t) return;
       if ((t.kind === 'postmark_needs_owner_review' || t.kind === 'possible_duplicate') && !(root.ledgerUser && root.ledgerUser.role === 'owner')) { toast('Only the owner can close that task.'); return; }
       t.done = true;
-      commit('Completed task: ' + t.title, t.clientId);
+      commit('Completed task: ' + t.title, t.clientId, 'tasks/' + t.id);
     },
     'add-report': el => reportModal(el.dataset.id),
     'edit-report': el => { const r = Store.get.report(el.dataset.id); reportModal(r.clientId, r.id); },
-    'delete-report': el => { const r = Store.get.report(el.dataset.id); if (!UI.ask(`Delete the ${r.bureau} report dated ${r.date}?`)) return; S().reports = S().reports.filter(x => x.id !== r.id); commit(`Deleted ${r.bureau} report`, r.clientId); },
+    'delete-report': el => { const r = Store.get.report(el.dataset.id); if (!UI.ask(`Delete the ${r.bureau} report dated ${r.date}?`)) return; S().reports = S().reports.filter(x => x.id !== r.id); commit(`Deleted ${r.bureau} report`, r.clientId, 'reports/' + r.id); },
     'edit-tradeline': el => tradelineModal(el.dataset.report, el.dataset.id),
     'disputes-from-audit': el => disputesFromAudit(el.dataset.id),
     'new-dispute': el => newDisputeModal(el.dataset.client || (S().clients[0] || {}).id, el.dataset.type ? { type: el.dataset.type, recipient: 'Dun & Bradstreet', title: 'Business bureau correction request' } : undefined),
-    'delete-dispute': el => { const d = Store.get.dispute(el.dataset.id); if (!UI.ask('Delete this dispute and its letter?')) return; S().disputes = S().disputes.filter(x => x.id !== d.id); S().letters = S().letters.filter(l => l.disputeId !== d.id); Store.log(`Deleted dispute to ${d.recipient}`, d.clientId); Store.save(); go(`#/clients/${d.clientId}/disputes`); },
+    'delete-dispute': el => { const d = Store.get.dispute(el.dataset.id); if (!UI.ask('Delete this dispute and its letter?')) return; S().disputes = S().disputes.filter(x => x.id !== d.id); S().letters = S().letters.filter(l => l.disputeId !== d.id); Store.log(`Deleted dispute to ${d.recipient}`, d.clientId, 'disputes/' + d.id); Store.save(); go(`#/clients/${d.clientId}/disputes`); },
     'edit-item': el => itemModal(el.dataset.id, el.dataset.item),
     'edit-recipient': el => { const id = el.dataset.id; const d = Store.get.dispute(id); modal({ title: 'Recipient', body: `${field('Recipient', 'recipient', d.recipient)}<div style="height:12px"></div>${field('Address (non-bureau recipients)', 'recipientAddress', d.recipientAddress, { type: 'textarea', rows: 3 })}<div style="height:12px"></div>${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3 })}`, onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } Object.assign(live, x); commit(); } }); },
     'gen-letter': el => { const d = Store.get.dispute(el.dataset.id); const l = d.letterId && Store.get.letter(d.letterId); if (l && l.text && !l.text.startsWith('(Generated') && !UI.ask('Regenerate and replace any edits to this letter?')) return; generateLetter(d); },
@@ -1201,7 +1311,7 @@
       const v = Letters.validate(d.type, d.items);
       if (v.length) { toast(v[0]); return; }
       l.status = 'approved'; l.approvedAt = T(); d.status = 'ready';
-      commit(`Letter to ${d.recipient} approved after client review`, d.clientId);
+      commit(`Letter to ${d.recipient} approved after client review`, d.clientId, l ? ['disputes/' + d.id, 'letters/' + l.id] : 'disputes/' + d.id);
     },
     'unapprove': el => { const d = Store.get.dispute(el.dataset.id); const l = Store.get.letter(d.letterId); l.status = 'draft'; l.approvedAt = null; d.status = 'draft'; commit(); },
     'mark-sent': el => {
@@ -1220,18 +1330,18 @@
           const l = Store.get.letter(live.letterId); if (l) { l.status = 'sent'; l.sentAt = x.sentAt; }
           live.items.forEach(it => { const r = Store.get.report(it.reportId); const a = r && r.accounts.find(t => t.id === it.accountId); if (a) a.consumerDisputed = true; });
           if (live.dueAt) S().tasks.push({ id: Store.uid(), clientId: live.clientId, title: `Check ${live.recipient} response (round ${live.round})`, due: live.dueAt, done: false, createdAt: Store.now() });
-          commit(`Round ${live.round} mailed to ${live.recipient}${live.dueAt ? ', response due ' + live.dueAt : ''}`, live.clientId);
+          commit(`Round ${live.round} mailed to ${live.recipient}${live.dueAt ? ', response due ' + live.dueAt : ''}`, live.clientId, l ? ['disputes/' + live.id, 'letters/' + l.id] : 'disputes/' + live.id);
         }
       });
     },
-    'mark-received': el => { const id = el.dataset.id; const d = Store.get.dispute(id); modal({ title: 'Date received by recipient', body: field('Received on', 'receivedAt', d.receivedAt, { type: 'date', help: 'From the certified mail return receipt' }), onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } live.receivedAt = x.receivedAt; live.dueAt = Law.responseDue(live.type, x.receivedAt); commit(`${live.recipient} received dispute on ${x.receivedAt}`, live.clientId); } }); },
+    'mark-received': el => { const id = el.dataset.id; const d = Store.get.dispute(id); modal({ title: 'Date received by recipient', body: field('Received on', 'receivedAt', d.receivedAt, { type: 'date', help: 'From the certified mail return receipt' }), onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } live.receivedAt = x.receivedAt; live.dueAt = Law.responseDue(live.type, x.receivedAt); commit(`${live.recipient} received dispute on ${x.receivedAt}`, live.clientId, 'disputes/' + live.id); } }); },
     'record-response': el => {
       const id = el.dataset.id;
       const d = Store.get.dispute(id);
       modal({
         title: `Response from ${d.recipient}`,
         body: `<div class="form-grid">${field('Outcome', 'outcome', '', { type: 'select', options: [['deleted', 'Deleted'], ['corrected', 'Corrected / updated'], ['verified', 'Verified as accurate'], ['frivolous', 'Frivolous / irrelevant notice'], ['no_response', 'No response by deadline'], ['validated', 'Debt validated'], ['closed', 'Closed — other']] })}${field('Date of response', 'respondedAt', T(), { type: 'date' })}${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
-        onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } Object.assign(live, { outcome: x.outcome, respondedAt: x.respondedAt, notes: x.notes }); commit(`${live.recipient} response recorded: ${UI.DSTATE[x.outcome][0]}`, live.clientId); }
+        onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } Object.assign(live, { outcome: x.outcome, respondedAt: x.respondedAt, notes: x.notes }); commit(`${live.recipient} response recorded: ${UI.DSTATE[x.outcome][0]}`, live.clientId, 'disputes/' + live.id); }
       });
     },
     'next-round': el => {
@@ -1244,7 +1354,7 @@
     },
     'letter-edit': () => {},
     'new-invoice': el => invoiceModal(el.dataset.client || (S().clients[0] || {}).id),
-    'invoice-paid': el => { const i = S().invoices.find(x => x.id === el.dataset.id); i.status = 'paid'; i.paidAt = T(); commit(`Payment received ${UI.money(i.amount)}`, i.clientId); },
+    'invoice-paid': el => { const i = S().invoices.find(x => x.id === el.dataset.id); i.status = 'paid'; i.paidAt = T(); commit(`Payment received ${UI.money(i.amount)}`, i.clientId, 'invoices/' + i.id); },
     'invoice-void': el => {
       const id = el.dataset.id;
       const liveInvoice = () => (S().invoices || []).find(x => x && x.id === id);
@@ -1315,7 +1425,7 @@
         if (!partner) { toast('That partner is no longer in the workspace.'); return false; }
         Object.assign(partner, d);
         if (isNew) { partner.id = Store.uid(); partner.createdAt = T(); S().referrals.push(partner); }
-        commit((isNew ? 'Added' : 'Updated') + ' referral partner ' + d.name);
+        commit((isNew ? 'Added' : 'Updated') + ' referral partner ' + d.name, null, 'referrals/' + partner.id);
       }
     });
   }
@@ -1339,7 +1449,7 @@
         if (!account) { toast('That account is no longer on the client.'); return false; }
         Object.assign(account, d, { limit: d.limit ? Number(d.limit) : '' });
         if (!vid) { account.id = Store.uid(); live.vendorAccounts.push(account); }
-        commit(`${vid ? 'Updated' : 'Tracking'} business account ${d.vendor}`, live.id);
+        commit(`${vid ? 'Updated' : 'Tracking'} business account ${d.vendor}`, live.id, 'clients/' + live.id);
       }
     });
   }
@@ -1365,14 +1475,21 @@
         Object.assign(live, d, { payout: d.payout ? Number(d.payout) : '' });
         if (isNew) { live.id = Store.uid(); live.clicks = 0; S().partnerReferrals.push(live); }
         const o = S().offers.find(x => x.id === d.offerId);
-        commit(`${isNew ? 'Recommended' : 'Updated recommendation:'} ${o ? o.name : 'offer'}`, d.clientId);
+        commit(`${isNew ? 'Recommended' : 'Updated recommendation:'} ${o ? o.name : 'offer'}`, d.clientId, 'partnerReferrals/' + live.id);
       }
     });
   }
 
   Object.assign(A, {
     'ai': el => root.Assistant.toggle(undefined, el.dataset.id),
-    'logout': async () => { await api('POST', '/api/logout'); location.reload(); },
+    'logout': async () => {
+      try { await Remote.flushNow(); }
+      catch (e) { toast(e.message || 'Could not save your latest changes.'); return; }
+      if (Store.unsaved) { toast('Some changes are still unsaved. Stay on this page to retry.'); return; }
+      Remote.clearDirtyStores();
+      await api('POST', '/api/logout');
+      location.reload();
+    },
     'invite-staff': () => modal({
       title: 'Invite staff member',
       body: `<div class="form-grid">${field('Name', 'name', '', { required: true })}${field('Email', 'email', '', { type: 'email', required: true })}</div>`,
@@ -1392,7 +1509,7 @@
           if (!(n >= m.min && n <= m.max)) { toast(`${m.name} ranges from ${m.min} to ${m.max}`); return false; }
           c.businessScores = c.businessScores || [];
           c.businessScores.push({ id: Store.uid(), model: d.model, score: n, date: d.date, source: d.source });
-          commit(`Logged ${m.name} ${n}`, c.id);
+          commit(`Logged ${m.name} ${n}`, c.id, 'clients/' + c.id);
         }
       });
     },
@@ -1408,7 +1525,7 @@
     'new-offer': () => modal({
       title: 'Custom partner offer',
       body: `<div class="form-grid">${field('Name', 'name', '', { required: true })}${field('Audience', 'audience', 'personal', { type: 'select', options: [['personal', 'Personal'], ['business', 'Business']] })}${field('Category', 'category', '')}${field('Program / network', 'program', '')}${field('Referral bonus', 'bonus', '')}${field('Website (https://…)', 'url', '')}${field('Your affiliate link', 'affiliateUrl', '', { cls: 'span2' })}${field('Notes', 'note', '', { type: 'textarea', rows: 2, cls: 'span2' })}</div>`,
-      onSubmit: d => { if (!d.name || !/^https:\/\//.test(d.url || d.affiliateUrl)) { toast('Name and an https:// link are required'); return false; } S().offers.push(Object.assign({ id: Store.uid(), key: 'custom-' + Date.now(), status: 'verify', cookie: '—', sources: [], joinUrl: '', enabled: true, verifiedAt: T() }, d)); commit('Added partner offer ' + d.name); }
+      onSubmit: d => { if (!d.name || !/^https:\/\//.test(d.url || d.affiliateUrl)) { toast('Name and an https:// link are required'); return false; } const offer = Object.assign({ id: Store.uid(), key: 'custom-' + Date.now(), status: 'verify', cookie: '—', sources: [], joinUrl: '', enabled: true, verifiedAt: T() }, d); S().offers.push(offer); commit('Added partner offer ' + d.name, null, 'offers/' + offer.id); }
     }),
     'portal-invite': async el => {
       const c = Store.get.client(el.dataset.id);
@@ -1416,7 +1533,7 @@
       try {
         const r = await api('POST', '/api/invites', { role: 'client', clientId: c.id });
         modal({ title: 'Client portal invitation', body: `<p class="small">Send this private link to <b>${esc(c.name)}</b> (${esc(c.email)}). It expires in ${r.expiresInDays} days and can be used once. In the portal they can e-sign the rights disclosure and agreement, follow their disputes, and see your recommendations.</p><input readonly value="${esc(r.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' });
-        Store.log('Created client portal invitation', c.id);
+        Store.log('Created client portal invitation', c.id, 'clients/' + c.id);
       } catch (e) { toast(e.message); }
     }
   });
@@ -1477,7 +1594,7 @@
         else if (!c.email) { toast('No email on file'); return false; }
         const logLocal = () => {
           S().messages.unshift({ id: Store.uid(), clientId: c.id, channel, to: channel === 'sms' ? c.phone : c.email, subject: d.subject || '', body: d.body, at: Store.now(), by: Remote.user ? Remote.user.email : 'me', status: 'opened' });
-          commit(`${channel === 'sms' ? 'Text' : 'Email'} to ${c.name}`, c.id);
+          commit(`${channel === 'sms' ? 'Text' : 'Email'} to ${c.name}`, c.id, 'clients/' + c.id);
           location.href = channel === 'sms' ? `sms:${c.phone.replace(/[^\d+]/g, '')}?&body=${encodeURIComponent(d.body)}` : `mailto:${c.email}?subject=${encodeURIComponent(d.subject || '')}&body=${encodeURIComponent(d.body)}`;
         };
         if (!Store.remote) { logLocal(); return; }
@@ -1540,7 +1657,7 @@
     'select-all': el => { document.querySelectorAll('.pick').forEach(x => { x.checked = el.checked; }); updateBulk(); },
     'bulk-email': () => { const emails = picked().map(id => Store.get.client(id)).filter(c => c && c.email).map(c => c.email); if (!emails.length) return toast('No emails on the selected profiles'); location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}`; },
     'bulk-export': () => { const rows = picked().map(id => Store.get.client(id)); UI.download(`ledger-clients-${T()}.csv`, 'name,type,status,email,phone,state,added\n' + rows.map(c => [c.name, c.kind, c.status, c.email, c.phone, c.state, String(c.createdAt).slice(0, 10)].map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv'); },
-    'bulk-task': () => { const ids = picked(); modal({ title: `Task for ${ids.length} client(s)`, body: `<div class="form-grid">${field('Task', 'title', '', { required: true, cls: 'span2' })}${field('Due', 'due', Law.addDays(T(), 3), { type: 'date' })}</div>`, onSubmit: d => { if (!d.title) return false; ids.forEach(id => S().tasks.push({ id: Store.uid(), clientId: id, title: d.title, due: d.due, done: false, createdAt: Store.now() })); commit(`Added task “${d.title}” for ${ids.length} clients`); } }); },
+    'bulk-task': () => { const ids = picked(); modal({ title: `Task for ${ids.length} client(s)`, body: `<div class="form-grid">${field('Task', 'title', '', { required: true, cls: 'span2' })}${field('Due', 'due', Law.addDays(T(), 3), { type: 'date' })}</div>`, onSubmit: d => { if (!d.title) return false; const made = []; ids.forEach(id => { const task = { id: Store.uid(), clientId: id, title: d.title, due: d.due, done: false, createdAt: Store.now() }; S().tasks.push(task); made.push('tasks/' + task.id); }); commit(`Added task “${d.title}” for ${ids.length} clients`, null, made); } }); },
     'onboarding-link': () => {
       const base = (Store.remote ? location.origin : 'https://your-domain.com') + '/apply';
       modal({ title: 'Client onboarding link', wide: true,
@@ -1612,7 +1729,7 @@
         const c = Store.get.client(e.target.dataset.id);
         c.leadStage = e.target.value;
         if (c.leadStage === 'won' && c.status === 'lead') c.status = 'onboarding';
-        commit(`${c.name} moved to ${e.target.selectedOptions[0].text}`, c.id);
+        commit(`${c.name} moved to ${e.target.selectedOptions[0].text}`, c.id, 'clients/' + c.id);
       }
       if (e.target.matches('[data-act="cmp-pick"]')) {
         const [path, qs] = location.hash.split('?');
@@ -1630,20 +1747,25 @@
       if (e.target.matches('[data-act="vio-status"]')) {
         S().violations = S().violations || {};
         S().violations[e.target.dataset.key] = Object.assign(S().violations[e.target.dataset.key] || {}, { status: e.target.value, updatedAt: T() });
-        commit('Updated violation status');
+        commit('Updated violation status', null, 'settings/violations');
       }
       if (e.target.matches('[data-act="ref-stage"]')) {
         const r = S().partnerReferrals.find(x => x.id === e.target.dataset.id);
         r.status = e.target.value;
         if (r.status === 'signed_up' && !r.convertedAt) r.convertedAt = T();
         if (r.status === 'paid' && !r.paidAt) r.paidAt = T();
-        commit(`Recommendation moved to ${e.target.selectedOptions[0].text}`, r.clientId);
+        commit(`Recommendation moved to ${e.target.selectedOptions[0].text}`, r.clientId, 'partnerReferrals/' + r.id);
       }
     });
     let timer;
     let pointerDown = false;
     document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
     document.addEventListener('pointerup', () => setTimeout(() => { pointerDown = false; }, 0), true);
+    window.addEventListener('beforeunload', (e) => {
+      if (!Store.unsaved && !Remote.pending) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
     document.addEventListener('focusout', () => {
       if (!redrawDeferred) return;
       const run = () => { if (redrawDeferred) renderWhenSafe(); };
@@ -1672,7 +1794,7 @@
         const cs = Store.croaStatus(c);
         if (cs.cleared && c.status === 'onboarding') c.status = 'active';
         if (d.cancelledAt) c.status = 'cancelled';
-        commit('Updated agreement record', c.id);
+        commit('Updated agreement record', c.id, 'clients/' + c.id);
         toast('Saved');
       }
       if (f.dataset.form === 'biz-checklist') {
@@ -1680,20 +1802,20 @@
         const prev = c.businessChecklist || {};
         c.businessChecklist = {};
         Object.entries(d).forEach(([k, v]) => { if (v) c.businessChecklist[k] = prev[k] || T(); });
-        commit('Updated business fundability checklist', c.id);
+        commit('Updated business fundability checklist', c.id, 'clients/' + c.id);
         toast('Saved');
       }
       if (f.dataset.form === 'offer') {
         const o = S().offers.find(x => x.id === f.dataset.id);
         if (d.affiliateUrl && !/^https:\/\//.test(d.affiliateUrl)) { toast('Links must start with https://'); return; }
         o.affiliateUrl = d.affiliateUrl;
-        commit(`Saved affiliate link for ${o.name}`);
+        commit(`Saved affiliate link for ${o.name}`, null, 'offers/' + o.id);
         toast('Saved');
       }
       if (f.dataset.form === 'billing') {
         if (d.payLink && !/^https:\/\//.test(d.payLink)) { toast('Payment link must start with https://'); return; }
         S().settings.billing = Object.assign({}, root.Billing.DEFAULTS, S().settings.billing || {}, d, { perLetter: Number(d.perLetter) || 0, perDelete: Number(d.perDelete) || 0, monthly: Number(d.monthly) || 0, dueDays: Number(d.dueDays) || 0 });
-        commit('Updated billing settings');
+        commit('Updated billing settings', null, 'settings/billing');
         toast('Saved');
       }
       if (f.dataset.form === 'company') {
@@ -1701,7 +1823,7 @@
         S().settings.company = co;
         S().settings.defaultFee = defaultFee;
         S().settings.mailTransitDays = Number(mailTransitDays) || 5;
-        commit('Updated company settings');
+        commit('Updated company settings', null, 'settings/company');
         toast('Saved');
       }
     });
@@ -1786,6 +1908,6 @@
     setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
   root.root = root;
-  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
+  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, Remote, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
   document.addEventListener('DOMContentLoaded', boot);
 })(typeof window !== 'undefined' ? window : (typeof root !== 'undefined' ? root : globalThis));
