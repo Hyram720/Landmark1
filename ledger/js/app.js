@@ -1421,8 +1421,39 @@
     results: ['Results arrived', c => `Hi ${c.firstName || c.name}, we received results from the bureaus. Log in to your portal to see the updates, and forward any letters you receive by mail.`],
     business: ['Business credit next steps', c => `Hi ${c.firstName || c.name}, your business credit checklist is updated. The next item is listed in your portal. Let us know when it is done.`]
   };
+  const HELD_TEMPLATES = [
+    ['disclosure-1679c', 'Consumer Credit File Rights'],
+    ['contract-1679d', 'Contract for signature'],
+    ['signed-copies', 'Signed copies'],
+    ['cancellation-1679e', 'Notice of Cancellation'],
+    ['cancel-window', 'Cancellation-window reminder'],
+    ['cancellation-confirmed', 'Cancellation received'],
+    ['account-admin', 'Account admin'],
+    ['postmark-review', 'Postmark review']
+  ];
   function messageModal(cid, channel, preset) {
     const c = Store.get.client(cid);
+    const held = Store.serviceHold(S(), c.id);
+    if (held) {
+      modal({
+        title: `${channel === 'sms' ? 'Text' : 'Email'} ${c.name}`,
+        body: `<div class="form-grid">${field('Template', 'template', 'disclosure-1679c', { type: 'select', options: HELD_TEMPLATES, cls: 'span2' })}
+          ${field('Account message', 'admin', 'invite', { type: 'select', options: [['invite', 'Portal invite'], ['login', 'Login link'], ['reset', 'Password reset'], ['verify', 'Email verification']], cls: 'span2' })}
+          ${field('Postmark outcome', 'outcome', 'timely', { type: 'select', options: [['timely', 'Timely'], ['late', 'Late']], cls: 'span2' })}
+          <p class="small span2">This client is on hold. The server writes the message. Credit report and ID requests are available after the client is clear.</p></div>`,
+        foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Send</button>',
+        onSubmit: d => {
+          if (channel === 'sms' && !c.smsConsent) { toast('Record SMS consent first'); return false; }
+          if (channel === 'sms' && !c.phone) { toast('No phone number on file'); return false; }
+          if (channel !== 'sms' && !c.email) { toast('No email on file'); return false; }
+          if (!Store.remote) { toast('The server sends this message'); return false; }
+          Remote.flushNow().then(() => api('POST', '/api/messages', { clientId: c.id, channel, template: d.template, admin: d.admin, outcome: d.outcome })
+            .then(() => { toast('Sent'); return Remote.reload(); })
+            .catch(e => toast(e.message)));
+        }
+      });
+      return;
+    }
     modal({
       title: `${channel === 'sms' ? 'Text' : 'Email'} ${c.name}`,
       body: `<div class="form-grid">${field('Template', 'tpl', '', { type: 'select', options: [['', 'Write your own…']].concat(Object.entries(TEMPLATES).map(([k, v]) => [k, v[0]])), cls: 'span2' })}

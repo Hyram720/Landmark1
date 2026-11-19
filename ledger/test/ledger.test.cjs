@@ -345,10 +345,14 @@ test('automations fire once, only after being turned on, and fill templates', ()
   assert.strictEqual(Automations.due(ws, today, {}).length, 0, 'off by default');
   ws.automations = Automations.DEFAULT_RULES.map(r => Object.assign({}, r, { enabled: true, enabledAt: Law.addDays(today, -1) + 'T00:00:00Z' }));
   ws.clients.push({ id: 'lead1', name: 'Pat Lead', firstName: 'Pat', status: 'lead', createdAt: today + 'T10:00:00Z', onboarding: {} });
+  ws.clients.push({ id: 'clear1', name: 'Ada Clear', firstName: 'Ada', status: 'lead', kind: 'personal', createdAt: today + 'T10:00:00Z', onboarding: { disclosureSignedAt: '2026-10-01', contractSignedAt: '2026-10-01', cancellationWindowEndsAt: '2026-10-06' } });
+  ws.clients.push({ id: 'back1', name: 'Bea Back', firstName: 'Bea', status: 'active', kind: 'personal', createdAt: '2026-10-02T10:00:00Z', onboarding: { disclosureSignedAt: '2026-10-01', contractSignedAt: '2026-10-01', cancellationWindowEndsAt: '2026-10-06' } });
   ws.settings.company.bookingUrl = 'https://book.example.test';
   const acts = Automations.due(ws, today, { origin: 'https://app.example.test' });
-  const welcome = acts.find(a => a.rule.id === 'welcome-lead' && a.client.id === 'lead1');
-  assert.ok(welcome && welcome.body.includes('Pat') && welcome.body.includes('https://book.example.test'));
+  assert.ok(!acts.some(a => a.client.id === 'lead1'), 'a client who is not clear gets no automation');
+  assert.ok(!acts.some(a => a.client.id === 'back1'), 'a notice from the hold period does not send after the client is clear');
+  const welcome = acts.find(a => a.rule.id === 'welcome-lead' && a.client.id === 'clear1');
+  assert.ok(welcome && welcome.body.includes('Ada') && welcome.body.includes('https://book.example.test'));
   assert.ok(!acts.some(a => a.client.name === 'Casey Testcase' && a.rule.trigger === 'lead_new'), 'history before enabling is ignored');
   ws.automationLog = Object.fromEntries(acts.map(a => [a.key, { at: today }]));
   assert.strictEqual(Automations.due(ws, today, {}).length, 0, 'each event fires once');

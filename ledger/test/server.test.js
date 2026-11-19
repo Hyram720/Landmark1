@@ -190,7 +190,7 @@ test('the server refuses invoices over the 12-month term / $1,188 cap', async ()
   const next = await owner('GET', '/api/workspace');
   const book = next.body.data;
   book.disputes = book.disputes || [];
-  book.disputes.push({ id: 'cap-d', clientId: 'capc', items: [
+  book.disputes.push({ id: 'cap-d', clientId: 'capc', sentAt: day, items: [
     { id: 'cap-i1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: day },
     { id: 'cap-i2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: day },
     { id: 'cap-i3', creditor: 'East Bank', bureau: 'TransUnion', result: 'deleted', bureauResultAt: day }
@@ -213,7 +213,7 @@ test('the server refuses invoices over the 12-month term / $1,188 cap', async ()
 test('messaging is disabled until a provider is configured', async () => {
   const cfg = await owner('GET', '/api/config');
   assert.strictEqual(cfg.body.email, false);
-  const r = await owner('POST', '/api/messages', { clientId, channel: 'email', body: 'Please review and sign your contract in the portal.', purpose: 'contract' });
+  const r = await owner('POST', '/api/messages', { clientId, channel: 'email', template: 'cancel-window' });
   assert.strictEqual(r.status, 501);
 });
 
@@ -335,13 +335,16 @@ test('online mailing through Lob is gated, then mails an approved letter and tra
     const g2 = await owner('GET', '/api/workspace');
     const book = g2.body.data;
     book.letters.push({ id: 'l9', clientId: 'c9', disputeId: 'd9', type: 'cra_611', status: 'approved', text: 'Morgan Mailer\n12 Example Rd\n\nRe: dispute\n\nPlease correct the balance.' });
-    book.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ id: 'd9-i', creditor: 'Example Bank', bureau: 'Experian', discrepancy: 'Balance should be zero. Paid in full.', result: 'deleted', bureauResultAt: signed }], letterId: 'l9', sentAt: null });
+    book.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ id: 'd9-i', creditor: 'Example Bank', bureau: 'Experian', discrepancy: 'Balance should be zero. Paid in full.', result: 'deleted', bureauResultAt: signed }], letterId: 'l9', sentAt: signed });
     book.invoices.push({ id: 'inv9abc', clientId: 'c9', disputeId: 'd9', itemId: 'd9-i', description: 'Letter mailed', amount: 49, status: 'issued', issuedAt: signed, serviceCompletedAt: signed, payToken: 'paytokentest123' });
     book.referrals = book.referrals || [];
     book.referrals.push({ id: 'ref9', name: 'Pat Partner', email: 'pat@example.test', commissionType: 'flat', commissionAmount: 25 });
     book.clients.find(c => c.id === 'c9').referralId = 'ref9';
     const savedMail = await owner('PUT', '/api/workspace', { baseVersion: g2.body.version, data: book });
     assert.strictEqual(savedMail.status, 200, JSON.stringify(savedMail.body));
+    const ready = db.data.workspace.disputes.find(x => x.id === 'd9');
+    ready.sentAt = null;
+    ready.status = 'ready';
 
     assert.strictEqual((await owner('POST', '/api/disputes/d9/mail', { service: 'certified' })).status, 501, 'off until a key is saved');
     assert.strictEqual((await owner('PUT', '/api/settings/mail', { lobKey: 'nope' })).status, 400);

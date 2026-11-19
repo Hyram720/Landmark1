@@ -52,12 +52,19 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   const method = () => (typeof authMethod === 'function' ? authMethod() : 'password');
   const magicPath = () => !!settings().magicLink || method() === 'magic_link';
 
+  function portalFileGone(u) {
+    if (!u || u.role !== 'client') return false;
+    const c = ((workspace().clients) || []).find(row => row && row.id === u.clientId);
+    if (!c) return true;
+    return !!(u.clientIdentity && c.identity && u.clientIdentity !== c.identity);
+  }
+
   // ---------- forgot / reset ----------
   app.post('/api/auth/forgot', async (req, res) => {
     const email = String((req.body || {}).email || '').toLowerCase().slice(0, 200);
     if (!ipLimit(req.ip) || !emailLimit('f:' + email)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const u = userByEmail(email);
-    if (u) {
+    if (u && !portalFileGone(u)) {
       const { raw } = issue('reset', u, RESET_TTL);
       db.audit({ actor: u.email, action: 'auth.reset.request', detail: mailMode() });
       await mail(u, `Reset your ${company()} password`, `Someone asked to reset the password for this email.\n\nReset it here (works once, expires in 30 minutes):\n${origin(req)}/${pageFor(u.role)}#reset=${raw}\n\nIf this wasn’t you, ignore this email — your password won’t change.`);
@@ -98,7 +105,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     const u = userByEmail(email);
     // The self-signup switch only issues links for client accounts. Staff and owner
     // still need the owner toggle (settings.magicLink) if they should get one.
-    if (u && (settings().magicLink || (method() === 'magic_link' && u.role === 'client'))) {
+    if (u && !portalFileGone(u) && (settings().magicLink || (method() === 'magic_link' && u.role === 'client'))) {
       const { raw } = issue('magic', u, MAGIC_TTL);
       db.audit({ actor: u.email, action: 'auth.magic.request', detail: mailMode() });
       await mail(u, `Your ${company()} sign-in link`, `Sign in here (works once, expires in 15 minutes):\n${origin(req)}/${pageFor(u.role)}#magic=${raw}\n\nIf you didn’t ask for this, ignore this email.`);
@@ -177,22 +184,25 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     return /dispute|credit file|good news|deadline|mailed|result/.test(text);
   }
 
-  async function notifyClient(clientId, key, subject, line, req) {
+  async function notifyClient(clientId, key, subject, line, req, actor) {
     if (settings().notifications === false || sent()[key]) return;
     const ws = workspace();
     const client = ((ws && ws.clients) || []).find(c => c && c.id === clientId);
     const heldDispute = client && clientServiceOnHold(client, undefined, (ws && ws.signatures) || []) && disputeNotice(subject, line);
+    const who = (req && req.user && req.user.email) || actor || '';
     if (!client || heldDispute) {
       sent()[key] = new Date().toISOString();
-      const actor = req && req.user && req.user.email;
-      if (actor) db.audit({ actor, action: 'notify.skipped', detail: key + (!client ? ' client missing' : ' client on hold') });
+      if (who) {
+        db.audit({ actor: who, action: 'notify.skipped', detail: key + (!client ? ' client missing' : ' client on hold') });
+        db.persist();
+      }
       return;
     }
     sent()[key] = new Date().toISOString();
     const users = D().users.filter(u => u.role === 'client' && u.clientId === clientId && !u.disabled && !u.notifyOptOut && client);
     const link = req ? `${origin(req)}/portal` : 'your client portal';
     for (const u of users) await mail(u, subject, `${line}\n\nSign in to see the details: ${link}\n\nYou can turn these emails off in the portal.`);
-    db.audit({ actor: 'system', action: 'notify', detail: `${key} → ${users.length}` });
+    db.audit({ actor: who || 'system', action: 'notify', detail: `${key} → ${users.length}` });
   }
 
   function passiveResponse(d, after) {
@@ -221,13 +231,13 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     const soon = Date.now() + 3 * 86400000;
     const ws = workspace();
     ((ws.disputes) || []).filter(d => d && d.id).forEach(d => {
-      if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`);
+      if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`, null, 'system:sweep');
     });
     // Business credit plan: remind the client when a step is due within 2 days (once per step and due date).
     const t0 = today();
     ((workspace().clients) || []).filter(c => c.kind !== 'personal' && c.creditPlan && c.creditPlan.startedAt).forEach(c => {
       const cur = Business.coachState(c, workspace(), t0).current;
-      if (cur && Date.parse(cur.due) <= Date.now() + 2 * 86400000 && !(c.creditPlan.clientConfirmed || {})[cur.key]) notifyClient(c.id, `step:${c.id}:${cur.key}:${cur.due}`, 'Your next business credit step', `Your next business credit plan step is due ${cur.due}: ${cur.title.split(':')[0]}. Sign in to your portal to see how to do it, and tap “I’ve done this” when it’s finished.`);
+      if (cur && Date.parse(cur.due) <= Date.now() + 2 * 86400000 && !(c.creditPlan.clientConfirmed || {})[cur.key]) notifyClient(c.id, `step:${c.id}:${cur.key}:${cur.due}`, 'Your next business credit step', `Your next business credit plan step is due ${cur.due}: ${cur.title.split(':')[0]}. Sign in to your portal to see how to do it, and tap “I’ve done this” when it’s finished.`, null, 'system:sweep');
     });
     db.persistSoon();
   }

@@ -20,6 +20,7 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, clientServiceOnHold, mailingBlocked, serviceWorkBlocked } from './signup-status.js';
+import { HELD_TEMPLATE_IDS, renderHeldMessage } from './held-messages.js';
 import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
@@ -476,6 +477,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (invoiceGuard.status) return reject(invoiceGuard.status, invoiceGuard.error, invoiceGuard.refused);
     pendingAudits.push(...invoiceGuard.audits);
     lockInvoicedDisputeItems(before, data);
+    stampDeletionRecords(before, data);
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return reject(409, billingBlock.error, billingBlock.refused);
     const over = Billing.capViolations(before, data);
@@ -501,6 +503,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     for (const c of data.clients) if (isRecord(c)) applySignupStatus(c);
     for (const c of data.clients) if (isRecord(c) && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
+    for (const c of data.clients || []) {
+      if (!isRecord(c) || !c.id) continue;
+      const old = priorClients.get(c.id);
+      if (old && old.identity) c.identity = old.identity;
+      else c.identity = uid();
+      if (old && old.createdAt) c.createdAt = old.createdAt;
+    }
     for (const entry of pendingAudits) db.audit(entry);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
@@ -550,6 +559,42 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (!Number.isNaN(end) && !Number.isNaN(svc) && svc <= end) return true;
     }
     return false;
+  }
+  function recordedDay(value) {
+    const day = String(value || '').slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
+  }
+  function recordedResultDay(item) {
+    if (!item) return '';
+    return recordedDay(item.serverResultAt) || recordedDay(item.bureauResultAt) || recordedDay(item.resultAt) || recordedDay(item.resultDate);
+  }
+  function stampDeletionRecords(before, data) {
+    const prior = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
+    for (const d of data.disputes || []) {
+      if (!d || !d.id) continue;
+      const old = prior.get(d.id);
+      const client = (data.clients || []).find(c => c && c.id === d.clientId);
+      const onHold = !!(client && client.kind !== 'business' && clientServiceOnHold(client, undefined, data.signatures));
+      for (const item of d.items || []) {
+        if (!item || typeof item !== 'object') continue;
+        const oldItem = old && (old.items || []).find(it => it && it.id === item.id);
+        if (oldItem && oldItem.serverResultAt) {
+          item.serverResultAt = oldItem.serverResultAt;
+          if (oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
+          else delete item.resultRecordedOnHold;
+        } else if (item.result === 'deleted') {
+          const day = recordedDay(item.bureauResultAt) || recordedDay(item.resultAt) || recordedDay(item.resultDate);
+          if (day) item.serverResultAt = day;
+          else delete item.serverResultAt;
+          if (onHold) item.resultRecordedOnHold = true;
+          else delete item.resultRecordedOnHold;
+        }
+      }
+    }
+  }
+  function recordedMailedDay(dispute) {
+    if (!dispute) return '';
+    return recordedDay(dispute.sentAt) || recordedDay(dispute.sentDate);
   }
   function deletedInvoiceItem(data, inv) {
     if (!inv || !inv.disputeId || !inv.itemId) return null;
@@ -609,20 +654,21 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (!billed) return stop(inv, 'clientId', 'An invoice needs a client who is in the workspace.');
       if (billed.kind === 'business') continue;
       if (clientServiceOnHold(billed, undefined, data.signatures)) return stop(inv, 'clientId', `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`);
-      if (serviceDateInsideWindow(billed, inv)) return stop(inv, 'serviceCompletedAt', 'The service date is inside the cancellation window.');
       const item = deletedInvoiceItem(data, inv);
       if (!item) return stop(inv, 'itemId', 'An invoice must name the deleted item and its bureau.');
       if (item.result !== 'deleted') return stop(inv, 'itemId', 'An invoice can be issued only for a deleted item, not a correction.');
-      const stamp = item.bureauResultAt || item.resultDate || inv.bureauResultAt;
-      const report = (item.reportId || inv.reportId) && (data.reports || []).find(r => r && r.id === (item.reportId || inv.reportId) && r.clientId === inv.clientId && r.date);
-      const doc = (item.documentId || inv.documentId) && (data.documents || []).find(d => d && d.id === (item.documentId || inv.documentId) && d.clientId === inv.clientId && (d.uploadedAt || d.date));
-      if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return stop(inv, 'bureauResultAt', 'An invoice must name the dated bureau result for the deleted item.');
+      const priorDispute = ((before && before.disputes) || []).find(d => d && d.id === inv.disputeId);
+      const currentDispute = (data.disputes || []).find(d => d && d.id === inv.disputeId);
+      const resultDay = recordedResultDay(item);
+      const mailedDay = recordedMailedDay(priorDispute) || recordedMailedDay(currentDispute);
+      if (item.resultRecordedOnHold) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
+      if (!resultDay) return stop(inv, 'bureauResultAt', 'An invoice must name the dated bureau result for the deleted item.');
       const signedAt = billed.onboarding && (billed.onboarding.contractSignedAtTs || billed.onboarding.contractSignedAt);
       let deadline = String((billed.onboarding && billed.onboarding.cancellationWindowEndsAt) || '');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) && signedAt) deadline = cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
-      const resultDay = String(stamp || (report && report.date) || (doc && (doc.date || doc.uploadedAt)) || '').slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && /^\d{4}-\d{2}-\d{2}$/.test(deadline) && resultDay <= deadline) return stop(inv, 'bureauResultAt', 'The bureau result date must be after the cancellation window.');
-      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && resultDay > todayEtYmd()) return stop(inv, 'bureauResultAt', 'The bureau result date cannot be after today.');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && resultDay <= deadline) return stop(inv, 'bureauResultAt', 'The bureau result date must be after the cancellation window.');
+      if (resultDay > todayEtYmd()) return stop(inv, 'bureauResultAt', 'The bureau result date cannot be after today.');
+      if (!mailedDay || (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && mailedDay <= deadline)) return stop(inv, 'sentAt', 'The dispute must have been mailed after the cancellation window.');
       const price = Number(billed.pricePerResult);
       if (!(price > 0) || Number(inv.amount) !== price) return stop(inv, 'amount', 'The invoice amount must equal the price per result.');
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
@@ -755,8 +801,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (prob) return res.status(400).json({ error: prob });
     const addr = (inv.email || String(email || '')).toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(addr)) return res.status(400).json({ error: 'A valid email is required' });
-    if (D().users.some(u => u.email === addr && !u.disabled)) return res.status(409).json({ error: 'An account already exists for this email' });
-    const u = { id: uid(), name: inv.name, email: addr, role: inv.role, clientId: inv.clientId, referralId: inv.referralId || null, password: hashPassword(password), sessionEpoch: 1, createdAt: new Date().toISOString() };
+    if (D().users.some(u => u.email === addr && !u.disabled)) return res.status(409).json({ error: 'An account already exists for this email. The owner can re-link that login to this client.' });
+    const bound = inv.role === 'client' ? workspace().clients.find(x => x && x.id === inv.clientId) : null;
+    const u = { id: uid(), name: inv.name, email: addr, role: inv.role, clientId: inv.clientId, clientIdentity: bound && bound.identity || null, referralId: inv.referralId || null, password: hashPassword(password), sessionEpoch: 1, createdAt: new Date().toISOString() };
     D().users.push(u);
     inv.usedAt = new Date().toISOString();
     db.audit({ actor: addr, action: 'invite.accept', detail: inv.role });
@@ -768,7 +815,29 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   // ---------- client portal ----------
   const company = () => workspace().settings.company || {};
-  function portalClient(req) { return workspace().clients.find(c => c.id === req.user.clientId); }
+  function portalClient(req) {
+    const c = workspace().clients.find(row => row && row.id === req.user.clientId);
+    if (!c || req.user.role !== 'client') return c || null;
+    if (req.user.clientIdentity && c.identity && req.user.clientIdentity !== c.identity) return null;
+    if (!req.user.clientIdentity && c.identity) {
+      req.user.clientIdentity = c.identity;
+      db.audit({ actor: req.user.email, action: 'portal.identity.bind', detail: c.id });
+      db.persist();
+    }
+    return c;
+  }
+  app.post('/api/clients/:id/portal-link', need('owner'), (req, res) => {
+    const c = workspace().clients.find(row => row && row.id === req.params.id);
+    if (!c || !c.identity) return res.status(404).json({ error: 'Client not found' });
+    const email = String((req.body || {}).email || '').toLowerCase().trim();
+    const u = D().users.find(row => row && row.role === 'client' && row.email === email);
+    if (!u) return res.status(404).json({ error: 'No portal login uses that email' });
+    u.clientId = c.id;
+    u.clientIdentity = c.identity;
+    db.audit({ actor: req.user.email, action: 'portal.link', detail: `${email} -> ${c.id}` });
+    db.persist();
+    res.json({ ok: true, clientId: c.id });
+  });
   function croaClient(c) { return !!(c && c.kind !== 'business'); }
   function signingStatus(c, pack) {
     if (!croaClient(c)) return { code: '', message: '' };
@@ -1433,24 +1502,29 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       res.status(status).json({ error: status === 429 ? 'The AI service is busy. Try again in a minute.' : `Assistant error: ${e.message}` });
     }
   });
-  function disputeResultWording(subject, body) {
-    const text = (String(subject || '') + '\n' + String(body || '')).toLowerCase();
-    return /dispute|letter|bureau|result|removed|deletion|deleted|experian|equifax|transunion|mailed|good news|deadline/.test(text);
-  }
-  function heldMessageAllowed(subject, body, purpose) {
-    if (disputeResultWording(subject, body)) return false;
-    const named = String(purpose || '').toLowerCase();
-    if (named === 'dispute' || named === 'result' || named === 'automation') return false;
-    if (named === 'contract' || named === 'cancellation' || named === 'onboarding') return true;
-    const text = (String(subject || '') + '\n' + String(body || '')).toLowerCase();
-    return /contract|cancellation|notice of cancellation|onboarding|disclosure|enrollment|e-sign|esign/.test(text);
-  }
   app.post('/api/messages', need('owner', 'staff'), async (req, res) => {
-    const { clientId, channel, subject, body } = req.body || {};
+    const { clientId, channel, template } = req.body || {};
+    let subject = (req.body || {}).subject;
+    let body = (req.body || {}).body;
     const c = workspace().clients.find(x => x.id === clientId);
     if (!c) return res.status(404).json({ error: 'Client not found' });
+    const held = clientServiceOnHold(c, undefined, workspace().signatures);
+    if (held) {
+      const supplied = String(subject || '').trim() || String(body || '').trim() || String((req.body || {}).purpose || '').trim();
+      if (supplied || !HELD_TEMPLATE_IDS.includes(template)) return res.status(409).json({ error: 'This client is on hold. Only a server template can be sent, with no message text.' });
+      const rendered = renderHeldMessage(template, c, {
+        company: company(),
+        docs: croaDocsOverride || croaDocs(),
+        signatures: workspace().signatures || [],
+        invoices: workspace().invoices || [],
+        admin: (req.body || {}).admin,
+        outcome: (req.body || {}).outcome
+      });
+      if (rendered.error) return res.status(409).json({ error: rendered.error });
+      subject = rendered.subject;
+      body = rendered.text;
+    }
     if (!String(body || '').trim()) return res.status(400).json({ error: 'Message is empty' });
-    if (clientServiceOnHold(c, undefined, workspace().signatures) && !heldMessageAllowed(subject, body, (req.body || {}).purpose)) return res.status(409).json({ error: 'This client is on hold. Dispute and result messages are not sent. Contract, cancellation, and onboarding messages are still allowed.' });
     const cfg = commsConfig();
     if (!cfg[channel]) return res.status(501).json({ error: `${channel === 'sms' ? 'SMS' : 'Email'} sending is not configured on the server` });
     if (channel === 'sms' && !c.smsConsent) return res.status(400).json({ error: 'No SMS consent on file for this client (TCPA). Record consent first.' });

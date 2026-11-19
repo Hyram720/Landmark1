@@ -86,10 +86,10 @@
     return trigger === 'letter_mailed' || trigger === 'item_removed' || trigger === 'response_overdue' || trigger === 'sequence_due' || trigger === 'progress_monthly' || trigger === 'report_refresh';
   }
 
-  function resultStillHeld(ws, ev) {
-    if (Store.serviceHold && Store.serviceHold(ws, ev.clientId)) return true;
+  function heldOrBacklog(ws, ev) {
     const client = ((ws && ws.clients) || []).find(row => row && row.id === ev.clientId);
-    if (!client || client.kind === 'business') return false;
+    if (client && client.kind === 'business') return false;
+    if (!client || (Store.serviceHold && Store.serviceHold(ws, ev.clientId))) return true;
     const end = (client.onboarding || {}).cancellationWindowEndsAt;
     if (!end) return false;
     return String(ev.at || '').slice(0, 10) <= String(end);
@@ -121,7 +121,7 @@
       events(ws, r.trigger, today).forEach(ev => {
         const key = r.id + ':' + ev.key;
         if (log[key]) return;
-        if (disputeTrigger(r.trigger) && resultStillHeld(ws, ev)) return;
+        if (heldOrBacklog(ws, ev)) return;
         if (!ev.at || ev.at < d10(r.enabledAt)) return; // never fire for history
         if (Law.addDays(ev.at, Number(r.delayDays) || 0) > today) return;
         if (ev.still && !ev.still()) return;
