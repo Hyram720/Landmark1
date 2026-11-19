@@ -1429,14 +1429,22 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       res.status(status).json({ error: status === 429 ? 'The AI service is busy. Try again in a minute.' : `Assistant error: ${e.message}` });
     }
   });
+  function heldMessageAllowed(subject, body, purpose) {
+    const named = String(purpose || '').toLowerCase();
+    if (named === 'contract' || named === 'cancellation' || named === 'onboarding') return true;
+    if (named === 'dispute' || named === 'result' || named === 'automation') return false;
+    const text = (String(subject || '') + '\n' + String(body || '')).toLowerCase();
+    if (/dispute|were mailed|good news|results arrived|update on your credit file|round mailed|deadline|bureau response/.test(text)) return false;
+    return /contract|cancellation|notice of cancellation|onboarding|disclosure|enrollment|e-sign|esign/.test(text);
+  }
   app.post('/api/messages', need('owner', 'staff'), async (req, res) => {
     const { clientId, channel, subject, body } = req.body || {};
     const c = workspace().clients.find(x => x.id === clientId);
     if (!c) return res.status(404).json({ error: 'Client not found' });
     if (!String(body || '').trim()) return res.status(400).json({ error: 'Message is empty' });
+    if (clientServiceOnHold(c, undefined, workspace().signatures) && !heldMessageAllowed(subject, body, (req.body || {}).purpose)) return res.status(409).json({ error: 'This client is on hold. Dispute and result messages are not sent. Contract, cancellation, and onboarding messages are still allowed.' });
     const cfg = commsConfig();
     if (!cfg[channel]) return res.status(501).json({ error: `${channel === 'sms' ? 'SMS' : 'Email'} sending is not configured on the server` });
-    if (clientServiceOnHold(c, undefined, workspace().signatures)) return res.status(409).json({ error: 'This client is on hold. No message is sent.' });
     if (channel === 'sms' && !c.smsConsent) return res.status(400).json({ error: 'No SMS consent on file for this client (TCPA). Record consent first.' });
     const to = channel === 'sms' ? c.phone : c.email;
     if (!to) return res.status(400).json({ error: `Client has no ${channel === 'sms' ? 'phone number' : 'email'}` });

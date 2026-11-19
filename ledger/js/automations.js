@@ -82,6 +82,19 @@
 
   function fill(tpl, vars) { return String(tpl || '').replace(/\{\{(\w+)\}\}/g, (m, k) => (vars[k] === undefined || vars[k] === null ? '' : String(vars[k]))); }
 
+  function disputeTrigger(trigger) {
+    return trigger === 'letter_mailed' || trigger === 'item_removed' || trigger === 'response_overdue' || trigger === 'sequence_due' || trigger === 'progress_monthly' || trigger === 'report_refresh';
+  }
+
+  function resultStillHeld(ws, ev) {
+    if (Store.serviceHold && Store.serviceHold(ws, ev.clientId)) return true;
+    const client = ((ws && ws.clients) || []).find(row => row && row.id === ev.clientId);
+    if (!client || client.kind === 'business') return false;
+    const end = (client.onboarding || {}).cancellationWindowEndsAt;
+    if (!end) return false;
+    return String(ev.at || '').slice(0, 10) <= String(end);
+  }
+
   function varsFor(ws, c, ev, ctx) {
     const co = ws.settings.company || {};
     const booking = co.bookingUrl || '';
@@ -108,6 +121,7 @@
       events(ws, r.trigger, today).forEach(ev => {
         const key = r.id + ':' + ev.key;
         if (log[key]) return;
+        if (disputeTrigger(r.trigger) && resultStillHeld(ws, ev)) return;
         if (!ev.at || ev.at < d10(r.enabledAt)) return; // never fire for history
         if (Law.addDays(ev.at, Number(r.delayDays) || 0) > today) return;
         if (ev.still && !ev.still()) return;

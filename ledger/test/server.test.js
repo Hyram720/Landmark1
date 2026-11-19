@@ -213,7 +213,7 @@ test('the server refuses invoices over the 12-month term / $1,188 cap', async ()
 test('messaging is disabled until a provider is configured', async () => {
   const cfg = await owner('GET', '/api/config');
   assert.strictEqual(cfg.body.email, false);
-  const r = await owner('POST', '/api/messages', { clientId, channel: 'email', body: 'Hello' });
+  const r = await owner('POST', '/api/messages', { clientId, channel: 'email', body: 'Please review and sign your contract in the portal.', purpose: 'contract' });
   assert.strictEqual(r.status, 501);
 });
 

@@ -197,7 +197,11 @@
     log(text, clientId);
     return true;
   }
-  function log(text, clientId) { state.activity.unshift({ id: uid(), at: now(), text, clientId: clientId || null }); if (state.activity.length > 2000) state.activity.length = 2000; }
+  function log(text, clientId, record) {
+    const about = Array.isArray(record) ? record.filter(Boolean).map(String) : (record ? [String(record)] : []);
+    state.activity.unshift({ id: uid(), at: now(), text, clientId: clientId || null, record: about.length ? about : null });
+    if (state.activity.length > 2000) state.activity.length = 2000;
+  }
 
   const get = {
     client: id => state.clients.find(c => c.id === id),

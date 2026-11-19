@@ -2479,6 +2479,21 @@ test('the deploy gate lists orphan disputes and blank client rows', () => {
   const listed = JSON.parse(spawnSync(process.execPath, [script, orphanOnly], { encoding: 'utf8' }).stdout);
   assert.strictEqual(listed.deployGate.ready, true);
   assert.deepStrictEqual(listed.orphans.disputes, [{ key: 'disputes', id: 'gone-d', clientId: 'missing' }]);
+  const linkedFile = path.join(dir, 'linked.json');
+  const linkedBody = JSON.stringify({ workspace: {
+    invoices: [{ id: 'ok', status: 'draft' }],
+    clients: [{ id: 'ada' }, { id: 'ben' }],
+    reports: [{ id: 'rep-b', clientId: 'ben', accounts: [{ id: 'acct-b' }] }, { id: 'rep-gone', clientId: 'missing', accounts: [] }],
+    disputes: [{ id: 'd1', clientId: 'ada', items: [{ reportId: 'rep-b', accountId: 'acct-b' }] }],
+    letters: [{ id: 'l1', clientId: 'ada', reportId: 'rep-b' }]
+  } });
+  fs.writeFileSync(linkedFile, linkedBody);
+  const linked = JSON.parse(spawnSync(process.execPath, [script, linkedFile], { encoding: 'utf8' }).stdout);
+  assert.strictEqual(linked.deployGate.ready, true);
+  assert.ok(linked.orphans.reports.some(row => row.id === 'rep-gone' && row.clientId === 'missing'));
+  assert.ok(linked.crossClient.some(row => row.key === 'disputes' && row.id === 'd1' && row.ownerClientId === 'ben' && row.accountId === 'acct-b'));
+  assert.ok(linked.crossClient.some(row => row.key === 'letters' && row.id === 'l1' && row.reportId === 'rep-b'));
+  assert.deepStrictEqual(linked.deployGate.crossClient, linked.crossClient);
   assert.strictEqual(fs.readFileSync(file, 'utf8'), body);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -2737,4 +2752,69 @@ test('a held client outcome does not schedule a removal message or the next lett
   assert.ok(!removed.some(row => row.client && row.client.id === 'held'));
   assert.ok(removed.some(row => row.client && row.client.id === 'clear'));
   assert.strictEqual(ctx.Sequences.plan(Store.state, Store.state.sequences[0], '2026-11-19').length, 0);
+  Store.state.disputes.find(row => row.id === 'held-d').sentAt = '2026-11-01';
+  Store.state.automations.push({ id: 'mailed', trigger: 'letter_mailed', delayDays: 0, channel: 'email', subject: 'Your dispute letters were mailed', body: 'Hi', enabled: true, enabledAt: '2020-01-01' });
+  assert.ok(!ctx.Automations.due(Store.state, '2026-11-19', {}).some(row => row.rule && row.rule.id === 'mailed' && row.client.id === 'held'));
+  Store.state.clients.find(row => row.id === 'held').onboarding = { disclosureSignedAt: '2026-11-01', contractSignedAt: '2026-11-01', cancellationWindowEndsAt: '2026-11-10' };
+  Store.state.signatures.push({ id: 'hd', clientId: 'held', doc: 'disclosure' }, { id: 'hc', clientId: 'held', doc: 'contract' });
+  assert.ok(!ctx.Automations.due(Store.state, '2026-11-19', {}).some(row => row.rule && row.rule.id === 'mailed' && row.client.id === 'held'));
+});
+
+test('a held client can be sent a contract message, not a dispute result, and a gone portal login gets no mail', async () => {
+  const out = [];
+  setTransport(async message => { out.push(message); });
+  try {
+    await withOwner(async ({ built, owner }) => {
+      await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-msg@guard.test', status: 'lead' });
+      built.db.data.users.push({ id: 'held-portal', name: 'Held Client', email: 'held-msg@guard.test', role: 'client', clientId: 'held', password: 'x', sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
+      built.db.data.workspace.disputes = [{ id: 'due-d', clientId: 'held', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-01', dueAt: new Date().toISOString().slice(0, 10), outcome: null, items: [] }];
+      await built.auth.deadlineSweep();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.ok(!out.some(message => message.to === 'held-msg@guard.test'));
+      const dispute = await owner('POST', '/api/messages', { clientId: 'held', channel: 'email', subject: 'Your dispute letters were mailed', body: 'We mailed your dispute letters today.', purpose: 'dispute' });
+      assert.strictEqual(dispute.status, 409, JSON.stringify(dispute.body));
+      assert.match(dispute.body.error, /on hold/);
+      const contract = await owner('POST', '/api/messages', { clientId: 'held', channel: 'email', subject: 'Your contract', body: 'Please sign your contract.', purpose: 'contract' });
+      assert.strictEqual(contract.status, 501, JSON.stringify(contract.body));
+      seedSignedClient(built.db.data.workspace, 'held');
+      await built.auth.deadlineSweep();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.ok(!out.some(message => message.to === 'held-msg@guard.test'));
+      const before = await owner('GET', '/api/workspace');
+      const drop = JSON.parse(JSON.stringify(before.body.data));
+      drop.clients = drop.clients.filter(row => row.id !== 'held');
+      drop.disputes = [];
+      const removed = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: drop });
+      assert.strictEqual(removed.status, 200, JSON.stringify(removed.body));
+      const user = built.db.data.users.find(row => row.id === 'held-portal');
+      assert.strictEqual(user.disabled, true);
+    });
+  } finally {
+    setTransport(null);
+  }
+});
+
+test('a deletion recorded during a hold is not billed until the contract is clear', () => {
+  const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Map, Error, URLSearchParams, crypto, navigator: {} };
+  ctx.globalThis = ctx;
+  ctx.self = ctx;
+  ctx.top = ctx;
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  const root = path.join(import.meta.dirname, '../js');
+  for (const file of ['law.js', 'store.js', 'billing.js']) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), ctx, { filename: file });
+  const Store = ctx.Store;
+  Store.load();
+  Store.adopt({
+    version: 2,
+    settings: { billing: { model: 'per_delete', perDelete: 50 } },
+    clients: [{ id: 'held', name: 'Held', kind: 'personal', status: 'lead', onboarding: {} }],
+    disputes: [{ id: 'd', clientId: 'held', type: 'cra_611', recipient: 'Equifax', sentAt: '2026-11-01', outcome: 'deleted', respondedAt: '2026-11-18', items: [{ creditor: 'North Bank', result: 'deleted', resultAt: '2026-11-18' }] }, { id: 'gone', clientId: 'missing', type: 'cra_611', recipient: 'Experian', sentAt: '2026-11-01', outcome: 'deleted', respondedAt: '2026-11-18', items: [{ creditor: 'South Bank', result: 'deleted', resultAt: '2026-11-18' }] }],
+    invoices: []
+  });
+  assert.strictEqual(ctx.Billing.due(Store.state, '2026-11-19').length, 0);
+  Store.state.clients[0].onboarding = { disclosureSignedAt: '2026-10-01', contractSignedAt: '2026-10-01', cancellationWindowEndsAt: '2026-10-06' };
+  const due = ctx.Billing.due(Store.state, '2026-11-19');
+  assert.ok(due.length >= 1 && due.every(row => row.clientId === 'held'));
+  assert.ok(!due.some(row => row.clientId === 'missing'));
 });

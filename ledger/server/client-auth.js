@@ -172,13 +172,34 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   });
 
   const sent = () => (D().notified = D().notified || {});
+  function disputeNotice(subject, line) {
+    const text = (String(subject || '') + '\n' + String(line || '')).toLowerCase();
+    return /dispute|credit file|good news|deadline|mailed|result/.test(text);
+  }
+
   async function notifyClient(clientId, key, subject, line, req) {
     if (settings().notifications === false || sent()[key]) return;
+    const ws = workspace();
+    const client = ((ws && ws.clients) || []).find(c => c && c.id === clientId);
+    if (!client || (clientServiceOnHold(client, undefined, (ws && ws.signatures) || []) && disputeNotice(subject, line))) {
+      sent()[key] = new Date().toISOString();
+      return;
+    }
     sent()[key] = new Date().toISOString();
-    const users = D().users.filter(u => u.role === 'client' && u.clientId === clientId && !u.disabled && !u.notifyOptOut);
+    const users = D().users.filter(u => u.role === 'client' && u.clientId === clientId && !u.disabled && !u.notifyOptOut && client);
     const link = req ? `${origin(req)}/portal` : 'your client portal';
     for (const u of users) await mail(u, subject, `${line}\n\nSign in to see the details: ${link}\n\nYou can turn these emails off in the portal.`);
     db.audit({ actor: 'system', action: 'notify', detail: `${key} → ${users.length}` });
+  }
+
+  function disableGonePortalUsers(after) {
+    const ids = new Set(((after && after.clients) || []).filter(c => c && c.id).map(c => c.id));
+    (D().users || []).forEach(u => {
+      if (!u || u.role !== 'client' || !u.clientId || u.disabled) return;
+      if (ids.has(u.clientId)) return;
+      u.disabled = true;
+      db.audit({ actor: 'system', action: 'portal.user.disabled', detail: `${u.email || u.id} client ${u.clientId} is gone` });
+    });
   }
 
   function passiveResponse(d, after) {
@@ -199,13 +220,15 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
         if (['deleted', 'corrected'].includes(it.result) && it.result !== was.result) notifyClient(d.clientId, `item:${d.id}:${i}:${it.result}`, 'Good news on your credit file', `An item you disputed with ${d.recipient || 'a bureau'} was ${it.result === 'deleted' ? 'removed' : 'corrected'}.`, req);
       });
     });
+    disableGonePortalUsers(after);
     db.persistSoon();
   }
 
   /** Hourly: email clients when a bureau response is due within 3 days. */
   function deadlineSweep() {
     const soon = Date.now() + 3 * 86400000;
-    ((workspace().disputes) || []).filter(d => d && d.id).forEach(d => {
+    const ws = workspace();
+    ((ws.disputes) || []).filter(d => d && d.id).forEach(d => {
       if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`);
     });
     // Business credit plan: remind the client when a step is due within 2 days (once per step and due date).

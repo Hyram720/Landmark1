@@ -46,16 +46,18 @@ const shapeReport = workspaceShapeReport(data && data.workspace);
 const shapeErrors = shapeReport.shapeErrors;
 const missingIdWarnings = shapeReport.missingIdWarnings;
 const orphans = orphanWork(data && data.workspace);
+const crossClient = crossClientLinks(data && data.workspace);
 const deployGate = {
   outside: outside,
   duplicatePayTokens,
   shapeErrors,
   missingIdWarnings,
   orphans,
+  crossClient,
   ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0,
-  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes and letters whose client is no longer in the workspace. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes, letters, and reports whose client is no longer in the workspace. crossClient lists a dispute or letter on one client whose items, report, or account cite another client. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, deployGate }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, crossClient, deployGate }, null, 2) + '\n');
 
 function workspaceShapeReport(ws) {
   const shapeErrors = [];
@@ -92,7 +94,44 @@ function orphanWork(ws) {
   const workspace = ws || {};
   const ids = new Set(((workspace.clients) || []).filter(row => row && row.id).map(row => row.id));
   const list = (rows, key) => (rows || []).filter(row => row && row.id && row.clientId && !ids.has(row.clientId)).map(row => ({ key, id: row.id, clientId: row.clientId }));
-  return { disputes: list(workspace.disputes, 'disputes'), letters: list(workspace.letters, 'letters') };
+  return { disputes: list(workspace.disputes, 'disputes'), letters: list(workspace.letters, 'letters'), reports: list(workspace.reports, 'reports') };
+}
+
+function crossClientLinks(ws) {
+  const workspace = ws || {};
+  const reportOwner = new Map();
+  const accountOwner = new Map();
+  (workspace.reports || []).forEach(report => {
+    if (!report || !report.id || !report.clientId) return;
+    reportOwner.set(report.id, report.clientId);
+    (report.accounts || []).forEach(acct => {
+      if (acct && acct.id) accountOwner.set(acct.id, { clientId: report.clientId, reportId: report.id });
+    });
+  });
+  const links = [];
+  const see = (node, row, key, seen) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.reportId && reportOwner.has(node.reportId) && reportOwner.get(node.reportId) !== row.clientId) {
+      const token = key + '/' + row.id + '/report/' + node.reportId;
+      if (!seen.has(token)) {
+        seen.add(token);
+        links.push({ key, id: row.id, clientId: row.clientId || '', reportId: node.reportId, ownerClientId: reportOwner.get(node.reportId) });
+      }
+    }
+    if (node.accountId && accountOwner.has(node.accountId) && accountOwner.get(node.accountId).clientId !== row.clientId) {
+      const owner = accountOwner.get(node.accountId);
+      const token = key + '/' + row.id + '/account/' + node.accountId;
+      if (!seen.has(token)) {
+        seen.add(token);
+        links.push({ key, id: row.id, clientId: row.clientId || '', accountId: node.accountId, reportId: owner.reportId, ownerClientId: owner.clientId });
+      }
+    }
+    (node.items || []).forEach(item => see(item, row, key, seen));
+  };
+  const walk = (rows, key) => (rows || []).forEach(row => { if (row && row.id) see(row, row, key, new Set()); });
+  walk(workspace.disputes, 'disputes');
+  walk(workspace.letters, 'letters');
+  return links;
 }
 
 function decode(raw, secret) {

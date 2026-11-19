@@ -6,7 +6,7 @@
   const S = () => Store.state;
   const T = () => Store.today();
   const go = h => { if (location.hash === h) render(); else location.hash = h; };
-  const commit = (msg, cid) => { if (msg) Store.log(msg, cid); Store.save(); renderWhenSafe(); };
+  const commit = (msg, cid, record) => { if (msg) Store.log(msg, cid, record); Store.save(); renderWhenSafe(); };
   let redrawDeferred = false;
   function renderWhenSafe() {
     const draw = () => {
@@ -713,8 +713,8 @@
         await Remote.flushNow();
         const fails = [];
         for (const { a, entry } of send) {
-          try { await api('POST', '/api/messages', { clientId: a.client.id, channel: a.channel, subject: a.subject, body: a.body }); entry.via = 'sent'; }
-          catch (e) { fails.push({ a, entry, why: e.message }); }
+          try { await api('POST', '/api/messages', { clientId: a.client.id, channel: a.channel, subject: a.subject, body: a.body, purpose: 'automation' }); entry.via = 'sent'; }
+          catch (e) { if (e.status === 409) { entry.via = 'not sent'; continue; } fails.push({ a, entry, why: e.message }); }
         }
         await Remote.reload();
         fails.forEach(({ a, entry, why }) => { S().automationLog[a.key] = Object.assign(entry, { via: 'queued — ' + why }); queueMessage(a, entry, why); });
@@ -1441,7 +1441,8 @@
           location.href = channel === 'sms' ? `sms:${c.phone.replace(/[^\d+]/g, '')}?&body=${encodeURIComponent(d.body)}` : `mailto:${c.email}?subject=${encodeURIComponent(d.subject || '')}&body=${encodeURIComponent(d.body)}`;
         };
         if (!Store.remote) { logLocal(); return; }
-        Remote.flushNow().then(() => api('POST', '/api/messages', { clientId: c.id, channel, subject: d.subject, body: d.body })
+        const purpose = d.tpl === 'mailed' || d.tpl === 'results' ? 'dispute' : (d.tpl === 'welcome' || d.tpl === 'report' || d.tpl === 'docs' ? 'onboarding' : '');
+        Remote.flushNow().then(() => api('POST', '/api/messages', { clientId: c.id, channel, subject: d.subject, body: d.body, purpose })
           .then(() => { toast('Sent'); return Remote.reload(); })
           .catch(e => { if (e.status === 501) { toast(e.message + ' — opening your app instead'); logLocal(); } else toast(e.message); }));
       }
@@ -1525,16 +1526,21 @@
         onSubmit: d => {
           const ids = d.ids || [];
           if (!ids.length) return false;
+          const mailed = [];
           ids.forEach(id => {
             const disp = Store.get.dispute(id);
-            if (!Store.croaStatus(Store.get.client(disp.clientId)).cleared) return;
+            if (!disp) return;
+            const client = Store.get.client(disp.clientId);
+            if (!client || Store.serviceHold(S(), disp.clientId)) return;
             Object.assign(disp, { sentAt: d.sentAt, receivedAt: Law.addDays(d.sentAt, Number(d.transit) || transit), status: 'sent' });
             disp.dueAt = Law.responseDue(disp.type, disp.receivedAt);
             const l = Store.get.letter(disp.letterId); if (l) { l.status = 'sent'; l.sentAt = d.sentAt; }
             disp.items.forEach(it => { const r = Store.get.report(it.reportId); const a = r && r.accounts.find(t => t.id === it.accountId); if (a) a.consumerDisputed = true; });
             if (disp.dueAt) S().tasks.push({ id: Store.uid(), clientId: disp.clientId, title: `Check ${disp.recipient} response (round ${disp.round})`, due: disp.dueAt, done: false, createdAt: Store.now() });
+            mailed.push(disp);
           });
-          commit(`Round mailed: ${ids.length} letter(s)`);
+          if (!mailed.length) { toast('Those clients are on hold, so nothing was marked mailed.'); return false; }
+          commit(`Round mailed: ${mailed.length} letter(s)`, null, mailed.map(row => 'disputes/' + row.id));
         }
       });
     }
