@@ -9,6 +9,7 @@ import { createApp } from '../server/app.js';
 import { setAiFetch, clientDigest } from '../server/ledger-assistant.js';
 import { setTransport } from '../server/mailer.js';
 import { FileCheck, Business, DisputeReasons, Law, KB, Letters } from '../server/shared.js';
+import { seedSignedClient } from './seed-croa.js';
 
 for (const k of ['OPENAI_API_KEY', 'LEDGER_AI_ENABLED', 'LEDGER_MAIL_MODE', 'LEDGER_SETUP_CODE']) delete process.env[k];
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-biz-'));
@@ -125,6 +126,7 @@ test('setup: owner, two business clients with portal logins, one personal client
   ws.clients.push(A, B, Object.assign({}, personalClient, { kind: 'personal', status: 'active', email: 'pat@biz.test', onboarding: {} }));
   ws.reports.push(personalReport);
   assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
+  seedSignedClient(db.data.workspace, 'pa');
   for (const [c, id, pw] of [[bizA, 'ba', 'business a password'], [bizB, 'bb', 'business b password']]) {
     const inv = await owner('POST', '/api/invites', { role: 'client', clientId: id });
     assert.strictEqual((await c('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: pw })).status, 200);

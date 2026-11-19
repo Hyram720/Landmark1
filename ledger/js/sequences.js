@@ -28,6 +28,14 @@
     { n: 4, title: 'Step 4 — Attorney review', text: 'If the documented error is still reported, Ledger creates a task to refer the client to a consumer attorney (FCRA §§ 616–617).' }
   ];
 
+  function clientCleared(ws, clientId) {
+    if (!clientId) return true;
+    const clients = (ws && ws.clients) || [];
+    if (!clients.some(c => c && c.id === clientId)) return false;
+    if (root.Store && typeof root.Store.serviceHold === 'function') return !root.Store.serviceHold(ws, clientId);
+    const c = clients.find(x => x && x.id === clientId);
+    return !!(c && c.kind === 'business');
+  }
   const isBureau = name => !!Law.BUREAUS[name];
   const seqDisputes = (ws, seq) => ws.disputes.filter(d => d.seqId === seq.id);
   const stepOf = (ws, d) => { let n = 1, p = d; while (p && p.parentId) { p = ws.disputes.find(x => x.id === p.parentId); n++; } return n; };
@@ -57,6 +65,7 @@
   /** Overall status: active | due | won | attorney | stopped. */
   function status(ws, seq, today) {
     if (seq.status === 'stopped') return { state: 'stopped', label: 'Stopped', branches: [] };
+    if (!clientCleared(ws, seq.clientId)) return { state: 'active', label: 'Waiting until the client is cleared for service work', step: 1, branches: [] };
     const br = branches(ws, seq, today);
     const due = br.filter(b => b.state === 'due');
     const open = br.filter(b => ['to_mail', 'waiting', 'due'].includes(b.state));
@@ -73,6 +82,7 @@
 
   /** New disputes to create for every branch that is due. Returns [{ parent, type, recipient, recipientAddress, items, step }]. */
   function plan(ws, seq, today) {
+    if (!clientCleared(ws, seq.clientId)) return [];
     const out = [];
     const all = seqDisputes(ws, seq);
     let furnisherDone = all.some(d => ['furnisher_623', 'student_loan_623', 'furnisher_final', 'validation_809'].includes(d.type) && seq.furnisher && d.recipient === seq.furnisher.name);

@@ -8,11 +8,12 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createApp } from '../server/app.js';
 import { setAnthropicFactory } from '../server/assistant.js';
+import { seedSignedClient } from './seed-croa.js';
 
 const chromeBin = ['/usr/local/bin/google-chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].find(p => fs.existsSync(p));
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-scan-ui-'));
-const { app } = createApp({ dataDir: dir, encryptionKey: 'scan-ui-test-key-0000' });
+const { app, db } = createApp({ dataDir: dir, encryptionKey: 'scan-ui-test-key-0000' });
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -166,6 +167,7 @@ test('upload and Scan with AI stay visible until the result or the exact error',
   const ws = g.body.data;
   ws.clients.push({ id: 'cscan', name: 'Casey Report', firstName: 'Casey', lastName: 'Report', kind: 'personal', email: 'casey@example.test', status: 'active', onboarding: {} });
   assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
+  seedSignedClient(db.data.workspace, 'cscan');
   const html = '<table><tr><td>Creditor</td><td>Example Bank</td></tr><tr><td>Balance</td><td>$100</td></tr></table>';
   const report = await owner('POST', '/api/clients/cscan/files', formFile('bureau.html', Buffer.from(html), 'text/html'));
   const png = await owner('POST', '/api/clients/cscan/files', formFile('scan.png', Buffer.from('\x89PNG\r\n\x1a\nfake'), 'image/png'));

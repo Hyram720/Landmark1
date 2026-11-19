@@ -6,7 +6,18 @@
   const S = () => Store.state;
   const T = () => Store.today();
   const go = h => { if (location.hash === h) render(); else location.hash = h; };
-  const commit = (msg, cid) => { if (msg) Store.log(msg, cid); Store.save(); render(); };
+  const commit = (msg, cid, record) => { if (msg) Store.log(msg, cid, record); Store.save(); renderWhenSafe(); };
+  let redrawDeferred = false;
+  function renderWhenSafe() {
+    const draw = () => {
+      if (!document.getElementById('view')) return;
+      const active = document.activeElement;
+      if (!Store.shouldRedrawAfterSave({ overlay: !!document.querySelector('.overlay'), activeTag: active && active.tagName })) { redrawDeferred = true; return; }
+      redrawDeferred = false;
+      render();
+    };
+    draw();
+  }
 
   // ---------- router ----------
   function parseHash() {
@@ -70,10 +81,40 @@
     el.textContent = { saving: 'Saving…', saved: 'Saved', offline: 'Offline — retrying', conflict: 'Reloaded' }[state] || '';
     el.className = 'badge plain ' + (state === 'saved' ? 'b-ok' : state === 'offline' ? 'b-high' : 'b-low');
   }
+  function droppedEdits(local, remote) {
+    const skip = { payToken: 1, paidAt: 1, transId: 1, paidVia: 1, signupSource: 1 };
+    const names = [];
+    Object.keys(local || {}).forEach(key => {
+      if (!Array.isArray(local[key])) return;
+      const remoteRows = Array.isArray(remote && remote[key]) ? remote[key] : [];
+      const byId = rows => {
+        const map = new Map();
+        (rows || []).forEach(row => { if (row && row.id) map.set(row.id, row); });
+        return map;
+      };
+      const localMap = byId(local[key]);
+      const remoteMap = byId(remoteRows);
+      localMap.forEach((row, id) => {
+        const other = remoteMap.get(id);
+        const label = row.name || row.recipient || row.description || id;
+        if (!other) { names.push(String(label)); return; }
+        const fields = [];
+        Object.keys(row).forEach(field => {
+          if (skip[field]) return;
+          if (JSON.stringify(row[field]) !== JSON.stringify(other[field])) fields.push(field);
+        });
+        if (fields.length) names.push(label + ' (' + fields.join(', ') + ')');
+      });
+    });
+    return names.slice(0, 8);
+  }
   const Remote = {
-    version: 0, timer: null, pending: false, user: null,
+    version: 0, timer: null, pending: false, sending: false, savedWaiters: [], user: null,
+    afterSave(fn) { this.savedWaiters.push(fn); },
+    finishWaiters() { const fns = this.savedWaiters.splice(0); fns.forEach(fn => fn()); },
     async start(user) {
       this.user = user;
+      root.ledgerUser = user;
       const r = await api('GET', '/api/workspace');
       this.version = r.version;
       Store.adopt(r.data);
@@ -84,20 +125,45 @@
     async reload() { const w = await api('GET', '/api/workspace'); this.version = w.version; Store.adopt(w.data); render(); },
     push() { this.pending = true; setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
     async flush() {
+      if (this.sending) return;
+      this.sending = true;
+      clearTimeout(this.timer);
+      const sent = JSON.parse(JSON.stringify(Store.state));
+      let requeue = false;
       try {
-        const r = await api('PUT', '/api/workspace', { baseVersion: this.version, data: Store.state });
-        this.version = r.version; this.pending = false; setSync('saved');
+        const r = await api('PUT', '/api/workspace', { baseVersion: this.version, data: sent });
+        this.version = r.version;
+        requeue = r.data ? Store.applyServerSave(r.data, sent) : false;
+        if (requeue) { this.pending = true; setSync('saving'); }
+        else { this.pending = false; clearTimeout(this.timer); setSync('saved'); renderWhenSafe(); this.finishWaiters(); }
       } catch (e) {
-        if (e.status === 409) {
-          Store.adopt(e.body.data); this.version = e.body.version; this.pending = false; setSync('conflict');
-          toast('Someone else updated the workspace — loaded the latest version. Please redo your last change.'); render();
-        } else if (e.status === 422) {
-          // The server refused an invoice over the agreement's 12-month term / total cap: drop the change.
-          this.pending = false; setSync('saved');
-          toast((e.body.error || 'Change refused by the server') + ' Reloaded the last saved version.');
-          await this.reload();
+        const refused = e.status === 400 || e.status === 403 || e.status === 422 || (e.status === 409 && !(e.body && e.body.data));
+        if (e.status === 409 && e.body && e.body.data) {
+          this.version = e.body.version;
+          Store.adopt(e.body.data);
+          this.pending = false;
+          requeue = false;
+          setSync('conflict');
+          toast('Someone else updated this. Redo your last change.');
+          renderWhenSafe();
+        } else if (refused) {
+          this.pending = false;
+          requeue = false;
+          const reasons = Array.isArray(e.body && e.body.refused) ? e.body.refused.map(row => row && row.reason).filter(Boolean) : [];
+          const reasonText = reasons.length ? reasons.join('; ') : ((e.body && e.body.error) || 'Change refused.');
+          const localSnap = JSON.parse(JSON.stringify(Store.state));
+          setSync('conflict');
+          const syncEl = document.getElementById('sync');
+          if (syncEl) syncEl.textContent = 'Not allowed: ' + reasonText;
+          try { await this.reload(); } catch (err) { setSync('conflict'); }
+          const dropped = droppedEdits(localSnap, Store.state);
+          toast(dropped.length ? 'Not allowed: ' + reasonText + ' Dropped: ' + dropped.join('; ') + '.' : 'Not allowed: ' + reasonText);
         } else if (e.status === 401) location.reload();
-        else { setSync('offline'); this.timer = setTimeout(() => this.flush(), 5000); }
+        else if (!e.status || e.status >= 500) { setSync('offline'); this.pending = true; this.timer = setTimeout(() => this.flush(), 5000); }
+        else { this.pending = false; requeue = false; setSync('conflict'); toast((e.body && e.body.error) || 'Change refused.'); await this.reload(); }
+      } finally {
+        this.sending = false;
+        if (this.pending && requeue) this.push();
       }
     },
     async poll() {
@@ -322,6 +388,7 @@
 
   function clientModal(c, defaults) {
     const isNew = !c;
+    const clientId = c && c.id;
     c = c || Object.assign({ status: 'lead', kind: 'personal' }, defaults || {});
     const bizBlock = `<div class="span2" data-biz ${c.kind && c.kind !== 'personal' ? '' : 'hidden'}><hr><h3 style="margin-bottom:10px">Business</h3><div class="form-grid">
           ${field('Legal business name', 'b_legalName', (c.business || {}).legalName)}${field('DBA', 'b_dba', (c.business || {}).dba)}
@@ -347,27 +414,30 @@
         <label class="check span2"><input type="checkbox" name="shareWithReferrer" ${c.shareWithReferrer ? 'checked' : ''}> Client agreed to share their progress with the person who referred them</label>
         ${field('Notes', 'notes', c.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Delete client</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
-      onOpen: f => { f.elements.kind.onchange = () => { f.querySelector('[data-biz]').hidden = f.elements.kind.value === 'personal'; }; const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { if (UI.ask(`Delete ${c.name} and all their reports, disputes and invoices?`)) { const id = c.id; ['reports', 'disputes', 'letters', 'tasks', 'invoices'].forEach(k => { S()[k] = S()[k].filter(x => x.clientId !== id); }); S().clients = S().clients.filter(x => x.id !== id); UI.close(); Store.log('Deleted client ' + c.name); Store.save(); go('#/clients'); } }; },
+      onOpen: f => { f.elements.kind.onchange = () => { f.querySelector('[data-biz]').hidden = f.elements.kind.value === 'personal'; }; const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const current = Store.get.client(clientId); if (current && UI.ask(`Delete ${current.name} and all their reports, disputes and invoices?`)) { const id = current.id; ['reports', 'disputes', 'letters', 'tasks', 'invoices'].forEach(k => { S()[k] = S()[k].filter(x => x.clientId !== id); }); S().clients = S().clients.filter(x => x.id !== id); UI.close(); Store.log('Deleted client ' + current.name); Store.save(); go('#/clients'); } }; },
       onSubmit: (d, f) => {
+        const current = isNew ? c : Store.get.client(clientId);
+        if (!current) { toast('That client is no longer in the workspace.'); return false; }
         const bizOnly = d.kind !== 'personal' && d.b_legalName;
         if (!bizOnly && (!d.firstName || !d.lastName)) { UI.fieldError(f, d.firstName ? 'lastName' : 'firstName', d.kind === 'personal' ? 'Enter the client’s first and last name' : 'Enter the owner’s first and last name, or the legal business name'); return false; }
         if (d.ssnLast4 && !/^\d{4}$/.test(d.ssnLast4)) { UI.fieldError(f, 'ssnLast4', 'Enter only the last 4 digits of the SSN'); return false; }
         if (d.b_einLast4 && !/^\d{4}$/.test(d.b_einLast4)) { UI.fieldError(f, 'b_einLast4', 'Enter only the last 4 digits of the EIN'); return false; }
         const biz = {};
         Object.keys(d).filter(k => k.startsWith('b_')).forEach(k => { biz[k.slice(2)] = d[k]; delete d[k]; });
-        Object.assign(c, d, { name: `${d.firstName} ${d.lastName}`.trim() || biz.legalName });
-        if (d.kind !== 'personal') c.business = Object.assign(c.business || {}, biz);
-        if (isNew) { Object.assign(c, { id: Store.uid(), createdAt: Store.now(), onboarding: {}, addedBy: Remote.user ? Remote.user.name : 'Me' }); S().clients.push(c); }
-        Store.log((isNew ? 'Added ' : 'Updated ') + c.name, c.id);
+        Object.assign(current, d, { name: `${d.firstName} ${d.lastName}`.trim() || biz.legalName });
+        if (d.kind !== 'personal') current.business = Object.assign(current.business || {}, biz);
+        if (isNew) { Object.assign(current, { id: Store.uid(), createdAt: Store.now(), onboarding: {}, addedBy: Remote.user ? Remote.user.name : 'Me' }); S().clients.push(current); }
+        Store.log((isNew ? 'Added ' : 'Updated ') + current.name, current.id);
         Store.save();
-        go(`#/clients/${c.id}`);
+        go(`#/clients/${current.id}`);
       }
     });
   }
 
-  function reportModal(cid, r) {
-    const isNew = !r;
-    r = r || { bureau: 'Experian', date: T(), source: '', scores: {} };
+  function reportModal(cid, reportId) {
+    const isNew = !reportId;
+    const existing = isNew ? null : Store.get.report(reportId);
+    const r = existing || { bureau: 'Experian', date: T(), source: '', scores: {} };
     modal({
       title: isNew ? 'Add credit report' : 'Edit report', wide: isNew,
       body: `<div class="form-grid g4f">
@@ -383,10 +453,12 @@
         if (isNew && d.csv) {
           try { accounts = parseCSV(d.csv).map(tradelineFrom).filter(t => t.creditor); } catch (e) { toast('Could not read CSV'); return false; }
         }
-        Object.assign(r, { bureau: d.bureau, date: d.date, source: d.source, scores: d.score ? { [d.bureau]: Number(d.score) } : {} });
-        if (isNew) { Object.assign(r, { id: Store.uid(), clientId: cid, accounts }); S().reports.push(r); }
-        const wins = isNew ? root.AIFlow.afterImport([r]) : [];
-        commit(isNew ? `Imported ${r.bureau} report (${accounts.length} tradelines)` : `Updated ${r.bureau} report`, cid);
+        const live = isNew ? r : Store.get.report(reportId);
+        if (!live) { toast('That report is no longer in the workspace.'); return false; }
+        Object.assign(live, { bureau: d.bureau, date: d.date, source: d.source, scores: d.score ? { [d.bureau]: Number(d.score) } : {} });
+        if (isNew) { Object.assign(live, { id: Store.uid(), clientId: cid, accounts }); S().reports.push(live); }
+        const wins = isNew ? root.AIFlow.afterImport([live]) : [];
+        commit(isNew ? `Imported ${live.bureau} report (${accounts.length} tradelines)` : `Updated ${live.bureau} report`, cid);
         if (isNew) { go(`#/clients/${cid}/reports`); if (wins.length) setTimeout(() => root.AIFlow.showWins(cid, wins), 50); }
       }
     });
@@ -413,14 +485,21 @@
         ${field('Consumer-reported issue', 'issue', t.issue, { type: 'textarea', rows: 2, cls: 'span2', help: 'What the consumer says is wrong, in their words' })}
         ${field('Evidence', 'evidence', t.evidence, { type: 'textarea', rows: 2, cls: 'span2', help: 'Statements, payoff letters, receipts' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Remove</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
-      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { r.accounts = r.accounts.filter(a => a.id !== id); UI.close(); commit(`Removed ${t.creditor} tradeline`, r.clientId); }; },
+      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const report = Store.get.report(reportId); if (!report) return; report.accounts = report.accounts.filter(a => a.id !== id); UI.close(); commit(`Removed ${t.creditor} tradeline`, report.clientId); }; },
       onSubmit: d => {
         if (!d.creditor) { toast('Creditor is required'); return false; }
+        const report = Store.get.report(reportId);
+        if (!report) { toast('That report is no longer in the workspace.'); return false; }
         const upd = tradelineFrom(d);
-        upd.id = t.id;
+        upd.id = id || (t && t.id) || Store.uid();
         upd.consumerDisputed = !!d.consumerDisputed;
-        if (isNew) r.accounts.push(upd); else Object.assign(t, upd);
-        commit(`${isNew ? 'Added' : 'Updated'} tradeline ${d.creditor} (${r.bureau})`, r.clientId);
+        if (isNew) report.accounts.push(upd);
+        else {
+          const live = report.accounts.find(a => a.id === id);
+          if (!live) { toast('That tradeline is no longer on the report.'); return false; }
+          Object.assign(live, upd);
+        }
+        commit(`${isNew ? 'Added' : 'Updated'} tradeline ${d.creditor} (${report.bureau})`, report.clientId);
       }
     });
   }
@@ -485,9 +564,11 @@
     });
   }
 
-  function itemModal(d, i) {
-    const isNew = i === undefined || i === '';
-    const it = isNew ? { creditor: '', fields: [] } : d.items[Number(i)];
+  function itemModal(disputeId, itemId) {
+    const opened = Store.get.dispute(disputeId);
+    const isNew = !itemId;
+    if (!isNew) (opened.items || []).forEach(row => { if (row && !row.id) row.id = Store.uid(); });
+    const it = isNew ? { id: Store.uid(), creditor: '', fields: [] } : (opened.items || []).find(row => row && row.id === itemId);
     modal({
       title: isNew ? 'Add disputed item' : 'Edit item',
       body: `<div class="form-grid">${field('Creditor / furnisher', 'creditor', it.creditor, { required: true })}${field('Account # (masked)', 'accountNumber', it.accountNumber)}
@@ -496,11 +577,16 @@
         ${field('Correction requested', 'requested', it.requested, { cls: 'span2' })}
         ${field('Supporting evidence', 'evidence', it.evidence, { cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Remove</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
-      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { d.items.splice(Number(i), 1); UI.close(); commit(); }; },
+      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const live = Store.get.dispute(disputeId); if (!live) return; live.items = (live.items || []).filter(row => row && row.id !== itemId); UI.close(); commit(); }; },
       onSubmit: x => {
         if (!x.creditor || x.discrepancy.length < 12) { toast('Add the creditor and a specific description'); return false; }
-        Object.assign(it, x, { fields: x.fields ? x.fields.split(',').map(s => s.trim()).filter(Boolean) : [] });
-        if (isNew) d.items.push(it);
+        const live = Store.get.dispute(disputeId);
+        if (!live) { toast('That dispute is no longer in the workspace.'); return false; }
+        live.items = live.items || [];
+        const item = isNew ? { id: it.id, creditor: '', fields: [] } : live.items.find(row => row && row.id === itemId);
+        if (!item) { toast('That item is no longer on the dispute.'); return false; }
+        Object.assign(item, x, { id: item.id, fields: x.fields ? x.fields.split(',').map(s => s.trim()).filter(Boolean) : [] });
+        if (isNew) live.items.push(item);
         commit();
       }
     });
@@ -517,26 +603,31 @@
     commit(`Generated ${Law.typeInfo(d.type).label.toLowerCase()} letter to ${d.recipient}`, d.clientId);
   }
 
-  function aqModal(c, d) {
-    const isNew = !d;
-    d = d || { structure: '' };
+  function aqModal(clientId, dealId) {
+    const opened = Store.get.client(clientId);
+    const isNew = !dealId;
+    const d = isNew ? { structure: '' } : (opened.deals || []).find(row => row.id === dealId) || { structure: '' };
     const Aq = root.Acquisition;
     modal({
       title: isNew ? 'Add a business to evaluate' : 'Edit ' + d.name, wide: true,
       body: `<div class="form-grid">${field('Business legal name', 'name', d.name, { required: true, cls: 'span2' })}
-        ${field('State', 'state', d.state || (c.business || {}).stateOfFormation || '', { type: 'select', options: [['', '—']].concat(Object.entries(Aq.STATES)) })}${field('State entity / file number', 'entityNumber', d.entityNumber)}
+        ${field('State', 'state', d.state || (opened.business || {}).stateOfFormation || '', { type: 'select', options: [['', '-']].concat(Object.entries(Aq.STATES)) })}${field('State entity / file number', 'entityNumber', d.entityNumber)}
         ${field('Formation date', 'formedOn', d.formedOn, { type: 'date' })}${field('Structure', 'structure', d.structure, { type: 'select', options: [['', 'Undecided'], ['Asset purchase', 'Asset purchase'], ['Stock / membership-interest purchase', 'Stock / membership-interest purchase']] })}
         ${field('Asking price ($)', 'askingPrice', d.askingPrice, { type: 'number', attrs: 'min="0"' })}${field('Annual revenue ($)', 'revenue', d.revenue, { type: 'number', attrs: 'min="0"' })}
         ${field('Seller’s discretionary earnings / cash flow ($)', 'sde', d.sde, { type: 'number', attrs: 'min="0"' })}${field('Listing link', 'listingUrl', d.listingUrl, { placeholder: 'https://…' })}</div>`,
       onSubmit: x => {
         if (!x.name) { toast('Name is required'); return false; }
         if (x.listingUrl && !/^https?:\/\//.test(x.listingUrl)) { toast('Listing link must start with https://'); return false; }
-        c.deals = c.deals || [];
-        Object.assign(d, x);
-        if (isNew) { Object.assign(d, { id: Store.uid(), createdAt: Store.now(), checks: {} }); c.deals.push(d); }
-        Store.log(`${isNew ? 'Added' : 'Updated'} acquisition target ${x.name}`, c.id);
+        const live = Store.get.client(clientId);
+        if (!live) { toast('That client is no longer in the workspace.'); return false; }
+        live.deals = live.deals || [];
+        const deal = isNew ? { structure: '' } : live.deals.find(row => row.id === dealId);
+        if (!deal) { toast('That business is no longer on the client.'); return false; }
+        Object.assign(deal, x);
+        if (isNew) { Object.assign(deal, { id: Store.uid(), createdAt: Store.now(), checks: {} }); live.deals.push(deal); }
+        Store.log(`${isNew ? 'Added' : 'Updated'} acquisition target ${x.name}`, live.id);
         Store.save();
-        go(`#/clients/${c.id}/acquisition?deal=${d.id}`);
+        go(`#/clients/${live.id}/acquisition?deal=${deal.id}`);
       }
     });
   }
@@ -600,7 +691,7 @@
       let n = 0;
       // 1. Automatic invoices (work already performed only).
       const capBlocked = [];
-      const bills = root.Billing.due(S(), today, capBlocked);
+      const bills = root.Billing.due(S(), today, capBlocked).filter(i => !Store.serviceHold(S(), i.clientId));
       if (capBlocked.length && manual) setTimeout(() => toast(`${capBlocked.length} invoice${capBlocked.length > 1 ? 's' : ''} not issued: ${capBlocked[0].client}: ${capBlocked[0].reason}`), 900);
       bills.forEach(i => { S().invoices.push(i); Store.log(`Invoice issued automatically: ${UI.money(i.amount)} — ${i.description}`, i.clientId); });
       n += bills.length;
@@ -622,8 +713,8 @@
         await Remote.flushNow();
         const fails = [];
         for (const { a, entry } of send) {
-          try { await api('POST', '/api/messages', { clientId: a.client.id, channel: a.channel, subject: a.subject, body: a.body }); entry.via = 'sent'; }
-          catch (e) { fails.push({ a, entry, why: e.message }); }
+          try { await api('POST', '/api/messages', { clientId: a.client.id, channel: a.channel, subject: a.subject, body: a.body, purpose: 'automation' }); entry.via = 'sent'; }
+          catch (e) { if (e.status === 409) { entry.via = 'not sent'; continue; } fails.push({ a, entry, why: e.message }); }
         }
         await Remote.reload();
         fails.forEach(({ a, entry, why }) => { S().automationLog[a.key] = Object.assign(entry, { via: 'queued — ' + why }); queueMessage(a, entry, why); });
@@ -901,7 +992,7 @@
         if (!(Number(d.amount) > 0) || !d.description) { toast('Add a description and amount'); return false; }
         const cap = root.Billing.capCheck(S(), c, Number(d.amount), d.serviceCompletedAt);
         if (!cap.ok) { toast(`Blocked: ${cap.reason}`); return false; }
-        const inv = { id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), dueAt: d.dueAt || null, notes: d.notes || '', paidAt: null, payToken: root.Billing.payToken() };
+        const inv = { id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), dueAt: d.dueAt || null, notes: d.notes || '', paidAt: null };
         inv.number = root.Invoices.number(inv);
         S().invoices.push(inv);
         commit(`Issued invoice ${inv.number} ${UI.money(d.amount)} — ${d.description}`, d.clientId);
@@ -910,13 +1001,19 @@
     });
   }
 
-  function printClientDoc(kind, cid) {
-    const co = S().settings.company;
-    const c = cid ? Store.get.client(cid) : { name: '[Client name]', onboarding: {} };
-    const cs = cid ? Store.croaStatus(c) : {};
-    if (kind === 'disclosure') return UI.printDoc('Consumer Credit File Rights', Law.CROA_DISCLOSURE + `\n\n\nAcknowledgment of receipt\n\nI received this statement before signing any contract.\n\n${c.name}\n\nSignature: ______________________   Date: __________`);
-    if (kind === 'contract') return UI.printDoc('Credit services agreement', Law.contractTerms(co, c, S().settings.defaultFee));
-    if (kind === 'cancel') { const n = Law.cancellationNotice(co, cs.deadline ? UI.date(cs.deadline) : null); return UI.printDoc('Notice of Cancellation', n + '\n\n\n— — — — — — — — — — duplicate copy — — — — — — — — — —\n\n' + n); }
+  async function printClientDoc(kind, cid) {
+    const titles = { disclosure: 'Consumer Credit File Rights', contract: 'Credit services agreement', cancel: 'Notice of Cancellation' };
+    if (Store.remote && cid) {
+      const pack = await api('GET', '/api/clients/' + encodeURIComponent(cid) + '/croa-documents');
+      if ((kind === 'contract' || kind === 'cancel') && pack.contractPdfId) {
+        window.open('/api/clients/' + encodeURIComponent(cid) + '/signed-agreement', '_blank', 'noopener');
+        return;
+      }
+      const text = kind === 'disclosure' ? pack.disclosure : kind === 'contract' ? pack.contract : pack.cancellation + '\n\n' + pack.cancellation;
+      return UI.printDoc(titles[kind] || 'Document', text);
+    }
+    if (kind === 'disclosure') return UI.printDoc(titles.disclosure, Law.CROA_DISCLOSURE);
+    toast('The agreement and cancellation notice are printed from the signed file. This browser copy cannot print them.');
   }
 
   function progressReport(cid) { UI.printHtml(root.Reports.progress(S(), cid, T())); Store.log('Printed progress report', cid); }
@@ -949,13 +1046,25 @@
     },
     'oc-search': () => { const v = id => (document.getElementById(id) || {}).value || ''; const a = document.createElement('a'); a.href = root.Acquisition.LINKS.ocSearch(v('oc-name').trim(), v('oc-state')); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); },
     'aq-listings': () => { const st = (document.getElementById('aq-state') || {}).value; const a = document.createElement('a'); a.href = root.Acquisition.LINKS.listings(st); a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); },
-    'aq-add': el => aqModal(Store.get.client(el.dataset.id)),
-    'aq-edit': el => { const c = Store.get.client(el.dataset.id); aqModal(c, (c.deals || []).find(d => d.id === el.dataset.deal)); },
+    'aq-add': el => aqModal(el.dataset.id),
+    'aq-edit': el => aqModal(el.dataset.id, el.dataset.deal),
     'aq-note': el => {
-      const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal);
-      const cur = (d.checks || {})[el.dataset.key] || {};
-      const chk = root.Acquisition.CHECKS.find(x => x.key === el.dataset.key);
-      modal({ title: chk.label, body: field('What did you find? (source, date, document)', 'note', cur.note || '', { type: 'textarea', rows: 4 }), onSubmit: x => { d.checks = d.checks || {}; d.checks[el.dataset.key] = Object.assign({ status: 'pending' }, cur, { note: x.note, at: T() }); commit(null, c.id); } });
+      const clientId = el.dataset.id;
+      const dealId = el.dataset.deal;
+      const key = el.dataset.key;
+      const c = Store.get.client(clientId);
+      const d = c && (c.deals || []).find(x => x.id === dealId);
+      if (!d) { toast('That business is no longer on the client.'); return; }
+      const cur = (d.checks || {})[key] || {};
+      const chk = root.Acquisition.CHECKS.find(x => x.key === key);
+      modal({ title: chk.label, body: field('What did you find? (source, date, document)', 'note', cur.note || '', { type: 'textarea', rows: 4 }), onSubmit: x => {
+        const live = Store.get.client(clientId);
+        const deal = live && (live.deals || []).find(row => row.id === dealId);
+        if (!deal) { toast('That business is no longer on the client.'); return false; }
+        deal.checks = deal.checks || {};
+        deal.checks[key] = Object.assign({ status: 'pending' }, cur, { note: x.note, at: T() });
+        commit(null, live.id);
+      } });
     },
     'aq-print': el => { const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal); UI.printDoc('Due diligence — ' + d.name, root.Acquisition.report(d, c, T(), S().settings.company)); },
     'aq-delete': el => { const c = Store.get.client(el.dataset.id); if (!UI.ask('Remove this business and its checklist?')) return; c.deals = c.deals.filter(x => x.id !== el.dataset.deal); commit('Removed acquisition target', c.id); go(`#/clients/${c.id}/acquisition`); },
@@ -983,7 +1092,20 @@
     'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId); } },
     'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; copyText(url, 'Partner sign-up link', 'Sign-up link copied'); },
     'ref-invite': el => { const r = S().referrals.find(x => x.id === el.dataset.id); Remote.flushNow().then(() => api('POST', '/api/invites', { role: 'partner', referralId: r.id, name: r.name, email: r.email })).then(x => modal({ title: 'Partner portal invitation', body: `<p class="small">Send this one-time link to ${esc(r.name)}. It expires in ${x.expiresInDays} days.</p><input readonly value="${esc(x.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); },
-    'ref-payout': el => { const r = S().referrals.find(x => x.id === el.dataset.id); const k = root.Sales.commissions(S(), r, T()); modal({ title: 'Record payout — ' + r.name, body: `<div class="form-grid">${field('Amount ($)', 'amount', k.owed, { type: 'number', attrs: 'step="0.01" min="0"' })}${field('Date paid', 'date', T(), { type: 'date' })}${field('Note', 'note', '', { cls: 'span2' })}</div>`, onSubmit: d => { if (!(Number(d.amount) > 0)) return false; r.payouts = r.payouts || []; r.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note }); commit(`Recorded ${UI.money(d.amount)} payout to ${r.name}`); } }); },
+    'ref-payout': el => {
+      const id = el.dataset.id;
+      const r = S().referrals.find(x => x.id === id);
+      if (!r) { toast('That referral partner is no longer in the workspace.'); return; }
+      const k = root.Sales.commissions(S(), r, T());
+      modal({ title: 'Record payout for ' + r.name, body: `<div class="form-grid">${field('Amount ($)', 'amount', k.owed, { type: 'number', attrs: 'step="0.01" min="0"' })}${field('Date paid', 'date', T(), { type: 'date' })}${field('Note', 'note', '', { cls: 'span2' })}</div>`, onSubmit: d => {
+        const live = S().referrals.find(x => x.id === id);
+        if (!live) { toast('That referral partner is no longer in the workspace.'); return false; }
+        if (!(Number(d.amount) > 0)) return false;
+        live.payouts = live.payouts || [];
+        live.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note });
+        commit(`Recorded ${UI.money(d.amount)} payout to ${live.name}`);
+      } });
+    },
     'mail-lob': el => {
       const d = Store.get.dispute(el.dataset.id);
       const c = Store.get.client(d.clientId);
@@ -1021,6 +1143,15 @@
     'use-template': el => templateModal(el.dataset.tpl, el.dataset.client),
     'new-client': () => clientModal(),
     'edit-client': el => clientModal(Store.get.client(el.dataset.id)),
+    'confirm-mail-snapshot': el => {
+      if (!(root.ledgerUser && root.ledgerUser.role === 'owner')) { toast('Only the owner can confirm a name and address.'); return; }
+      const current = Store.get.client(el.dataset.id);
+      if (!current) { toast('That client is no longer in the workspace.'); return; }
+      current.confirmMailSnapshot = true;
+      Store.log('Confirmed the mailed name and address for ' + (current.name || 'a client'), current.id, 'clients/' + current.id);
+      Store.save();
+      toast('Name and address confirmed');
+    },
     'enrollment-terms': el => enrollmentTermsModal(Store.get.client(el.dataset.id)),
     'load-demo': () => { if (S().clients.length && !UI.ask('Replace the current workspace with demo data?')) return; Store.replace(Sample.build()); toast('Demo workspace loaded'); go('#/'); },
     'reset': () => { if (!UI.ask('Erase every client, report, dispute and invoice in this browser? Export a backup first.')) return; Store.replace(Store.empty()); go('#/'); },
@@ -1043,16 +1174,22 @@
       body: `<div class="form-grid">${field('Task', 'title', '', { required: true, cls: 'span2' })}${field('Client', 'clientId', el.dataset.client || '', { type: 'select', options: [['', '—']].concat(S().clients.map(c => [c.id, c.name])) })}${field('Due', 'due', Law.addDays(T(), 3), { type: 'date' })}</div>`,
       onSubmit: d => { if (!d.title) return false; S().tasks.push({ id: Store.uid(), title: d.title, clientId: d.clientId || null, due: d.due, done: false, createdAt: Store.now() }); commit('Task added: ' + d.title, d.clientId); }
     }),
-    'toggle-task': el => { const t = S().tasks.find(x => x.id === el.dataset.id); t.done = true; commit('Completed task: ' + t.title, t.clientId); },
+    'toggle-task': el => {
+      const t = S().tasks.find(x => x.id === el.dataset.id);
+      if (!t) return;
+      if ((t.kind === 'postmark_needs_owner_review' || t.kind === 'possible_duplicate') && !(root.ledgerUser && root.ledgerUser.role === 'owner')) { toast('Only the owner can close that task.'); return; }
+      t.done = true;
+      commit('Completed task: ' + t.title, t.clientId);
+    },
     'add-report': el => reportModal(el.dataset.id),
-    'edit-report': el => { const r = Store.get.report(el.dataset.id); reportModal(r.clientId, r); },
+    'edit-report': el => { const r = Store.get.report(el.dataset.id); reportModal(r.clientId, r.id); },
     'delete-report': el => { const r = Store.get.report(el.dataset.id); if (!UI.ask(`Delete the ${r.bureau} report dated ${r.date}?`)) return; S().reports = S().reports.filter(x => x.id !== r.id); commit(`Deleted ${r.bureau} report`, r.clientId); },
     'edit-tradeline': el => tradelineModal(el.dataset.report, el.dataset.id),
     'disputes-from-audit': el => disputesFromAudit(el.dataset.id),
     'new-dispute': el => newDisputeModal(el.dataset.client || (S().clients[0] || {}).id, el.dataset.type ? { type: el.dataset.type, recipient: 'Dun & Bradstreet', title: 'Business bureau correction request' } : undefined),
     'delete-dispute': el => { const d = Store.get.dispute(el.dataset.id); if (!UI.ask('Delete this dispute and its letter?')) return; S().disputes = S().disputes.filter(x => x.id !== d.id); S().letters = S().letters.filter(l => l.disputeId !== d.id); Store.log(`Deleted dispute to ${d.recipient}`, d.clientId); Store.save(); go(`#/clients/${d.clientId}/disputes`); },
-    'edit-item': el => itemModal(Store.get.dispute(el.dataset.id), el.dataset.i),
-    'edit-recipient': el => { const d = Store.get.dispute(el.dataset.id); modal({ title: 'Recipient', body: `${field('Recipient', 'recipient', d.recipient)}<div style="height:12px"></div>${field('Address (non-bureau recipients)', 'recipientAddress', d.recipientAddress, { type: 'textarea', rows: 3 })}<div style="height:12px"></div>${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3 })}`, onSubmit: x => { Object.assign(d, x); commit(); } }); },
+    'edit-item': el => itemModal(el.dataset.id, el.dataset.item),
+    'edit-recipient': el => { const id = el.dataset.id; const d = Store.get.dispute(id); modal({ title: 'Recipient', body: `${field('Recipient', 'recipient', d.recipient)}<div style="height:12px"></div>${field('Address (non-bureau recipients)', 'recipientAddress', d.recipientAddress, { type: 'textarea', rows: 3 })}<div style="height:12px"></div>${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3 })}`, onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } Object.assign(live, x); commit(); } }); },
     'gen-letter': el => { const d = Store.get.dispute(el.dataset.id); const l = d.letterId && Store.get.letter(d.letterId); if (l && l.text && !l.text.startsWith('(Generated') && !UI.ask('Regenerate and replace any edits to this letter?')) return; generateLetter(d); },
     'print-letter': el => { const l = Store.get.letter(el.dataset.id); UI.printDoc('Dispute letter', l.text); },
     'approve-letter': el => {
@@ -1068,29 +1205,33 @@
     },
     'unapprove': el => { const d = Store.get.dispute(el.dataset.id); const l = Store.get.letter(d.letterId); l.status = 'draft'; l.approvedAt = null; d.status = 'draft'; commit(); },
     'mark-sent': el => {
-      const d = Store.get.dispute(el.dataset.id);
+      const id = el.dataset.id;
+      const d = Store.get.dispute(id);
       const transit = Number(S().settings.mailTransitDays) || 5;
       modal({
         title: 'Record mailing',
         body: `<div class="form-grid">${field('Date mailed', 'sentAt', T(), { type: 'date', required: true })}${field('Certified mail tracking #', 'tracking', d.tracking)}${field('Date received (if known)', 'receivedAt', Law.addDays(T(), transit), { type: 'date', help: `Defaults to ${transit} days after mailing; update from the return receipt` })}</div>`,
         onSubmit: x => {
-          if (!Store.croaStatus(Store.get.client(d.clientId)).cleared) { toast('Blocked until onboarding clears'); return false; }
-          Object.assign(d, { sentAt: x.sentAt, tracking: x.tracking, receivedAt: x.receivedAt || Law.addDays(x.sentAt, transit), status: 'sent' });
-          d.dueAt = Law.responseDue(d.type, d.receivedAt);
-          const l = Store.get.letter(d.letterId); if (l) { l.status = 'sent'; l.sentAt = x.sentAt; }
-          d.items.forEach(it => { const r = Store.get.report(it.reportId); const a = r && r.accounts.find(t => t.id === it.accountId); if (a) a.consumerDisputed = true; });
-          if (d.dueAt) S().tasks.push({ id: Store.uid(), clientId: d.clientId, title: `Check ${d.recipient} response (round ${d.round})`, due: d.dueAt, done: false, createdAt: Store.now() });
-          commit(`Round ${d.round} mailed to ${d.recipient}${d.dueAt ? ' — response due ' + d.dueAt : ''}`, d.clientId);
+          const live = Store.get.dispute(id);
+          if (!live) { toast('That dispute is no longer in the workspace.'); return false; }
+          if (!Store.croaStatus(Store.get.client(live.clientId)).cleared) { toast('Blocked until onboarding clears'); return false; }
+          Object.assign(live, { sentAt: x.sentAt, tracking: x.tracking, receivedAt: x.receivedAt || Law.addDays(x.sentAt, transit), status: 'sent' });
+          live.dueAt = Law.responseDue(live.type, live.receivedAt);
+          const l = Store.get.letter(live.letterId); if (l) { l.status = 'sent'; l.sentAt = x.sentAt; }
+          live.items.forEach(it => { const r = Store.get.report(it.reportId); const a = r && r.accounts.find(t => t.id === it.accountId); if (a) a.consumerDisputed = true; });
+          if (live.dueAt) S().tasks.push({ id: Store.uid(), clientId: live.clientId, title: `Check ${live.recipient} response (round ${live.round})`, due: live.dueAt, done: false, createdAt: Store.now() });
+          commit(`Round ${live.round} mailed to ${live.recipient}${live.dueAt ? ', response due ' + live.dueAt : ''}`, live.clientId);
         }
       });
     },
-    'mark-received': el => { const d = Store.get.dispute(el.dataset.id); modal({ title: 'Date received by recipient', body: field('Received on', 'receivedAt', d.receivedAt, { type: 'date', help: 'From the certified mail return receipt' }), onSubmit: x => { d.receivedAt = x.receivedAt; d.dueAt = Law.responseDue(d.type, x.receivedAt); commit(`${d.recipient} received dispute on ${x.receivedAt}`, d.clientId); } }); },
+    'mark-received': el => { const id = el.dataset.id; const d = Store.get.dispute(id); modal({ title: 'Date received by recipient', body: field('Received on', 'receivedAt', d.receivedAt, { type: 'date', help: 'From the certified mail return receipt' }), onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } live.receivedAt = x.receivedAt; live.dueAt = Law.responseDue(live.type, x.receivedAt); commit(`${live.recipient} received dispute on ${x.receivedAt}`, live.clientId); } }); },
     'record-response': el => {
-      const d = Store.get.dispute(el.dataset.id);
+      const id = el.dataset.id;
+      const d = Store.get.dispute(id);
       modal({
         title: `Response from ${d.recipient}`,
         body: `<div class="form-grid">${field('Outcome', 'outcome', '', { type: 'select', options: [['deleted', 'Deleted'], ['corrected', 'Corrected / updated'], ['verified', 'Verified as accurate'], ['frivolous', 'Frivolous / irrelevant notice'], ['no_response', 'No response by deadline'], ['validated', 'Debt validated'], ['closed', 'Closed — other']] })}${field('Date of response', 'respondedAt', T(), { type: 'date' })}${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3, cls: 'span2' })}</div>`,
-        onSubmit: x => { Object.assign(d, { outcome: x.outcome, respondedAt: x.respondedAt, notes: x.notes }); commit(`${d.recipient} response recorded: ${UI.DSTATE[x.outcome][0]}`, d.clientId); }
+        onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } Object.assign(live, { outcome: x.outcome, respondedAt: x.respondedAt, notes: x.notes }); commit(`${live.recipient} response recorded: ${UI.DSTATE[x.outcome][0]}`, live.clientId); }
       });
     },
     'next-round': el => {
@@ -1104,48 +1245,112 @@
     'letter-edit': () => {},
     'new-invoice': el => invoiceModal(el.dataset.client || (S().clients[0] || {}).id),
     'invoice-paid': el => { const i = S().invoices.find(x => x.id === el.dataset.id); i.status = 'paid'; i.paidAt = T(); commit(`Payment received ${UI.money(i.amount)}`, i.clientId); },
-    'invoice-void': el => { const i = S().invoices.find(x => x.id === el.dataset.id); if (!UI.ask('Void this invoice?')) return; i.status = 'void'; commit('Voided invoice: ' + i.description, i.clientId); },
+    'invoice-void': el => {
+      const id = el.dataset.id;
+      const liveInvoice = () => (S().invoices || []).find(x => x && x.id === id);
+      const open = liveInvoice();
+      if (!open) return;
+      if ((open.status === 'issued' || open.status === 'paid') && !(root.ledgerUser && root.ledgerUser.role === 'owner')) { toast('Only the owner can void an issued or paid invoice.'); return; }
+      const saveVoid = () => {
+        const inv = liveInvoice();
+        if (!inv) { toast('That invoice is no longer in the workspace.'); return false; }
+        const description = inv.description;
+        const clientId = inv.clientId;
+        Store.save();
+        renderWhenSafe();
+        Remote.afterSave(() => { if (Store.logVoidIfSaved(id, description, clientId)) Store.save(); });
+      };
+      if (open.status !== 'issued' && open.status !== 'paid') {
+        const inv = liveInvoice();
+        inv.status = 'void';
+        saveVoid();
+        return;
+      }
+      modal({
+        title: 'Void invoice',
+        body: field('Reason', 'voidReason', '', { required: true, cls: 'span2' }),
+        onSubmit: d => {
+          if (!String(d.voidReason || '').trim()) { toast('A reason is required'); return false; }
+          const inv = liveInvoice();
+          if (!inv) { toast('That invoice is no longer in the workspace.'); return false; }
+          inv.status = 'void';
+          inv.voidReason = String(d.voidReason).trim();
+          saveVoid();
+        }
+      });
+    },
     'invoice-print': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const c = Store.get.client(i.clientId); const co = S().settings.company; UI.printDoc('Invoice', `${co.name}\n${co.address}\n\nINVOICE\n\nBill to: ${c.name}\n${c.address || ''}\n\nIssued: ${i.issuedAt}\nService completed: ${i.serviceCompletedAt}\n\n${i.description}\n\nAmount: ${UI.money(i.amount)}\nStatus: ${i.status}\n\nThis invoice is for services already performed. No fees are charged in advance of services (15 U.S.C. § 1679b(b)).`); },
     'export-invoices': () => UI.download(`ledger-invoices-${T()}.csv`, 'client,description,serviceCompletedAt,issuedAt,status,amount,paidAt\n' + S().invoices.map(i => [Store.get.client(i.clientId) ? Store.get.client(i.clientId).name : '', i.description, i.serviceCompletedAt, i.issuedAt, i.status, i.amount, i.paidAt || ''].map(v => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv'),
     'print-doc': el => printClientDoc(el.dataset.doc, el.dataset.id),
+    'record-cancel': el => {
+      const id = el.dataset.id;
+      modal({
+        title: 'Record a written cancellation',
+        body: `<div class="form-grid">${field('How it arrived', 'method', 'mail', { type: 'select', options: [['mail', 'Mail'], ['email', 'Email'], ['other', 'Other']] })}${field('Date received', 'receivedAt', T(), { type: 'date', required: true })}${field('Postmark or sent date', 'postmarkAt', '', { type: 'date' })}</div>`,
+        onSubmit: d => {
+          if (!Store.remote) { toast('Recording a written cancellation needs the Ledger server.'); return false; }
+          api('POST', '/api/clients/' + encodeURIComponent(id) + '/cancel', { method: d.method, receivedAt: d.receivedAt, postmarkAt: d.postmarkAt || '' })
+            .then(r => Remote.reload().then(() => toast(r.refundTask ? 'Cancellation recorded. A refund task was added.' : (r.timely ? 'Timely cancellation recorded.' : 'Cancellation recorded.'))), e => toast(e.message));
+        }
+      });
+    },
     'progress-report': el => progressReport(el.dataset.id),
     'lint': () => {
       const res = Law.lintText(document.getElementById('lint-in').value);
       document.getElementById('lint-out').innerHTML = res.length ? `<div class="callout warn"><b>${res.length} issue(s)</b>${res.map(r => `“${esc(r.phrase)}” — ${esc(r.why)}`).join('<br>')}</div>` : `<div class="callout good"><b>No flagged phrases</b>Still review for accuracy — software cannot judge whether a statement is true.</div>`;
     },
     'new-referral': () => referralModal(),
-    'edit-referral': el => referralModal(S().referrals.find(r => r.id === el.dataset.id))
+    'edit-referral': el => referralModal(el.dataset.id)
   };
 
-  function referralModal(r) {
-    const isNew = !r;
-    r = r || {};
+  function referralModal(referralId) {
+    const isNew = !referralId;
+    const r = isNew ? {} : (S().referrals.find(row => row.id === referralId) || {});
     modal({
       title: isNew ? 'New referral partner' : 'Edit partner',
       body: `<div class="form-grid">${field('Name', 'name', r.name, { required: true })}${field('Email', 'email', r.email)}${field('Company', 'company', r.company)}${field('Commission terms', 'commission', r.commission)}</div><p class="small muted" style="margin-top:12px">Paying for referrals can trigger RESPA (mortgage) and state-law issues. Confirm with counsel.</p>`,
-      onSubmit: d => { if (!d.name) return false; Object.assign(r, d); if (isNew) { r.id = Store.uid(); r.createdAt = T(); S().referrals.push(r); } commit((isNew ? 'Added' : 'Updated') + ' referral partner ' + d.name); }
+      onSubmit: d => {
+        if (!d.name) return false;
+        const partner = isNew ? {} : S().referrals.find(row => row.id === referralId);
+        if (!partner) { toast('That partner is no longer in the workspace.'); return false; }
+        Object.assign(partner, d);
+        if (isNew) { partner.id = Store.uid(); partner.createdAt = T(); S().referrals.push(partner); }
+        commit((isNew ? 'Added' : 'Updated') + ' referral partner ' + d.name);
+      }
     });
   }
 
   // ---------- business credit & partner actions ----------
-  function vendorModal(c, vid, preset) {
-    c.vendorAccounts = c.vendorAccounts || [];
-    const v = vid ? c.vendorAccounts.find(x => x.id === vid) : Object.assign({ status: 'applied', opened: T() }, preset || {});
+  function vendorModal(clientId, vid, preset) {
+    const opened = Store.get.client(clientId);
+    opened.vendorAccounts = opened.vendorAccounts || [];
+    const v = vid ? opened.vendorAccounts.find(x => x.id === vid) : Object.assign({ status: 'applied', opened: T() }, preset || {});
     modal({
       title: vid ? v.vendor : 'Track business account',
       body: `<div class="form-grid">${field('Vendor / lender', 'vendor', v.vendor, { required: true })}${field('Category', 'category', v.category)}${field('Terms', 'terms', v.terms, { placeholder: 'Net 30' })}${field('Reports to', 'reportsTo', v.reportsTo)}${field('Credit limit', 'limit', v.limit, { type: 'number' })}${field('Opened', 'opened', v.opened, { type: 'date' })}${field('Status', 'status', v.status, { type: 'select', options: [['applied', 'Applied'], ['current', 'Open — paid on time'], ['late', 'Late payment'], ['closed', 'Closed']] })}</div>`,
       foot: `${vid ? '<button type="button" class="btn danger" data-del style="margin-right:auto">Remove</button>' : ''}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
-      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { c.vendorAccounts = c.vendorAccounts.filter(x => x.id !== vid); UI.close(); commit(); }; },
-      onSubmit: d => { if (!d.vendor) return false; Object.assign(v, d, { limit: d.limit ? Number(d.limit) : '' }); if (!vid) { v.id = Store.uid(); c.vendorAccounts.push(v); } commit(`${vid ? 'Updated' : 'Tracking'} business account ${d.vendor}`, c.id); }
+      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const live = Store.get.client(clientId); if (!live) return; live.vendorAccounts = (live.vendorAccounts || []).filter(x => x.id !== vid); UI.close(); commit(); }; },
+      onSubmit: d => {
+        if (!d.vendor) return false;
+        const live = Store.get.client(clientId);
+        if (!live) { toast('That client is no longer in the workspace.'); return false; }
+        live.vendorAccounts = live.vendorAccounts || [];
+        const account = vid ? live.vendorAccounts.find(x => x.id === vid) : Object.assign({ status: 'applied', opened: T() }, preset || {});
+        if (!account) { toast('That account is no longer on the client.'); return false; }
+        Object.assign(account, d, { limit: d.limit ? Number(d.limit) : '' });
+        if (!vid) { account.id = Store.uid(); live.vendorAccounts.push(account); }
+        commit(`${vid ? 'Updated' : 'Tracking'} business account ${d.vendor}`, live.id);
+      }
     });
   }
 
-  function refModal(cid, ref) {
-    const isNew = !ref;
+  function refModal(cid, refId) {
+    const isNew = !refId;
+    const existing = isNew ? null : S().partnerReferrals.find(row => row.id === refId);
     const c = cid && Store.get.client(cid);
+    const ref = existing || { status: 'recommended', recommendedAt: T(), clientId: cid };
     const fits = o => !c || c.kind === 'both' || (c.kind === 'business' ? o.audience === 'business' : o.audience === 'personal');
     const offers = S().offers.filter(o => o.enabled || (ref && ref.offerId === o.id));
-    ref = ref || { status: 'recommended', recommendedAt: T(), clientId: cid };
     modal({
       title: isNew ? 'Recommend a partner offer' : 'Edit recommendation',
       body: `<div class="form-grid">${field('Client', 'clientId', ref.clientId, { type: 'select', options: S().clients.map(x => [x.id, x.name]), cls: 'span2' })}
@@ -1155,8 +1360,10 @@
         <p class="small muted" style="margin-top:10px">${esc(root.Partners.DISCLOSURE)}</p>`,
       onSubmit: d => {
         if (!d.clientId || !d.offerId) { toast('Choose a client and an offer'); return false; }
-        Object.assign(ref, d, { payout: d.payout ? Number(d.payout) : '' });
-        if (isNew) { ref.id = Store.uid(); ref.clicks = 0; S().partnerReferrals.push(ref); }
+        const live = isNew ? { status: 'recommended', recommendedAt: T(), clientId: cid } : S().partnerReferrals.find(row => row.id === refId);
+        if (!live) { toast('That recommendation is no longer in the workspace.'); return false; }
+        Object.assign(live, d, { payout: d.payout ? Number(d.payout) : '' });
+        if (isNew) { live.id = Store.uid(); live.clicks = 0; S().partnerReferrals.push(live); }
         const o = S().offers.find(x => x.id === d.offerId);
         commit(`${isNew ? 'Recommended' : 'Updated recommendation:'} ${o ? o.name : 'offer'}`, d.clientId);
       }
@@ -1172,8 +1379,8 @@
       onSubmit: d => { api('POST', '/api/invites', { role: 'staff', name: d.name, email: d.email }).then(r => modal({ title: 'Invitation link', body: `<p class="small">Send this one-time link to ${esc(d.email)}. It expires in ${r.expiresInDays} days.</p><input readonly value="${esc(r.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); }
     }),
     'disable-user': async el => { if (!UI.ask('Remove this user’s access?')) return; try { await api('DELETE', '/api/users/' + el.dataset.id); loadTeam(); } catch (e) { toast(e.message); } },
-    'edit-vendor': el => vendorModal(Store.get.client(el.dataset.id), el.dataset.vid),
-    'add-starter-vendor': el => vendorModal(Store.get.client(el.dataset.id), null, Object.assign({}, root.Business.STARTER_VENDORS[Number(el.dataset.i)])),
+    'edit-vendor': el => vendorModal(el.dataset.id, el.dataset.vid),
+    'add-starter-vendor': el => vendorModal(el.dataset.id, null, Object.assign({}, root.Business.STARTER_VENDORS[Number(el.dataset.i)])),
     'add-biz-score': el => {
       const c = Store.get.client(el.dataset.id);
       modal({
@@ -1190,7 +1397,7 @@
       });
     },
     'new-ref': el => refModal(el.dataset.client || '', null),
-    'edit-ref': el => { const r = S().partnerReferrals.find(x => x.id === el.dataset.id); refModal(r.clientId, r); },
+    'edit-ref': el => { const r = S().partnerReferrals.find(x => x.id === el.dataset.id); refModal(r.clientId, r.id); },
     'copy-ref-link': el => {
       const r = S().partnerReferrals.find(x => x.id === el.dataset.id);
       const o = S().offers.find(x => x.id === r.offerId) || {};
@@ -1223,8 +1430,39 @@
     results: ['Results arrived', c => `Hi ${c.firstName || c.name}, we received results from the bureaus. Log in to your portal to see the updates, and forward any letters you receive by mail.`],
     business: ['Business credit next steps', c => `Hi ${c.firstName || c.name}, your business credit checklist is updated. The next item is listed in your portal. Let us know when it is done.`]
   };
+  const HELD_TEMPLATES = [
+    ['disclosure-1679c', 'Consumer Credit File Rights'],
+    ['contract-1679d', 'Contract for signature'],
+    ['signed-copies', 'Signed copies'],
+    ['cancellation-1679e', 'Notice of Cancellation'],
+    ['cancel-window', 'Cancellation-window reminder'],
+    ['cancellation-confirmed', 'Cancellation received'],
+    ['account-admin', 'Account admin'],
+    ['postmark-review', 'Postmark review']
+  ];
   function messageModal(cid, channel, preset) {
     const c = Store.get.client(cid);
+    const held = Store.serviceHold(S(), c.id);
+    if (held) {
+      modal({
+        title: `${channel === 'sms' ? 'Text' : 'Email'} ${c.name}`,
+        body: `<div class="form-grid">${field('Template', 'template', 'disclosure-1679c', { type: 'select', options: HELD_TEMPLATES, cls: 'span2' })}
+          ${field('Account message', 'admin', 'invite', { type: 'select', options: [['invite', 'Portal invite'], ['login', 'Login link'], ['reset', 'Password reset'], ['verify', 'Email verification']], cls: 'span2' })}
+          ${field('Postmark outcome', 'outcome', 'timely', { type: 'select', options: [['timely', 'Timely'], ['late', 'Late']], cls: 'span2' })}
+          <p class="small span2">This client is on hold. The server writes the message. Credit report and ID requests are available after the client is clear.</p></div>`,
+        foot: '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Send</button>',
+        onSubmit: d => {
+          if (channel === 'sms' && !c.smsConsent) { toast('Record SMS consent first'); return false; }
+          if (channel === 'sms' && !c.phone) { toast('No phone number on file'); return false; }
+          if (channel !== 'sms' && !c.email) { toast('No email on file'); return false; }
+          if (!Store.remote) { toast('The server sends this message'); return false; }
+          Remote.flushNow().then(() => api('POST', '/api/messages', { clientId: c.id, channel, template: d.template, admin: d.admin, outcome: d.outcome })
+            .then(() => { toast('Sent'); return Remote.reload(); })
+            .catch(e => toast(e.message)));
+        }
+      });
+      return;
+    }
     modal({
       title: `${channel === 'sms' ? 'Text' : 'Email'} ${c.name}`,
       body: `<div class="form-grid">${field('Template', 'tpl', '', { type: 'select', options: [['', 'Write your own…']].concat(Object.entries(TEMPLATES).map(([k, v]) => [k, v[0]])), cls: 'span2' })}
@@ -1243,7 +1481,8 @@
           location.href = channel === 'sms' ? `sms:${c.phone.replace(/[^\d+]/g, '')}?&body=${encodeURIComponent(d.body)}` : `mailto:${c.email}?subject=${encodeURIComponent(d.subject || '')}&body=${encodeURIComponent(d.body)}`;
         };
         if (!Store.remote) { logLocal(); return; }
-        Remote.flushNow().then(() => api('POST', '/api/messages', { clientId: c.id, channel, subject: d.subject, body: d.body })
+        const purpose = d.tpl === 'mailed' || d.tpl === 'results' ? 'dispute' : (d.tpl === 'welcome' || d.tpl === 'report' || d.tpl === 'docs' ? 'onboarding' : '');
+        Remote.flushNow().then(() => api('POST', '/api/messages', { clientId: c.id, channel, subject: d.subject, body: d.body, purpose })
           .then(() => { toast('Sent'); return Remote.reload(); })
           .catch(e => { if (e.status === 501) { toast(e.message + ' — opening your app instead'); logLocal(); } else toast(e.message); }));
       }
@@ -1327,16 +1566,21 @@
         onSubmit: d => {
           const ids = d.ids || [];
           if (!ids.length) return false;
+          const mailed = [];
           ids.forEach(id => {
             const disp = Store.get.dispute(id);
-            if (!Store.croaStatus(Store.get.client(disp.clientId)).cleared) return;
+            if (!disp) return;
+            const client = Store.get.client(disp.clientId);
+            if (!client || Store.serviceHold(S(), disp.clientId)) return;
             Object.assign(disp, { sentAt: d.sentAt, receivedAt: Law.addDays(d.sentAt, Number(d.transit) || transit), status: 'sent' });
             disp.dueAt = Law.responseDue(disp.type, disp.receivedAt);
             const l = Store.get.letter(disp.letterId); if (l) { l.status = 'sent'; l.sentAt = d.sentAt; }
             disp.items.forEach(it => { const r = Store.get.report(it.reportId); const a = r && r.accounts.find(t => t.id === it.accountId); if (a) a.consumerDisputed = true; });
             if (disp.dueAt) S().tasks.push({ id: Store.uid(), clientId: disp.clientId, title: `Check ${disp.recipient} response (round ${disp.round})`, due: disp.dueAt, done: false, createdAt: Store.now() });
+            mailed.push(disp);
           });
-          commit(`Round mailed: ${ids.length} letter(s)`);
+          if (!mailed.length) { toast('Those clients are on hold, so nothing was marked mailed.'); return false; }
+          commit(`Round mailed: ${mailed.length} letter(s)`, null, mailed.map(row => 'disputes/' + row.id));
         }
       });
     }
@@ -1397,6 +1641,15 @@
       }
     });
     let timer;
+    let pointerDown = false;
+    document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
+    document.addEventListener('pointerup', () => setTimeout(() => { pointerDown = false; }, 0), true);
+    document.addEventListener('focusout', () => {
+      if (!redrawDeferred) return;
+      const run = () => { if (redrawDeferred) renderWhenSafe(); };
+      if (pointerDown) document.addEventListener('click', () => setTimeout(run, 0), { capture: false, once: true });
+      else setTimeout(run, 0);
+    });
     document.addEventListener('input', e => {
       if (e.target.id === 'addr-q') { document.getElementById('addr-results').innerHTML = Views.addressList(e.target.value); return; }
       if (e.target.id === 'lib-q') { document.getElementById('lib-results').innerHTML = Views.libraryResults(e.target.value); return; }
@@ -1532,6 +1785,7 @@
     runEngine().then(n => { if (n) render(); }).catch(e => console.error(e));
     setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
+  root.root = root;
   root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
   document.addEventListener('DOMContentLoaded', boot);
-})(window);
+})(typeof window !== 'undefined' ? window : (typeof root !== 'undefined' ? root : globalThis));

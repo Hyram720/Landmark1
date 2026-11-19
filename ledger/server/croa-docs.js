@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { cancellationWindow, formatDeadlineDateEt, formatDocumentTimeEt } from './croa-window.js';
+import { LEGAL_COMPANY_ADDRESS } from './email-footer.js';
 
 const dir = path.resolve(new URL('../legal/', import.meta.url).pathname);
 
@@ -52,9 +53,10 @@ function addressGap(client) {
   return null;
 }
 
-export function enrollmentStatus(client, docs) {
+export function enrollmentStatus(client, docs, opts) {
   const c = client || {};
-  if (!mailingAddress(c)) {
+  const requireAddress = !opts || opts.requireAddress !== false;
+  if (requireAddress && !mailingAddress(c)) {
     return addressGap(c) || { code: 'address', message: 'Your mailing address is needed' };
   }
   if (scheduleAEntries(c).length < 1 || pricePerResult(c) == null) {
@@ -138,10 +140,13 @@ export function stampCancellationDeadline(text, instant) {
 /** Replace blanks that belong to this client. Owner blanks are left in place. The clock is not used here. */
 export function fillPerClientText(text, client) {
   const c = client || {};
-  const name = String(c.name || '').trim() || 'Client';
+  const plain = value => String(value || '').replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim();
+  const name = plain(c.name) || 'Client';
+  const address = plain(c.mailAddress) || plain(clientAddress(c));
   let out = String(text || '')
     .replace(/\[CLIENT FULL NAME\]/g, name)
-    .replace(/\[CLIENT ADDRESS\]/g, clientAddress(c) || '[CLIENT ADDRESS]')
+    .replace(/\[CLIENT ADDRESS\]/g, address || '[CLIENT ADDRESS]')
+    .replace(/\[STREET ADDRESS[^\]]*\]/g, LEGAL_COMPANY_ADDRESS)
     .replace(/\[DATE SIGNED[^\]]*\]/g, UNSIGNED_DATE_SIGNED)
     .replace(/\[ITEM \/ CREDITOR NAME \/ ACCOUNT ENDING IN LAST 4 ONLY \/ BUREAU\(S\)\]/g, scheduleAText(c))
     .replace(/\[DATE:[^\]]*\]/g, UNSIGNED_CANCEL_DEADLINE)

@@ -10,6 +10,7 @@ import { createApp } from '../server/app.js';
 import { setAiFetch } from '../server/ledger-assistant.js';
 import { setTransport } from '../server/mailer.js';
 import { redact } from '../server/redact.js';
+import { seedSignedClient } from './seed-croa.js';
 
 for (const k of ['OPENAI_API_KEY', 'LEDGER_AI_ENABLED', 'LEDGER_MAIL_MODE', 'ANTHROPIC_API_KEY', 'LEDGER_SETUP_CODE']) delete process.env[k];
 
@@ -63,6 +64,8 @@ test('setup + seed two synthetic clients with reports', async () => {
     ws.partnerReferrals.push({ id: 'ref-b', clientId: 'cb', offerId: 'offer-creditstrong', status: 'recommended', clicks: 0 });
     ws.offers.find(o => o.key === 'creditstrong').affiliateUrl = 'https://www.creditstrong.com/?ref=qa';
   });
+  seedSignedClient(db.data.workspace, 'ca');
+  seedSignedClient(db.data.workspace, 'cb');
   for (const [c, who, pw] of [[alice, 'ca', 'alice password 1'], [bob, 'cb', 'bob password 12']]) {
     const inv = await owner('POST', '/api/invites', { role: 'client', clientId: who });
     assert.strictEqual((await c('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: pw })).status, 200);
@@ -128,7 +131,8 @@ test('intake validation: email, state, SMS needs phone; SSNs are scrubbed', asyn
 });
 
 test('pay page: CROA guard refuses payment before service is complete / window cleared', async () => {
-  await saveWs(ws => { ws.invoices = ws.invoices || []; ws.invoices.push({ id: 'inv1', clientId: 'cb', amount: 99, description: 'Round 1', status: 'open', payToken: 'paytokqa1' }); });
+  db.data.workspace.invoices = db.data.workspace.invoices || [];
+  db.data.workspace.invoices.push({ id: 'inv1', clientId: 'cb', amount: 99, description: 'Round 1', status: 'issued', payToken: 'paytokqa1' });
   const r = await anon('GET', '/pay/paytokqa1');
   assert.strictEqual(r.status, 409);
   assert.match(r.body, /can’t be paid online yet/);

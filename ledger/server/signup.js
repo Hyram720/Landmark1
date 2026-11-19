@@ -8,6 +8,8 @@ import { sendMail, mailMode } from './mailer.js';
 import { clientAuthMethod } from './auth-method.js';
 import { postKitForm } from './kit-hook.js';
 import { mailingAddress, enrollmentStatus } from './croa-docs.js';
+import { safeLine } from './held-messages.js';
+import { etYmd } from './croa-window.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -35,7 +37,8 @@ export function selfSignupEnabled(env = process.env, override) {
 }
 
 export function mountSignup(app, deps) {
-  const { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod, signupRateLimit, enabled, publicBaseUrl: baseOverride } = deps;
+  const { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod, signupRateLimit, enabled, publicBaseUrl: baseOverride, now } = deps;
+  const today = () => etYmd(typeof now === 'function' ? now() : new Date());
   const method = () => clientAuthMethod(typeof authMethod === 'function' ? authMethod() : authMethod);
   const limit = rateLimiter(signupRateLimit || 8, 15 * 60 * 1000);
   const origin = () => String(baseOverride || '').replace(/\/+$/, '');
@@ -91,12 +94,14 @@ export function mountSignup(app, deps) {
     } else {
       passwordHash = hashPassword(crypto.randomBytes(24).toString('base64url'));
     }
-    const exists = D().users.some(u => u.email === email && !u.disabled);
+    const normEmail = value => String(value || '').trim().toLowerCase();
+    const exists = D().users.some(u => normEmail(u.email) === email && !u.disabled);
     if (exists) {
       db.audit({ actor: 'public', action: 'signup.duplicate', detail: 'email not revealed' });
       db.persist();
       return res.json(SIGNUP_OK);
     }
+    const matchedClient = (workspace().clients || []).find(c => c && normEmail(c.email) === email);
     const clientId = uid();
     const now = new Date().toISOString();
     const client = {
@@ -124,12 +129,17 @@ export function mountSignup(app, deps) {
       signupIp: req.ip,
       signupUserAgent: String(req.get('user-agent') || '').slice(0, 300)
     };
+    if (matchedClient) client.possible_duplicate = matchedClient.id;
+    client.identity = uid();
+    client.mailName = safeLine(client.name, 80);
+    client.mailAddress = safeLine([street, city, 'NJ', zip].filter(Boolean).join(', '), 120);
     const user = {
       id: uid(),
       name: client.name,
       email,
       role: 'client',
       clientId,
+      clientIdentity: client.identity,
       password: passwordHash,
       sessionEpoch: 1,
       createdAt: now,
@@ -138,6 +148,10 @@ export function mountSignup(app, deps) {
       authMethod: mode
     };
     workspace().clients.push(client);
+    if (matchedClient) {
+      workspace().tasks = workspace().tasks || [];
+      workspace().tasks.push({ id: uid(), clientId, title: `Review a possible duplicate signup for ${client.name} and merge it with the existing client if they are the same person.`, due: today(), done: false, createdAt: now, kind: 'possible_duplicate', matchedClientId: matchedClient.id });
+    }
     D().users.push(user);
     const raw = issueVerify(user);
     activity(`Self-signup pending: ${client.name}. No service work until CROA onboarding clears.`, clientId);

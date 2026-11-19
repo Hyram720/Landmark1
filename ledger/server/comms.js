@@ -8,12 +8,17 @@ export function commsConfig(env = process.env) {
   };
 }
 
-export async function sendEmail({ to, subject, text, attachments }, env = process.env) {
+export async function sendEmail({ to, subject, text, html, attachments }, env = process.env) {
   const body = text && String(text).includes(CAN_SPAM_POSTAL_ADDRESS) ? text : `${text || ''}\n\n${emailFooter()}`;
+  let htmlBody = html ? String(html) : '';
+  if (htmlBody && !htmlBody.includes(CAN_SPAM_POSTAL_ADDRESS)) htmlBody += '<p>' + CAN_SPAM_POSTAL_ADDRESS.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</p>';
+  const payload = { from: env.LEDGER_EMAIL_FROM, to: [to], subject, text: body };
+  if (htmlBody) payload.html = htmlBody;
+  if (attachments && attachments.length) payload.attachments = attachments;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.LEDGER_RESEND_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(Object.assign({ from: env.LEDGER_EMAIL_FROM, to: [to], subject, text: body }, attachments && attachments.length ? { attachments } : {}))
+    body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error(`Email provider error ${res.status}`);
   return (await res.json()).id;

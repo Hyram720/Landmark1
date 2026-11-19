@@ -19,7 +19,8 @@ import { mountClientAuth } from './client-auth.js';
 import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
-import { applySignupStatus, serviceWorkBlocked, selfSignupCleared } from './signup-status.js';
+import { applySignupStatus, clientServiceOnHold, mailingBlocked, serviceWorkBlocked } from './signup-status.js';
+import { HELD_TEMPLATE_IDS, STATUTORY_HELD_TEMPLATES, clientForHeldTemplate, renderHeldMessage, safeLine, snapshotProblem, templateClient } from './held-messages.js';
 import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
@@ -68,7 +69,6 @@ function faviconIco() {
   return FAVICON;
 }
 const uid = () => crypto.randomUUID();
-const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
@@ -83,11 +83,136 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const value = typeof nowSource === 'function' ? nowSource() : new Date();
     return value instanceof Date ? value : new Date(value);
   };
+  const today = () => etYmd(now());
   const db = openDb({ dir: dataDir, encryptionKey });
   const filesDir = path.join(dataDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
   const fileKey = encryptionKey ? crypto.createHash('sha256').update('files:' + encryptionKey).digest() : null;
   const D = () => db.data;
+  const PORTAL_IDENTITY_MIGRATION = 1;
+  (function migratePortalIdentity() {
+    if (D().portalIdentityMigration === PORTAL_IDENTITY_MIGRATION) return;
+    const ws = D().workspace;
+    const bound = [];
+    const unbound = [];
+    if (ws && Array.isArray(ws.clients)) {
+      const idCount = new Map();
+      for (const c of ws.clients) if (c && c.id) idCount.set(c.id, (idCount.get(c.id) || 0) + 1);
+      const ambiguous = new Set([...idCount].filter(([, count]) => count > 1).map(([id]) => id));
+      for (const c of ws.clients) {
+        if (!c || !c.id) continue;
+        if (!c.mailName) c.mailName = safeLine(c.name, 80);
+        if (!c.mailAddress) c.mailAddress = safeLine([c.address, c.city, c.state, c.zip].filter(Boolean).join(', '), 120);
+        if (!c.mailSnapshotAt) {
+          c.mailSnapshotAt = new Date().toISOString();
+          const problem = snapshotProblem(c.mailName, c.mailAddress);
+          c.mailSnapshotConfirmed = !problem;
+          if (problem) c.mailNeedsConfirm = true;
+        }
+        if (ambiguous.has(c.id)) {
+          c.identityAmbiguous = true;
+          unbound.push('ambiguous ' + c.id);
+          continue;
+        }
+        if (c.identity) continue;
+        c.identity = uid();
+        bound.push('client ' + c.id);
+      }
+      const byId = new Map(ws.clients.filter(c => c && c.id && !ambiguous.has(c.id)).map(c => [c.id, c]));
+      for (const u of D().users || []) {
+        if (!u || u.role !== 'client' || u.clientIdentity || !u.clientId) continue;
+        const c = byId.get(u.clientId);
+        const loginEmail = String(u.email || '').toLowerCase().trim();
+        const clientEmail = c ? String(c.email || '').toLowerCase().trim() : '';
+        if (ambiguous.has(u.clientId)) {
+          u.portalLinkNeedsInvite = true;
+          unbound.push(loginEmail || u.id || u.clientId);
+          continue;
+        }
+        if (c && c.identity && loginEmail && loginEmail === clientEmail) {
+          u.clientIdentity = c.identity;
+          bound.push('login ' + loginEmail);
+        } else {
+          u.portalLinkNeedsInvite = true;
+          unbound.push(loginEmail || u.id || u.clientId);
+        }
+      }
+    }
+    D().portalIdentityMigration = PORTAL_IDENTITY_MIGRATION;
+    db.audit({ actor: 'system:migrate', action: 'portal.identity.migrate', detail: JSON.stringify({ bound, unbound }).slice(0, 2000) });
+    db.persist();
+  })();
+  const LEGACY_MAILED_MIGRATION = 1;
+  (function migrateLegacyMailed() {
+    if (String(env.LEDGER_MIGRATE_LEGACY_MAILED || '').trim() !== '1') return;
+    if (D().legacyMailedMigration === LEGACY_MAILED_MIGRATION) return;
+    const ws = D().workspace || {};
+    const legacyDay = (value) => {
+      const day = String(value || '').slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
+    };
+    const legacyBureau = (value) => {
+      const raw = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+      if (!raw) return '';
+      if (raw === 'exp' || raw.startsWith('experian')) return 'experian';
+      if (raw === 'efx' || raw === 'eq' || raw.startsWith('equifax')) return 'equifax';
+      if (raw === 'tu' || raw.startsWith('transunion')) return 'transunion';
+      return '';
+    };
+    const clients = Array.isArray(ws.clients) ? ws.clients : [];
+    const byClient = new Map(clients.filter(c => c && c.id).map(c => [c.id, c]));
+    ws.disputes = Array.isArray(ws.disputes) ? ws.disputes : [];
+    ws.heldOutcomes = Array.isArray(ws.heldOutcomes) ? ws.heldOutcomes : [];
+    let stamped = 0;
+    let held = 0;
+    for (const d of ws.disputes) {
+      if (!d) continue;
+      const sent = !!(d.serverSentAt || d.sentAt || d.sentDate || String(d.status || '') === 'sent');
+      if (!sent) continue;
+      if (!legacyDay(d.serverSentAt)) {
+        const typed = [d.sentAt, d.sentDate].map(legacyDay).filter(Boolean).sort()[0] || '';
+        if (typed) {
+          d.serverSentAt = typed;
+          stamped += 1;
+        }
+      }
+      const mailed = legacyDay(d.serverSentAt);
+      const client = byClient.get(d.clientId);
+      if (!client || client.kind === 'business') continue;
+      const onboarding = client.onboarding || {};
+      let end = legacyDay(onboarding.cancellationWindowEndsAt);
+      const signedAt = onboarding.contractSignedAtTs || onboarding.contractSignedAt;
+      if (!end && signedAt) end = cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+      const undated = !mailed;
+      const inside = !!(end && mailed && mailed <= end);
+      if (!undated && !inside) continue;
+      const bureaus = [];
+      for (const item of d.items || []) {
+        const bureau = item && legacyBureau(item.bureau);
+        if (bureau && !bureaus.includes(bureau)) bureaus.push(bureau);
+      }
+      const recipient = legacyBureau(d.recipient);
+      if (recipient && !bureaus.includes(recipient)) bureaus.push(recipient);
+      for (const bureau of bureaus) {
+        const key = String(client.id) + '\n' + bureau;
+        const prior = ws.heldOutcomes.find(row => row && row.key === key);
+        if (prior && prior.cleared) continue;
+        const at = mailed || (prior && legacyDay(prior.at)) || '';
+        if (prior) {
+          prior.onHold = true;
+          prior.reason = prior.reason || (undated ? 'undated' : 'mailed');
+          if (!legacyDay(prior.at) || (at && at < prior.at)) prior.at = at;
+        } else {
+          ws.heldOutcomes.push({ key, clientId: String(client.id), bureau, at, onHold: true, reason: undated ? 'undated' : 'mailed', cleared: false, clearedAt: null, clearedBy: null, clearReason: '' });
+        }
+        held += 1;
+      }
+    }
+    D().workspace = ws;
+    D().legacyMailedMigration = LEGACY_MAILED_MIGRATION;
+    db.audit({ actor: 'system:migrate', action: 'legacy.mailed.migrate', detail: JSON.stringify({ stamped, held }) });
+    db.persist();
+  })();
   setKeyProvider(() => (db.data.secrets && db.data.secrets.anthropicKey) || '');
 
   // ---------- owner access from Railway variables ----------
@@ -349,35 +474,718 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   app.get('/api/workspace/version', need('owner', 'staff'), (req, res) => res.json({ version: D().workspaceVersion }));
   app.put('/api/workspace', need('owner', 'staff'), (req, res) => {
     const { baseVersion, data } = req.body || {};
-    if (!data || data.version !== 2 || !Array.isArray(data.clients)) return res.status(400).json({ error: 'Invalid workspace' });
+    const reject = (status, error, refused) => {
+      const body = { error };
+      if (Array.isArray(refused) && refused.length) body.refused = refused.map(row => ({ key: row.key || '', id: row.id || '', field: row.field || '', reason: row.reason || error }));
+      return res.status(status).json(body);
+    };
+    if (!data || data.version !== 2 || !Array.isArray(data.clients)) return reject(400, 'Invalid workspace');
+    const listKeys = ['reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'addressBook', 'automations'];
+    const mapKeys = ['automationLog', 'violations', 'settings'];
+    for (const key of listKeys) {
+      if (data[key] != null && !Array.isArray(data[key])) return reject(400, key + ' must be a list.', [{ key, id: '', field: '', reason: key + ' must be a list.' }]);
+    }
+    for (const key of mapKeys) {
+      if (data[key] != null && (Array.isArray(data[key]) || typeof data[key] !== 'object')) return reject(400, key + ' must be a map.', [{ key, id: '', field: '', reason: key + ' must be a map.' }]);
+    }
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
     const before = D().workspace;
-    // 12-month term / total cap per client agreement (Billing.capCheck): reject any new or increased
-    // invoice that would push a client's total for the term over the cap, or bill after the term ends.
+    const idRequired = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'automations'];
+    const stableValue = (value) => {
+      if (Array.isArray(value)) return '[' + value.map(stableValue).join(',') + ']';
+      if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableValue(value[key])).join(',') + '}';
+      return JSON.stringify(value);
+    };
+    const sameRow = (a, b) => stableValue(a) === stableValue(b);
+    const isRecord = row => !!(row && typeof row === 'object' && !Array.isArray(row));
+    const rowLists = ['clients'].concat(listKeys);
+    for (const key of rowLists) {
+      const rows = data[key];
+      if (!Array.isArray(rows)) continue;
+      const priorRows = Array.isArray(before && before[key]) ? before[key] : [];
+      const usedBad = new Set();
+      for (const row of rows) {
+        if (isRecord(row)) continue;
+        const match = priorRows.findIndex((old, index) => !usedBad.has(index) && !isRecord(old) && sameRow(old, row));
+        if (match >= 0) { usedBad.add(match); continue; }
+        return reject(422, 'A ' + key + ' list contains an empty row.', [{ key, id: '', field: '', reason: 'A ' + key + ' list contains an empty row.' }]);
+      }
+    }
+    for (const key of idRequired) {
+      const rows = data[key];
+      if (!Array.isArray(rows)) continue;
+      const prior = ((before && before[key]) || []).filter(row => row && typeof row === 'object');
+      const used = new Set();
+      for (const row of rows) {
+        if (!row || typeof row !== 'object' || Array.isArray(row) || String(row.id || '').trim()) continue;
+        const match = prior.findIndex((old, index) => !used.has(index) && !String(old.id || '').trim() && sameRow(old, row));
+        if (match >= 0) { used.add(match); continue; }
+        return reject(422, 'A ' + key + ' record is missing an id.', [{ key, id: '', field: 'id', reason: 'A ' + key + ' record is missing an id.' }]);
+      }
+    }
+    if (data.violations && typeof data.violations === 'object' && !Array.isArray(data.violations)) {
+      const priorViolations = (before && before.violations && typeof before.violations === 'object' && !Array.isArray(before.violations)) ? before.violations : {};
+      for (const id of Object.keys(data.violations)) {
+        if (String(id || '').trim()) continue;
+        if (sameRow(priorViolations[id], data.violations[id])) continue;
+        return reject(422, 'A violations record is missing an id.', [{ key: 'violations', id: '', field: 'id', reason: 'A violations record is missing an id.' }]);
+      }
+    }
+    const priorClients = new Map(((before && before.clients) || []).filter(c => isRecord(c) && String(c.id || '').trim()).map(c => [c.id, c]));
+    const companyOf = (ws) => stableValue((ws && ws.settings && ws.settings.company) || null);
+    if (req.user.role !== 'owner' && companyOf(before) !== companyOf(data)) return reject(403, 'Only the owner can change the company settings.', [{ key: 'settings', id: 'company', field: 'company', reason: 'Only the owner can change the company settings.' }]);
+    const pendingAudits = [];
+    for (const c of data.clients || []) {
+      if (!isRecord(c)) continue;
+      const old = priorClients.get(c.id);
+      if (old) {
+        if (Object.prototype.hasOwnProperty.call(old, 'signupSource')) c.signupSource = old.signupSource;
+        else delete c.signupSource;
+        if (Object.prototype.hasOwnProperty.call(old, 'possible_duplicate')) c.possible_duplicate = old.possible_duplicate;
+        else delete c.possible_duplicate;
+      } else {
+        c.signupSource = false;
+        delete c.possible_duplicate;
+      }
+    }
+    restoreServerOwnedEnrollment(data, before, priorClients);
+    for (const c of data.clients) {
+      const old = priorClients.get(c && c.id);
+      if (!old || (old.kind || 'personal') === (c.kind || 'personal')) continue;
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can change the client type.', [{ key: 'clients', id: c.id, field: 'kind', reason: 'Only the owner can change the client type.' }]);
+      const becomingPersonal = old.kind === 'business' && (c.kind || 'personal') !== 'business';
+      if (!becomingPersonal && (inCancellationWindow(old) || enrollmentOpenOrSigned(old, data.signatures))) return reject(409, 'The client type cannot change during enrollment or after the agreement is signed.', [{ key: 'clients', id: c.id, field: 'kind', reason: 'The client type cannot change during enrollment or after the agreement is signed.' }]);
+      pendingAudits.push({ actor: req.user.email, action: 'client.kind', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, old: old.kind || 'personal', new: c.kind || 'personal' }) });
+    }
+    data.retiredClientIds = JSON.parse(JSON.stringify((before && before.retiredClientIds) || []));
+    restoreServerTasks(before, data);
+    const nextIds = new Set((data.clients || []).filter(Boolean).map(c => c.id));
+    for (const old of priorClients.values()) {
+      if (!old || nextIds.has(old.id) || old.kind === 'business' || !enrollmentOpenOrSigned(old, data.signatures)) continue;
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can delete a client who has started enrollment.', [{ key: 'clients', id: old.id, field: '', reason: 'Only the owner can delete a client who has started enrollment.' }]);
+      if (!data.retiredClientIds.includes(old.id)) data.retiredClientIds.push(old.id);
+    }
+    for (const c of data.clients) {
+      if (c && !priorClients.has(c.id) && data.retiredClientIds.includes(c.id)) return reject(409, 'This client id was retired and cannot be recreated.', [{ key: 'clients', id: c.id, field: 'id', reason: 'This client id was retired and cannot be recreated.' }]);
+    }
+    data.knownClients = JSON.parse(JSON.stringify((before && before.knownClients) || []));
+    const rememberClient = (c) => {
+      if (!c || !c.id) return;
+      const email = normalizeClientEmail(c.email);
+      const name = normalizeClientName(c.name);
+      const row = data.knownClients.find(k => k && k.id === c.id);
+      if (row) { row.email = email; row.name = name; }
+      else data.knownClients.push({ id: c.id, email, name });
+    };
+    for (const old of priorClients.values()) rememberClient(old);
+    for (const c of data.clients || []) rememberClient(c);
+    for (const c of data.clients || []) {
+      if (!isRecord(c)) continue;
+      const old = priorClients.get(c.id);
+      if (old && old.businessMatchApproval) c.businessMatchApproval = JSON.parse(JSON.stringify(old.businessMatchApproval));
+      else delete c.businessMatchApproval;
+    }
+    for (const c of data.clients || []) {
+      if (!c || c.kind !== 'business') continue;
+      const old = priorClients.get(c.id);
+      const email = normalizeClientEmail(c.email);
+      const name = normalizeClientName(c.name);
+      const identitySame = old && (old.kind || 'personal') === 'business' && normalizeClientEmail(old.email) === email && normalizeClientName(old.name) === name;
+      if (identitySame) continue;
+      delete c.businessMatchApproval;
+      const matched = data.knownClients.filter(k => k && k.id !== c.id && ((email && normalizeClientEmail(k.email) === email) || (name && normalizeClientName(k.name) === name)));
+      if (!matched.length) continue;
+      if (req.user.role !== 'owner') return reject(409, 'A client with this email or name already exists. Only the owner can add a business client for that person.', [{ key: 'clients', id: c.id, field: 'name', reason: 'A client with this email or name already exists. Only the owner can add a business client for that person.' }]);
+      c.businessMatchApproval = { user: req.user.email, at: new Date().toISOString(), matchedIds: matched.map(k => k.id), name, email };
+      pendingAudits.push({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: c.businessMatchApproval.at, clientId: c.id, email, name, matchedIds: c.businessMatchApproval.matchedIds }) });
+    }
+    const invoiceGuard = guardIssuedInvoices(before, data, req);
+    if (invoiceGuard.status) return reject(invoiceGuard.status, invoiceGuard.error, invoiceGuard.refused);
+    pendingAudits.push(...invoiceGuard.audits);
+    lockInvoicedDisputeItems(before, data);
+    const stamped = stampServerWork(before, data, { role: req.user.role, email: req.user.email });
+    if (stamped && stamped.error) return reject(409, stamped.error, stamped.refused);
+    for (const inv of data.invoices || []) {
+      if (!inv || inv.confirmNoAccountHold !== true) continue;
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can confirm a deletion when a held item has no account number.', [{ key: 'invoices', id: inv.id, field: 'confirmNoAccountHold', reason: 'Only the owner can confirm a deletion when a held item has no account number.' }]);
+      inv.noAccountHoldConfirmedBy = req.user.email;
+      delete inv.confirmNoAccountHold;
+      pendingAudits.push({ actor: req.user.email, action: 'invoice.no_account_hold.confirm', detail: JSON.stringify({ invoiceId: inv.id, clientId: inv.clientId || '' }) });
+    }
+    for (const row of (stamped && stamped.orphanDeletes) || []) pendingAudits.push({ actor: req.user.email, action: 'dispute.orphan_delete', detail: JSON.stringify(row) });
+    const billingBlock = invoiceBillingBlocked(before, data);
+    if (billingBlock) return reject(409, billingBlock.error, billingBlock.refused);
     const over = Billing.capViolations(before, data);
     if (over.length) {
       db.audit({ actor: req.user.email, action: 'invoice.cap_blocked', detail: over.map(v => v.invoice.id).join(',').slice(0, 200) });
-      return res.status(422).json({ error: `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`, violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })) });
+      const reason = `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`;
+      return res.status(422).json({
+        error: reason,
+        violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })),
+        refused: over.map(v => ({ key: 'invoices', id: v.invoice.id, field: 'amount', reason: v.reason }))
+      });
     }
-    // TODO(billing): signup does not create or collect invoices. Cap checks above stay in billing.js.
     const held = serviceWorkBlocked(before, data);
-    if (held) return res.status(409).json({ error: held });
-    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
+    if (held) return reject(409, held.error, held.refused);
+    pendingAudits.push(...bureauResponseAudits(before, data, req.user));
     for (const c of data.clients) {
-      if (!c || c.signupSource !== 'self') continue;
+      if (!c || c.kind === 'business') continue;
       const old = priorClients.get(c.id);
       if (!old || enrollmentSnapshot(old) === enrollmentSnapshot(c)) continue;
-      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the price and Schedule A.' });
-      if (contractIsSigned(old)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
-      return res.status(400).json({ error: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' });
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can change the price and Schedule A.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'Only the owner can change the price and Schedule A.' }]);
+      if (contractIsSigned(old)) return reject(409, 'The contract is already signed. Price and Schedule A cannot be changed.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'The contract is already signed. Price and Schedule A cannot be changed.' }]);
+      return reject(400, 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' }]);
     }
-    for (const c of data.clients) applySignupStatus(c);
+    for (const c of data.clients) if (isRecord(c)) applySignupStatus(c);
+    for (const c of data.clients) if (isRecord(c) && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
+    const identityRefused = [];
+    const identityOwner = new Map();
+    for (const old of priorClients.values()) if (old.identity) identityOwner.set(String(old.identity), old.id);
+    const seenIdentity = new Set();
+    const idCount = new Map();
+    for (const c of data.clients || []) if (isRecord(c) && c.id) idCount.set(c.id, (idCount.get(c.id) || 0) + 1);
+    const ambiguousIds = new Set([...idCount].filter(([, count]) => count > 1).map(([id]) => id));
+    const priorIdCount = new Map();
+    for (const old of (before && before.clients) || []) if (old && old.id) priorIdCount.set(old.id, (priorIdCount.get(old.id) || 0) + 1);
+    for (const [id, count] of idCount) {
+      if (count > 1 && count > (priorIdCount.get(id) || 0)) identityRefused.push({ key: 'clients', id, field: 'id', reason: 'A client id cannot be duplicated.' });
+    }
+    for (const c of data.clients || []) {
+      if (!isRecord(c) || !c.id) continue;
+      const old = priorClients.get(c.id);
+      const submitted = String(c.identity || '');
+      if (ambiguousIds.has(c.id)) {
+        c.identityAmbiguous = true;
+        c.identity = submitted && !seenIdentity.has(submitted) ? submitted : uid();
+      } else if (old && old.identity) {
+        if (!submitted || submitted !== String(old.identity)) identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'The client identity does not match this id.' });
+        c.identity = old.identity;
+        if (old.createdAt) c.createdAt = old.createdAt;
+      } else if (submitted && identityOwner.has(submitted) && identityOwner.get(submitted) !== c.id) {
+        identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'That identity belongs to another client.' });
+        c.identity = uid();
+      } else {
+        c.identity = uid();
+      }
+      if (seenIdentity.has(c.identity)) identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'The client identity does not match this id.' });
+      seenIdentity.add(c.identity);
+      const snapName = safeLine(c.name, 80);
+      const snapAddress = safeLine([c.address, c.city, c.state, c.zip].filter(Boolean).join(', '), 120);
+      const priorName = old ? safeLine(old.name, 80) : '';
+      const priorAddress = old ? safeLine([old.address, old.city, old.state, old.zip].filter(Boolean).join(', '), 120) : '';
+      const profileChanged = !old || priorName !== snapName || priorAddress !== snapAddress || String((old && old.email) || '').toLowerCase() !== String(c.email || '').toLowerCase();
+      const boundLogin = !!(old && (D().users || []).some(u => u && u.role === 'client' && !u.disabled && u.clientId === c.id && u.clientIdentity && u.clientIdentity === old.identity));
+      if (boundLogin && profileChanged) {
+        if (req.user.role !== 'owner') return reject(403, 'Only the owner can change the name, email, or address of a client who has a portal login.', [{ key: 'clients', id: c.id, field: 'name', reason: 'Only the owner can change the name, email, or address of a client who has a portal login.' }]);
+        pendingAudits.push({ actor: req.user.email, action: 'client.bound_profile', detail: JSON.stringify({ clientId: c.id, name: priorName !== snapName, email: String((old && old.email) || '').toLowerCase() !== String(c.email || '').toLowerCase(), address: priorAddress !== snapAddress }) });
+      }
+      const snapshotChanged = !old || !old.mailSnapshotAt || priorName !== snapName || priorAddress !== snapAddress;
+      if (c.confirmMailSnapshot === true && req.user.role !== 'owner') return reject(403, 'Only the owner can confirm this client\'s name and address.', [{ key: 'clients', id: c.id, field: 'confirmMailSnapshot', reason: 'Only the owner can confirm this client\'s name and address.' }]);
+      const confirm = req.user.role === 'owner' && c.confirmMailSnapshot === true;
+      if (confirm) {
+        c.mailName = snapName;
+        c.mailAddress = snapAddress;
+        c.mailSnapshotAt = new Date().toISOString();
+        c.mailSnapshotConfirmed = true;
+        c.mailNeedsConfirm = false;
+        pendingAudits.push({ actor: req.user.email, action: 'client.mail_snapshot.confirm', detail: JSON.stringify({ clientId: c.id, name: snapName, address: snapAddress }) });
+      } else if (!snapshotChanged && old) {
+        c.mailName = old.mailName;
+        c.mailAddress = old.mailAddress;
+        c.mailSnapshotAt = old.mailSnapshotAt;
+        c.mailSnapshotConfirmed = old.mailSnapshotConfirmed === true;
+        c.mailNeedsConfirm = !!old.mailNeedsConfirm;
+      } else {
+        const problem = snapshotProblem(snapName, snapAddress);
+        if (!problem) {
+          c.mailName = snapName;
+          c.mailAddress = snapAddress;
+          c.mailSnapshotAt = new Date().toISOString();
+          c.mailSnapshotConfirmed = true;
+          c.mailNeedsConfirm = false;
+        } else {
+          c.mailName = old && old.mailName ? old.mailName : '';
+          c.mailAddress = old && old.mailAddress ? old.mailAddress : '';
+          c.mailSnapshotAt = old && old.mailSnapshotAt || null;
+          c.mailSnapshotConfirmed = !!(old && old.mailSnapshotConfirmed);
+          c.mailNeedsConfirm = true;
+        }
+      }
+      delete c.confirmMailSnapshot;
+    }
+    if (identityRefused.length) return reject(409, identityRefused[0].reason, identityRefused);
+    if (ambiguousIds.size) {
+      for (const u of D().users || []) {
+        if (!u || u.role !== 'client' || !ambiguousIds.has(u.clientId)) continue;
+        u.clientIdentity = null;
+        u.portalLinkNeedsInvite = true;
+      }
+    }
+    for (const entry of pendingAudits) db.audit(entry);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
     try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }
-    res.json({ version: D().workspaceVersion });
+    res.json({ version: D().workspaceVersion, data: workspace() });
   });
 
+  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs', 'cancellationMethod', 'cancellationReceivedAt', 'cancellationPostmarkAt', 'cancellationTimely', 'postmarkReview'];
+  const ENROLLMENT_FIELDS = SERVER_OWNED_ONBOARDING.concat(['disclosureViewedAt', 'contractViewedAt', 'contractViewedSha256', 'contractViewStale', 'authorizationAt', 'esignDemoPassed', 'esignIp', 'esignUserAgent', 'paperRequestedAt']);
+  function restoreServerOwnedEnrollment(data, before, priorClients) {
+    data.signatures = JSON.parse(JSON.stringify((before && before.signatures) || []));
+    for (const c of data.clients || []) {
+      if (!c || typeof c !== 'object' || Array.isArray(c)) continue;
+      const old = priorClients.get(c.id);
+      const switchingToPersonal = !!(old && old.kind === 'business' && c.kind !== 'business');
+      const personal = switchingToPersonal || (old ? old.kind !== 'business' : c.kind !== 'business');
+      if (!personal) continue;
+      c.onboarding = c.onboarding || {};
+      if (!old || switchingToPersonal) {
+        for (const key of ENROLLMENT_FIELDS) c.onboarding[key] = null;
+        continue;
+      }
+      const prev = old.onboarding || {};
+      for (const key of SERVER_OWNED_ONBOARDING) c.onboarding[key] = prev[key] == null ? null : prev[key];
+    }
+  }
+  function inCancellationWindow(c) {
+    const o = (c && c.onboarding) || {};
+    if (o.cancelledAt || (!o.contractSignedAt && !o.contractSignedAtTs)) return false;
+    if (o.cancellationWindowEndsAtTs) return Date.now() <= Date.parse(o.cancellationWindowEndsAtTs);
+    return true;
+  }
+  function enrollmentOpenOrSigned(c, signatures) {
+    const o = (c && c.onboarding) || {};
+    if (o.esignConsentAt || o.disclosureViewedAt || o.disclosureSignedAt || o.disclosureAcknowledgedAt || o.contractViewedAt || o.contractSignedAt || o.contractSignedAtTs || o.cancellationWindowEndsAtTs) return true;
+    return (signatures || []).some(s => s && s.clientId === c.id && (s.doc === 'disclosure' || s.doc === 'contract'));
+  }
+  function serviceDateInsideWindow(client, inv) {
+    const o = (client && client.onboarding) || {};
+    const raw = inv.serviceCompletedAt || inv.issuedAt;
+    if (!raw) return false;
+    const day = String(raw).slice(0, 10);
+    if (o.cancellationWindowEndsAt && day <= o.cancellationWindowEndsAt) return true;
+    if (o.cancellationWindowEndsAtTs) {
+      const end = Date.parse(o.cancellationWindowEndsAtTs);
+      const svc = Date.parse(String(raw).length > 10 ? raw : day + 'T12:00:00.000Z');
+      if (!Number.isNaN(end) && !Number.isNaN(svc) && svc <= end) return true;
+    }
+    return false;
+  }
+  function recordedDay(value) {
+    const day = String(value || '').slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
+  }
+  function earliestDay(values) {
+    const days = (values || []).map(recordedDay).filter(Boolean).sort();
+    return days[0] || '';
+  }
+  function bureauEnum(value) {
+    const raw = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (!raw) return '';
+    if (raw === 'exp' || raw.startsWith('experian')) return 'experian';
+    if (raw === 'efx' || raw === 'eq' || raw.startsWith('equifax')) return 'equifax';
+    if (raw === 'tu' || raw.startsWith('transunion')) return 'transunion';
+    return null;
+  }
+  function holdKey(clientId, bureau) {
+    return String(clientId || '') + '\n' + bureau;
+  }
+  function creditorKey(item) {
+    let key = String((item && item.creditor) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    let prev = '';
+    while (key && key !== prev) {
+      prev = key;
+      key = key.replace(/(na|inc|llc|corp)$/, (suffix, _m, offset) => offset >= 3 ? '' : suffix);
+    }
+    return key;
+  }
+  function accountDigits(item) {
+    const raw = String((item && (item.accountNumber || item.accountId)) || '').replace(/-(\d)\s*$/, '');
+    return raw.replace(/\D/g, '');
+  }
+  function accountLast4(item) {
+    const digits = accountDigits(item);
+    return digits.length >= 4 ? digits.slice(-4) : '';
+  }
+  function digitsContainHeld(held, item) {
+    const heldLast = accountLast4(held);
+    const digits = accountDigits(item);
+    return !!(heldLast && digits.length >= 4 && digits.includes(heldLast));
+  }
+  function sameHeldAccount(held, item) {
+    if (!held || !item) return false;
+    const bureau = bureauEnum(held.bureau);
+    if (!bureau || bureau !== bureauEnum(item.bureau)) return false;
+    if (digitsContainHeld(held, item) || digitsContainHeld(item, held)) return true;
+    const creditor = creditorKey(held);
+    return !!(creditor && creditor === creditorKey(item) && !accountLast4(item));
+  }
+  function citesHeldAccount(dispute, heldItems) {
+    return (dispute.items || []).some(item => (heldItems || []).some(held => {
+      if (!item || bureauEnum(item.bureau) !== bureauEnum(held.bureau)) return false;
+      return digitsContainHeld(held, item) || digitsContainHeld(item, held);
+    }));
+  }
+  function citesHeldCreditor(dispute, heldItems) {
+    return (dispute.items || []).some(item => (heldItems || []).some(held => {
+      if (!item || !citesHeldAccount({ items: [item] }, [held])) return false;
+      const creditor = creditorKey(held);
+      return !!(creditor && creditor === creditorKey(item));
+    }));
+  }
+  function windowEndDay(client) {
+    const o = (client && client.onboarding) || {};
+    const end = String(o.cancellationWindowEndsAt || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(end)) return end;
+    const signedAt = o.contractSignedAtTs || o.contractSignedAt;
+    if (!signedAt) return '';
+    return cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+  }
+  function disputeBureaus(d) {
+    const known = [];
+    const bad = [];
+    const add = (value, required) => {
+      if (value == null || value === '') return;
+      const mapped = bureauEnum(value);
+      if (mapped == null) {
+        if (required) bad.push(String(value));
+        return;
+      }
+      if (mapped && !known.includes(mapped)) known.push(mapped);
+    };
+    for (const item of (d && d.items) || []) if (item && typeof item === 'object') add(item.bureau, true);
+    add(d && d.bureau, true);
+    add(d && d.recipient, false);
+    return { known, bad };
+  }
+  function rememberHold(outcomes, clientId, bureau, at, why) {
+    if (!clientId || !bureau) return;
+    const key = holdKey(clientId, bureau);
+    const prior = outcomes.get(key);
+    outcomes.set(key, {
+      key,
+      clientId: String(clientId),
+      bureau,
+      at: earliestDay([prior && prior.at, at]) || at || '',
+      onHold: true,
+      reason: (prior && prior.reason) || why || '',
+      cleared: false,
+      clearedAt: prior && prior.clearedAt || null,
+      clearedBy: prior && prior.clearedBy || null,
+      clearReason: prior && prior.clearReason || ''
+    });
+  }
+  function recordedResultDay(item) {
+    return item ? recordedDay(item.serverResultAt) : '';
+  }
+  function wasSent(row) {
+    if (!row) return false;
+    if (row.serverSentAt || row.sentAt || row.sentDate) return true;
+    return String(row.status || '') === 'sent';
+  }
+  function stampServerWork(before, data, actor) {
+    const today = todayEtYmd();
+    const prior = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
+    const refused = [];
+    const push = (id, field, reason) => refused.push({ key: 'disputes', id: id || '', field, reason });
+    const outcomes = new Map();
+    for (const row of (before && before.heldOutcomes) || []) {
+      if (!row || !row.key) continue;
+      outcomes.set(row.key, {
+        key: row.key,
+        clientId: row.clientId || String(row.key).split('\n')[0] || '',
+        bureau: row.bureau || String(row.key).split('\n')[1] || '',
+        at: recordedDay(row.at),
+        onHold: !!row.onHold && !row.cleared,
+        reason: row.reason || row.outcome || '',
+        cleared: !!row.cleared,
+        clearedAt: row.clearedAt || null,
+        clearedBy: row.clearedBy || null,
+        clearReason: row.clearReason || ''
+      });
+    }
+    const tombs = new Map();
+    for (const row of (before && before.mailedDisputeTombstones) || []) if (row && row.id) tombs.set(row.id, Object.assign({}, row));
+    const priorClientIds = new Set(((before && before.clients) || []).filter(c => c && c.id).map(c => c.id));
+    const nextDisputeIds = new Set((data.disputes || []).filter(d => d && d.id).map(d => d.id));
+    const orphanDeletes = [];
+    const heldAccounts = [];
+    const noteHeld = (clientId, item) => {
+      if (!clientId || !item || !item.resultRecordedOnHold) return;
+      heldAccounts.push({ clientId: String(clientId), creditor: item.creditor, accountNumber: item.accountNumber, accountId: item.accountId, bureau: item.bureau });
+    };
+    for (const oldDispute of (before && before.disputes) || []) {
+      if (!oldDispute) continue;
+      for (const item of oldDispute.items || []) noteHeld(oldDispute.clientId, item);
+    }
+    for (const tomb of tombs.values()) for (const item of tomb.items || []) noteHeld(tomb.clientId, item);
+    for (const oldDispute of (before && before.disputes) || []) {
+      if (!oldDispute || !oldDispute.id || nextDisputeIds.has(oldDispute.id)) continue;
+      if (!wasSent(oldDispute)) continue;
+      const stamp = { id: oldDispute.id, clientId: oldDispute.clientId || '', serverSentAt: oldDispute.serverSentAt || '', deletedAt: new Date().toISOString(), deletedBy: (actor && actor.email) || '', items: (oldDispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: !!it.resultRecordedOnHold, result: it.result || '' })) };
+      tombs.set(oldDispute.id, stamp);
+      const orphan = oldDispute.clientId && !priorClientIds.has(oldDispute.clientId);
+      if (orphan && actor && actor.role === 'owner') {
+        if (!recordedDay(oldDispute.serverSentAt)) {
+          tombs.delete(oldDispute.id);
+          push(oldDispute.id, 'id', 'Date or retire this mailed dispute before deleting it.');
+          continue;
+        }
+        orphanDeletes.push({ id: oldDispute.id, clientId: oldDispute.clientId || '' });
+        continue;
+      }
+      push(oldDispute.id, 'id', 'A mailed dispute cannot be deleted.');
+    }
+    for (const d of data.disputes || []) {
+      if (!d || !d.id) continue;
+      if (tombs.has(d.id) && !(prior.get(d.id) && prior.get(d.id).id === d.id)) push(d.id, 'id', 'A removed mailed dispute cannot be added again.');
+      const old = prior.get(d.id);
+      if (old && String(old.clientId || '') !== String(d.clientId || '')) {
+        const resulted = !!old.outcome || (old.items || []).some(it => it && it.result);
+        if (wasSent(old) || resulted) {
+          push(d.id, 'clientId', 'A mailed or resulted dispute cannot move to another client.');
+          d.clientId = old.clientId;
+        }
+      }
+      const client = (data.clients || []).find(c => c && c.id === d.clientId);
+      const onHold = !!(client && client.kind !== 'business' && clientServiceOnHold(client, undefined, data.signatures));
+      if (old && wasSent(old)) {
+        if (recordedDay(d.sentAt) !== recordedDay(old.sentAt) || recordedDay(d.sentDate) !== recordedDay(old.sentDate)) {
+          push(d.id, 'sentAt', 'The mailed date cannot be changed after the dispute is sent.');
+        }
+        d.sentAt = old.sentAt == null ? null : old.sentAt;
+        d.sentDate = old.sentDate == null ? null : old.sentDate;
+        if (recordedDay(old.serverSentAt)) d.serverSentAt = recordedDay(old.serverSentAt);
+        else delete d.serverSentAt;
+        if (String(old.status || '') === 'sent' && String(d.status || '') !== 'sent') {
+          push(d.id, 'status', 'A mailed dispute cannot be moved off sent.');
+        }
+        if (String(old.status || '') === 'sent') d.status = 'sent';
+        if (String(old.recipient || '') !== String(d.recipient || '')) {
+          push(d.id, 'recipient', 'The recipient cannot be changed after the dispute is mailed.');
+          d.recipient = old.recipient == null ? null : old.recipient;
+        }
+      } else if (wasSent(d)) {
+        d.serverSentAt = today;
+      } else {
+        delete d.serverSentAt;
+      }
+      const oldItems = (old && old.items) || [];
+      const nextIds = new Set((d.items || []).filter(it => it && it.id).map(it => String(it.id)));
+      for (const oldItem of oldItems) {
+        if (!oldItem || !oldItem.id) continue;
+        const locked = oldItem.result === 'deleted' || oldItem.result === 'corrected' || oldItem.resultRecordedOnHold || oldItem.serverResultAt;
+        if (locked && !nextIds.has(String(oldItem.id))) push(d.id, 'items', 'A deleted item cannot change its id.');
+      }
+      let resultDuring = false;
+      for (const item of d.items || []) {
+        if (!item || typeof item !== 'object') continue;
+        const oldItem = oldItems.find(it => it && String(it.id) === String(item.id));
+        const typed = earliestDay([
+          item.bureauResultAt, item.resultAt, item.resultDate,
+          oldItem && oldItem.bureauResultAt, oldItem && oldItem.resultAt, oldItem && oldItem.resultDate
+        ]);
+        const resulted = item.result === 'deleted' || item.result === 'corrected' || (oldItem && (oldItem.result === 'deleted' || oldItem.result === 'corrected'));
+        const disputeLocked = !!(old && (wasSent(old) || old.outcome || (old.items || []).some(it => it && it.result)));
+        if (oldItem && (disputeLocked || oldItem.result === 'deleted' || oldItem.resultRecordedOnHold)) {
+          if (String(oldItem.bureau || '') !== String(item.bureau || '')) {
+            push(d.id, 'bureau', 'The bureau on a mailed or resulted dispute cannot be changed.');
+            item.bureau = oldItem.bureau == null ? null : oldItem.bureau;
+          }
+        }
+        if (oldItem && (oldItem.result === 'deleted' || oldItem.resultRecordedOnHold)) {
+          for (const field of ['creditor', 'accountNumber', 'accountId']) {
+            if (String(oldItem[field] || '') !== String(item[field] || '')) {
+              push(d.id, field, 'The creditor and account on a held or deleted item cannot be changed.');
+              item[field] = oldItem[field] == null ? null : oldItem[field];
+            }
+          }
+        }
+        if (oldItem && oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
+        if (oldItem && oldItem.serverResultAt) item.serverResultAt = earliestDay([oldItem.serverResultAt, typed]) || oldItem.serverResultAt;
+        else if (resulted && typed) item.serverResultAt = typed < today ? typed : today;
+        else delete item.serverResultAt;
+        const day = recordedDay(item.serverResultAt);
+        const end = windowEndDay(client);
+        if (resulted && (onHold || (end && day && day <= end))) resultDuring = true;
+      }
+      const end = windowEndDay(client);
+      const outcomeDay = earliestDay([d.respondedAt, d.receivedDate, d.outcomeAt]);
+      const mailedDuring = wasSent(d) && (onHold || (end && d.serverSentAt && d.serverSentAt <= end));
+      const outcomeDuring = !!d.outcome && (onHold || (end && outcomeDay && outcomeDay <= end));
+      const { known, bad } = disputeBureaus(d);
+      if ((mailedDuring || outcomeDuring || resultDuring) && (bad.length || !known.length)) {
+        push(d.id, 'bureau', 'Name the bureau as Equifax, Experian, or TransUnion.');
+      }
+      const recipientBureau = bureauEnum(d.recipient);
+      if (recipientBureau) {
+        for (const item of d.items || []) {
+          if (!item || !item.bureau) continue;
+          if (bureauEnum(item.bureau) !== recipientBureau) push(d.id, 'bureau', 'Each item bureau must match the dispute recipient.');
+        }
+      }
+      if (mailedDuring || outcomeDuring || resultDuring) {
+        const why = outcomeDuring ? 'outcome' : (resultDuring ? 'result' : 'mailed');
+        const at = earliestDay([d.serverSentAt, outcomeDay]) || '';
+        for (const bureau of known) rememberHold(outcomes, d.clientId, bureau, at, why);
+      }
+      for (const item of d.items || []) {
+        if (!item || typeof item !== 'object') continue;
+        const oldItem = oldItems.find(it => it && String(it.id) === String(item.id));
+        const resulted = item.result === 'deleted' || item.result === 'corrected' || (oldItem && (oldItem.result === 'deleted' || oldItem.result === 'corrected'));
+        if (oldItem && oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
+        else if (resulted) {
+          const bureau = bureauEnum(item.bureau);
+          const row = bureau ? outcomes.get(holdKey(d.clientId, bureau)) : null;
+          const copied = heldAccounts.some(held => held.clientId === String(d.clientId) && sameHeldAccount(held, item));
+          if ((row && row.onHold && !row.cleared) || copied) item.resultRecordedOnHold = true;
+          else delete item.resultRecordedOnHold;
+        } else delete item.resultRecordedOnHold;
+        noteHeld(d.clientId, item);
+      }
+    }
+    data.heldOutcomes = Array.from(outcomes.values());
+    data.mailedDisputeTombstones = Array.from(tombs.values());
+    if (refused.length) return { error: refused[0].reason, refused };
+    return orphanDeletes.length ? { orphanDeletes } : null;
+  }
+  function recordedMailedDay(dispute) {
+    return dispute ? recordedDay(dispute.serverSentAt) : '';
+  }
+  function deletedInvoiceItem(data, inv) {
+    if (!inv || !inv.disputeId || !inv.itemId) return null;
+    const dispute = (data.disputes || []).find(d => d && d.id === inv.disputeId && d.clientId === inv.clientId);
+    if (!dispute) return null;
+    return (dispute.items || []).find(it => it && it.id === inv.itemId && it.bureau) || null;
+  }
+  function invoiceField(inv, key) {
+    return inv && inv[key] == null ? '' : String(inv[key]);
+  }
+  function invoiceChanged(prev, inv) {
+    if (!prev) return true;
+    return ['status', 'itemId', 'disputeId', 'clientId', 'amount', 'serviceCompletedAt', 'issuedAt', 'bureauResultAt', 'reportId', 'documentId'].some(key => invoiceField(prev, key) !== invoiceField(inv, key));
+  }
+  function bureauResponseAudits(before, after, user) {
+    const prior = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
+    const clients = (after && after.clients) || [];
+    const signatures = (after && after.signatures) || [];
+    const fields = ['outcome', 'respondedAt', 'receivedDate'];
+    const audits = [];
+    for (const d of (after && after.disputes) || []) {
+      if (!d || !d.id) continue;
+      const old = prior.get(d.id);
+      if (!old) continue;
+      const mailed = !!(old.sentAt || old.sentDate || String(old.status || '') === 'sent');
+      if (!mailed) continue;
+      const changed = fields.filter(name => String(old[name] == null ? '' : old[name]) !== String(d[name] == null ? '' : d[name]));
+      const itemResults = (list) => (list || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || null, result: it.result == null || it.result === '' ? null : it.result }));
+      const nextItems = itemResults(d.items);
+      const prevItems = itemResults(old.items);
+      if (JSON.stringify(prevItems) !== JSON.stringify(nextItems)) changed.push('items.result');
+      if (!changed.length) continue;
+      const client = clients.find(c => c && c.id === d.clientId);
+      if (client && !clientServiceOnHold(client, undefined, signatures)) continue;
+      const at = new Date().toISOString();
+      audits.push({
+        actor: user.email,
+        action: 'dispute.bureau_response',
+        detail: JSON.stringify({ user: user.email, at, disputeId: d.id, clientId: d.clientId || null, fields: changed, outcome: d.outcome || null, respondedAt: d.respondedAt || null, receivedDate: d.receivedDate || null, items: nextItems })
+      });
+    }
+    return audits;
+  }
+  function invoiceBillingBlocked(before, data) {
+    const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
+    const billable = inv => inv && (inv.status === 'issued' || inv.status === 'paid');
+    const stop = (inv, field, reason) => {
+      const prev = prior.get(inv && inv.id);
+      const changed = prev ? changedInvoiceKeys(prev, inv) : [];
+      const fields = [...new Set([field].concat(changed).filter(Boolean))];
+      return { error: reason, refused: fields.map(name => ({ key: 'invoices', id: inv && inv.id, field: name, reason })) };
+    };
+    for (const inv of (data.invoices || []).filter(billable)) {
+      const prev = prior.get(inv.id);
+      if (prev && billable(prev) && !invoiceChanged(prev, inv)) continue;
+      const billed = (data.clients || []).find(x => x && x.id === inv.clientId);
+      if (!billed) return stop(inv, 'clientId', 'An invoice needs a client who is in the workspace.');
+      if (billed.kind === 'business') continue;
+      if (undatedMailedOutstanding(data)) return stop(inv, 'sentAt', 'A mailed dispute has no server mailed date. Date or retire it before invoicing.');
+      if (clientServiceOnHold(billed, undefined, data.signatures)) return stop(inv, 'clientId', `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`);
+      const item = deletedInvoiceItem(data, inv);
+      if (!item) return stop(inv, 'itemId', 'An invoice must name the deleted item and its bureau.');
+      if (item.result !== 'deleted') return stop(inv, 'itemId', 'An invoice can be issued only for a deleted item, not a correction.');
+      const itemBureau = bureauEnum(item.bureau);
+      if (itemBureau == null) return stop(inv, 'bureau', 'Name the bureau as Equifax, Experian, or TransUnion.');
+      if (inv.bureau && bureauEnum(inv.bureau) !== itemBureau) return stop(inv, 'bureau', 'The invoice bureau does not match the deleted item.');
+      const heldOutcome = (data.heldOutcomes || []).find(row => row && row.key === holdKey(inv.clientId, itemBureau) && row.onHold && !row.cleared);
+      const currentDispute = (data.disputes || []).find(d => d && d.id === inv.disputeId);
+      const resultDay = recordedResultDay(item);
+      const mailedDay = recordedMailedDay(currentDispute);
+      if (!resultDay) return stop(inv, 'bureauResultAt', 'An invoice must name the dated bureau result for the deleted item.');
+      const signedAt = billed.onboarding && (billed.onboarding.contractSignedAtTs || billed.onboarding.contractSignedAt);
+      let deadline = String((billed.onboarding && billed.onboarding.cancellationWindowEndsAt) || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) && signedAt) deadline = cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && resultDay <= deadline) return stop(inv, 'bureauResultAt', 'The bureau result date must be after the cancellation window.');
+      if (resultDay > todayEtYmd()) return stop(inv, 'bureauResultAt', 'The bureau result date cannot be after today.');
+      const copiedHeld = (data.disputes || []).some(d => d && d.clientId === inv.clientId && (d.items || []).some(it => it && it.id !== item.id && it.resultRecordedOnHold && sameHeldAccount(it, item)))
+        || (data.mailedDisputeTombstones || []).some(tomb => tomb && tomb.clientId === inv.clientId && (tomb.items || []).some(it => it && it.resultRecordedOnHold && sameHeldAccount(it, item)));
+      if (currentDispute && currentDispute.legacyMailedUnbillable) return stop(inv, 'sentAt', 'This mailing was recorded inside the cancellation window and cannot be billed.');
+      const noAccountHeld = []
+        .concat(data.disputes || [], (data.mailedDisputeTombstones || []).map(tomb => tomb && { clientId: tomb.clientId, items: tomb.items }))
+        .some(row => row && row.clientId === inv.clientId && (row.items || []).some(it => it && it.id !== item.id && it.resultRecordedOnHold && bureauEnum(it.bureau) === itemBureau && !accountLast4(it)));
+      if (noAccountHeld && !inv.noAccountHoldConfirmedBy) return stop(inv, 'itemId', 'The owner must confirm this deletion before it can be invoiced.');
+      if (item.resultRecordedOnHold || heldOutcome || copiedHeld) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
+      const bureauHasHeldWork = !!heldOutcome || []
+        .concat(data.disputes || [], (data.mailedDisputeTombstones || []).map(tomb => tomb && { clientId: tomb.clientId, items: tomb.items }))
+        .some(row => row && row.clientId === inv.clientId && (row.items || []).some(it => it && it.id !== item.id && it.resultRecordedOnHold && bureauEnum(it.bureau) === itemBureau));
+      if (!accountLast4(item) && bureauHasHeldWork && !inv.noAccountHoldConfirmedBy) return stop(inv, 'itemId', 'The owner must confirm this deletion before it can be invoiced.');
+      if (!mailedDay || (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && mailedDay <= deadline)) return stop(inv, 'sentAt', 'The dispute must have been mailed after the cancellation window.');
+      if (resultDay < mailedDay) return stop(inv, 'bureauResultAt', 'The bureau result date must be on or after the mailed date.');
+      const price = Number(billed.pricePerResult);
+      if (!(price > 0) || Number(inv.amount) !== price) return stop(inv, 'amount', 'The invoice amount must equal the price per result.');
+      const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
+      if (dup) return stop(inv, 'itemId', 'Only one invoice can be issued for each deleted item and bureau.');
+    }
+    return null;
+  }
+  function undatedMailedOutstanding(data) {
+    const retired = new Set(((data && data.mailedDisputeTombstones) || []).filter(row => row && row.retired && row.id).map(row => row.id));
+    const open = ((data && data.disputes) || []).some(row => row && !retired.has(row.id) && wasSent(row) && !recordedDay(row.serverSentAt));
+    const buried = ((data && data.mailedDisputeTombstones) || []).some(row => row && !row.retired && !recordedDay(row.serverSentAt));
+    return open || buried;
+  }
+  function lockInvoicedDisputeItems(before, data) {
+    const seen = new Set();
+    const locked = [];
+    for (const inv of [].concat((before && before.invoices) || [], data.invoices || [])) {
+      if (!inv || !inv.disputeId || !inv.itemId) continue;
+      const stillBilled = inv.status === 'issued' || inv.status === 'paid' || inv.status === 'void';
+      if (!stillBilled) continue;
+      const key = inv.disputeId + '\0' + inv.itemId;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      locked.push(inv);
+    }
+    const priorDispute = new Map(((before && before.disputes) || []).filter(Boolean).map(d => [d.id, d]));
+    for (const inv of locked) {
+      const oldDispute = priorDispute.get(inv.disputeId);
+      const oldItem = oldDispute && (oldDispute.items || []).find(it => it && it.id === inv.itemId);
+      if (!oldItem) continue;
+      data.disputes = data.disputes || [];
+      let dispute = data.disputes.find(d => d && d.id === inv.disputeId);
+      if (!dispute) {
+        dispute = { id: inv.disputeId, clientId: inv.clientId || oldDispute.clientId, items: [] };
+        data.disputes.push(dispute);
+      }
+      dispute.items = dispute.items || [];
+      let item = dispute.items.find(it => it && it.id === inv.itemId);
+      if (!item) {
+        dispute.items.push(JSON.parse(JSON.stringify(oldItem)));
+        continue;
+      }
+      for (const key of ['item', 'creditor', 'bureau', 'result', 'bureauResultAt', 'resultDate']) item[key] = oldItem[key] == null ? null : oldItem[key];
+    }
+  }
   function invalidateContractView(onboarding) {
     if (!onboarding) return;
     if (onboarding.contractViewedAt || onboarding.contractViewedSha256) onboarding.contractViewStale = true;
@@ -406,7 +1214,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   app.put('/api/clients/:id/enrollment-terms', need('owner'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
     if (!c) return res.status(404).json({ error: 'Client not found' });
-    if (c.signupSource !== 'self') return res.status(400).json({ error: 'Price and Schedule A are set here for self-signup clients.' });
+    if (c.kind === 'business') return res.status(400).json({ error: 'Price and Schedule A are set here for personal clients.' });
     if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
     const price = Number((req.body || {}).pricePerResult);
     if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ error: 'Enter a price per result greater than zero.' });
@@ -454,7 +1262,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     db.audit({ actor: req.user.email, action: 'invite.create', detail: `${role} ${email || (c && c.name) || (rf && rf.name) || ''}` });
     db.persist();
     const page = role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app';
-    const url = `${req.protocol}://${req.get('host')}/${page}#invite=${token}`;
+    const url = `${publicOrigin.replace(/\/$/, '')}/${page}#invite=${token}`;
     const to = (email || (c && c.email) || (rf && rf.email) || '').toLowerCase();
     let emailed = false;
     if ((req.body || {}).sendEmail && mailEnabled() && /^\S+@\S+\.\S+$/.test(to)) {
@@ -471,8 +1279,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (prob) return res.status(400).json({ error: prob });
     const addr = (inv.email || String(email || '')).toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(addr)) return res.status(400).json({ error: 'A valid email is required' });
-    if (D().users.some(u => u.email === addr && !u.disabled)) return res.status(409).json({ error: 'An account already exists for this email' });
-    const u = { id: uid(), name: inv.name, email: addr, role: inv.role, clientId: inv.clientId, referralId: inv.referralId || null, password: hashPassword(password), sessionEpoch: 1, createdAt: new Date().toISOString() };
+    if (D().users.some(u => u.email === addr && !u.disabled)) return res.status(409).json({ error: 'An account already exists for this email. The owner can re-link that login to this client.' });
+    const bound = inv.role === 'client' ? workspace().clients.find(x => x && x.id === inv.clientId) : null;
+    const u = { id: uid(), name: inv.name, email: addr, role: inv.role, clientId: inv.clientId, clientIdentity: bound && bound.identity || null, referralId: inv.referralId || null, password: hashPassword(password), sessionEpoch: 1, createdAt: new Date().toISOString() };
     D().users.push(u);
     inv.usedAt = new Date().toISOString();
     db.audit({ actor: addr, action: 'invite.accept', detail: inv.role });
@@ -484,21 +1293,189 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   // ---------- client portal ----------
   const company = () => workspace().settings.company || {};
-  function portalClient(req) { return workspace().clients.find(c => c.id === req.user.clientId); }
-  function documentsFor(c) {
-    const cs = Store.croaStatus(c);
-    if (c.signupSource === 'self') return personalizeCroaDocs(croaDocsOverride || croaDocs(), c, now());
-    return {
-      disclosure: Law.CROA_DISCLOSURE,
-      contract: Law.contractTerms(company(), c, workspace().settings.defaultFee),
-      cancellation: Law.cancellationNotice(company(), cs.deadline)
+  function portalClient(req) {
+    const c = workspace().clients.find(row => row && row.id === req.user.clientId);
+    if (req.user.role !== 'client') return c || null;
+    if (!c || !req.user.clientIdentity || !c.identity || req.user.clientIdentity !== c.identity) return null;
+    return c;
+  }
+  app.post('/api/clients/:id/portal-link', need('owner'), (req, res) => {
+    const c = workspace().clients.find(row => row && row.id === req.params.id);
+    if (!c || !c.identity) return res.status(404).json({ error: 'Client not found' });
+    const email = String((req.body || {}).email || '').toLowerCase().trim();
+    const u = D().users.find(row => row && row.role === 'client' && row.email === email);
+    if (!u) return res.status(404).json({ error: 'No portal login uses that email' });
+    const clientEmail = String(c.email || '').toLowerCase().trim();
+    const live = u.clientId && workspace().clients.find(row => row && row.id === u.clientId);
+    if (live && live.id !== c.id) return res.status(409).json({ error: 'This login still belongs to a client in the workspace. Send a new invitation instead.' });
+    if (email !== clientEmail) return res.status(409).json({ error: 'The login email does not match this client. Send a new invitation instead.' });
+    u.clientId = c.id;
+    u.clientIdentity = c.identity;
+    db.audit({ actor: req.user.email, action: 'portal.link', detail: `${email} -> ${c.id}` });
+    db.persist();
+    res.json({ ok: true, clientId: c.id });
+  });
+  app.post('/api/clients/:id/bureau-hold/clear', need('owner'), (req, res) => {
+    const c = workspace().clients.find(row => row && row.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    const bureau = bureauEnum((req.body || {}).bureau);
+    const disputeId = String((req.body || {}).disputeId || '').trim();
+    const reason = String((req.body || {}).reason || '').trim().slice(0, 500);
+    if (bureau == null || !bureau) return res.status(400).json({ error: 'Name the bureau as Equifax, Experian, or TransUnion.' });
+    if (!disputeId || !reason.includes(disputeId)) return res.status(400).json({ error: 'The reason must name the dispute that was mailed again after the cancellation window.' });
+    const ws = workspace();
+    const named = (ws.disputes || []).find(d => d && d.id === disputeId && d.clientId === c.id);
+    if (!named) return res.status(400).json({ error: 'That dispute is not on this client.' });
+    const namedBureaus = (named.items || []).map(it => it && bureauEnum(it.bureau)).filter(Boolean);
+    if (bureauEnum(named.recipient)) namedBureaus.push(bureauEnum(named.recipient));
+    if (!namedBureaus.includes(bureau)) return res.status(400).json({ error: 'That dispute is not for this bureau.' });
+    const end = windowEndDay(c);
+    const namedMailed = recordedDay(named.serverSentAt);
+    if (!end || !namedMailed || namedMailed <= end) return res.status(409).json({ error: 'That dispute must have been mailed after the cancellation window.' });
+    const recordedResult = (item) => item && (item.result === 'deleted' || item.result === 'corrected');
+    const heldItems = [];
+    for (const dispute of ws.disputes || []) {
+      if (!dispute || dispute.clientId !== c.id || dispute.id === named.id) continue;
+      for (const item of dispute.items || []) if (recordedResult(item) && item.resultRecordedOnHold && bureauEnum(item.bureau) === bureau) heldItems.push({ dispute, item });
+    }
+    for (const tomb of ws.mailedDisputeTombstones || []) {
+      if (!tomb || tomb.clientId !== c.id) continue;
+      for (const item of tomb.items || []) if (recordedResult(item) && item.resultRecordedOnHold && bureauEnum(item.bureau) === bureau) heldItems.push({ dispute: tomb, item });
+    }
+    const heldForClear = heldItems.map(row => row.item);
+    if (heldItems.length && !citesHeldAccount(named, heldForClear)) return res.status(400).json({ error: 'That dispute must cite the account that was recorded during the hold.' });
+    const confirmCreditor = (req.body || {}).confirmCreditor === true;
+    if (heldItems.length && !confirmCreditor && !citesHeldCreditor(named, heldForClear)) return res.status(400).json({ error: 'That dispute must cite the same creditor, or the owner must confirm it.' });
+    const causeDays = heldItems.map(row => recordedDay(row.dispute.serverSentAt)).filter(Boolean);
+    const holdRow = (ws.heldOutcomes || []).find(item => item && item.key === holdKey(c.id, bureau));
+    if (!causeDays.length && holdRow) {
+      const at = recordedDay(holdRow.at);
+      if (at) causeDays.push(at);
+    }
+    const cause = causeDays.slice().sort()[0] || '';
+    if (!cause || namedMailed <= cause) return res.status(409).json({ error: 'That dispute must have been mailed after the dispute that caused the hold.' });
+    const open = (ws.disputes || []).filter(d => d && d.clientId === c.id && ((d.items || []).some(it => it && bureauEnum(it.bureau) === bureau) || bureauEnum(d.recipient) === bureau));
+    for (const dispute of open) {
+      const mailed = recordedDay(dispute.serverSentAt);
+      if (!mailed || mailed <= end) return res.status(409).json({ error: 'Every open dispute for this bureau must have been mailed after the cancellation window.' });
+      const resultDays = (dispute.items || []).filter(it => it && it.result).map(it => recordedDay(it.serverResultAt)).filter(Boolean);
+      if ((dispute.items || []).some(it => it && it.result && !recordedDay(it.serverResultAt))) return res.status(409).json({ error: 'Every result for this bureau needs a date after the cancellation window.' });
+      if (resultDays.some(day => day <= end || day < mailed)) return res.status(409).json({ error: 'Every result date must be after the cancellation window and on or after the mailed date.' });
+    }
+    ws.heldOutcomes = Array.isArray(ws.heldOutcomes) ? ws.heldOutcomes : [];
+    const row = ws.heldOutcomes.find(item => item && item.key === holdKey(c.id, bureau));
+    if (!row || !row.onHold || row.cleared) return res.status(409).json({ error: 'No hold is recorded for that bureau.' });
+    row.onHold = false;
+    row.cleared = true;
+    row.clearedAt = new Date().toISOString();
+    row.clearedBy = req.user.email;
+    row.clearReason = reason;
+    db.audit({ actor: req.user.email, action: 'bureau.hold.clear', detail: JSON.stringify({ clientId: c.id, bureau, reason, confirmCreditor }) });
+    commitWorkspace(req.user.email, 'bureau.hold.clear', c.id);
+    res.json({ ok: true, bureau });
+  });
+  function holdBureaus(dispute) {
+    const found = [];
+    const add = (value) => {
+      const bureau = bureauEnum(value);
+      if (bureau && !found.includes(bureau)) found.push(bureau);
     };
+    for (const item of (dispute && dispute.items) || []) if (item) add(item.bureau);
+    add(dispute && dispute.recipient);
+    return found;
+  }
+  function placeBureauHold(ws, clientId, bureau, at, reason) {
+    ws.heldOutcomes = Array.isArray(ws.heldOutcomes) ? ws.heldOutcomes : [];
+    const key = holdKey(clientId, bureau);
+    const prior = ws.heldOutcomes.find(row => row && row.key === key);
+    if (prior && prior.cleared) return;
+    if (prior) {
+      prior.onHold = true;
+      prior.reason = prior.reason || reason;
+      if (!recordedDay(prior.at) || (at && at < prior.at)) prior.at = at || prior.at || '';
+      return;
+    }
+    ws.heldOutcomes.push({ key, clientId: String(clientId), bureau, at: at || '', onHold: true, reason, cleared: false, clearedAt: null, clearedBy: null, clearReason: '' });
+  }
+  app.post('/api/disputes/:id/legacy-mailed', need('owner'), (req, res) => {
+    const ws = workspace();
+    ws.mailedDisputeTombstones = Array.isArray(ws.mailedDisputeTombstones) ? ws.mailedDisputeTombstones : [];
+    const dispute = (ws.disputes || []).find(row => row && row.id === req.params.id);
+    const tombstone = ws.mailedDisputeTombstones.find(row => row && row.id === req.params.id && !row.retired && !recordedDay(row.serverSentAt));
+    const target = dispute || tombstone;
+    if (!target) return res.status(404).json({ error: 'Dispute not found' });
+    if (dispute && !wasSent(dispute)) return res.status(409).json({ error: 'Only a mailed dispute can be reviewed here.' });
+    if (recordedDay(target.serverSentAt)) return res.status(409).json({ error: 'This dispute already has a server mailed date.' });
+    const reason = String((req.body || {}).reason || '').trim().slice(0, 500);
+    if (!reason) return res.status(400).json({ error: 'A reason is required.' });
+    const retire = (req.body || {}).retire === true;
+    if (retire) {
+      if (tombstone && !dispute) {
+        tombstone.retired = true;
+        tombstone.retiredAt = new Date().toISOString();
+        tombstone.retiredBy = req.user.email;
+        tombstone.reason = reason;
+        for (const item of tombstone.items || []) if (item) item.resultRecordedOnHold = true;
+      } else {
+        ws.mailedDisputeTombstones.push({
+          id: dispute.id,
+          clientId: dispute.clientId || '',
+          serverSentAt: '',
+          retired: true,
+          retiredAt: new Date().toISOString(),
+          retiredBy: req.user.email,
+          reason,
+          items: (dispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: true, result: it.result || '' }))
+        });
+        ws.disputes = ws.disputes.filter(row => row && row.id !== dispute.id);
+      }
+      db.audit({ actor: req.user.email, action: 'dispute.legacy_retire', detail: JSON.stringify({ disputeId: target.id, clientId: target.clientId || '', reason }) });
+      commitWorkspace(req.user.email, 'dispute.legacy_retire', target.id);
+      return res.json({ ok: true, retired: true });
+    }
+    const mailed = recordedDay((req.body || {}).mailedAt);
+    if (!mailed) return res.status(400).json({ error: 'Name the mailed date as YYYY-MM-DD.' });
+    if (mailed > todayEtYmd()) return res.status(400).json({ error: 'The mailed date cannot be after today.' });
+    const typedDays = [recordedDay(target.sentAt), recordedDay(target.sentDate)].filter(Boolean).sort();
+    const earliestTyped = typedDays[0] || '';
+    if (earliestTyped && mailed > earliestTyped) return res.status(409).json({ error: 'The mailed date cannot be later than the typed mailed date.' });
+    const client = (ws.clients || []).find(row => row && row.id === target.clientId);
+    const end = windowEndDay(client);
+    const signed = client && client.onboarding ? recordedDay(client.onboarding.contractSignedAt || client.onboarding.contractSignedAtTs) : '';
+    const inside = !!(end && mailed <= end);
+    const beforeContract = !!(signed && mailed < signed);
+    const afterWindow = !!(end && mailed > end && !beforeContract);
+    let held = !client || client.kind === 'business' ? false : (!end || inside || beforeContract);
+    if (!earliestTyped && client && client.kind !== 'business') held = !afterWindow;
+    if (!earliestTyped && !client) held = true;
+    target.serverSentAt = mailed;
+    if (held) {
+      target.legacyMailedUnbillable = true;
+      for (const item of target.items || []) if (item && (item.result === 'deleted' || item.result === 'corrected')) item.resultRecordedOnHold = true;
+      for (const bureau of holdBureaus(target)) placeBureauHold(ws, target.clientId, bureau, mailed, beforeContract && !inside ? 'before-contract' : 'mailed');
+    }
+    db.audit({ actor: req.user.email, action: 'dispute.legacy_mailed', detail: JSON.stringify({ disputeId: target.id, clientId: target.clientId || '', mailedAt: mailed, held, reason, sentAt: target.sentAt || '', sentDate: target.sentDate || '' }) });
+    commitWorkspace(req.user.email, 'dispute.legacy_mailed', target.id);
+    res.json({ ok: true, mailedAt: mailed, held });
+  });
+  function croaClient(c) { return !!(c && c.kind !== 'business'); }
+  function signingStatus(c, pack) {
+    if (!croaClient(c)) return { code: '', message: '' };
+    return enrollmentStatus(c, pack, { requireAddress: true });
+  }
+  function documentsFor(c) {
+    return personalizeCroaDocs(croaDocsOverride || croaDocs(), templateClient(c), now());
+  }
+  function alreadySigned(c) {
+    const o = (c && c.onboarding) || {};
+    return !!(o.disclosureSignedAt || o.contractSignedAt || o.contractSignedAtTs);
   }
   function documentsForPortal(c) {
     const docs = documentsFor(c);
-    if (c.signupSource !== 'self') return docs;
-    if (!mailingAddress(c)) return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
-    const consented = !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt;
+    if (!croaClient(c)) return docs;
+    if (c.signupSource === 'self' && !mailingAddress(c)) return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
+    const o = c.onboarding || {};
+    const consented = (!!o.esignConsentAt && !o.esignWithdrawnAt) || alreadySigned(c);
     if (consented) return docs;
     return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
   }
@@ -527,11 +1504,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const o = ws.offers.find(x => x.id === r.offerId) || {};
       return { id: r.id, name: o.name, category: o.category, why: r.note || o.note, url: `/go/${r.id}`, status: r.status };
     });
-    const win = c.signupSource === 'self' ? selfWindow(c) : null;
+    const win = selfWindow(c);
     const disclosureSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'disclosure');
     const contractSig = (ws.signatures || []).find(s => s.clientId === c.id && s.doc === 'contract');
     const pack = documentsFor(c);
-    const block = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
+    const block = signingStatus(c, pack);
     res.json({
       client: { name: c.name, kind: c.kind, status: c.status, address: c.address || '', city: c.city || '', state: c.state || '', zip: c.zip || '' },
       company: { name: company().name, phone: c.status === 'active' ? company().phone : '', email: company().email },
@@ -571,7 +1548,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
-    if (c.signupSource !== 'self') return res.status(400).json({ error: 'This address step is for self-signup accounts.' });
+    if (!croaClient(c)) return res.status(400).json({ error: 'This address step is for personal clients.' });
     if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed.' });
     const b = req.body || {};
     const next = {
@@ -583,6 +1560,18 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const draft = Object.assign({}, c, next);
     if (!mailingAddress(draft)) return res.status(400).json({ error: enrollmentStatus(draft, {}).message });
     Object.assign(c, next);
+    const snapName = safeLine(c.mailName || c.name, 80);
+    const snapAddress = safeLine(mailingAddress(c), 160);
+    c.mailAddress = snapAddress;
+    if (snapshotProblem(snapName, snapAddress)) {
+      c.mailNeedsConfirm = true;
+      c.mailSnapshotConfirmed = false;
+    } else {
+      c.mailName = snapName;
+      c.mailSnapshotAt = new Date().toISOString();
+      c.mailSnapshotConfirmed = true;
+      c.mailNeedsConfirm = false;
+    }
     c.onboarding = c.onboarding || {};
     invalidateContractView(c.onboarding);
     activity(`${c.name} saved a New Jersey mailing address`, c.id);
@@ -595,7 +1584,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
     const pack = documentsFor(c);
-    const status = c.signupSource === 'self' ? enrollmentStatus(c, pack) : { code: '', message: '' };
+    const status = signingStatus(c, pack);
     if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
     c.onboarding = c.onboarding || {};
     c.onboarding.contractViewedAt = new Date().toISOString();
@@ -623,8 +1612,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
     const pack = documentsFor(c);
-    if (c.signupSource === 'self') {
-      const status = enrollmentStatus(c, pack);
+    if (croaClient(c)) {
+      const status = signingStatus(c, pack);
       if (status.code && status.code !== 'review') return res.status(503).json({ error: status.message });
     }
     const { agree, code } = req.body || {};
@@ -676,24 +1665,23 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!agree || String(typedName || '').trim().toLowerCase() !== String(c.name).trim().toLowerCase()) return res.status(400).json({ error: `Type your full name exactly as "${c.name}" and check the box to sign.` });
     c.onboarding = c.onboarding || {};
     const pack = documentsFor(c);
-    if (c.signupSource === 'self') {
-      const status = enrollmentStatus(c, pack);
+    if (croaClient(c)) {
+      const status = signingStatus(c, pack);
       if (status.code === 'address' || status.code === 'terms' || status.code === 'closed') return res.status(503).json({ error: status.message });
       if (doc === 'contract' && status.code === 'review') return res.status(400).json({ error: status.message });
     }
     if (c.signupSource === 'self' && !signupOn) return res.status(403).json({ error: 'Self-signup signing is turned off.' });
-    if (c.signupSource === 'self' && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
-    if (c.signupSource === 'self' && c.onboarding.esignWithdrawnAt) return res.status(400).json({ error: 'Electronic consent was withdrawn. Ask for paper copies. There is no fee.' });
-    if (doc === 'disclosure' && c.signupSource === 'self' && !c.onboarding.disclosureViewedAt) return res.status(400).json({ error: 'Open the separate Consumer Credit File Rights statement before signing it.' });
-    if (doc === 'contract' && c.signupSource === 'self' && !(workspace().signatures || []).some(s => s.clientId === c.id && s.doc === 'disclosure')) return res.status(400).json({ error: 'Sign the separate Consumer Credit File Rights statement before the contract.' });
-    if (doc === 'contract' && c.signupSource !== 'self' && !c.onboarding.disclosureSignedAt) return res.status(400).json({ error: 'Please acknowledge the Consumer Credit File Rights statement first.' });
+    if (croaClient(c) && !c.onboarding.esignConsentAt) return res.status(400).json({ error: 'Consent to electronic records is required before any document is signed.' });
+    if (croaClient(c) && c.onboarding.esignWithdrawnAt) return res.status(400).json({ error: 'Electronic consent was withdrawn. Ask for paper copies. There is no fee.' });
+    if (doc === 'disclosure' && croaClient(c) && !c.onboarding.disclosureViewedAt) return res.status(400).json({ error: 'Open the separate Consumer Credit File Rights statement before signing it.' });
+    if (doc === 'contract' && croaClient(c) && !(workspace().signatures || []).some(s => s.clientId === c.id && s.doc === 'disclosure')) return res.status(400).json({ error: 'Sign the separate Consumer Credit File Rights statement before the contract.' });
     if ((workspace().signatures || []).some(s => s.clientId === c.id && s.doc === doc)) return res.status(409).json({ error: 'Already signed' });
     const atDate = now();
     const at = atDate.toISOString();
     let text = pack[doc];
     let pdfSha = null;
     let pdfId = null;
-    if (doc === 'contract' && c.signupSource === 'self') {
+    if (doc === 'contract' && croaClient(c)) {
       const win = cancellationWindow(at, atDate);
       const built = buildContractPackagePdf({ contract: stampContractSignedAt(pack.contract, atDate), notice: stampCancellationDeadline(pack.cancellation, atDate), clientName: c.name, signedLabel: formatDocumentTimeEt(atDate), deadlineLabel: formatDeadlineDateEt(win.deadlineInstant) });
       pdfSha = built.sha256;
@@ -741,6 +1729,21 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ ok: true, signature: sig });
   });
 
+  app.get('/api/clients/:id/croa-documents', need('owner', 'staff'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    const pack = documentsFor(c);
+    res.json({ disclosure: pack.disclosure, contract: pack.contract, cancellation: pack.cancellation, contractPdfId: (c.onboarding || {}).contractPdfId || null });
+  });
+  app.get('/api/clients/:id/signed-agreement', need('owner', 'staff'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    const pdfId = c && c.onboarding && c.onboarding.contractPdfId;
+    if (!pdfId) return res.status(404).json({ error: 'Not found' });
+    const file = path.join(filesDir, 'signed', pdfId + '.pdf');
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Not found' });
+    res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
+  });
+
   app.get('/api/portal/signed/:id', need('client'), (req, res) => {
     if (!portalVerified(req, res)) return;
     const c = portalClient(req);
@@ -750,13 +1753,260 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
   });
 
+  function todayEtYmd(at = now()) {
+    return etYmd(at);
+  }
+  function calendarDaysBetween(earlier, later) {
+    const [y1, m1, d1] = earlier.split('-').map(Number);
+    const [y2, m2, d2] = later.split('-').map(Number);
+    return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
+  }
+  function receivedOnOrBeforeToday(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split('-').map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return false;
+    return value <= todayEtYmd();
+  }
+  function normalizeClientName(value) {
+    let raw = String(value || '').trim();
+    const suffixes = new Set(['llc', 'inc', 'co', 'corp', 'ltd']);
+    const comma = raw.indexOf(',');
+    if (comma > 0) {
+      const last = raw.slice(0, comma).trim();
+      const rest = raw.slice(comma + 1).trim();
+      const restWords = rest.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
+      const suffixOnly = restWords.length > 0 && restWords.every(word => suffixes.has(word));
+      if (last && rest && !suffixOnly) raw = rest + ' ' + last;
+    }
+    const words = raw.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(w => w && !suffixes.has(w));
+    if (words.length <= 2) return words.join(' ');
+    return [words[0]].concat(words.slice(1, -1).filter(w => w.length > 1), words[words.length - 1]).join(' ');
+  }
+  function normalizeClientEmail(value) {
+    const email = String(value || '').trim().toLowerCase();
+    const at = email.lastIndexOf('@');
+    if (at < 1) return email;
+    let local = email.slice(0, at);
+    let domain = email.slice(at + 1);
+    const plus = local.indexOf('+');
+    if (plus >= 0) local = local.slice(0, plus);
+    if (domain === 'gmail.com' || domain === 'googlemail.com') {
+      local = local.replace(/\./g, '');
+      domain = 'gmail.com';
+    }
+    return local + '@' + domain;
+  }
+  const SERVER_TASK_KINDS = new Set(['postmark_needs_owner_review', 'possible_duplicate']);
+  function restoreServerTasks(before, data) {
+    const prior = ((before && before.tasks) || []).filter(t => t && SERVER_TASK_KINDS.has(t.kind));
+    const ownedIds = new Set(prior.map(t => t && t.id).filter(Boolean));
+    const incoming = Array.isArray(data.tasks) ? data.tasks : [];
+    const ordinary = incoming.filter(t => t && !SERVER_TASK_KINDS.has(t.kind) && !ownedIds.has(t.id));
+    data.tasks = prior.map(t => JSON.parse(JSON.stringify(t))).concat(ordinary);
+  }
+  const INVOICE_STATUSES = new Set(['draft', 'issued', 'paid', 'void']);
+  function changedInvoiceKeys(prev, inv) {
+    const keys = new Set([...Object.keys(prev || {}), ...Object.keys(inv || {})]);
+    const changed = [];
+    for (const key of keys) if (invoiceField(prev, key) !== invoiceField(inv, key)) changed.push(key);
+    return changed;
+  }
+  function mintPayToken(invoices) {
+    const used = new Set();
+    for (const inv of invoices || []) if (inv && inv.payToken) used.add(String(inv.payToken));
+    let token = '';
+    do { token = crypto.randomBytes(32).toString('base64url'); } while (used.has(token));
+    return token;
+  }
+  function guardIssuedInvoices(before, data, req) {
+    const audits = [];
+    const refuseInv = (status, error, id, field) => {
+      const fields = [...new Set((Array.isArray(field) ? field : [field || '']).filter(name => name || name === ''))];
+      return { status, error, refused: fields.map(name => ({ key: 'invoices', id, field: name || '', reason: error })) };
+    };
+    const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
+    for (const inv of (data && data.invoices) || []) {
+      if (!inv) continue;
+      const prev = prior.get(inv.id);
+      const leavingBilled = prev && (prev.status === 'issued' || prev.status === 'paid') && inv.status !== 'issued' && inv.status !== 'paid';
+      if (!INVOICE_STATUSES.has(inv.status) && !leavingBilled) return refuseInv(400, 'Invoice status must be draft, issued, paid, or void.', inv.id, 'status');
+      if (inv.status === 'draft') delete inv.payToken;
+      if (!prev || (prev.status !== 'paid' && prev.status !== 'void')) {
+        delete inv.transId;
+        delete inv.paidVia;
+        if (inv.status === 'paid') {
+          const service = String(inv.serviceCompletedAt || '').slice(0, 10);
+          const paidOn = today();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(service) && paidOn < service) return refuseInv(409, 'The paid date cannot be before the service was completed.', inv.id, 'paidAt');
+          inv.paidAt = paidOn;
+        } else delete inv.paidAt;
+      } else {
+        for (const key of ['paidAt', 'transId', 'paidVia']) {
+          if (prev[key] == null || prev[key] === '') delete inv[key];
+          else inv[key] = prev[key];
+        }
+      }
+    }
+    const next = new Map(((data && data.invoices) || []).filter(Boolean).map(i => [i.id, i]));
+    for (const prev of (before && before.invoices) || []) {
+      if (!prev) continue;
+      const inv = next.get(prev.id);
+      if (prev.status === 'void') {
+        if (!inv) return refuseInv(409, 'A voided invoice cannot be deleted.', prev.id, '');
+        const changed = changedInvoiceKeys(prev, inv);
+        if (changed.includes('status')) return refuseInv(409, 'A voided invoice cannot be reopened.', prev.id, changed);
+        if (changed.includes('voidReason')) return refuseInv(409, 'The void reason cannot be changed.', prev.id, changed);
+        if (changed.length) return refuseInv(409, 'A voided invoice cannot be changed.', prev.id, changed);
+        continue;
+      }
+      if (prev.status !== 'issued' && prev.status !== 'paid') continue;
+      if (!inv) return refuseInv(409, 'An issued or paid invoice cannot be deleted.', prev.id, '');
+      if (prev.status === 'paid' && inv.status === 'issued') return refuseInv(409, 'A paid invoice can only be voided.', prev.id, 'status');
+      const leaving = inv.status !== 'issued' && inv.status !== 'paid';
+      if (leaving && req.user.role !== 'owner') return refuseInv(403, 'Only the owner can void an issued or paid invoice.', prev.id, 'status');
+      const markingPaid = prev.status === 'issued' && inv.status === 'paid';
+      const allowed = new Set();
+      if (markingPaid) { allowed.add('status'); allowed.add('paidAt'); }
+      if (leaving) { allowed.add('status'); allowed.add('voidReason'); }
+      if (!prev.payToken && inv.status === 'issued') allowed.add('payToken');
+      const changed = changedInvoiceKeys(prev, inv).filter(key => !allowed.has(key));
+      if (changed.length) return refuseInv(409, prev.status === 'paid' ? 'The invoice is locked once it is paid.' : 'The invoice is locked once it is issued.', prev.id, changed);
+      if (markingPaid) inv.paidAt = today();
+      if (prev.payToken) inv.payToken = prev.payToken;
+      if (!leaving) continue;
+      if (!String(inv.voidReason || '').trim()) return refuseInv(400, 'A reason is required to void this invoice.', prev.id, 'voidReason');
+      if (prev.voidReason && String(inv.voidReason) !== String(prev.voidReason)) return refuseInv(409, 'The void reason cannot be changed.', prev.id, 'voidReason');
+      inv.status = 'void';
+      audits.push({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: prev.id, clientId: prev.clientId, reason: String(inv.voidReason).trim() }) });
+    }
+    for (const inv of (data && data.invoices) || []) {
+      if (!inv || inv.status === 'draft') continue;
+      const prev = prior.get(inv.id);
+      const kept = prev && prev.payToken && (prev.status === 'issued' || prev.status === 'paid' || prev.status === 'void');
+      if (kept) { inv.payToken = prev.payToken; continue; }
+      if (inv.status !== 'issued') { delete inv.payToken; continue; }
+      const others = (data.invoices || []).filter(other => other && other !== inv && other.payToken);
+      inv.payToken = mintPayToken(others);
+    }
+    return { audits };
+  }
+  app.post('/api/clients/:id/cancel', need('owner', 'staff'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    if (c.kind === 'business') return res.status(400).json({ error: 'Business clients are outside this cancellation notice.' });
+    c.onboarding = c.onboarding || {};
+    if (c.onboarding.cancelledAt) return res.status(409).json({ error: 'The cancellation is already recorded.' });
+    const method = String((req.body || {}).method || '');
+    const receivedAt = String((req.body || {}).receivedAt || '');
+    if (!['mail', 'email', 'other'].includes(method)) return res.status(400).json({ error: 'Say how the written notice arrived: mail, email, or other.' });
+    if (!receivedOnOrBeforeToday(receivedAt)) return res.status(400).json({ error: 'Enter the date the written notice was received. It cannot be after today.' });
+    const signedDay = String(c.onboarding.contractSignedAt || c.onboarding.contractSignedAtTs || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(signedDay) && receivedAt < signedDay) return res.status(400).json({ error: 'The notice cannot be received before the contract was signed.' });
+    const postmarkAt = String((req.body || {}).postmarkAt || (req.body || {}).sentAt || '').trim();
+    if (postmarkAt && !receivedOnOrBeforeToday(postmarkAt)) return res.status(400).json({ error: 'The postmark or sent date cannot be after today.' });
+    if (postmarkAt && postmarkAt > receivedAt) return res.status(400).json({ error: 'The postmark or sent date cannot be after the date the notice was received.' });
+    if (postmarkAt && /^\d{4}-\d{2}-\d{2}$/.test(signedDay) && postmarkAt < signedDay) return res.status(400).json({ error: 'The postmark or sent date cannot be before the contract was signed.' });
+    const postmarkEarly = !!(postmarkAt && calendarDaysBetween(postmarkAt, receivedAt) > 10);
+    const pendingReview = postmarkEarly && req.user.role !== 'owner';
+    const signedAt = c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt;
+    const compared = postmarkAt && postmarkAt < receivedAt ? postmarkAt : receivedAt;
+    let timely = null;
+    if (!pendingReview && signedAt) timely = compared <= cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+    c.onboarding.cancelledAt = receivedAt;
+    c.onboarding.cancelledAtTs = new Date().toISOString();
+    c.onboarding.cancellationMethod = method;
+    c.onboarding.cancellationReceivedAt = receivedAt;
+    c.onboarding.cancellationPostmarkAt = postmarkAt || null;
+    c.onboarding.cancellationTimely = pendingReview ? null : timely;
+    c.onboarding.postmarkReview = pendingReview ? 'postmark_needs_owner_review' : (postmarkEarly ? 'confirmed' : null);
+    c.status = 'cancelled';
+    if (pendingReview) {
+      workspace().tasks = workspace().tasks || [];
+      workspace().tasks.push({ id: uid(), clientId: c.id, title: `Review the postmark for ${c.name}. Confirm or reject it before timely or late is decided.`, due: today(), done: false, createdAt: new Date().toISOString(), kind: 'postmark_needs_owner_review' });
+    }
+    const refund = pendingReview ? false : settleTimelyCancellation(c, req.user.email, timely);
+    db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt, postmarkAt: postmarkAt || null, timely, postmarkReview: c.onboarding.postmarkReview, refund }) });
+    if (postmarkEarly && !pendingReview) db.audit({ actor: req.user.email, action: 'client.cancel.postmark', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, receivedAt, postmarkAt }) });
+    activity(`${c.name} cancelled by ${method}. ${pendingReview ? 'Postmark needs owner review.' : timely ? 'Timely.' : 'Late.'}${refund ? ' Refund task created.' : ''}`, c.id);
+    commitWorkspace(req.user.email, 'client.cancel', c.id);
+    res.json({ ok: true, cancelledAt: receivedAt, method, timely, postmarkReview: c.onboarding.postmarkReview, refundTask: refund });
+  });
+  function cancellationIsTimely(c, compared) {
+    const signedAt = c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt;
+    if (!signedAt) return false;
+    return compared <= cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+  }
+  function settleTimelyCancellation(c, actor, timely) {
+    if (!timely) return false;
+    const issued = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'issued');
+    for (const inv of issued) {
+      inv.status = 'void';
+      inv.voidReason = 'timely CROA cancellation';
+      db.audit({ actor, action: 'invoice.void', detail: JSON.stringify({ user: actor, at: new Date().toISOString(), invoiceId: inv.id, clientId: c.id, reason: 'timely CROA cancellation' }) });
+    }
+    const paid = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'paid');
+    if (!paid.length) return false;
+    workspace().tasks = workspace().tasks || [];
+    if (!workspace().tasks.some(t => t && t.clientId === c.id && /Refund/.test(t.title || '') && /paid/.test(t.title || ''))) {
+      workspace().tasks.push({ id: uid(), clientId: c.id, title: `Refund ${c.name} for an invoice that was paid. The cancellation was timely.`, due: today(), done: false, createdAt: new Date().toISOString() });
+    }
+    return true;
+  }
+  app.post('/api/clients/:id/cancel/postmark-review', need('owner'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    c.onboarding = c.onboarding || {};
+    if (c.onboarding.postmarkReview !== 'postmark_needs_owner_review') return res.status(409).json({ error: 'This cancellation has no postmark waiting for review.' });
+    const decision = String((req.body || {}).decision || '');
+    if (decision !== 'confirm' && decision !== 'reject') return res.status(400).json({ error: 'Confirm or reject the postmark.' });
+    const receivedAt = c.onboarding.cancellationReceivedAt;
+    const postmarkAt = c.onboarding.cancellationPostmarkAt;
+    const compared = decision === 'confirm' && postmarkAt && postmarkAt < receivedAt ? postmarkAt : receivedAt;
+    const timely = cancellationIsTimely(c, compared);
+    c.onboarding.cancellationTimely = timely;
+    c.onboarding.postmarkReview = decision === 'confirm' ? 'confirmed' : 'rejected';
+    const refund = settleTimelyCancellation(c, req.user.email, timely);
+    for (const task of workspace().tasks || []) {
+      if (task && task.clientId === c.id && task.kind === 'postmark_needs_owner_review' && !task.done) task.done = true;
+    }
+    db.audit({ actor: req.user.email, action: 'client.cancel.postmark_review', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, decision, receivedAt, postmarkAt, timely, refund }) });
+    activity(`${req.user.email} ${decision === 'confirm' ? 'confirmed' : 'rejected'} the postmark for ${c.name}. ${timely ? 'Timely.' : 'Late.'}`, c.id);
+    commitWorkspace(req.user.email, 'client.cancel.postmark_review', c.id);
+    res.json({ ok: true, decision, timely, refundTask: refund });
+  });
+  app.post('/api/tasks/:id/close', need('owner'), (req, res) => {
+    const task = (workspace().tasks || []).find(t => t && t.id === req.params.id);
+    if (!task || task.kind !== 'possible_duplicate') return res.status(404).json({ error: 'Close that task from its own review.' });
+    task.done = true;
+    db.audit({ actor: req.user.email, action: 'task.close', detail: JSON.stringify({ id: task.id, kind: task.kind, clientId: task.clientId }) });
+    commitWorkspace(req.user.email, 'task.close', task.id);
+    res.json({ ok: true });
+  });
+  app.post('/api/clients/:id/cancel/timeliness', need('owner'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    c.onboarding = c.onboarding || {};
+    if (!c.onboarding.cancelledAt) return res.status(409).json({ error: 'No cancellation is recorded.' });
+    if (c.onboarding.postmarkReview === 'postmark_needs_owner_review') return res.status(409).json({ error: 'Review the postmark before changing timeliness.' });
+    if (c.onboarding.cancellationTimely !== false) return res.status(409).json({ error: 'Only a late cancellation can be corrected to timely.' });
+    const reason = String((req.body || {}).reason || '').trim();
+    if (!reason) return res.status(400).json({ error: 'A reason is required to correct a late cancellation to timely.' });
+    c.onboarding.cancellationTimely = true;
+    const refund = settleTimelyCancellation(c, req.user.email, true);
+    db.audit({ actor: req.user.email, action: 'client.cancel.timeliness', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, from: 'late', to: 'timely', reason, refund }) });
+    activity(`${req.user.email} corrected ${c.name}'s cancellation from late to timely. ${reason}`, c.id);
+    commitWorkspace(req.user.email, 'client.cancel.timeliness', c.id);
+    res.json({ ok: true, timely: true, refundTask: refund });
+  });
+
   app.post('/api/portal/cancel', need('client'), (req, res) => {
     if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
     c.onboarding = c.onboarding || {};
     if (c.onboarding.cancelledAt) return res.json({ ok: true });
-    if (c.signupSource === 'self' && (c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt)) {
+    if (croaClient(c) && (c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt)) {
       const win = cancellationWindow(c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt, new Date());
       if (!win.open) return res.status(400).json({ error: 'The 3-business-day cancellation window has ended.' });
     }
@@ -870,7 +2120,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
     const { clientId, history } = req.body || {};
-    if (clientId && selfSignupOnHold(clientId)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
+    if (clientId && clientServiceOnHold(workspace().clients.find(x => x.id === clientId), undefined, workspace().signatures)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
     if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });
@@ -885,9 +2135,48 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
   });
   app.post('/api/messages', need('owner', 'staff'), async (req, res) => {
-    const { clientId, channel, subject, body } = req.body || {};
+    const { clientId, channel, template } = req.body || {};
+    let subject = (req.body || {}).subject;
+    let body = (req.body || {}).body;
+    let html = '';
     const c = workspace().clients.find(x => x.id === clientId);
     if (!c) return res.status(404).json({ error: 'Client not found' });
+    const held = clientServiceOnHold(c, undefined, workspace().signatures);
+    if (channel === 'sms' && (template === 'disclosure-1679c' || template === 'cancellation-1679e')) {
+      return res.status(409).json({ error: 'This notice can be sent by email or the portal only, not by text message.' });
+    }
+    if (held && c.mailNeedsConfirm && !STATUTORY_HELD_TEMPLATES.includes(template)) return res.status(409).json({ error: 'Confirm this client\'s name and address before sending.' });
+    if (held) {
+      const supplied = String(subject || '').trim() || String(body || '').trim() || String((req.body || {}).purpose || '').trim();
+      if (supplied || !HELD_TEMPLATE_IDS.includes(template)) return res.status(409).json({ error: 'This client is on hold. Only a server template can be sent, with no message text.' });
+      let link = '';
+      const admin = String((req.body || {}).admin || '');
+      if (template === 'account-admin') {
+        if (admin === 'login') link = publicOrigin.replace(/\/$/, '') + '/portal';
+        else if (admin === 'invite') {
+          const token = crypto.randomBytes(24).toString('base64url');
+          D().invites.push({ hash: sha(token), role: 'client', clientId: c.id, referralId: null, name: c.name || '', email: String(c.email || '').toLowerCase(), expiresAt: Date.now() + INVITE_TTL_MS, usedAt: null });
+          db.audit({ actor: req.user.email, action: 'invite.create', detail: `client ${c.id} ${publicOrigin}` });
+          db.persist();
+          link = publicOrigin.replace(/\/$/, '') + '/portal#invite=' + token;
+        } else if ((admin === 'reset' || admin === 'verify') && auth) {
+          const user = D().users.find(row => row && row.role === 'client' && row.clientId === c.id && !row.disabled);
+          if (user) link = auth.issuePortalLink(admin, user, publicOrigin);
+        }
+      }
+      const rendered = renderHeldMessage(template, clientForHeldTemplate(c, template), {
+        docs: croaDocsOverride || croaDocs(),
+        signatures: workspace().signatures || [],
+        invoices: workspace().invoices || [],
+        admin,
+        link,
+        outcome: (req.body || {}).outcome
+      });
+      if (rendered.error) return res.status(409).json({ error: rendered.error });
+      subject = rendered.subject;
+      body = rendered.text;
+      html = rendered.html || '';
+    }
     if (!String(body || '').trim()) return res.status(400).json({ error: 'Message is empty' });
     const cfg = commsConfig();
     if (!cfg[channel]) return res.status(501).json({ error: `${channel === 'sms' ? 'SMS' : 'Email'} sending is not configured on the server` });
@@ -895,10 +2184,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const to = channel === 'sms' ? c.phone : c.email;
     if (!to) return res.status(400).json({ error: `Client has no ${channel === 'sms' ? 'phone number' : 'email'}` });
     try {
-      const providerId = channel === 'sms' ? await sendSms({ to, text: body }) : await sendEmail({ to, subject: subject || 'Update on your credit file', text: body });
+      const providerId = channel === 'sms' ? await sendSms({ to, text: body }) : await sendEmail({ to, subject: subject || 'Update on your credit file', text: body, html });
+      const loggedBody = String(body || '').replace(/https?:\/\/\S*#(invite|reset|verify)=\S+/gi, '[link]');
       const ws = workspace();
       ws.messages = ws.messages || [];
-      ws.messages.unshift({ id: uid(), clientId, channel, to, subject: subject || '', body, at: new Date().toISOString(), by: req.user.email, status: 'sent', providerId });
+      ws.messages.unshift({ id: uid(), clientId, channel, to, subject: subject || '', body: loggedBody, at: new Date().toISOString(), by: req.user.email, status: 'sent', providerId });
       commitWorkspace(req.user.email, 'message.send', `${channel} to ${clientId}`);
       res.json({ ok: true, version: D().workspaceVersion });
     } catch (e) { res.status(502).json({ error: e.message }); }
@@ -940,12 +2230,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function sendModel(res, held, body) { if (held) held.send(body); else res.json(body); }
   function failModel(res, held, e) { if (held) held.send({ error: aiMessage(e).error }); else aiError(res, e); }
   const SERVICE_HOLD = 'On hold until the contract is signed and the cancellation window ends.';
-  function selfSignupOnHold(id) {
-    const c = workspace().clients.find(x => x.id === id);
-    return !!(c && c.signupSource === 'self' && !selfSignupCleared(c));
+  function serviceOnHold(id) {
+    const ws = workspace();
+    return clientServiceOnHold((ws.clients || []).find(x => x.id === id), undefined, ws.signatures);
   }
   app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
-    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
+    if (serviceOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const doc = (workspace().documents || []).find(d => d.id === req.params.docId && d.clientId === req.params.id);
@@ -965,7 +2255,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     finally { scanningDocs.delete(doc.id); }
   });
   app.post('/api/clients/:id/scan-text', need('owner', 'staff'), async (req, res) => {
-    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
+    if (serviceOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     const text = String((req.body || {}).text || '');
@@ -989,7 +2279,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     finally { scanningDocs.delete(lockKey); }
   });
   app.post('/api/clients/:id/ai-plan', need('owner', 'staff'), async (req, res) => {
-    if (selfSignupOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
+    if (serviceOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly AI limit reached. Try again later.' });
     let held = null;
@@ -1079,7 +2369,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   async function autoScan(c, doc) {
     const ws = workspace();
     ws.pendingImports = ws.pendingImports || [];
-    if (c.signupSource === 'self' && !selfSignupCleared(c)) {
+    if (clientServiceOnHold(c, undefined, ws.signatures)) {
       ws.tasks.push({ id: uid(), clientId: c.id, title: `Credit report from ${c.name} is on hold until the cancellation window ends (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'report.uploaded.hold', doc.name);
       return;
@@ -1184,17 +2474,18 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function recipientAddressFor(d) { const b = Law.BUREAUS[d.recipient]; return b ? { name: b.name, address: b.address } : { name: d.recipient, address: d.recipientAddress || '' }; }
 
   app.post('/api/disputes/:id/mail', need('owner', 'staff'), async (req, res) => {
-    const key = secrets().lobKey;
-    if (!key) return res.status(501).json({ error: 'Online mailing is off. The owner can add a Lob API key in Settings → Print & mail.' });
     const ws = workspace();
     const d = ws.disputes.find(x => x.id === req.params.id);
     if (!d) return res.status(404).json({ error: 'Dispute not found' });
-    if (d.sentAt) return res.status(409).json({ error: 'Already mailed' });
     const c = ws.clients.find(x => x.id === d.clientId);
+    const mailHold = mailingBlocked(ws, d);
+    if (mailHold) return res.status(409).json({ error: mailHold });
+    const key = secrets().lobKey;
+    if (!key) return res.status(501).json({ error: 'Online mailing is off. The owner can add a Lob API key in Settings → Print & mail.' });
+    if (d.sentAt) return res.status(409).json({ error: 'Already mailed' });
     const letter = ws.letters.find(l => l.id === d.letterId);
     if (!c || !letter || !letter.text) return res.status(400).json({ error: 'Generate the letter first' });
     if (letter.status !== 'approved') return res.status(400).json({ error: 'Approve the letter (client confirmed every statement) before mailing' });
-    if (!Store.croaStatus(c).cleared || (c.signupSource === 'self' && !selfSignupCleared(c))) return res.status(400).json({ error: 'Blocked until onboarding and the cancellation period are complete' });
     const rc = recipientAddressFor(d);
     const to = parseAddress(rc.name, rc.address);
     if (!to) return res.status(400).json({ error: `Recipient address must end with “City, ST 12345”. Edit the recipient address for ${d.recipient}.` });
@@ -1320,28 +2611,76 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   });
 
   // ---------- online invoice payments ----------
-  const findInvoiceByToken = t => (workspace().invoices || []).find(i => i.payToken && i.payToken === t);
+  function invoicesSharingToken(token) {
+    const value = String(token || '');
+    if (!value) return [];
+    return (workspace().invoices || []).filter(i => i && i.payToken && String(i.payToken) === value);
+  }
+  function findInvoiceByToken(token) {
+    const matches = invoicesSharingToken(token);
+    if (matches.length !== 1) return null;
+    return matches[0];
+  }
+  function legacyInvoiceStatus(status) {
+    return status == null || status === '' || status === 'open';
+  }
+  // N40b is waiting on Fred. A paper-signed personal client with contract dates and no
+  // server signature rows keeps the previous croaStatus pay gate. Any electronic
+  // signature row stays on the server hold instead.
+  function isLegacyPaperPayClient(c, signatures) {
+    if (!c || c.kind === 'business' || c.signupSource === 'self') return false;
+    const o = c.onboarding || {};
+    if (!(o.contractSignedAt || o.contractSignedAtTs)) return false;
+    const rows = (signatures || []).filter(s => s && s.clientId === c.id && (s.doc === 'disclosure' || s.doc === 'contract'));
+    if (rows.length) return false;
+    return true;
+  }
+  function legacyPaperPayHold(c) {
+    const cs = Store.croaStatus(c);
+    return !!(cs.required && (!cs.cleared || cs.cancelled));
+  }
+  function invoicePaymentHeld(c, signatures) {
+    if (!c || c.kind === 'business') return false;
+    if (isLegacyPaperPayClient(c, signatures)) return legacyPaperPayHold(c);
+    return clientServiceOnHold(c, undefined, signatures);
+  }
   const payPage = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${htmlEsc(title)}</title><link rel="stylesheet" href="/css/app.css"></head><body style="background:var(--bg)"><main style="max-width:520px;margin:8vh auto;padding:0 16px"><section class="card"><div class="card-b stack">${body}</div></section></main></body></html>`;
+  const payRefused = (res, co) => res.status(409).send(payPage('Not payable yet', `<h1>This invoice can’t be paid online yet</h1><p class="muted">We only accept payment after the service has been completed and your cancellation period has ended. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
+  function payableInvoice(inv) {
+    if (!inv || inv.status === 'void' || inv.status === 'draft') return false;
+    if (inv.status === 'paid' || inv.status === 'issued') return true;
+    return legacyInvoiceStatus(inv.status);
+  }
   async function confirmPayment(inv) {
     const a = anet();
-    if (!a || inv.status === 'paid') return inv.status === 'paid';
-    const hit = await findPayment(a, inv);
+    if (!a || !inv || !inv.payToken) return !!(inv && inv.status === 'paid');
+    const matches = invoicesSharingToken(inv.payToken);
+    const current = matches.find(i => i.id === inv.id && i.clientId === inv.clientId && i.status === inv.status);
+    if (matches.length !== 1 || !current) return false;
+    if (current.status === 'paid') return true;
+    if (current.status !== 'issued' && !legacyInvoiceStatus(current.status)) return false;
+    const hit = await findPayment(a, current);
     if (!hit) return false;
-    Object.assign(inv, { status: 'paid', paidAt: today(), transId: hit.transId, paidVia: 'Authorize.net' });
-    activity(`Online payment received: $${Number(inv.amount).toFixed(2)} — ${inv.description}`, inv.clientId);
-    commitWorkspace('payment', 'invoice.paid', inv.id);
+    Object.assign(current, { status: 'paid', paidAt: today(), transId: hit.transId, paidVia: 'Authorize.net' });
+    activity(`Online payment received: $${Number(current.amount).toFixed(2)} for ${current.description}`, current.clientId);
+    commitWorkspace('payment', 'invoice.paid', current.id);
     return true;
   }
   app.get('/pay/:token', async (req, res) => {
-    const inv = findInvoiceByToken(req.params.token);
+    const matches = invoicesSharingToken(req.params.token);
     const co = company();
+    if (matches.length > 1) return res.status(409).send(payPage('Payment link', '<h1>This payment link cannot be used</h1><p class="muted">It does not identify a single invoice.</p>'));
+    const inv = matches[0];
     if (!inv || inv.status === 'void') return res.status(404).send(payPage('Invoice not found', '<h1>Invoice not found</h1><p class="muted">This payment link is not valid. Please contact us.</p>'));
     if (inv.status === 'paid') return res.send(payPage('Paid', `<h1>Thank you</h1><p>This invoice was paid${inv.paidAt ? ' on ' + htmlEsc(inv.paidAt) : ''}.</p>`));
-    // CROA § 1679b(b): no payment before the service is fully performed, and nothing inside the
-    // 3-business-day cancellation window. Enforced here too, not just when invoices are created.
+    if (inv.status === 'draft') return res.status(409).send(payPage('Draft invoice', '<h1>This invoice is still a draft</h1><p class="muted">A draft cannot be paid.</p>'));
+    if (!payableInvoice(inv)) return res.status(409).send(payPage('Not payable', '<h1>This invoice cannot be paid online</h1>'));
     const payClient = workspace().clients.find(x => x.id === inv.clientId);
-    const payCs = payClient ? Store.croaStatus(payClient) : null;
-    if (!inv.serviceCompletedAt || (payCs && (!payCs.cleared || payCs.cancelled))) return res.status(409).send(payPage('Not payable yet', `<h1>This invoice can’t be paid online yet</h1><p class="muted">We only accept payment after the service has been completed and your cancellation period has ended. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
+    const signatures = workspace().signatures;
+    if (legacyInvoiceStatus(inv.status)) {
+      const payCs = payClient ? Store.croaStatus(payClient) : null;
+      if (!inv.serviceCompletedAt || (payCs && (!payCs.cleared || payCs.cancelled))) return payRefused(res, co);
+    } else if (!inv.serviceCompletedAt || invoicePaymentHeld(payClient, signatures)) return payRefused(res, co);
     const billing = (workspace().settings || {}).billing || {};
     if (billing.provider === 'link' && /^https:\/\//.test(billing.payLink || '')) return res.redirect(302, billing.payLink);
     const a = anet();
@@ -1373,13 +2712,15 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const ws = workspace();
     const inv = (ws.invoices || []).find(i => i.id === req.params.id);
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    if (inv.status === 'draft') return res.status(409).json({ error: 'A draft invoice cannot be emailed.' });
     const c = ws.clients.find(x => x.id === inv.clientId);
+    if (c && ((c.onboarding && c.onboarding.cancelledAt) || clientServiceOnHold(c, undefined, ws.signatures))) return res.status(409).json({ error: 'This client is cancelled or on hold. The invoice cannot be emailed.' });
     const to = String((req.body || {}).to || (c && c.email) || '').trim();
     if (!/^\S+@\S+\.\S+$/.test(to)) return res.status(400).json({ error: 'The client has no email address. Add one on their profile.' });
     if (!commsConfig().email) return res.status(501).json({ error: 'Email sending is not set up on the server (Resend). Download the PDF and attach it to your own email instead.' });
     const origin = `${req.protocol}://${req.get('host')}`;
     const billing = (ws.settings || {}).billing || {};
-    const payLink = billing.provider === 'link' && billing.payLink ? billing.payLink : billing.provider === 'authorizenet' && inv.payToken ? `${origin}/pay/${inv.payToken}` : '';
+    const payLink = inv.status === 'issued' && (billing.provider === 'link' && billing.payLink ? billing.payLink : billing.provider === 'authorizenet' && inv.payToken ? `${origin}/pay/${inv.payToken}` : '') || '';
     const co = company();
     const note = String((req.body || {}).message || '').trim();
     const body = `Hi ${(c && (c.firstName || c.name)) || ''},\n\n${note ? note + '\n\n' : ''}Your invoice ${Invoices.number(inv)} for ${Invoices.money(inv.amount)} is attached.${payLink && inv.status !== 'paid' ? `\n\nPay securely online: ${payLink}` : ''}\n\n${Invoices.text(ws, inv, { payLink })}\n\nThank you,\n${co.name || ''}${co.phone ? '\n' + co.phone : ''}`;
@@ -1413,14 +2754,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       commission: { type: r.commissionType || 'none', amount: r.commissionAmount || '', terms: r.commission || '', earned: com.earned, paid: com.paid, owed: com.owed, payouts: r.payouts || [] } });
   });
 
-  mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit, enabled: signupOn, publicBaseUrl: publicOrigin });
+  mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit, enabled: signupOn, publicBaseUrl: publicOrigin, now });
   mountNewsletter(app, { db });
-  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod, portalVerified });
+  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod, portalVerified, now });
 
   // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
-  mountLedgerAssistant(app, { need, workspace, db, D, uid });
+  mountLedgerAssistant(app, { need, workspace, db, D, uid, now });
   mountPartnerLinks(app, { need, workspace, db, D, currentUser });
-  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity, portalVerified });
+  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity, portalVerified, now });
 
   // ---------- static ----------
   // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old

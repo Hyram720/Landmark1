@@ -12,6 +12,7 @@ import { setAnthropicFactory } from '../server/assistant.js';
 import { scanReport, pdfText } from '../server/ai.js';
 import { setAiFetch } from '../server/ledger-assistant.js';
 import { redact, redactObject, findSensitive, assertNoSensitive, redactPayload } from '../server/redact.js';
+import { seedSignedClient } from './seed-croa.js';
 
 for (const k of ['OPENAI_API_KEY', 'LEDGER_AI_ENABLED', 'ANTHROPIC_API_KEY', 'LEDGER_SETUP_CODE']) delete process.env[k];
 
@@ -70,7 +71,7 @@ setAnthropicFactory(() => ({
 }));
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-priv-'));
-const { app } = createApp({ dataDir: dir, encryptionKey: 'privacy-test-key-not-a-secret-00' });
+const { app, db } = createApp({ dataDir: dir, encryptionKey: 'privacy-test-key-not-a-secret-00' });
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 test.after(() => { setAnthropicFactory(null); setAiFetch((...a) => fetch(...a)); delete process.env.ANTHROPIC_API_KEY; delete process.env.LEDGER_AI_ENABLED; delete process.env.OPENAI_API_KEY; server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -93,8 +94,11 @@ test('setup a client file full of identifiers', async () => {
   ws.reports.push({ id: 'rp', clientId: 'cp', bureau: 'Experian', date: '2026-10-01', accounts: [
     { id: 'ta', creditor: 'CAPITAL ONE', accountNumber: PII.acct, type: 'R', status: '11', balance: 1200, pastDue: 100, limit: 2000, issue: `Card ${PII.cardSpaced} isn't late; my SSN is ${PII.ssn}`, evidence: `statement mailed to ${PII.street}` },
     { id: 'tb', creditor: 'CHASE', accountNumber: PII.card, type: 'R', status: '97', balance: 900, dofd: '2021-06-01' }] });
-  ws.disputes.push({ id: 'dp', clientId: 'cp', type: 'cra_611', recipient: 'Experian', round: 1, status: 'sent', sentAt: '2026-09-01', items: [{ accountId: 'ta', creditor: 'CAPITAL ONE', discrepancy: `Account ${PII.acct} — DOB ${PII.dob} wrong, EIN ${PII.ein}` }] });
   assert.strictEqual((await call('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
+  seedSignedClient(db.data.workspace, 'cp');
+  const g2 = await call('GET', '/api/workspace');
+  g2.body.data.disputes.push({ id: 'dp', clientId: 'cp', type: 'cra_611', recipient: 'Experian', round: 1, status: 'sent', sentAt: '2026-09-01', items: [{ accountId: 'ta', creditor: 'CAPITAL ONE', discrepancy: `Account ${PII.acct}. DOB ${PII.dob} wrong, EIN ${PII.ein}` }] });
+  assert.strictEqual((await call('PUT', '/api/workspace', { baseVersion: g2.body.version, data: g2.body.data })).status, 200);
   process.env.ANTHROPIC_API_KEY = 'test-not-a-real-key';
 });
 

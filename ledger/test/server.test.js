@@ -5,9 +5,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/app.js';
+import { seedSignedClient } from './seed-croa.js';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-test-'));
-const { app, db } = createApp({ dataDir: dir, encryptionKey: 'test-key' });
+const openInviteDocs = {
+  disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nBankruptcy information can be reported for 10 years.\n',
+  contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
+  cancellation: '**Notice of Cancellation**\n\nbefore midnight on [DATE: Weekday, Month D, YYYY]\n\n[date]\n\n[purchaser\'s signature]\n\nYou can also cancel before midnight Eastern Time on the date above.\n',
+  esign: 'Consent to Electronic Records\n\nOpen [LINK TO SAMPLE PDF]. Code [______]\n\n[ ] I agree.\n'
+};
+const { app, db } = createApp({ dataDir: dir, encryptionKey: 'test-key', croaDocs: openInviteDocs });
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 test.after(() => { server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -27,6 +34,21 @@ const owner = client();
 const portal = client();
 const anon = client();
 let ws, clientId;
+function clearDemoCroa() {
+  const c = db.data.workspace.clients.find(x => x.id === clientId);
+  const signed = '2020-01-06';
+  c.status = 'active';
+  c.onboarding = Object.assign({}, c.onboarding, {
+    disclosureSignedAt: signed,
+    disclosureAcknowledgedAt: signed + 'T00:00:00.000Z',
+    contractSignedAt: signed,
+    contractSignedAtTs: signed + 'T15:00:00.000Z',
+    cancellationWindowEndsAt: '2020-01-09',
+    cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z',
+    cancelledAt: null,
+    cancelledAtTs: null
+  });
+}
 
 test('first run requires setup; data is encrypted at rest', async () => {
   const s = await anon('GET', '/api/session');
@@ -74,11 +96,21 @@ test('client portal invite, CROA e-sign order, cancellation', async () => {
   assert.strictEqual((await portal('GET', '/api/workspace')).status, 403, 'clients cannot read the workspace');
   const me = await portal('GET', '/api/portal/me');
   assert.strictEqual(me.body.client.name, 'Jordan Sample');
-  assert.match(me.body.documents.disclosure, /Consumer Credit File Rights/);
+  assert.match(me.body.documents.esign, /Consent to Electronic Records/);
+  assert.doesNotMatch(JSON.stringify(me.body.documents), /up to 10 years/);
   assert.strictEqual(me.body.recommendations[0].url, '/go/r1');
+  assert.strictEqual((await portal('POST', '/api/portal/address', { address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' })).status, 200);
+  assert.strictEqual((await owner('PUT', '/api/clients/' + clientId + '/enrollment-terms', { pricePerResult: 20, scheduleA: [{ item: 'Late fee', creditor: 'North Bank', bureau: 'Equifax', last4: '4242' }] })).status, 200);
+  const sample = await portal('GET', '/api/portal/esign/sample');
+  const code = sample.body.match(/Your code is ([A-F0-9]{6})/)[1];
+  assert.strictEqual((await portal('POST', '/api/portal/esign/consent', { agree: true, code })).status, 200);
+  const shown = await portal('GET', '/api/portal/me');
+  assert.match(shown.body.documents.disclosure, /reported for 10 years/);
   assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true })).status, 400, 'contract before disclosure is refused');
+  assert.strictEqual((await portal('POST', '/api/portal/disclosure-view')).status, 200);
   assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Someone Else', agree: true })).status, 400);
   assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'jordan sample', agree: true })).status, 200);
+  assert.strictEqual((await portal('POST', '/api/portal/contract-view')).status, 200);
   const c = await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true });
   assert.strictEqual(c.status, 200);
   assert.match(c.body.signature.documentSha256, /^[0-9a-f]{64}$/);
@@ -110,7 +142,7 @@ test('staff invites are owner-only and audit log records actions', async () => {
   assert.strictEqual((await staff('POST', '/api/invites', { role: 'staff', email: 'x@example.test' })).status, 403);
   assert.strictEqual((await staff('GET', '/api/audit')).status, 403);
   const audit = await owner('GET', '/api/audit');
-  ['setup', 'workspace.save', 'intake', 'portal.sign', 'portal.cancel', 'referral.click'].forEach(a => assert.ok(audit.body.some(x => x.action === a), a));
+  ['setup', 'workspace.save', 'intake', 'portal.sign', 'portal.cancel', 'invite.accept', 'referral.click'].forEach(a => assert.ok(audit.body.some(x => x.action === a), a));
 });
 
 test('login rejects wrong password and static pages are served', async () => {
@@ -148,27 +180,41 @@ test('public business pages are served as drafts (noindex) and linked from the p
 test('the server refuses invoices over the 12-month term / $1,188 cap', async () => {
   const g = await owner('GET', '/api/workspace');
   const w = g.body.data;
-  const signed = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
   const day = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10);
-  w.clients.push({ id: 'capc', name: 'Casey Cap', firstName: 'Casey', lastName: 'Cap', kind: 'personal', email: 'cap@example.test', status: 'active', onboarding: { disclosureSignedAt: signed, contractSignedAt: signed } });
-  w.invoices.push({ id: 'capi1', clientId: 'capc', description: 'Service', amount: 1100, status: 'issued', issuedAt: day, serviceCompletedAt: day });
-  const ok = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w });
-  assert.strictEqual(ok.status, 200);
-  w.invoices.push({ id: 'capi2', clientId: 'capc', description: 'More service', amount: 100, status: 'issued', issuedAt: day, serviceCompletedAt: day });
-  const no = await owner('PUT', '/api/workspace', { baseVersion: ok.body.version, data: w });
+  const resultDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  w.clients.push({ id: 'capc', name: 'Casey Cap', firstName: 'Casey', lastName: 'Cap', kind: 'personal', email: 'cap@example.test', status: 'active', pricePerResult: 594, onboarding: {} });
+  const created = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w });
+  assert.strictEqual(created.status, 200);
+  const signedOn = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+  const windowEnd = new Date(Date.now() - 40 * 864e5).toISOString();
+  seedSignedClient(db.data.workspace, 'capc', { onboarding: { disclosureSignedAt: signedOn, disclosureAcknowledgedAt: signedOn + 'T15:00:00.000Z', contractSignedAt: signedOn, contractSignedAtTs: signedOn + 'T16:00:00.000Z', cancellationWindowEndsAt: windowEnd.slice(0, 10), cancellationWindowEndsAtTs: windowEnd } });
+  const next = await owner('GET', '/api/workspace');
+  const book = next.body.data;
+  book.disputes = book.disputes || [];
+  book.disputes.push({ id: 'cap-d', clientId: 'capc', sentAt: day, items: [
+    { id: 'cap-i1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: resultDay },
+    { id: 'cap-i2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: resultDay },
+    { id: 'cap-i3', creditor: 'East Bank', bureau: 'TransUnion', result: 'deleted', bureauResultAt: resultDay }
+  ] });
+  book.invoices.push({ id: 'capi1', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i1', description: 'Service', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
+  const ok = await owner('PUT', '/api/workspace', { baseVersion: next.body.version, data: book });
+  assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+  const second = await owner('GET', '/api/workspace');
+  second.body.data.invoices.push({ id: 'capi2', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i2', description: 'More service', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
+  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: second.body.version, data: second.body.data })).status, 200, 'exactly $1,188 is allowed');
+  const saved = await owner('GET', '/api/workspace');
+  saved.body.data.invoices.push({ id: 'capi3', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i3', description: 'Over the cap', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
+  const no = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: saved.body.data });
   assert.strictEqual(no.status, 422);
-  assert.match(no.body.error, /Casey Cap/); assert.strictEqual(no.body.violations[0].invoiceId, 'capi2');
-  const saved = (await owner('GET', '/api/workspace')).body;
-  assert.ok(!saved.data.invoices.some(i => i.id === 'capi2'), 'nothing saved');
-  w.invoices.pop();
-  w.invoices.push({ id: 'capi3', clientId: 'capc', description: 'Last bit', amount: 88, status: 'issued', issuedAt: day, serviceCompletedAt: day });
-  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: saved.version, data: w })).status, 200, 'exactly $1,188 is allowed');
+  assert.match(no.body.error, /Casey Cap/); assert.strictEqual(no.body.violations[0].invoiceId, 'capi3');
+  const kept = (await owner('GET', '/api/workspace')).body;
+  assert.ok(!kept.data.invoices.some(i => i.id === 'capi3'), 'nothing saved');
 });
 
 test('messaging is disabled until a provider is configured', async () => {
   const cfg = await owner('GET', '/api/config');
   assert.strictEqual(cfg.body.email, false);
-  const r = await owner('POST', '/api/messages', { clientId, channel: 'email', body: 'Hello' });
+  const r = await owner('POST', '/api/messages', { clientId, channel: 'email', template: 'cancel-window' });
   assert.strictEqual(r.status, 501);
 });
 
@@ -192,6 +238,7 @@ test('documents upload encrypted and are isolated per client', async () => {
 });
 
 test('Ledger AI needs an API key and sees the client file', async () => {
+  clearDemoCroa();
   const saved = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   const r = await owner('POST', '/api/assistant', { clientId, history: [{ role: 'user', content: 'What next?' }] });
@@ -206,6 +253,7 @@ test('Ledger AI needs an API key and sees the client file', async () => {
 });
 
 test('AI scan and round plan are gated on an API key; HTML reports are flattened to text', async () => {
+  clearDemoCroa();
   const saved = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   assert.strictEqual((await owner('POST', `/api/clients/${clientId}/ai-plan`)).status, 501);
@@ -218,6 +266,7 @@ test('AI scan and round plan are gated on an API key; HTML reports are flattened
 });
 
 test('pasted-text AI scan is gated on an API key and validates input', async () => {
+  clearDemoCroa();
   const saved = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   assert.strictEqual((await owner('POST', `/api/clients/${clientId}/scan-text`, { text: 'x'.repeat(500) })).status, 501);
@@ -280,14 +329,24 @@ test('online mailing through Lob is gated, then mails an approved letter and tra
     const g = await owner('GET', '/api/workspace');
     const w = g.body.data;
     const signed = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-    w.clients.push({ id: 'c9', name: 'Morgan Mailer', firstName: 'Morgan', lastName: 'Mailer', kind: 'personal', email: 'm@example.test', address: '12 Example Rd', city: 'Austin', state: 'TX', zip: '78701', status: 'active', onboarding: { disclosureSignedAt: signed, contractSignedAt: signed } });
-    w.letters.push({ id: 'l9', clientId: 'c9', disputeId: 'd9', type: 'cra_611', status: 'approved', text: 'Morgan Mailer\n12 Example Rd\n\nRe: dispute\n\nPlease correct the balance.' });
-    w.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ creditor: 'Example Bank', discrepancy: 'Balance should be zero — paid in full.' }], letterId: 'l9', sentAt: null });
-    w.invoices.push({ id: 'inv9abc', clientId: 'c9', description: 'Letter mailed', amount: 49, status: 'issued', issuedAt: signed, serviceCompletedAt: signed, payToken: 'paytokentest123' });
-    w.referrals = w.referrals || [];
-    w.referrals.push({ id: 'ref9', name: 'Pat Partner', email: 'pat@example.test', commissionType: 'flat', commissionAmount: 25 });
-    w.clients.find(c => c.id === 'c9').referralId = 'ref9';
+    w.clients.push({ id: 'c9', name: 'Morgan Mailer', firstName: 'Morgan', lastName: 'Mailer', kind: 'personal', email: 'm@example.test', address: '12 Example Rd', city: 'Austin', state: 'TX', zip: '78701', status: 'active', pricePerResult: 49, onboarding: {} });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w })).status, 200);
+    const signedOn = new Date(Date.now() - 50 * 864e5).toISOString().slice(0, 10);
+    seedSignedClient(db.data.workspace, 'c9', { onboarding: { disclosureSignedAt: signedOn, disclosureAcknowledgedAt: signedOn + 'T15:00:00.000Z', contractSignedAt: signedOn, contractSignedAtTs: signedOn + 'T16:00:00.000Z', cancellationWindowEndsAt: signedOn, cancellationWindowEndsAtTs: new Date(Date.now() - 45 * 864e5).toISOString() } });
+    const g2 = await owner('GET', '/api/workspace');
+    const book = g2.body.data;
+    book.letters.push({ id: 'l9', clientId: 'c9', disputeId: 'd9', type: 'cra_611', status: 'approved', text: 'Morgan Mailer\n12 Example Rd\n\nRe: dispute\n\nPlease correct the balance.' });
+    const resultDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    book.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ id: 'd9-i', creditor: 'Example Bank', bureau: 'Experian', discrepancy: 'Balance should be zero. Paid in full.', result: 'deleted', bureauResultAt: resultDay }], letterId: 'l9', sentAt: signed });
+    book.invoices.push({ id: 'inv9abc', clientId: 'c9', disputeId: 'd9', itemId: 'd9-i', description: 'Letter mailed', amount: 49, status: 'issued', issuedAt: signed, serviceCompletedAt: signed, payToken: 'paytokentest123' });
+    book.referrals = book.referrals || [];
+    book.referrals.push({ id: 'ref9', name: 'Pat Partner', email: 'pat@example.test', commissionType: 'flat', commissionAmount: 25 });
+    book.clients.find(c => c.id === 'c9').referralId = 'ref9';
+    const savedMail = await owner('PUT', '/api/workspace', { baseVersion: g2.body.version, data: book });
+    assert.strictEqual(savedMail.status, 200, JSON.stringify(savedMail.body));
+    const ready = db.data.workspace.disputes.find(x => x.id === 'd9');
+    ready.sentAt = null;
+    ready.status = 'ready';
 
     assert.strictEqual((await owner('POST', '/api/disputes/d9/mail', { service: 'certified' })).status, 501, 'off until a key is saved');
     assert.strictEqual((await owner('PUT', '/api/settings/mail', { lobKey: 'nope' })).status, 400);
@@ -315,17 +374,20 @@ test('invoice pay link uses Authorize.net hosted page and confirms payment', asy
   mockExternal();
   try {
     assert.strictEqual((await anon('GET', '/pay/nope')).status, 404);
-    const none = await anon('GET', '/pay/paytokentest123');
+    const payToken = (await owner('GET', '/api/workspace')).body.data.invoices.find(i => i.id === 'inv9abc').payToken;
+    assert.notStrictEqual(payToken, 'paytokentest123');
+    assert.ok(payToken.length >= 43);
+    const none = await anon('GET', '/pay/' + payToken);
     assert.match(none.body, /isn’t set up yet/);
     const s = await owner('PUT', '/api/settings/payments', { loginId: 'LOGIN1234', transactionKey: 'TXKEY', sandbox: true });
     assert.strictEqual(s.status, 200); assert.strictEqual(s.body.sandbox, true);
-    const page = await anon('GET', '/pay/paytokentest123');
+    const page = await anon('GET', '/pay/' + payToken);
     assert.match(page.body, /test\.authorize\.net\/payment\/payment/); assert.match(page.body, /FORMTOKEN/);
     const hpp = JSON.parse(calls.filter(c => c.u.includes('authorize.net') && String((c.opts || {}).body || '').includes('getHostedPaymentPageRequest')).pop().opts.body).getHostedPaymentPageRequest;
     const payOpts = JSON.parse(hpp.hostedPaymentSettings.setting.find(s => s.settingName === 'hostedPaymentPaymentOptions').settingValue);
     assert.strictEqual(payOpts.showBankAccount, false, 'eCheck / bank account is off');
     assert.strictEqual(payOpts.showCreditCard, true, 'cards stay on');
-    const done = await anon('GET', '/pay/paytokentest123/done');
+    const done = await anon('GET', '/pay/' + payToken + '/done');
     assert.match(done.body, /Thank you/);
     const inv = (await owner('GET', '/api/workspace')).body.data.invoices.find(i => i.id === 'inv9abc');
     assert.strictEqual(inv.status, 'paid'); assert.strictEqual(inv.transId, '555');

@@ -10,13 +10,16 @@ import crypto from 'node:crypto';
 import { hashPassword, passwordProblem, rateLimiter } from './auth.js';
 import { sendMail, mailEnabled, mailMode } from './mailer.js';
 import { Business } from './shared.js';
+import { etYmd } from './croa-window.js';
+import { clientServiceOnHold } from './signup-status.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const RESET_TTL = 30 * 60 * 1000, MAGIC_TTL = 15 * 60 * 1000, OTP_TTL = 10 * 60 * 1000;
 const NEUTRAL = 'If an account exists for that email, we sent a link. It expires soon and works once.';
 const pageFor = role => (role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app');
 
-export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds, authMethod, portalVerified }) {
+export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds, authMethod, portalVerified, now }) {
+  const today = () => etYmd(typeof now === 'function' ? now() : new Date());
   const ipLimit = rateLimiter(10, 15 * 60 * 1000);
   const emailLimit = rateLimiter(5, 60 * 60 * 1000);
   const otpLimit = rateLimiter(10, 15 * 60 * 1000);
@@ -49,12 +52,19 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   const method = () => (typeof authMethod === 'function' ? authMethod() : 'password');
   const magicPath = () => !!settings().magicLink || method() === 'magic_link';
 
+  function portalFileGone(u) {
+    if (!u || u.role !== 'client') return false;
+    const c = ((workspace().clients) || []).find(row => row && row.id === u.clientId);
+    if (!c) return true;
+    return !!(u.clientIdentity && c.identity && u.clientIdentity !== c.identity);
+  }
+
   // ---------- forgot / reset ----------
   app.post('/api/auth/forgot', async (req, res) => {
     const email = String((req.body || {}).email || '').toLowerCase().slice(0, 200);
     if (!ipLimit(req.ip) || !emailLimit('f:' + email)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const u = userByEmail(email);
-    if (u) {
+    if (u && !portalFileGone(u)) {
       const { raw } = issue('reset', u, RESET_TTL);
       db.audit({ actor: u.email, action: 'auth.reset.request', detail: mailMode() });
       await mail(u, `Reset your ${company()} password`, `Someone asked to reset the password for this email.\n\nReset it here (works once, expires in 30 minutes):\n${origin(req)}/${pageFor(u.role)}#reset=${raw}\n\nIf this wasn’t you, ignore this email — your password won’t change.`);
@@ -95,7 +105,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     const u = userByEmail(email);
     // The self-signup switch only issues links for client accounts. Staff and owner
     // still need the owner toggle (settings.magicLink) if they should get one.
-    if (u && (settings().magicLink || (method() === 'magic_link' && u.role === 'client'))) {
+    if (u && !portalFileGone(u) && (settings().magicLink || (method() === 'magic_link' && u.role === 'client'))) {
       const { raw } = issue('magic', u, MAGIC_TTL);
       db.audit({ actor: u.email, action: 'auth.magic.request', detail: mailMode() });
       await mail(u, `Your ${company()} sign-in link`, `Sign in here (works once, expires in 15 minutes):\n${origin(req)}/${pageFor(u.role)}#magic=${raw}\n\nIf you didn’t ask for this, ignore this email.`);
@@ -169,20 +179,60 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   });
 
   const sent = () => (D().notified = D().notified || {});
-  async function notifyClient(clientId, key, subject, line, req) {
+  function disputeNotice(subject, line) {
+    const text = (String(subject || '') + '\n' + String(line || '')).toLowerCase();
+    return /dispute|credit file|good news|deadline|mailed|result/.test(text);
+  }
+
+  async function notifyClient(clientId, key, subject, line, req, actor) {
     if (settings().notifications === false || sent()[key]) return;
+    const ws = workspace();
+    const client = ((ws && ws.clients) || []).find(c => c && c.id === clientId);
+    const heldDispute = client && clientServiceOnHold(client, undefined, (ws && ws.signatures) || []) && disputeNotice(subject, line);
+    const who = (req && req.user && req.user.email) || actor || '';
+    if (!client || heldDispute) {
+      sent()[key] = new Date().toISOString();
+      if (who) {
+        db.audit({ actor: who, action: 'notify.skipped', detail: (subject || 'Notice') + (!client ? ' client missing' : ' client on hold') });
+        db.persist();
+      }
+      return;
+    }
     sent()[key] = new Date().toISOString();
-    const users = D().users.filter(u => u.role === 'client' && u.clientId === clientId && !u.disabled && !u.notifyOptOut);
+    const users = D().users.filter(u => u.role === 'client' && u.clientId === clientId && !u.disabled && !u.notifyOptOut && client);
     const link = req ? `${origin(req)}/portal` : 'your client portal';
     for (const u of users) await mail(u, subject, `${line}\n\nSign in to see the details: ${link}\n\nYou can turn these emails off in the portal.`);
-    db.audit({ actor: 'system', action: 'notify', detail: `${key} → ${users.length}` });
+    db.audit({ actor: who || 'system', action: 'notify', detail: `${key} → ${users.length}` });
+  }
+
+  function passiveResponse(d, after) {
+    const client = ((after && after.clients) || []).find(c => c && c.id === d.clientId);
+    if (!client) return true;
+    return clientServiceOnHold(client, undefined, (after && after.signatures) || []);
   }
 
   /** Called after staff save the workspace: diff disputes and email the affected clients. */
   function onWorkspaceSaved(before, after, req) {
-    const old = new Map(((before && before.disputes) || []).map(d => [d.id, d]));
-    ((after && after.disputes) || []).forEach(d => {
+    const old = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
+    ((after && after.disputes) || []).filter(d => d && d.id).forEach(d => {
       const p = old.get(d.id) || { items: [] };
+      const wouldMail = (d.outcome && !p.outcome) || (d.items || []).some((it, i) => {
+        const was = (p.items || [])[i] || {};
+        return ['deleted', 'corrected'].includes(it.result) && it.result !== was.result;
+      });
+      if (passiveResponse(d, after)) {
+        const who = (req && req.user && req.user.email) || '';
+        if (wouldMail && who) {
+          const notices = [];
+          if (d.outcome && !p.outcome) notices.push('Update on your credit file');
+          (d.items || []).forEach((it, i) => {
+            const was = (p.items || [])[i] || {};
+            if (['deleted', 'corrected'].includes(it.result) && it.result !== was.result) notices.push('Good news on your credit file');
+          });
+          db.audit({ actor: who, action: 'notify.skipped', detail: (notices.filter((name, index) => notices.indexOf(name) === index).join('; ') || 'Notice') + ' client on hold' });
+        }
+        return;
+      }
       if (d.outcome && !p.outcome) notifyClient(d.clientId, `resp:${d.id}`, 'Update on your credit file', `A response from ${d.recipient} has been recorded on your file.`, req);
       (d.items || []).forEach((it, i) => {
         const was = (p.items || [])[i] || {};
@@ -195,19 +245,27 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   /** Hourly: email clients when a bureau response is due within 3 days. */
   function deadlineSweep() {
     const soon = Date.now() + 3 * 86400000;
-    ((workspace().disputes) || []).forEach(d => {
-      if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`);
+    const ws = workspace();
+    ((ws.disputes) || []).filter(d => d && d.id).forEach(d => {
+      if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`, null, 'system:sweep');
     });
     // Business credit plan: remind the client when a step is due within 2 days (once per step and due date).
-    const t0 = new Date().toISOString().slice(0, 10);
+    const t0 = today();
     ((workspace().clients) || []).filter(c => c.kind !== 'personal' && c.creditPlan && c.creditPlan.startedAt).forEach(c => {
       const cur = Business.coachState(c, workspace(), t0).current;
-      if (cur && Date.parse(cur.due) <= Date.now() + 2 * 86400000 && !(c.creditPlan.clientConfirmed || {})[cur.key]) notifyClient(c.id, `step:${c.id}:${cur.key}:${cur.due}`, 'Your next business credit step', `Your next business credit plan step is due ${cur.due}: ${cur.title.split(':')[0]}. Sign in to your portal to see how to do it, and tap “I’ve done this” when it’s finished.`);
+      if (cur && Date.parse(cur.due) <= Date.now() + 2 * 86400000 && !(c.creditPlan.clientConfirmed || {})[cur.key]) notifyClient(c.id, `step:${c.id}:${cur.key}:${cur.due}`, 'Your next business credit step', `Your next business credit plan step is due ${cur.due}: ${cur.title.split(':')[0]}. Sign in to your portal to see how to do it, and tap “I’ve done this” when it’s finished.`, null, 'system:sweep');
     });
     db.persistSoon();
   }
   const timer = setInterval(deadlineSweep, 60 * 60 * 1000);
   timer.unref();
 
-  return { otpRequired, startOtp, onWorkspaceSaved, deadlineSweep, notifyClient, stop: () => clearInterval(timer) };
+  function issuePortalLink(kind, u, base) {
+    const tokenKind = kind === 'verify' ? 'verify' : 'reset';
+    const ttl = tokenKind === 'reset' ? 30 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const { raw } = issue(tokenKind, u, ttl);
+    return `${String(base || '').replace(/\/$/, '')}/portal#${tokenKind}=${raw}`;
+  }
+
+  return { otpRequired, startOtp, onWorkspaceSaved, deadlineSweep, notifyClient, issuePortalLink, stop: () => clearInterval(timer) };
 }

@@ -8,8 +8,7 @@ import { redact } from './redact.js';
 import { aiConfig, chatCompletion, safeAnswer, businessDigest, RAILS } from './ledger-assistant.js';
 import { selfSignupCleared } from './signup-status.js';
 import { rateLimiter } from './auth.js';
-
-const today = () => new Date().toISOString().slice(0, 10);
+import { etYmd } from './croa-window.js';
 const COACH_KB = ['biz-building', 'biz-fcra-scope', 'biz-dnb', 'biz-experian', 'biz-equifax', 'biz-pg', 'biz-util-intelliscore', 'biz-paydex-timing', 'util-30', 'util-guarantee'];
 
 /** Deterministic coaching text (used when AI is off, and as grounding when it is on). */
@@ -34,7 +33,8 @@ export function coachText(st, audience) {
   return P.join('\n\n');
 }
 
-export function mountCoach(app, { need, workspace, db, commit, activity, portalVerified }) {
+export function mountCoach(app, { need, workspace, db, commit, activity, portalVerified, now }) {
+  const today = () => etYmd(typeof now === 'function' ? now() : new Date());
   const limit = rateLimiter(120, 60 * 60 * 1000);
   const find = id => (workspace().clients || []).find(c => c.id === id && c.kind !== 'personal');
   const view = (c, audience) => {

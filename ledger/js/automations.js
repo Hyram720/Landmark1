@@ -58,10 +58,13 @@
       ws.disputes.filter(d => d.sentAt && d.type !== 'cfpb_complaint').forEach(d => { const k = d.clientId + ':' + d.sentAt; (groups[k] = groups[k] || { key: k, clientId: d.clientId, at: d.sentAt, list: [] }).list.push(d); });
       Object.values(groups).forEach(g => out.push({ key: g.key, clientId: g.clientId, at: g.at, vars: { count: g.list.length, recipients: g.list.map(d => d.recipient).join(', ') } }));
     }
-    if (trigger === 'item_removed') ws.disputes.forEach(d => d.items.forEach((it, i) => {
+    if (trigger === 'item_removed') ws.disputes.forEach(d => {
+      if (Store.serviceHold && Store.serviceHold(ws, d.clientId)) return;
+      (d.items || []).forEach((it, i) => {
       const res = it.result || (['deleted', 'corrected'].includes(d.outcome) ? d.outcome : null);
       if (['deleted', 'corrected'].includes(res)) out.push({ key: `${d.id}:${i}`, clientId: d.clientId, at: d10(it.resultAt || d.respondedAt), vars: { creditor: it.creditor, bureau: it.bureau || d.recipient, result: res === 'deleted' ? 'removed' : 'corrected' } });
-    }));
+      });
+    });
     if (trigger === 'response_overdue') ws.disputes.filter(d => d.dueAt && d.sentAt && !d.outcome).forEach(d => out.push({ key: d.id, clientId: d.clientId, at: d.dueAt, vars: { recipient: d.recipient }, still: () => !d.outcome }));
     if (trigger === 'invoice_issued') ws.invoices.filter(i => i.status === 'issued').forEach(i => out.push({ key: i.id, clientId: i.clientId, at: i.issuedAt, vars: invVars(i) }));
     if (trigger === 'invoice_overdue') ws.invoices.filter(i => i.status === 'issued' && i.dueAt).forEach(i => out.push({ key: i.id, clientId: i.clientId, at: i.dueAt, vars: invVars(i), still: () => i.status === 'issued' }));
@@ -78,6 +81,19 @@
   function invVars(i) { return { amount: '$' + Number(i.amount || 0).toFixed(2), description: i.description, due: i.dueAt || '', invoiceId: i.id, payToken: i.payToken || '' }; }
 
   function fill(tpl, vars) { return String(tpl || '').replace(/\{\{(\w+)\}\}/g, (m, k) => (vars[k] === undefined || vars[k] === null ? '' : String(vars[k]))); }
+
+  function disputeTrigger(trigger) {
+    return trigger === 'letter_mailed' || trigger === 'item_removed' || trigger === 'response_overdue' || trigger === 'sequence_due' || trigger === 'progress_monthly' || trigger === 'report_refresh';
+  }
+
+  function heldOrBacklog(ws, ev) {
+    const client = ((ws && ws.clients) || []).find(row => row && row.id === ev.clientId);
+    if (client && client.kind === 'business') return false;
+    if (!client || (Store.serviceHold && Store.serviceHold(ws, ev.clientId))) return true;
+    const end = (client.onboarding || {}).cancellationWindowEndsAt;
+    if (!end) return false;
+    return String(ev.at || '').slice(0, 10) <= String(end);
+  }
 
   function varsFor(ws, c, ev, ctx) {
     const co = ws.settings.company || {};
@@ -105,6 +121,7 @@
       events(ws, r.trigger, today).forEach(ev => {
         const key = r.id + ':' + ev.key;
         if (log[key]) return;
+        if (heldOrBacklog(ws, ev)) return;
         if (!ev.at || ev.at < d10(r.enabledAt)) return; // never fire for history
         if (Law.addDays(ev.at, Number(r.delayDays) || 0) > today) return;
         if (ev.still && !ev.still()) return;
