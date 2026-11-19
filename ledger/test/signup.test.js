@@ -916,9 +916,11 @@ test('Eastern document times, staff enrollment terms, address, and the signature
 test('invited clients use the final CROA texts, the bracket gate, and the cancellation hold', async () => {
     assert.doesNotMatch(read('js/law.js'), /up to 10 years/);
     assert.strictEqual(CAN_SPAM_POSTAL_ADDRESS, 'Sun Marketing Enterprises LLC, d/b/a Credit Ledger, 2230 Route 70 W Ste 2 PMB 1194, Cherry Hill, NJ 08002');
-    const dated = { kind: 'personal', onboarding: { disclosureSignedAt: '2026-11-25', contractSignedAt: '2026-11-25', cancellationWindowEndsAtTs: '2026-12-02T04:59:59.999Z' } };
-    assert.strictEqual(clientServiceOnHold(dated, new Date('2026-11-26T02:00:00.000Z')), true);
-    assert.strictEqual(clientServiceOnHold(dated, new Date('2026-12-03T05:00:00.000Z')), false);
+    const dated = { id: 'dated', kind: 'personal', onboarding: { disclosureSignedAt: '2026-11-25', contractSignedAt: '2026-11-25', cancellationWindowEndsAtTs: '2026-12-02T04:59:59.999Z' } };
+    const datedSigs = [{ clientId: 'dated', doc: 'disclosure' }, { clientId: 'dated', doc: 'contract' }];
+    assert.strictEqual(clientServiceOnHold(dated, new Date('2026-11-26T02:00:00.000Z'), datedSigs), true);
+    assert.strictEqual(clientServiceOnHold(dated, new Date('2026-12-03T05:00:00.000Z'), datedSigs), false);
+    assert.strictEqual(clientServiceOnHold(dated, new Date('2026-12-03T05:00:00.000Z')), true);
   const openDocs = {
     disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nBankruptcy information can be reported for 10 years.\n',
     contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
@@ -1054,7 +1056,7 @@ test('invited clients use the final CROA texts, the bracket gate, and the cancel
     assert.match(noResultSave.body.error, /deleted item/);
     const ready = await owner('GET', '/api/workspace');
     const withResult = JSON.parse(JSON.stringify(ready.body.data));
-    withResult.disputes.push({ id: 'result-d', clientId: 'inv-open', items: [{ id: 'result-i', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted' }] });
+    withResult.disputes.push({ id: 'result-d', clientId: 'inv-open', items: [{ id: 'result-i', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2026-12-03' }] });
     withResult.invoices.push({ id: 'after-result', clientId: 'inv-open', disputeId: 'result-d', itemId: 'result-i', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-12-03', serviceCompletedAt: '2026-12-03' });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ready.body.version, data: withResult })).status, 200);
     const fd = new FormData();

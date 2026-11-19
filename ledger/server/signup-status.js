@@ -49,11 +49,18 @@ export function applySignupStatus(c, onDate) {
   return c.status !== beforeStatus || (o.cancellationWindowEndsAtTs || null) !== beforeEnd;
 }
 
-/** Self-signup uses the Eastern instant. Every other personal client is held while CROA is required and not cleared. onDate is the moment used for the window. */
-export function clientServiceOnHold(c, onDate) {
+function hasServerSignatures(c, signatures) {
+  const rows = (signatures || []).filter(s => s && c && s.clientId === c.id);
+  return rows.some(s => s.doc === 'disclosure') && rows.some(s => s.doc === 'contract');
+}
+
+/** Self-signup uses the Eastern instant. Every other personal client is held until both server-written signature rows exist and CROA is cleared. onDate is the moment used for the window. */
+export function clientServiceOnHold(c, onDate, signatures) {
   if (!c || c.kind === 'business') return false;
   if (c.signupSource === 'self') return !selfSignupCleared(c, onDate);
+  if (!hasServerSignatures(c, signatures)) return true;
   const o = c.onboarding || {};
+  if (o.cancelledAt) return true;
   const now = asOf(onDate);
   if (o.cancellationWindowEndsAtTs) {
     const open = now.getTime() <= Date.parse(o.cancellationWindowEndsAtTs);
@@ -70,8 +77,9 @@ export function clientServiceOnHold(c, onDate) {
 export function serviceWorkBlocked(before, after) {
   const priorDisputes = (before && before.disputes) || [];
   const priorLetters = (before && before.letters) || [];
+  const signatures = (after && after.signatures) || [];
   for (const c of (after && after.clients) || []) {
-    if (!clientServiceOnHold(c)) continue;
+    if (!clientServiceOnHold(c, undefined, signatures)) continue;
     const id = c.id;
     const count = (list) => (list || []).filter(d => d && d.clientId === id).length;
     const held = `${c.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;

@@ -356,10 +356,21 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     restoreServerOwnedEnrollment(data, before, priorClients);
     for (const c of data.clients) {
       const old = priorClients.get(c && c.id);
-      if (!old || old.kind === 'business' || (old.kind || 'personal') === (c.kind || 'personal')) continue;
+      if (!old || (old.kind || 'personal') === (c.kind || 'personal')) continue;
       if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the client type.' });
-      if (inCancellationWindow(old) || enrollmentOpenOrSigned(old, data.signatures)) return res.status(409).json({ error: 'The client type cannot change during enrollment or after the agreement is signed.' });
+      const becomingPersonal = old.kind === 'business' && (c.kind || 'personal') !== 'business';
+      if (!becomingPersonal && (inCancellationWindow(old) || enrollmentOpenOrSigned(old, data.signatures))) return res.status(409).json({ error: 'The client type cannot change during enrollment or after the agreement is signed.' });
       db.audit({ actor: req.user.email, action: 'client.kind', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, old: old.kind || 'personal', new: c.kind || 'personal' }) });
+    }
+    data.retiredClientIds = JSON.parse(JSON.stringify((before && before.retiredClientIds) || []));
+    const nextIds = new Set((data.clients || []).filter(Boolean).map(c => c.id));
+    for (const old of priorClients.values()) {
+      if (!old || nextIds.has(old.id) || old.kind === 'business' || !enrollmentOpenOrSigned(old, data.signatures)) continue;
+      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can delete a client who has started enrollment.' });
+      if (!data.retiredClientIds.includes(old.id)) data.retiredClientIds.push(old.id);
+    }
+    for (const c of data.clients) {
+      if (c && !priorClients.has(c.id) && data.retiredClientIds.includes(c.id)) return res.status(409).json({ error: 'This client id was retired and cannot be recreated.' });
     }
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return res.status(409).json({ error: billingBlock });
@@ -388,17 +399,23 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ version: D().workspaceVersion });
   });
 
-  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs'];
+  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs', 'cancellationMethod', 'cancellationReceivedAt'];
+  const ENROLLMENT_FIELDS = SERVER_OWNED_ONBOARDING.concat(['disclosureViewedAt', 'contractViewedAt', 'contractViewedSha256', 'contractViewStale', 'authorizationAt', 'esignDemoPassed', 'esignIp', 'esignUserAgent', 'paperRequestedAt']);
   function restoreServerOwnedEnrollment(data, before, priorClients) {
     data.signatures = JSON.parse(JSON.stringify((before && before.signatures) || []));
     for (const c of data.clients || []) {
       if (!c) continue;
       const old = priorClients.get(c.id);
-      const personal = old ? old.kind !== 'business' : c.kind !== 'business';
+      const switchingToPersonal = !!(old && old.kind === 'business' && c.kind !== 'business');
+      const personal = switchingToPersonal || (old ? old.kind !== 'business' : c.kind !== 'business');
       if (!personal) continue;
       c.onboarding = c.onboarding || {};
-      const prev = old && old.onboarding || {};
-      for (const key of SERVER_OWNED_ONBOARDING) c.onboarding[key] = !old || prev[key] == null ? null : prev[key];
+      if (!old || switchingToPersonal) {
+        for (const key of ENROLLMENT_FIELDS) c.onboarding[key] = null;
+        continue;
+      }
+      const prev = old.onboarding || {};
+      for (const key of SERVER_OWNED_ONBOARDING) c.onboarding[key] = prev[key] == null ? null : prev[key];
     }
   }
   function inCancellationWindow(c) {
@@ -432,21 +449,19 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     return (dispute.items || []).find(it => it && it.id === inv.itemId && it.bureau) || null;
   }
   function invoiceBillingBlocked(before, data) {
-    const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     const billable = inv => inv && (inv.status === 'issued' || inv.status === 'paid');
-    const transitioning = (data.invoices || []).filter(inv => {
-      if (!billable(inv)) return false;
-      const prev = prior.get(inv.id);
-      return !prev || (prev.status !== 'issued' && prev.status !== 'paid');
-    });
-    for (const inv of transitioning) {
+    for (const inv of (data.invoices || []).filter(billable)) {
       const billed = (data.clients || []).find(x => x && x.id === inv.clientId);
       if (!billed || billed.kind === 'business') continue;
-      if (clientServiceOnHold(billed)) return `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`;
+      if (clientServiceOnHold(billed, undefined, data.signatures)) return `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`;
       if (serviceDateInsideWindow(billed, inv)) return 'The service date is inside the cancellation window.';
       const item = deletedInvoiceItem(data, inv);
       if (!item) return 'An invoice must name the deleted item and its bureau.';
       if (item.result !== 'deleted') return 'An invoice can be issued only for a deleted item, not a correction.';
+      const stamp = item.bureauResultAt || item.resultDate || inv.bureauResultAt;
+      const report = (item.reportId || inv.reportId) && (data.reports || []).find(r => r && r.id === (item.reportId || inv.reportId) && r.clientId === inv.clientId && r.date);
+      const doc = (item.documentId || inv.documentId) && (data.documents || []).find(d => d && d.id === (item.documentId || inv.documentId) && d.clientId === inv.clientId && (d.uploadedAt || d.date));
+      if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return 'An invoice must name the dated bureau result for the deleted item.';
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
       if (dup) return 'Only one invoice can be issued for each deleted item and bureau.';
     }
@@ -842,6 +857,27 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
   });
 
+  app.post('/api/clients/:id/cancel', need('owner', 'staff'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    if (c.kind === 'business') return res.status(400).json({ error: 'Business clients are outside this cancellation notice.' });
+    c.onboarding = c.onboarding || {};
+    if (c.onboarding.cancelledAt) return res.status(409).json({ error: 'The cancellation is already recorded.' });
+    const method = String((req.body || {}).method || '');
+    const receivedAt = String((req.body || {}).receivedAt || '');
+    if (!['mail', 'email', 'other'].includes(method)) return res.status(400).json({ error: 'Say how the written notice arrived: mail, email, or other.' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(receivedAt)) return res.status(400).json({ error: 'Enter the date the written notice was received.' });
+    c.onboarding.cancelledAt = receivedAt;
+    c.onboarding.cancelledAtTs = new Date().toISOString();
+    c.onboarding.cancellationMethod = method;
+    c.onboarding.cancellationReceivedAt = receivedAt;
+    c.status = 'cancelled';
+    db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt }) });
+    activity(`${c.name} cancelled by ${method}. Confirm no invoice was issued.`, c.id);
+    commitWorkspace(req.user.email, 'client.cancel', c.id);
+    res.json({ ok: true, cancelledAt: receivedAt, method });
+  });
+
   app.post('/api/portal/cancel', need('client'), (req, res) => {
     if (!portalVerified(req, res)) return;
     const c = portalClient(req);
@@ -962,7 +998,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   app.post('/api/assistant', need('owner', 'staff'), async (req, res) => {
     const { clientId, history } = req.body || {};
-    if (clientId && clientServiceOnHold(workspace().clients.find(x => x.id === clientId))) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
+    if (clientId && clientServiceOnHold(workspace().clients.find(x => x.id === clientId), undefined, workspace().signatures)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     if (!assistantConfigured()) return res.status(501).json({ error: 'AI is off. The owner can add an Anthropic API key in Settings → AI settings.' });
     if (!aiLimit(req.user.id)) return res.status(429).json({ error: 'Hourly assistant limit reached. Try again later.' });
     if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'Ask a question first' });
@@ -1033,7 +1069,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function failModel(res, held, e) { if (held) held.send({ error: aiMessage(e).error }); else aiError(res, e); }
   const SERVICE_HOLD = 'On hold until the contract is signed and the cancellation window ends.';
   function serviceOnHold(id) {
-    return clientServiceOnHold(workspace().clients.find(x => x.id === id));
+    const ws = workspace();
+    return clientServiceOnHold((ws.clients || []).find(x => x.id === id), undefined, ws.signatures);
   }
   app.post('/api/clients/:id/files/:docId/scan', need('owner', 'staff'), async (req, res) => {
     if (serviceOnHold(req.params.id)) return res.status(409).json({ error: SERVICE_HOLD });
@@ -1170,7 +1207,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   async function autoScan(c, doc) {
     const ws = workspace();
     ws.pendingImports = ws.pendingImports || [];
-    if (clientServiceOnHold(c)) {
+    if (clientServiceOnHold(c, undefined, ws.signatures)) {
       ws.tasks.push({ id: uid(), clientId: c.id, title: `Credit report from ${c.name} is on hold until the cancellation window ends (${doc.name})`, due: today(), done: false, createdAt: new Date().toISOString() });
       commitWorkspace('system', 'report.uploaded.hold', doc.name);
       return;
@@ -1279,7 +1316,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const d = ws.disputes.find(x => x.id === req.params.id);
     if (!d) return res.status(404).json({ error: 'Dispute not found' });
     const c = ws.clients.find(x => x.id === d.clientId);
-    if (c && clientServiceOnHold(c)) return res.status(409).json({ error: SERVICE_HOLD });
+    if (c && clientServiceOnHold(c, undefined, ws.signatures)) return res.status(409).json({ error: SERVICE_HOLD });
     const key = secrets().lobKey;
     if (!key) return res.status(501).json({ error: 'Online mailing is off. The owner can add a Lob API key in Settings → Print & mail.' });
     if (d.sentAt) return res.status(409).json({ error: 'Already mailed' });

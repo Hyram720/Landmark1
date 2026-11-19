@@ -25,6 +25,11 @@ function listen(app) {
   return { server, base, client };
 }
 
+function futureWindow() {
+  const end = new Date(Date.now() + 14 * 864e5);
+  return { cancellationWindowEndsAt: end.toISOString().slice(0, 10), cancellationWindowEndsAtTs: end.toISOString() };
+}
+
 async function withOwner(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-guard-'));
   const built = createApp({ dataDir: dir, encryptionKey: 'guard-key-not-a-secret-00', selfSignupEnabled: false, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } });
@@ -95,7 +100,7 @@ test('the owner is the only role that can change a personal client type, and not
     const audit = await owner('GET', '/api/audit');
     assert.ok(audit.body.some(a => a.action === 'client.kind' && /lead/.test(a.detail)));
     await addClient(owner, { id: 'signed', name: 'Sam Signed', kind: 'personal', email: 'sam@guard.test', status: 'active', onboarding: {} });
-    seedSignedClient(built.db.data.workspace, 'signed', { onboarding: { cancellationWindowEndsAt: '2026-12-01', cancellationWindowEndsAtTs: '2026-12-02T04:59:59.999Z' } });
+    seedSignedClient(built.db.data.workspace, 'signed', { onboarding: futureWindow() });
     const locked = await owner('GET', '/api/workspace');
     locked.body.data.clients.find(c => c.id === 'signed').kind = 'business';
     const denied = await owner('PUT', '/api/workspace', { baseVersion: locked.body.version, data: locked.body.data });
@@ -107,7 +112,8 @@ test('the owner is the only role that can change a personal client type, and not
 test('a workspace save cannot add a letter by moving the cancellation window', async () => {
   await withOwner(async ({ built, owner }) => {
     await addClient(owner, { id: 'win', name: 'Wyn Window', kind: 'personal', email: 'wyn@guard.test', status: 'active', onboarding: {} });
-    seedSignedClient(built.db.data.workspace, 'win', { onboarding: { cancellationWindowEndsAt: '2026-12-01', cancellationWindowEndsAtTs: '2026-12-02T04:59:59.999Z' } });
+    const window = futureWindow();
+    seedSignedClient(built.db.data.workspace, 'win', { onboarding: window });
     const g = await owner('GET', '/api/workspace');
     const row = g.body.data.clients.find(c => c.id === 'win');
     row.onboarding.cancellationWindowEndsAtTs = '2020-01-02T04:59:59.999Z';
@@ -118,7 +124,7 @@ test('a workspace save cannot add a letter by moving the cancellation window', a
     g.body.data.disputes.push({ id: 'wd', clientId: 'win', recipient: 'Equifax', items: [] });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 409);
     const saved = await owner('GET', '/api/workspace');
-    assert.strictEqual(saved.body.data.clients.find(c => c.id === 'win').onboarding.cancellationWindowEndsAtTs, '2026-12-02T04:59:59.999Z');
+    assert.strictEqual(saved.body.data.clients.find(c => c.id === 'win').onboarding.cancellationWindowEndsAtTs, window.cancellationWindowEndsAtTs);
     assert.ok(!(saved.body.data.letters || []).some(l => l.id === 'wl'));
   });
 });
@@ -129,7 +135,7 @@ test('invited auto-scan stays on hold during the window and runs after it', asyn
     const inv = await owner('POST', '/api/invites', { role: 'client', clientId: 'scan', email: 'sue@guard.test' });
     const sue = live.client();
     assert.strictEqual((await sue('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'sue password 1' })).status, 200);
-    seedSignedClient(built.db.data.workspace, 'scan', { onboarding: { cancellationWindowEndsAt: '2026-12-01', cancellationWindowEndsAtTs: '2026-12-02T04:59:59.999Z' } });
+    seedSignedClient(built.db.data.workspace, 'scan', { onboarding: futureWindow() });
     const fd = new FormData();
     fd.append('type', 'report');
     fd.append('file', new Blob(['%PDF-1.4\n'], { type: 'application/pdf' }), 'report.pdf');
@@ -192,7 +198,7 @@ test('a draft invoice cannot be flipped to issued without a deleted item outside
     const g = await owner('GET', '/api/workspace');
     g.body.data.invoices = g.body.data.invoices || [];
     g.body.data.disputes = g.body.data.disputes || [];
-    g.body.data.disputes.push({ id: 'bd', clientId: 'bill', items: [{ id: 'bi', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted' }] });
+    g.body.data.disputes.push({ id: 'bd', clientId: 'bill', items: [{ id: 'bi', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2026-06-01' }] });
     g.body.data.invoices.push({ id: 'draft-1', clientId: 'bill', description: 'Draft', amount: 20, status: 'draft' });
     const draft = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
     assert.strictEqual(draft.status, 200, JSON.stringify(draft.body));
@@ -252,7 +258,7 @@ test('a second invoice for the same deleted item and bureau is refused', async (
     const g = await owner('GET', '/api/workspace');
     g.body.data.disputes = g.body.data.disputes || [];
     g.body.data.invoices = g.body.data.invoices || [];
-    g.body.data.disputes.push({ id: 'dd', clientId: 'dup', items: [{ id: 'di', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted' }] });
+    g.body.data.disputes.push({ id: 'dd', clientId: 'dup', items: [{ id: 'di', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] });
     g.body.data.invoices.push({ id: 'dup-1', clientId: 'dup', disputeId: 'dd', itemId: 'di', description: 'First', amount: 20, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
     const next = await owner('GET', '/api/workspace');
@@ -294,4 +300,147 @@ test('the offline print fallback does not print a stub contract', () => {
   assert.doesNotMatch(print, /Law\.contractTerms/);
   assert.doesNotMatch(lawJs, /The signed PDF, when one is stored/);
   assert.match(lawJs, /This browser copy cannot print them/);
+});
+
+test('a saved letter is held by the server window without changing that window', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'only', name: 'Ollie Only', kind: 'personal', email: 'ollie@guard.test', status: 'active', onboarding: {} });
+    const open = futureWindow();
+    seedSignedClient(built.db.data.workspace, 'only', { onboarding: open });
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.letters = g.body.data.letters || [];
+    g.body.data.letters.push({ id: 'only-l', clientId: 'only', text: 'Letter', status: 'draft' });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 409);
+    const saved = await owner('GET', '/api/workspace');
+    assert.strictEqual(saved.body.data.clients.find(c => c.id === 'only').onboarding.cancellationWindowEndsAtTs, open.cancellationWindowEndsAtTs);
+    assert.ok(!(saved.body.data.letters || []).some(l => l.id === 'only-l'));
+  });
+});
+
+test('flipping a business client to personal drops forged signing dates and holds the work', async () => {
+  await withOwner(async ({ owner }) => {
+    await addClient(owner, { id: 'flip', name: 'Fay Flip', kind: 'business', email: 'flip@guard.test', status: 'active', onboarding: { disclosureSignedAt: '2020-01-06', contractSignedAt: '2020-01-06', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } });
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.clients.find(c => c.id === 'flip').kind = 'personal';
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const saved = await owner('GET', '/api/workspace');
+    const row = saved.body.data.clients.find(c => c.id === 'flip');
+    assert.strictEqual(row.kind, 'personal');
+    assert.strictEqual(row.onboarding.contractSignedAt, null);
+    assert.strictEqual(row.onboarding.cancellationWindowEndsAtTs, null);
+    saved.body.data.letters = saved.body.data.letters || [];
+    saved.body.data.letters.push({ id: 'flip-l', clientId: 'flip', text: 'Letter', status: 'draft' });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: saved.body.data })).status, 409);
+    assert.strictEqual((await owner('POST', '/api/clients/flip/ai-plan')).status, 409);
+  });
+});
+
+test('an issued invoice cannot be re-pointed or moved into the window', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'edit', name: 'Eve Edit', kind: 'personal', email: 'eve@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'edit', { onboarding: { disclosureSignedAt: '2026-01-06', disclosureAcknowledgedAt: '2026-01-06T15:00:00.000Z', contractSignedAt: '2026-01-06', contractSignedAtTs: '2026-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2026-01-09', cancellationWindowEndsAtTs: '2026-01-10T04:59:59.999Z' } });
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = g.body.data.disputes || [];
+    g.body.data.invoices = g.body.data.invoices || [];
+    g.body.data.disputes.push({ id: 'ed', clientId: 'edit', items: [
+      { id: 'good', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2026-06-01' },
+      { id: 'bad', creditor: 'South Bank', bureau: 'Experian', result: 'corrected', bureauResultAt: '2026-06-01' }
+    ] });
+    g.body.data.invoices.push({ id: 'edit-1', clientId: 'edit', disputeId: 'ed', itemId: 'good', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-06-01', serviceCompletedAt: '2026-06-01' });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const moved = await owner('GET', '/api/workspace');
+    const inv = moved.body.data.invoices.find(i => i.id === 'edit-1');
+    inv.itemId = 'bad';
+    const repoint = await owner('PUT', '/api/workspace', { baseVersion: moved.body.version, data: moved.body.data });
+    assert.strictEqual(repoint.status, 409);
+    assert.match(repoint.body.error, /not a correction/);
+    const dated = await owner('GET', '/api/workspace');
+    const still = dated.body.data.invoices.find(i => i.id === 'edit-1');
+    still.serviceCompletedAt = '2026-01-08';
+    still.issuedAt = '2026-01-08';
+    const inside = await owner('PUT', '/api/workspace', { baseVersion: dated.body.version, data: dated.body.data });
+    assert.strictEqual(inside.status, 409);
+    assert.match(inside.body.error, /service date/);
+    const second = await owner('GET', '/api/workspace');
+    second.body.data.invoices.push({ id: 'edit-2', clientId: 'edit', disputeId: 'ed', itemId: 'good', description: 'Again', amount: 20, status: 'issued', issuedAt: '2026-06-02', serviceCompletedAt: '2026-06-02' });
+    const dup = await owner('PUT', '/api/workspace', { baseVersion: second.body.version, data: second.body.data });
+    assert.strictEqual(dup.status, 409);
+    assert.match(dup.body.error, /one invoice/i);
+  });
+});
+
+test('an invoice without a dated bureau result is refused', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'nodate', name: 'No Date', kind: 'personal', email: 'nodate@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'nodate');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = g.body.data.disputes || [];
+    g.body.data.invoices = g.body.data.invoices || [];
+    g.body.data.disputes.push({ id: 'nd', clientId: 'nodate', items: [{ id: 'ni', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted' }] });
+    g.body.data.invoices.push({ id: 'nodate-1', clientId: 'nodate', disputeId: 'nd', itemId: 'ni', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(saved.status, 409);
+    assert.match(saved.body.error, /dated bureau result/);
+  });
+});
+
+test('a written cancellation is recorded once and then holds the work', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'note', name: 'Ned Note', kind: 'personal', email: 'ned@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'note');
+    const open = futureWindow();
+    const row = built.db.data.workspace.clients.find(c => c.id === 'note');
+    Object.assign(row.onboarding, open);
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.clients.find(c => c.id === 'note').status = 'cancelled';
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const still = await owner('GET', '/api/workspace');
+    assert.strictEqual(still.body.data.clients.find(c => c.id === 'note').onboarding.cancelledAt, null);
+    still.body.data.letters = still.body.data.letters || [];
+    still.body.data.letters.push({ id: 'note-l', clientId: 'note', text: 'Letter', status: 'draft' });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: still.body.version, data: still.body.data })).status, 409);
+    const staff = live.client();
+    const inv = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-note@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const receivedAt = new Date().toISOString().slice(0, 10);
+    const recorded = await staff('POST', '/api/clients/note/cancel', { method: 'mail', receivedAt });
+    assert.strictEqual(recorded.status, 200);
+    assert.strictEqual((await staff('POST', '/api/clients/note/cancel', { method: 'email', receivedAt })).status, 409);
+    const audit = await owner('GET', '/api/audit');
+    assert.ok(audit.body.some(a => a.action === 'client.cancel' && /mail/.test(a.detail)));
+    built.db.data.workspace.clients.find(c => c.id === 'note').onboarding.cancellationWindowEndsAtTs = '2020-01-02T04:59:59.999Z';
+    built.db.data.workspace.clients.find(c => c.id === 'note').onboarding.cancellationWindowEndsAt = '2020-01-01';
+    const after = await owner('GET', '/api/workspace');
+    after.body.data.letters = after.body.data.letters || [];
+    after.body.data.letters.push({ id: 'note-l2', clientId: 'note', text: 'Later', status: 'draft' });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: after.body.version, data: after.body.data })).status, 409);
+    assert.strictEqual((await owner('POST', '/api/clients/note/files/x/scan')).status, 409);
+    after.body.data.invoices = after.body.data.invoices || [];
+    after.body.data.invoices.push({ id: 'note-inv', clientId: 'note', description: 'After cancel', amount: 20, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
+    const billed = await owner('GET', '/api/workspace');
+    billed.body.data.invoices = billed.body.data.invoices || [];
+    billed.body.data.invoices.push({ id: 'note-inv', clientId: 'note', description: 'After cancel', amount: 20, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: billed.body.version, data: billed.body.data })).status, 409);
+  });
+});
+
+test('a retired enrolled client id cannot come back as a business client', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'gone', name: 'Gina Gone', kind: 'personal', email: 'gina@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'gone');
+    const staff = live.client();
+    const inv = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-gone@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const asStaff = await owner('GET', '/api/workspace');
+    asStaff.body.data.clients = asStaff.body.data.clients.filter(c => c.id !== 'gone');
+    assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: asStaff.body.version, data: asStaff.body.data })).status, 403);
+    const asOwner = await owner('GET', '/api/workspace');
+    asOwner.body.data.clients = asOwner.body.data.clients.filter(c => c.id !== 'gone');
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: asOwner.body.version, data: asOwner.body.data })).status, 200);
+    const again = await owner('GET', '/api/workspace');
+    again.body.data.clients.push({ id: 'gone', name: 'Gina Gone', kind: 'business', email: 'gina@guard.test', status: 'active', onboarding: { contractSignedAt: '2020-01-06', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } });
+    const reborn = await owner('PUT', '/api/workspace', { baseVersion: again.body.version, data: again.body.data });
+    assert.strictEqual(reborn.status, 409);
+    assert.match(reborn.body.error, /retired/);
+  });
 });

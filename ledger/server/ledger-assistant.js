@@ -183,7 +183,7 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     if (!msgs.length || msgs[msgs.length - 1].role !== 'user') return res.status(400).json({ error: 'Ask a question first' });
     const ws = workspace();
     const held = clientId ? (ws.clients || []).find(x => x.id === clientId) : null;
-    if (clientId && clientServiceOnHold(held)) {
+    if (clientId && clientServiceOnHold(held, undefined, ws.signatures)) {
       return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     }
     const dig = clientId ? clientDigest(ws, clientId) : null;
@@ -208,7 +208,7 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     const ws = workspace();
     const c = (ws.clients || []).find(x => x.id === req.params.id);
     if (!c) return res.status(404).json({ error: 'Client not found' });
-    if (clientServiceOnHold(c)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
+    if (clientServiceOnHold(c, undefined, ws.signatures)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     res.json({ suggestions: DisputeReasons.suggestionsFor(ws, req.params.id), kbVersion: KB.version });
   });
 
@@ -219,7 +219,7 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     const b = req.body || {};
     const c = (ws.clients || []).find(x => x.id === b.clientId);
     if (!c) return res.status(404).json({ error: 'Client not found' });
-    if (clientServiceOnHold(c)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
+    if (clientServiceOnHold(c, undefined, ws.signatures)) return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     const recipient = String(b.recipient || '').slice(0, 120);
     if (!recipient) return res.status(400).json({ error: 'Choose a recipient (bureau or furnisher)' });
     const wanted = Array.isArray(b.items) ? b.items : [];
