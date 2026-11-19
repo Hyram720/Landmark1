@@ -3480,7 +3480,7 @@ test('a held item stays unbillable after the bureau hold is cleared, and its bur
     assert.match(oldBill.body.error, /recorded while the client was on hold/);
     const later = await owner('GET', '/api/workspace');
     const next = JSON.parse(JSON.stringify(later.body.data));
-    next.disputes.push({ id: 'later', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'two', creditor: 'New Bank', accountNumber: '999', bureau: 'Experian', result: 'deleted', bureauResultAt: todayEt() }] });
+    next.disputes.push({ id: 'later', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'two', creditor: 'New Bank', accountNumber: '9998', bureau: 'Experian', result: 'deleted', bureauResultAt: todayEt() }] });
     next.invoices = [{ id: 'new-item', clientId: 'bill', disputeId: 'later', itemId: 'two', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt() }];
     const billed = await owner('PUT', '/api/workspace', { baseVersion: later.body.version, data: next });
     assert.strictEqual(billed.status, 200, JSON.stringify(billed.body));
@@ -3523,6 +3523,9 @@ test('snapshot warnings do not lock the workspace, and real names still save', (
   assert.match(snapshotProblem('Ada', 'Trans Union'), /confirm/);
   assert.match(snapshotProblem('Ada', 'files dot com'), /confirm/);
   assert.match(snapshotProblem('Ada hxxps files', ''), /confirm/);
+  assert.match(snapshotProblem('Ada c0llections', ''), /confirm/);
+  assert.match(snapshotProblem('Ada', 'credit-report'), /confirm/);
+  assert.match(snapshotProblem('creditreport file', ''), /confirm/);
   assert.match(snapshotProblem('E X P E R I A N', ''), /confirm/);
   assert.match(snapshotProblem('\u0435xperian', ''), /confirm/);
   const views = fs.readFileSync(path.join(import.meta.dirname, '../js/views.js'), 'utf8');
@@ -3985,5 +3988,90 @@ test('a no-account deletion with an abbreviated creditor needs the owner to conf
     confirmed.invoices = [{ id: 'abbr-inv', clientId: 'bill', disputeId: 'abbrev', itemId: 'abbr', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt(), confirmNoAccountHold: true }];
     const allowed = await owner('PUT', '/api/workspace', { baseVersion: again.body.version, data: confirmed });
     assert.strictEqual(allowed.status, 200, JSON.stringify(allowed.body));
+  });
+});
+
+test('an owner cannot date a mailed row later than its typed date, and that row cannot be billed', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'bill', name: 'Bea Bill', kind: 'personal', email: 'typed-bill@guard.test', status: 'active', pricePerResult: 20 });
+    seedSignedClient(built.db.data.workspace, 'bill', { onboarding: { disclosureSignedAt: '2026-10-01', disclosureAcknowledgedAt: '2026-10-01T15:00:00.000Z', contractSignedAt: '2026-10-01', contractSignedAtTs: '2026-10-01T16:00:00.000Z', cancellationWindowEndsAt: '2026-10-06', cancellationWindowEndsAtTs: '2026-10-07T03:59:59.999Z' } });
+    built.db.data.workspace.disputes = [
+      { id: 'oct', clientId: 'bill', status: 'sent', sentAt: '2025-10-01', items: [{ id: 'o1', creditor: 'Old Bank', accountNumber: '1111', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2026-11-01' }] },
+      { id: 'nov', clientId: 'bill', status: 'sent', sentAt: '2025-11-24', sentDate: '2025-11-25', items: [{ id: 'n1', creditor: 'Mid Bank', accountNumber: '2222', bureau: 'Experian', result: 'deleted', bureauResultAt: '2026-11-01' }] },
+      { id: 'blank', clientId: 'bill', status: 'sent', items: [{ id: 'b1', creditor: 'Bare Bank', accountNumber: '3333', bureau: 'TransUnion' }] }
+    ];
+    const laterOct = await owner('POST', '/api/disputes/oct/legacy-mailed', { mailedAt: '2026-11-02', reason: 'The file was typed October 1.' });
+    assert.strictEqual(laterOct.status, 409, JSON.stringify(laterOct.body));
+    assert.match(laterOct.body.error, /later than the typed mailed date/);
+    const laterNov = await owner('POST', '/api/disputes/nov/legacy-mailed', { mailedAt: '2026-01-15', reason: 'The file was typed in November.' });
+    assert.strictEqual(laterNov.status, 409, JSON.stringify(laterNov.body));
+    const current = await owner('GET', '/api/workspace');
+    current.body.data.invoices = [
+      { id: 'oct-inv', clientId: 'bill', disputeId: 'oct', itemId: 'o1', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-01', serviceCompletedAt: '2026-11-01' },
+      { id: 'nov-inv', clientId: 'bill', disputeId: 'nov', itemId: 'n1', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-01', serviceCompletedAt: '2026-11-01' }
+    ];
+    const billed = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: current.body.data });
+    assert.strictEqual(billed.status, 409, JSON.stringify(billed.body));
+    const datedOct = await owner('POST', '/api/disputes/oct/legacy-mailed', { mailedAt: '2025-10-01', reason: 'The typed date is October 1.' });
+    assert.strictEqual(datedOct.status, 200, JSON.stringify(datedOct.body));
+    assert.strictEqual(datedOct.body.held, true);
+    const datedNov = await owner('POST', '/api/disputes/nov/legacy-mailed', { mailedAt: '2025-11-24', reason: 'The earlier typed date is November 24.' });
+    assert.strictEqual(datedNov.status, 200, JSON.stringify(datedNov.body));
+    assert.strictEqual(datedNov.body.held, true);
+    const inside = await owner('POST', '/api/disputes/blank/legacy-mailed', { mailedAt: '2026-10-03', reason: 'No typed date, and this is inside the window.' });
+    assert.strictEqual(inside.status, 200, JSON.stringify(inside.body));
+    assert.strictEqual(inside.body.held, true);
+    const audit = await owner('GET', '/api/audit');
+    const novAudit = audit.body.find(row => row.action === 'dispute.legacy_mailed' && /2025-11-24/.test(row.detail));
+    assert.ok(novAudit);
+    assert.match(novAudit.detail, /2025-11-25/);
+    const again = await owner('GET', '/api/workspace');
+    again.body.data.invoices = current.body.data.invoices;
+    const still = await owner('PUT', '/api/workspace', { baseVersion: again.body.version, data: again.body.data });
+    assert.strictEqual(still.status, 409, JSON.stringify(still.body));
+    assert.match(still.body.error, /cancellation window|recorded while the client was on hold|cannot be billed/);
+  });
+});
+
+test('a clear needs the same creditor unless the owner confirms it, and a short or buried account is caught', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'bill', name: 'Bea Bill', kind: 'personal', email: 'digit-bill@guard.test', status: 'active', pricePerResult: 20 });
+    seedSignedClient(built.db.data.workspace, 'bill', { onboarding: { disclosureSignedAt: '2026-10-01', disclosureAcknowledgedAt: '2026-10-01T15:00:00.000Z', contractSignedAt: '2026-10-01', contractSignedAtTs: '2026-10-01T16:00:00.000Z', cancellationWindowEndsAt: '2026-10-06', cancellationWindowEndsAtTs: '2026-10-07T03:59:59.999Z' } });
+    const open = await owner('GET', '/api/workspace');
+    open.body.data.disputes = [{ id: 'held-d', clientId: 'bill', status: 'sent', sentAt: '2026-11-02', items: [{ id: 'one', creditor: 'R Bank', accountNumber: '4321', bureau: 'Experian' }] }];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: open.body.version, data: open.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/bill/cancel', { method: 'email', receivedAt: '2026-10-04' })).status, 200);
+    const held = await owner('GET', '/api/workspace');
+    const marked = held.body.data.disputes.find(d => d.id === 'held-d');
+    marked.items[0].result = 'deleted';
+    marked.items[0].bureauResultAt = todayEt();
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: held.body.version, data: held.body.data })).status, 200);
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAt = null;
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAtTs = null;
+    built.db.data.workspace.disputes.find(d => d.id === 'held-d').serverSentAt = '2026-11-02';
+    const hold = built.db.data.workspace.heldOutcomes.find(row => row.key === 'bill\nexperian');
+    hold.at = '2026-11-02';
+    const book = await owner('GET', '/api/workspace');
+    book.body.data.disputes.push({ id: 'remail', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 're', creditor: 'Other Name', accountNumber: '4321 5', bureau: 'Experian' }] });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: book.body.version, data: book.body.data })).status, 200);
+    const mismatch = await owner('POST', '/api/clients/bill/bureau-hold/clear', { bureau: 'Experian', disputeId: 'remail', reason: 'Re-mailed dispute remail after the cancellation window.' });
+    assert.strictEqual(mismatch.status, 400, JSON.stringify(mismatch.body));
+    assert.match(mismatch.body.error, /same creditor/);
+    const buried = await owner('GET', '/api/workspace');
+    const buriedBody = JSON.parse(JSON.stringify(buried.body.data));
+    buriedBody.disputes.push({ id: 'buried', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'buried-item', creditor: 'Elsewhere', accountNumber: '4321 5', bureau: 'Experian', result: 'deleted', bureauResultAt: todayEt() }] });
+    buriedBody.invoices = [{ id: 'buried-inv', clientId: 'bill', disputeId: 'buried', itemId: 'buried-item', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt() }];
+    const buriedBill = await owner('PUT', '/api/workspace', { baseVersion: buried.body.version, data: buriedBody });
+    assert.strictEqual(buriedBill.status, 409, JSON.stringify(buriedBill.body));
+    assert.match(buriedBill.body.error, /recorded while the client was on hold/);
+    const short = await owner('GET', '/api/workspace');
+    const shortBody = JSON.parse(JSON.stringify(short.body.data));
+    shortBody.disputes.push({ id: 'short', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'short-item', creditor: 'Other Co', accountNumber: '21', bureau: 'Experian', result: 'deleted', bureauResultAt: todayEt() }] });
+    shortBody.invoices = [{ id: 'short-inv', clientId: 'bill', disputeId: 'short', itemId: 'short-item', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt() }];
+    const shortBill = await owner('PUT', '/api/workspace', { baseVersion: short.body.version, data: shortBody });
+    assert.strictEqual(shortBill.status, 409, JSON.stringify(shortBill.body));
+    assert.match(shortBill.body.error, /confirm this deletion|recorded while the client was on hold/i);
+    const cleared = await owner('POST', '/api/clients/bill/bureau-hold/clear', { bureau: 'Experian', disputeId: 'remail', reason: 'Re-mailed dispute remail after the cancellation window.', confirmCreditor: true });
+    assert.strictEqual(cleared.status, 200, JSON.stringify(cleared.body));
   });
 });

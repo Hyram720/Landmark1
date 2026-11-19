@@ -54,7 +54,7 @@ export function snapshotProblem(name, address) {
   if (/https?:\/\/|hxxps?:\/\/|www\./i.test(text) || /\bhxxps?\b/.test(lower) || /\bdot\s*com\b/.test(lower) || /[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})?(?:\.[\p{L}\p{N}]{2,})+/u.test(text)) {
     return warn;
   }
-  if (/\bcollections\b/.test(lower) || /\bcredit report\b/.test(lower) || /\bpaid off\b/.test(lower) || /\bwiped\b/.test(lower) || /\bnegatives\b/.test(lower) || /\berased\b/.test(lower) || /\btrans\s+union\b/.test(lower)) {
+  if (/\bcollections\b/.test(lower) || /\bc0llections\b/.test(lower) || /\bcredit report\b/.test(lower) || /\bcredit-report\b/.test(lower) || /\bcreditreport\b/.test(lower) || /\bpaid off\b/.test(lower) || /\bwiped\b/.test(lower) || /\bnegatives\b/.test(lower) || /\berased\b/.test(lower) || /\btrans\s+union\b/.test(lower)) {
     return warn;
   }
   const flat = collapseSpacedLetters(lower.replace(/([\p{L}])\1+/gu, '$1'));

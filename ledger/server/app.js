@@ -799,27 +799,38 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     return key;
   }
-  function accountLast4(item) {
+  function accountDigits(item) {
     const raw = String((item && (item.accountNumber || item.accountId)) || '').replace(/-(\d)\s*$/, '');
-    const digits = raw.replace(/\D/g, '');
-    return digits ? digits.slice(-4) : '';
+    return raw.replace(/\D/g, '');
+  }
+  function accountLast4(item) {
+    const digits = accountDigits(item);
+    return digits.length >= 4 ? digits.slice(-4) : '';
+  }
+  function digitsContainHeld(held, item) {
+    const heldLast = accountLast4(held);
+    const digits = accountDigits(item);
+    return !!(heldLast && digits.length >= 4 && digits.includes(heldLast));
   }
   function sameHeldAccount(held, item) {
     if (!held || !item) return false;
     const bureau = bureauEnum(held.bureau);
     if (!bureau || bureau !== bureauEnum(item.bureau)) return false;
-    const heldLast = accountLast4(held);
-    const itemLast = accountLast4(item);
-    if (heldLast && itemLast && heldLast === itemLast) return true;
+    if (digitsContainHeld(held, item) || digitsContainHeld(item, held)) return true;
     const creditor = creditorKey(held);
-    return !!(creditor && creditor === creditorKey(item) && !itemLast);
+    return !!(creditor && creditor === creditorKey(item) && !accountLast4(item));
   }
   function citesHeldAccount(dispute, heldItems) {
     return (dispute.items || []).some(item => (heldItems || []).some(held => {
       if (!item || bureauEnum(item.bureau) !== bureauEnum(held.bureau)) return false;
-      const heldLast = accountLast4(held);
-      const itemLast = accountLast4(item);
-      return !!(heldLast && itemLast && heldLast === itemLast);
+      return digitsContainHeld(held, item) || digitsContainHeld(item, held);
+    }));
+  }
+  function citesHeldCreditor(dispute, heldItems) {
+    return (dispute.items || []).some(item => (heldItems || []).some(held => {
+      if (!item || !citesHeldAccount({ items: [item] }, [held])) return false;
+      const creditor = creditorKey(held);
+      return !!(creditor && creditor === creditorKey(item));
     }));
   }
   function windowEndDay(client) {
@@ -1331,7 +1342,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (!tomb || tomb.clientId !== c.id) continue;
       for (const item of tomb.items || []) if (recordedResult(item) && item.resultRecordedOnHold && bureauEnum(item.bureau) === bureau) heldItems.push({ dispute: tomb, item });
     }
-    if (heldItems.length && !citesHeldAccount(named, heldItems.map(row => row.item))) return res.status(400).json({ error: 'That dispute must cite the account that was recorded during the hold.' });
+    const heldForClear = heldItems.map(row => row.item);
+    if (heldItems.length && !citesHeldAccount(named, heldForClear)) return res.status(400).json({ error: 'That dispute must cite the account that was recorded during the hold.' });
+    const confirmCreditor = (req.body || {}).confirmCreditor === true;
+    if (heldItems.length && !confirmCreditor && !citesHeldCreditor(named, heldForClear)) return res.status(400).json({ error: 'That dispute must cite the same creditor, or the owner must confirm it.' });
     const causeDays = heldItems.map(row => recordedDay(row.dispute.serverSentAt)).filter(Boolean);
     const holdRow = (ws.heldOutcomes || []).find(item => item && item.key === holdKey(c.id, bureau));
     if (!causeDays.length && holdRow) {
@@ -1356,7 +1370,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     row.clearedAt = new Date().toISOString();
     row.clearedBy = req.user.email;
     row.clearReason = reason;
-    db.audit({ actor: req.user.email, action: 'bureau.hold.clear', detail: JSON.stringify({ clientId: c.id, bureau, reason }) });
+    db.audit({ actor: req.user.email, action: 'bureau.hold.clear', detail: JSON.stringify({ clientId: c.id, bureau, reason, confirmCreditor }) });
     commitWorkspace(req.user.email, 'bureau.hold.clear', c.id);
     res.json({ ok: true, bureau });
   });
@@ -1422,19 +1436,25 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const mailed = recordedDay((req.body || {}).mailedAt);
     if (!mailed) return res.status(400).json({ error: 'Name the mailed date as YYYY-MM-DD.' });
     if (mailed > todayEtYmd()) return res.status(400).json({ error: 'The mailed date cannot be after today.' });
+    const typedDays = [recordedDay(target.sentAt), recordedDay(target.sentDate)].filter(Boolean).sort();
+    const earliestTyped = typedDays[0] || '';
+    if (earliestTyped && mailed > earliestTyped) return res.status(409).json({ error: 'The mailed date cannot be later than the typed mailed date.' });
     const client = (ws.clients || []).find(row => row && row.id === target.clientId);
     const end = windowEndDay(client);
     const signed = client && client.onboarding ? recordedDay(client.onboarding.contractSignedAt || client.onboarding.contractSignedAtTs) : '';
     const inside = !!(end && mailed <= end);
     const beforeContract = !!(signed && mailed < signed);
-    const held = !client || client.kind === 'business' ? false : (!end || inside || beforeContract);
+    const afterWindow = !!(end && mailed > end && !beforeContract);
+    let held = !client || client.kind === 'business' ? false : (!end || inside || beforeContract);
+    if (!earliestTyped && client && client.kind !== 'business') held = !afterWindow;
+    if (!earliestTyped && !client) held = true;
     target.serverSentAt = mailed;
     if (held) {
       target.legacyMailedUnbillable = true;
       for (const item of target.items || []) if (item && (item.result === 'deleted' || item.result === 'corrected')) item.resultRecordedOnHold = true;
       for (const bureau of holdBureaus(target)) placeBureauHold(ws, target.clientId, bureau, mailed, beforeContract && !inside ? 'before-contract' : 'mailed');
     }
-    db.audit({ actor: req.user.email, action: 'dispute.legacy_mailed', detail: JSON.stringify({ disputeId: target.id, clientId: target.clientId || '', mailedAt: mailed, held, reason }) });
+    db.audit({ actor: req.user.email, action: 'dispute.legacy_mailed', detail: JSON.stringify({ disputeId: target.id, clientId: target.clientId || '', mailedAt: mailed, held, reason, sentAt: target.sentAt || '', sentDate: target.sentDate || '' }) });
     commitWorkspace(req.user.email, 'dispute.legacy_mailed', target.id);
     res.json({ ok: true, mailedAt: mailed, held });
   });
