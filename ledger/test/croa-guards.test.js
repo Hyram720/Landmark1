@@ -2197,21 +2197,6 @@ test('a wrong list shape is a 400 and an id-less violations key is a 422', async
   });
 });
 
-test('the browser adopts the saved workspace and does not mint pay tokens', () => {
-  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
-  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  assert.match(flush, /Store\.applyServerSave\(r\.data, sent/);
-  assert.match(appJs, /renderWhenSafe\(\)/);
-  assert.match(flush, /e\.body && e\.body\.data/);
-  assert.match(flush, /await this\.reload\(\)/);
-  assert.doesNotMatch(appJs, /Billing\.payToken\(\)/);
-  const voidAct = appJs.slice(appJs.indexOf("'invoice-void'"), appJs.indexOf("'invoice-print'"));
-  assert.match(voidAct, /find\(x => x && x\.id === id\)/);
-  assert.match(voidAct, /logVoidIfSaved/);
-  assert.doesNotMatch(voidAct, /Voided invoice/);
-  assert.match(appJs, /Store\.get\.client\(clientId\)/);
-});
-
 test('a cleared dispute cannot take a held client letter and be marked sent', async () => {
   await withOwner(async ({ built, owner, live }) => {
     await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-letterid@guard.test', status: 'active' });
@@ -4121,6 +4106,7 @@ test('the browser adopts the saved workspace and does not mint pay tokens', () =
   const views = fs.readFileSync(path.join(import.meta.dirname, '../js/views.js'), 'utf8');
   const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
   assert.match(flush, /Store\.applyServerSave\(r\.data, sent/);
+  assert.match(appJs, /renderWhenSafe\(\)/);
   assert.match(flush, /finishApplied\(applied, false\)/);
   assert.match(flush, /e\.body && e\.body\.data/);
   assert.match(flush, /await this\.reload\(\)/);
@@ -4139,6 +4125,7 @@ test('the browser adopts the saved workspace and does not mint pay tokens', () =
   assert.match(note, /deals \|\| \[\]\)\.find\(row => row\.id === dealId\)/);
   const payout = appJs.slice(appJs.indexOf("'ref-payout'"), appJs.indexOf("'seq-stop'"));
   assert.match(payout, /no longer in the workspace/);
+  assert.match(appJs, /Store\.get\.client\(clientId\)/);
   assert.match(appJs, /Store\.get\.dispute\(disputeId\)/);
   assert.match(appJs, /vendorAccounts\.find\(x => x\.id === vid\)/);
   assert.match(views, /ledgerUser && root\.ledgerUser\.role === 'owner'/);
