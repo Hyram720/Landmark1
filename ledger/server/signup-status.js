@@ -84,6 +84,12 @@ function heldReason(client) {
   return `${client.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
 }
 
+function removedHeldClients(ws) {
+  const bag = ws && ws.heldServiceIds;
+  if (!bag || typeof bag !== 'object' || Array.isArray(bag) || !Array.isArray(bag.clients)) return [];
+  return bag.clients.filter(row => row && row.id);
+}
+
 function collectHeld(before, after) {
   const signatures = (after && after.signatures) || (before && before.signatures) || [];
   const heldById = new Map();
@@ -92,11 +98,20 @@ function collectHeld(before, after) {
   };
   ((before && before.clients) || []).forEach(add);
   ((after && after.clients) || []).forEach(add);
+  removedHeldClients(before).concat(removedHeldClients(after)).forEach(row => {
+    if (!heldById.has(row.id)) heldById.set(String(row.id), row.reason || heldReason({ name: row.name || row.id }));
+  });
   return heldById;
 }
 
-function letterHoldReason(letter, priorLetter, disputes, heldById) {
-  const reasonFor = id => (id && heldById.get(id)) || '';
+function clientHoldReason(id, clients, heldById) {
+  if (!id) return '';
+  if (heldById.get(id)) return heldById.get(id);
+  if (!(clients || []).some(c => c && c.id === id)) return 'Client ' + id + ' is not in the workspace, so this record stays on hold.';
+  return '';
+}
+
+function letterHoldReason(letter, priorLetter, disputes, reasonFor) {
   const owner = reasonFor(letter && letter.clientId) || reasonFor(priorLetter && priorLetter.clientId);
   if (owner) return owner;
   const ids = [];
@@ -117,9 +132,11 @@ function letterHoldReason(letter, priorLetter, disputes, heldById) {
 export function mailingBlocked(ws, dispute) {
   if (!ws || !dispute) return '';
   const heldById = collectHeld(ws, ws);
-  if (dispute.clientId && heldById.get(dispute.clientId)) return heldById.get(dispute.clientId);
+  const reasonFor = id => clientHoldReason(id, ws.clients || [], heldById);
+  const own = reasonFor(dispute.clientId);
+  if (own) return own;
   const letter = ((ws.letters) || []).find(row => row && row.id && row.id === dispute.letterId);
-  return letterHoldReason(letter, letter, ws.disputes || [], heldById);
+  return letterHoldReason(letter, letter, ws.disputes || [], reasonFor);
 }
 
 /** New letters or disputes, and any step toward sending, while a personal client is still inside CROA onboarding. */
@@ -138,9 +155,10 @@ export function serviceWorkBlocked(before, after) {
     seen.add(token);
     refused.push({ key, id: id || '', field, reason });
   };
-  const reasonForClient = id => (id && heldById.get(id)) || '';
+  const afterClients = (after && after.clients) || [];
+  const reasonForClient = id => clientHoldReason(id, afterClients, heldById);
   const allDisputes = priorDisputes.concat((after && after.disputes) || []);
-  const letterTiedReason = letter => letterHoldReason(letter, byId(priorLetters, letter && letter.id), allDisputes, heldById);
+  const letterTiedReason = letter => letterHoldReason(letter, byId(priorLetters, letter && letter.id), allDisputes, reasonForClient);
   const checkRow = (row, priorList, key, fields) => {
     if (!row || typeof row !== 'object') return;
     const old = byId(priorList, row.id);
@@ -164,7 +182,8 @@ export function serviceWorkBlocked(before, after) {
   const priorBag = before && before.heldServiceIds && typeof before.heldServiceIds === 'object' && !Array.isArray(before.heldServiceIds) ? before.heldServiceIds : {};
   const tomb = {
     disputes: (Array.isArray(priorBag.disputes) ? priorBag.disputes : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') })),
-    letters: (Array.isArray(priorBag.letters) ? priorBag.letters : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') }))
+    letters: (Array.isArray(priorBag.letters) ? priorBag.letters : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') })),
+    clients: (Array.isArray(priorBag.clients) ? priorBag.clients : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') }))
   };
   const remember = (list, id, reason) => {
     if (!id || list.some(row => row.id === id)) return;
@@ -180,6 +199,22 @@ export function serviceWorkBlocked(before, after) {
   priorLetters.forEach(old => {
     if (!old || !old.id || afterLetterIds.has(old.id)) return;
     if (heldById.get(old.clientId)) remember(tomb.letters, old.id, heldById.get(old.clientId));
+  });
+  const afterIds = new Set(afterClients.filter(c => c && c.id).map(c => c.id));
+  ((before && before.clients) || []).forEach(c => {
+    if (!c || !c.id || afterIds.has(c.id)) return;
+    const reason = heldById.get(c.id);
+    if (!reason) return;
+    const stillDisputes = ((after && after.disputes) || []).filter(row => row && row.clientId === c.id);
+    const stillLetters = ((after && after.letters) || []).filter(row => row && row.clientId === c.id);
+    if (stillDisputes.length || stillLetters.length) {
+      const names = stillDisputes.map(row => 'dispute ' + (row.id || '')).concat(stillLetters.map(row => 'letter ' + (row.id || '')));
+      push('clients', c.id, '', reason + ' Remove ' + names.join(', ') + ' before deleting this client.');
+      stillDisputes.forEach(row => push('disputes', row.id, 'clientId', reason));
+      stillLetters.forEach(row => push('letters', row.id, 'clientId', reason));
+      return;
+    }
+    remember(tomb.clients, c.id, reason);
   });
   if (after && typeof after === 'object') after.heldServiceIds = tomb;
   const reused = (list, id) => (list || []).find(row => row && row.id === id);
