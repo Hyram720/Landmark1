@@ -2083,7 +2083,7 @@ test('a 409 keeps the other user city and dispute recipient instead of re-saving
   assert.strictEqual(Store.state.clients[0].city, 'Cherry Hill');
   assert.strictEqual(Store.state.disputes[0].recipient, 'Experian');
   assert.strictEqual(Store.state.clients[0].zip, '08002');
-  assert.strictEqual(applied.requeue, true);
+  assert.strictEqual(applied.dropped.length, 0);
 });
 
 test('a refusal leaves Not allowed on the status and names the other dropped edits', () => {
