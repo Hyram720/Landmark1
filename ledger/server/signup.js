@@ -91,13 +91,14 @@ export function mountSignup(app, deps) {
     } else {
       passwordHash = hashPassword(crypto.randomBytes(24).toString('base64url'));
     }
-    const exists = D().users.some(u => u.email === email && !u.disabled);
+    const normEmail = value => String(value || '').trim().toLowerCase();
+    const exists = D().users.some(u => normEmail(u.email) === email && !u.disabled);
     if (exists) {
       db.audit({ actor: 'public', action: 'signup.duplicate', detail: 'email not revealed' });
       db.persist();
       return res.json(SIGNUP_OK);
     }
-    const matchedClient = (workspace().clients || []).find(c => c && String(c.email || '').trim().toLowerCase() === email);
+    const matchedClient = (workspace().clients || []).find(c => c && normEmail(c.email) === email);
     const clientId = uid();
     const now = new Date().toISOString();
     const client = {

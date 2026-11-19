@@ -42,7 +42,13 @@ const duplicatePayTokens = {
   sharedTokens: duplicateGroups.length,
   invoices: duplicateGroups.reduce((sum, n) => sum + n, 0)
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens }, null, 2) + '\n');
+const deployGate = {
+  outside: outside,
+  duplicatePayTokens,
+  ready: outside === 0 && duplicatePayTokens.sharedTokens === 0,
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0 and no pay token is shared. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+};
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, deployGate }, null, 2) + '\n');
 
 function decode(raw, secret) {
   const parsed = JSON.parse(raw);

@@ -68,7 +68,6 @@ function faviconIco() {
   return FAVICON;
 }
 const uid = () => crypto.randomUUID();
-const today = () => new Date().toISOString().slice(0, 10);
 const plain = (o) => JSON.parse(JSON.stringify(o));
 const BUILD = (process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now())).replace(/[^\w-]/g, '').slice(0, 40);
 
@@ -83,6 +82,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const value = typeof nowSource === 'function' ? nowSource() : new Date();
     return value instanceof Date ? value : new Date(value);
   };
+  const today = () => etYmd(now());
   const db = openDb({ dir: dataDir, encryptionKey });
   const filesDir = path.join(dataDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -377,6 +377,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       pendingAudits.push({ actor: req.user.email, action: 'client.kind', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, old: old.kind || 'personal', new: c.kind || 'personal' }) });
     }
     data.retiredClientIds = JSON.parse(JSON.stringify((before && before.retiredClientIds) || []));
+    restoreServerTasks(before, data);
     const nextIds = new Set((data.clients || []).filter(Boolean).map(c => c.id));
     for (const old of priorClients.values()) {
       if (!old || nextIds.has(old.id) || old.kind === 'business' || !enrollmentOpenOrSigned(old, data.signatures)) continue;
@@ -447,7 +448,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
     try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }
-    res.json({ version: D().workspaceVersion });
+    res.json({ version: D().workspaceVersion, data: workspace() });
   });
 
   const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs', 'cancellationMethod', 'cancellationReceivedAt', 'cancellationPostmarkAt', 'cancellationTimely', 'postmarkReview'];
@@ -958,9 +959,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
   });
 
-  function todayEtYmd(now = new Date()) {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
-    return `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+  function todayEtYmd(at = now()) {
+    return etYmd(at);
   }
   function calendarDaysBetween(earlier, later) {
     const [y1, m1, d1] = earlier.split('-').map(Number);
@@ -1003,6 +1003,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     return local + '@' + domain;
   }
+  const SERVER_TASK_KINDS = new Set(['postmark_needs_owner_review', 'possible_duplicate']);
+  function restoreServerTasks(before, data) {
+    const prior = ((before && before.tasks) || []).filter(t => t && SERVER_TASK_KINDS.has(t.kind));
+    const incoming = Array.isArray(data.tasks) ? data.tasks : [];
+    const ordinary = incoming.filter(t => t && !SERVER_TASK_KINDS.has(t.kind));
+    data.tasks = prior.map(t => JSON.parse(JSON.stringify(t))).concat(ordinary);
+  }
   const INVOICE_STATUSES = new Set(['draft', 'issued', 'paid', 'void']);
   function changedInvoiceKeys(prev, inv) {
     const keys = new Set([...Object.keys(prev || {}), ...Object.keys(inv || {})]);
@@ -1026,6 +1033,21 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const leavingBilled = prev && (prev.status === 'issued' || prev.status === 'paid') && inv.status !== 'issued' && inv.status !== 'paid';
       if (!INVOICE_STATUSES.has(inv.status) && !leavingBilled) return { status: 400, error: 'Invoice status must be draft, issued, paid, or void.' };
       if (inv.status === 'draft') delete inv.payToken;
+      if (!prev || (prev.status !== 'paid' && prev.status !== 'void')) {
+        delete inv.transId;
+        delete inv.paidVia;
+        if (inv.status === 'paid') {
+          const service = String(inv.serviceCompletedAt || '').slice(0, 10);
+          const paidOn = today();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(service) && paidOn < service) return { status: 409, error: 'The paid date cannot be before the service was completed.' };
+          inv.paidAt = paidOn;
+        } else delete inv.paidAt;
+      } else {
+        for (const key of ['paidAt', 'transId', 'paidVia']) {
+          if (prev[key] == null || prev[key] === '') delete inv[key];
+          else inv[key] = prev[key];
+        }
+      }
     }
     const next = new Map(((data && data.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     for (const prev of (before && before.invoices) || []) {
@@ -1050,7 +1072,6 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (leaving) { allowed.add('status'); allowed.add('voidReason'); }
       if (!prev.payToken && inv.status === 'issued') allowed.add('payToken');
       const changed = changedInvoiceKeys(prev, inv).filter(key => !allowed.has(key));
-      if (changed.includes('paidAt')) return { status: 409, error: 'The paid date is set by the server when the invoice is marked paid.' };
       if (changed.length) return { status: 409, error: prev.status === 'paid' ? 'The invoice is locked once it is paid.' : 'The invoice is locked once it is issued.' };
       if (markingPaid) inv.paidAt = today();
       if (prev.payToken) inv.payToken = prev.payToken;
@@ -1154,6 +1175,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     activity(`${req.user.email} ${decision === 'confirm' ? 'confirmed' : 'rejected'} the postmark for ${c.name}. ${timely ? 'Timely.' : 'Late.'}`, c.id);
     commitWorkspace(req.user.email, 'client.cancel.postmark_review', c.id);
     res.json({ ok: true, decision, timely, refundTask: refund });
+  });
+  app.post('/api/tasks/:id/close', need('owner'), (req, res) => {
+    const task = (workspace().tasks || []).find(t => t && t.id === req.params.id);
+    if (!task || task.kind !== 'possible_duplicate') return res.status(404).json({ error: 'Close that task from its own review.' });
+    task.done = true;
+    db.audit({ actor: req.user.email, action: 'task.close', detail: JSON.stringify({ id: task.id, kind: task.kind, clientId: task.clientId }) });
+    commitWorkspace(req.user.email, 'task.close', task.id);
+    res.json({ ok: true });
   });
   app.post('/api/clients/:id/cancel/timeliness', need('owner'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);

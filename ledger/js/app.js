@@ -86,11 +86,25 @@
     async flush() {
       try {
         const r = await api('PUT', '/api/workspace', { baseVersion: this.version, data: Store.state });
-        this.version = r.version; this.pending = false; setSync('saved');
+        this.version = r.version;
+        if (r.data) Store.adopt(r.data);
+        this.pending = false;
+        setSync('saved');
+        render();
       } catch (e) {
         if (e.status === 409) {
-          Store.adopt(e.body.data); this.version = e.body.version; this.pending = false; setSync('conflict');
-          toast('Someone else updated the workspace — loaded the latest version. Please redo your last change.'); render();
+          this.pending = false;
+          if (e.body && e.body.data) {
+            Store.adopt(e.body.data);
+            this.version = e.body.version;
+            setSync('conflict');
+            toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
+            render();
+          } else {
+            setSync('conflict');
+            toast((e.body && e.body.error) || 'Change refused. Reloaded the last saved version.');
+            await this.reload();
+          }
         } else if (e.status === 422) {
           // The server refused an invoice over the agreement's 12-month term / total cap: drop the change.
           this.pending = false; setSync('saved');
@@ -901,7 +915,7 @@
         if (!(Number(d.amount) > 0) || !d.description) { toast('Add a description and amount'); return false; }
         const cap = root.Billing.capCheck(S(), c, Number(d.amount), d.serviceCompletedAt);
         if (!cap.ok) { toast(`Blocked: ${cap.reason}`); return false; }
-        const inv = { id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), dueAt: d.dueAt || null, notes: d.notes || '', paidAt: null, payToken: root.Billing.payToken() };
+        const inv = { id: Store.uid(), clientId: d.clientId, description: d.description, amount: Number(d.amount), serviceCompletedAt: d.serviceCompletedAt, disputeId: d.disputeId || null, status: 'issued', issuedAt: T(), dueAt: d.dueAt || null, notes: d.notes || '', paidAt: null };
         inv.number = root.Invoices.number(inv);
         S().invoices.push(inv);
         commit(`Issued invoice ${inv.number} ${UI.money(d.amount)} — ${d.description}`, d.clientId);
