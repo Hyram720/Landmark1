@@ -473,10 +473,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const report = (item.reportId || inv.reportId) && (data.reports || []).find(r => r && r.id === (item.reportId || inv.reportId) && r.clientId === inv.clientId && r.date);
       const doc = (item.documentId || inv.documentId) && (data.documents || []).find(d => d && d.id === (item.documentId || inv.documentId) && d.clientId === inv.clientId && (d.uploadedAt || d.date));
       if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return 'An invoice must name the dated bureau result for the deleted item.';
-      if (prev && billable(prev) && invoiceField(prev, 'amount') !== invoiceField(inv, 'amount')) {
-        const price = Number(billed.pricePerResult);
-        if (!(price > 0) || Number(inv.amount) !== price) return 'The invoice amount must equal the price per result.';
-      }
+      const price = Number(billed.pricePerResult);
+      if (!(price > 0) || Number(inv.amount) !== price) return 'The invoice amount must equal the price per result.';
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
       if (dup) return 'Only one invoice can be issued for each deleted item and bureau.';
     }
