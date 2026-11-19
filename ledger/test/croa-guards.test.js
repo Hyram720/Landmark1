@@ -1610,7 +1610,7 @@ test('the browser adopts the saved workspace and does not mint pay tokens', () =
   const views = fs.readFileSync(path.join(import.meta.dirname, '../js/views.js'), 'utf8');
   const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
   assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
-  assert.match(flush, /renderWhenSafe\(\)/);
+  assert.match(flush, /finishApplied\(applied, false\)/);
   assert.match(flush, /e\.body && e\.body\.data/);
   assert.match(flush, /await this\.reload\(\)/);
   assert.doesNotMatch(appJs, /Billing\.payToken\(\)/);
@@ -1620,7 +1620,14 @@ test('the browser adopts the saved workspace and does not mint pay tokens', () =
   assert.doesNotMatch(voidAct, /Voided invoice/);
   assert.match(flush, /status === 400 \|\| e\.status === 403/);
   assert.match(flush, /!e\.status \|\| e\.status >= 500/);
-  assert.match(appJs, /focusout/);
+  assert.match(appJs, /redrawDeferred/);
+  assert.match(appJs, /pointerDown/);
+  assert.match(appJs, /dataset\.item/);
+  assert.match(views, /data-item=/);
+  const note = appJs.slice(appJs.indexOf("'aq-note'"), appJs.indexOf("'aq-print'"));
+  assert.match(note, /deals \|\| \[\]\)\.find\(row => row\.id === dealId\)/);
+  const payout = appJs.slice(appJs.indexOf("'ref-payout'"), appJs.indexOf("'seq-stop'"));
+  assert.match(payout, /no longer in the workspace/);
   assert.match(appJs, /Store\.get\.dispute\(disputeId\)/);
   assert.match(appJs, /vendorAccounts\.find\(x => x\.id === vid\)/);
   assert.match(views, /ledgerUser && root\.ledgerUser\.role === 'owner'/);
@@ -1894,6 +1901,99 @@ test('another user\'s city and dispute recipient survive a staff re-save after 4
     assert.strictEqual(after.body.data.disputes.find(row => row.id === 'race-dispute').recipient, 'Equifax');
     assert.ok(after.body.data.tasks.some(row => row.id === 'staff-task'));
   });
+});
+
+test('a refused edit from the failed save is replayed from the last server copy', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', city: '' }], tasks: [] });
+  const state = Store.state;
+  state.clients.find(row => row.id === 'c').city = 'Newark';
+  const sent = JSON.parse(JSON.stringify(state));
+  const server = JSON.parse(JSON.stringify(state));
+  server.clients.find(row => row.id === 'c').city = '';
+  server.tasks.push({ id: 'owner-task', title: 'Owner task', done: false });
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(applied.requeue, true);
+  assert.strictEqual(applied.dropped.length, 0);
+  assert.strictEqual(state.clients.find(row => row.id === 'c').city, 'Newark');
+  assert.ok(state.tasks.some(row => row.id === 'owner-task'));
+});
+
+test('mid-save edits to automations, violations and imports are replayed', () => {
+  const Store = loadStore();
+  const state = Store.state;
+  state.automations = [{ id: 'rule-1', on: true }];
+  state.automationLog = { 'rule-1': { at: '2026-11-18', via: 'email' } };
+  state.violations = { k1: { status: 'new' } };
+  state.pendingImports = [{ id: 'imp-1', clientId: 'c', docName: 'a.pdf' }];
+  state.addressBook = [{ id: 'addr-1', name: 'North Bank', address: '1 Main' }];
+  const sent = JSON.parse(JSON.stringify(state));
+  state.automations[0].on = false;
+  state.automationLog['rule-1'].via = 'queued';
+  state.violations.k1.status = 'closed';
+  state.pendingImports.push({ id: 'imp-2', clientId: 'c', docName: 'b.pdf' });
+  state.addressBook[0].address = '2 Main';
+  const server = JSON.parse(JSON.stringify(sent));
+  server.clients = [{ id: 'other', name: 'Other', city: 'Cherry Hill' }];
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(applied.requeue, true);
+  assert.strictEqual(state.automations.find(row => row.id === 'rule-1').on, false);
+  assert.strictEqual(state.automationLog['rule-1'].via, 'queued');
+  assert.strictEqual(state.violations.k1.status, 'closed');
+  assert.ok(state.pendingImports.some(row => row.id === 'imp-2'));
+  assert.strictEqual(state.addressBook.find(row => row.id === 'addr-1').address, '2 Main');
+  assert.strictEqual(state.clients.find(row => row.id === 'other').city, 'Cherry Hill');
+});
+
+test('client notes from a refused save survive, including typing during that save', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', notes: '' }] });
+  const server = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients.find(row => row.id === 'c').notes = 'Called the client';
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients.find(row => row.id === 'c').notes = 'Called the client. Left a message.';
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(applied.dropped.length, 0);
+  assert.strictEqual(applied.requeue, true);
+  assert.strictEqual(Store.state.clients.find(row => row.id === 'c').notes, 'Called the client. Left a message.');
+});
+
+test('a server pay token is not a conflict and a void typed during create is kept', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada' }], invoices: [] });
+  Store.state.invoices.push({ id: 'inv', clientId: 'c', description: 'Deletion', amount: 50, status: 'issued' });
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.invoices[0].status = 'void';
+  Store.state.invoices[0].voidReason = 'duplicate';
+  const server = JSON.parse(JSON.stringify(sent));
+  server.invoices[0].payToken = 'server-token';
+  server.invoices[0].paidAt = '2026-11-18';
+  server.invoices[0].transId = 'txn';
+  server.invoices[0].paidVia = 'Authorize.net';
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(applied.conflict, false);
+  assert.strictEqual(applied.dropped.length, 0);
+  const inv = Store.state.invoices.find(row => row.id === 'inv');
+  assert.strictEqual(inv.status, 'void');
+  assert.strictEqual(inv.voidReason, 'duplicate');
+  assert.strictEqual(inv.payToken, 'server-token');
+  assert.strictEqual(inv.paidAt, '2026-11-18');
+});
+
+test('a refused invoice is named and the other notes in the batch are kept', () => {
+  const Store = loadStore();
+  const clients = [];
+  for (let n = 0; n < 8; n++) clients.push({ id: 'c' + n, name: 'Client ' + n, notes: '' });
+  Store.adopt({ version: 2, clients, invoices: [{ id: 'bad', clientId: 'c0', description: 'Fee', amount: 50, status: 'issued' }] });
+  const server = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients.forEach(row => { row.notes = 'Note for ' + row.name; });
+  Store.state.invoices[0].description = 'Changed fee';
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  const applied = Store.applyServerSave(server, sent, { refused: ['invoices/bad'] });
+  assert.strictEqual(applied.requeue, true);
+  assert.ok(applied.dropped.some(label => /bad|Fee/.test(label)));
+  for (let n = 0; n < 8; n++) assert.strictEqual(Store.state.clients.find(row => row.id === 'c' + n).notes, 'Note for Client ' + n);
+  assert.strictEqual(Store.state.invoices.find(row => row.id === 'bad').description, 'Fee');
 });
 
 

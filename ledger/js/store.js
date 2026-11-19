@@ -73,7 +73,7 @@
       applyLiveCreditLinks(ws.offers);
       // Any list that is missing or damaged (null, object) becomes an empty list so pages and forms never crash on it.
       Object.keys(base).forEach(k => { if (Array.isArray(base[k]) && !Array.isArray(ws[k])) ws[k] = []; });
-      ['sequences', 'pendingImports', 'automationLog'].forEach(k => { if (ws[k] !== undefined && !Array.isArray(ws[k])) ws[k] = []; });
+      ['sequences', 'pendingImports'].forEach(k => { if (ws[k] !== undefined && !Array.isArray(ws[k])) ws[k] = []; });
       if (!ws.settings.company || typeof ws.settings.company !== 'object') ws.settings.company = base.settings.company;
       ws.clients = ws.clients.filter(c => c && typeof c === 'object');
       return ws;
@@ -123,6 +123,8 @@
   }
 
   let state;
+  let dirty = new Map();
+  let bases = {};
   const listeners = [];
   function load() {
     try {
@@ -130,6 +132,7 @@
       state = raw ? migrate(JSON.parse(raw)) : null;
     } catch (e) { state = null; }
     if (!state) state = empty();
+    resetBases(state);
     return state;
   }
   // When `remote` is set (server mode) saves go to the API instead of this browser.
@@ -150,15 +153,17 @@
     Object.keys(next).forEach(key => {
       const rows = next[key];
       if (!Array.isArray(rows)) { local[key] = rows; return; }
-      const prev = new Map((local[key] || []).filter(row => row && row.id).map(row => [row.id, row]));
+      const prevList = Array.isArray(local[key]) ? local[key] : [];
+      const prev = new Map(prevList.filter(row => row && row.id).map(row => [row.id, row]));
       local[key] = rows.map(row => (row && row.id && prev.has(row.id) ? stitchRow(prev.get(row.id), row) : row));
     });
     Object.keys(local).forEach(key => { if (!Object.prototype.hasOwnProperty.call(next, key)) delete local[key]; });
   }
-  function adopt(ws) {
+  function adopt(ws, opts) {
     const next = migrate(JSON.parse(JSON.stringify(ws || empty())));
-    if (!state) { state = next; return; }
-    stitchCollections(state, next);
+    if (!state) state = next;
+    else stitchCollections(state, next);
+    if (!opts || !opts.keepDirty) resetBases(state);
   }
   function sameJson(a, b) {
     const stable = value => {
@@ -177,54 +182,144 @@
     (list || []).forEach(row => { if (row && row.id) map.set(row.id, row); });
     return map;
   }
-  const REPLAY_LISTS = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences'];
-  // Adopt the server workspace, then replay only records this browser changed after `sent`.
-  // A record changed on both sides is a conflict: keep the server copy and do not re-save.
-  function applyServerSave(server, sent) {
-    if (!server) return { requeue: false, conflict: false };
-    const localSnap = JSON.parse(JSON.stringify(state));
-    if (sameJson(localSnap, sent)) {
-      adopt(server);
-      return { requeue: false, conflict: false };
-    }
-    const replays = [];
-    const dropped = [];
-    REPLAY_LISTS.forEach(key => {
-      const sentRows = rowsById(sent && sent[key]);
-      const localRows = rowsById(localSnap[key]);
-      const serverRows = rowsById(server[key]);
-      const ids = new Set([...sentRows.keys(), ...localRows.keys()]);
+  const INVOICE_OWNED = ['payToken', 'paidAt', 'transId', 'paidVia'];
+  const CLIENT_OWNED = ['signupSource'];
+  function resetBases(ws) {
+    dirty = new Map();
+    bases = indexWorkspace(ws);
+  }
+  function tokenOf(key, id) { return key + '/' + id; }
+  function recordId(row, index) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+    if (row.id) return String(row.id);
+    if (row.key) return 'key:' + row.key;
+    if (row.name && !row.id) return 'name:' + row.name;
+    return index == null ? null : 'i:' + index;
+  }
+  function workspaceKeys() {
+    const keys = new Set();
+    Array.from(arguments).forEach(obj => {
+      if (!obj || typeof obj !== 'object') return;
+      Object.keys(obj).forEach(key => { if (key !== 'version') keys.add(key); });
+    });
+    return Array.from(keys);
+  }
+  function isPlainObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
+  function indexWorkspace(ws) {
+    const out = {};
+    workspaceKeys(ws || {}).forEach(key => {
+      out[key] = new Map();
+      const value = ws[key];
+      if (Array.isArray(value)) value.forEach((row, i) => { const id = recordId(row, i); if (id) out[key].set(id, JSON.parse(JSON.stringify(row))); });
+      else if (isPlainObject(value)) {
+        if (key === 'settings') out[key].set('', JSON.parse(JSON.stringify(value)));
+        else Object.keys(value).forEach(id => { if (value[id] && typeof value[id] === 'object') out[key].set(id, JSON.parse(JSON.stringify(value[id]))); });
+      }
+    });
+    return out;
+  }
+  function userShape(key, row) {
+    if (row == null) return null;
+    const copy = JSON.parse(JSON.stringify(row));
+    const owned = key === 'invoices' ? INVOICE_OWNED : key === 'clients' ? CLIENT_OWNED : [];
+    owned.forEach(field => delete copy[field]);
+    return copy;
+  }
+  function overlayOwned(key, localRow, remoteRow) {
+    if (localRow == null) return null;
+    const next = JSON.parse(JSON.stringify(localRow));
+    if (!remoteRow || typeof remoteRow !== 'object') return next;
+    const owned = key === 'invoices' ? INVOICE_OWNED : key === 'clients' ? CLIENT_OWNED : [];
+    owned.forEach(field => {
+      if (remoteRow[field] == null || remoteRow[field] === '') delete next[field];
+      else next[field] = remoteRow[field];
+    });
+    return next;
+  }
+  function readIndexed(idx, key, id) { return idx[key] && idx[key].has(id) ? idx[key].get(id) : null; }
+  function baseRow(key, id) { return bases[key] && bases[key].has(id) ? bases[key].get(id) : null; }
+  function setBase(key, id, row) {
+    if (!bases[key]) bases[key] = new Map();
+    if (row == null) bases[key].delete(id);
+    else bases[key].set(id, JSON.parse(JSON.stringify(row)));
+  }
+  function dirtyNow(local) {
+    const found = new Map();
+    const indexed = indexWorkspace(local);
+    const keys = new Set([...Object.keys(bases), ...Object.keys(indexed)]);
+    keys.forEach(key => {
+      const ids = new Set([...(bases[key] ? bases[key].keys() : []), ...(indexed[key] ? indexed[key].keys() : [])]);
       ids.forEach(id => {
-        const before = sentRows.get(id) || null;
-        const nowRow = localRows.get(id) || null;
-        if (!sameJson(before, nowRow)) {
-          const remote = serverRows.get(id) || null;
-          if (!sameJson(before, remote)) dropped.push(recordLabel(key, nowRow || before, id));
-          else replays.push({ key, id, nowRow });
-        }
+        const left = userShape(key, indexed[key] && indexed[key].has(id) ? indexed[key].get(id) : null);
+        const right = userShape(key, baseRow(key, id));
+        if (!sameJson(left, right)) found.set(tokenOf(key, id), indexed[key] && indexed[key].has(id) ? indexed[key].get(id) : null);
       });
     });
-    if (!sameJson(sent && sent.settings, localSnap.settings)) {
-      if (!sameJson(sent && sent.settings, server.settings)) dropped.push('settings');
-      else replays.push({ key: 'settings', replace: localSnap.settings });
+    return found;
+  }
+  function refusedTokens(message) {
+    const msg = String(message || '');
+    const tokens = Array.from(dirtyNow(state).keys());
+    const named = tokens.filter(token => { const id = token.slice(token.indexOf('/') + 1); return id && msg.indexOf(id) >= 0; });
+    if (named.length) return named;
+    if (/invoice|void|paid date|pay token|locked/i.test(msg)) return tokens.filter(token => token.indexOf('invoices/') === 0);
+    if (/task/i.test(msg) && /owner/i.test(msg)) return tokens.filter(token => token.indexOf('tasks/') === 0);
+    if (tokens.length === 1) return tokens;
+    return [];
+  }
+  function writeRow(key, id, row) {
+    if (key === 'settings') { state.settings = row || {}; return; }
+    const value = state[key];
+    if (Array.isArray(value) || (!isPlainObject(value) && row && row.id)) {
+      const list = Array.isArray(state[key]) ? state[key] : (state[key] = []);
+      const idx = list.findIndex((item, i) => recordId(item, i) === id);
+      if (row == null) { if (idx >= 0) list.splice(idx, 1); return; }
+      if (idx >= 0) list[idx] = row;
+      else list.push(row);
+      return;
     }
-    adopt(server);
-    replays.forEach(change => {
-      if (Object.prototype.hasOwnProperty.call(change, 'replace')) {
-        state[change.key] = change.replace;
+    const bag = isPlainObject(state[key]) ? state[key] : (state[key] = {});
+    if (row == null) delete bag[id];
+    else bag[id] = row;
+  }
+  // Adopt the server copy, then put back every record still dirty since the base we edited from.
+  // A record is cleared only when the server accepts its user-editable fields, or when that record was refused.
+  function applyServerSave(server, sent, options) {
+    if (!server) return { requeue: false, conflict: false, dropped: [] };
+    const localSnap = JSON.parse(JSON.stringify(state));
+    const refused = new Set((options && options.refused) || []);
+    const pending = dirtyNow(localSnap);
+    const serverIdx = indexWorkspace(server);
+    const sentIdx = indexWorkspace(sent || {});
+    adopt(server, { keepDirty: true });
+    const dropped = [];
+    pending.forEach((localRow, token) => {
+      const split = token.indexOf('/');
+      const key = token.slice(0, split);
+      const id = token.slice(split + 1);
+      const remoteRow = readIndexed(serverIdx, key, id);
+      const kept = baseRow(key, id);
+      const sentRow = readIndexed(sentIdx, key, id);
+      const serverMoved = !sameJson(userShape(key, remoteRow), userShape(key, kept)) && !sameJson(userShape(key, remoteRow), userShape(key, sentRow));
+      if (refused.has(token) || refused.has(id) || serverMoved) {
+        dropped.push(recordLabel(key, localRow || kept, id));
+        setBase(key, id, remoteRow);
         return;
       }
-      const list = state[change.key] || (state[change.key] = []);
-      const idx = list.findIndex(row => row && row.id === change.id);
-      if (!change.nowRow) { if (idx >= 0) list.splice(idx, 1); return; }
-      if (idx >= 0) list[idx] = change.nowRow;
-      else list.push(change.nowRow);
+      const next = overlayOwned(key, localRow, remoteRow);
+      if (sameJson(userShape(key, next), userShape(key, remoteRow))) { setBase(key, id, remoteRow); return; }
+      writeRow(key, id, next);
     });
-    return { requeue: replays.length > 0, conflict: dropped.length > 0, dropped };
+    serverIdx && Object.keys(serverIdx).forEach(key => {
+      serverIdx[key].forEach((row, id) => { if (!pending.has(tokenOf(key, id))) setBase(key, id, row); });
+    });
+    const still = dirtyNow(state);
+    return { requeue: still.size > 0, conflict: dropped.length > 0, dropped: dropped };
   }
   function recordLabel(key, row, id) {
     const name = row && (row.name || row.title || row.recipient || row.description || row.vendor) || id;
-    return String(key).replace(/s$/, '') + ' ' + name;
+    const label = String(key).replace(/s$/, '') + ' ' + name;
+    return id && String(name) !== String(id) ? label + ' (' + id + ')' : label;
   }
   function shouldRedrawAfterSave(env) {
     if (!env) return true;
@@ -288,7 +383,8 @@
     return d.status;
   }
 
-  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, applyServerSave, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; } };
+  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, applyServerSave, refusedTokens, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; }, get unsaved() { return dirtyNow(state).size > 0; } };
+  root.root = root;
   root.Store = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

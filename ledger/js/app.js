@@ -7,15 +7,16 @@
   const T = () => Store.today();
   const go = h => { if (location.hash === h) render(); else location.hash = h; };
   const commit = (msg, cid) => { if (msg) Store.log(msg, cid); Store.save(); renderWhenSafe(); };
+  let redrawDeferred = false;
   function renderWhenSafe() {
     const draw = () => {
       if (!document.getElementById('view')) return;
       const active = document.activeElement;
-      if (!Store.shouldRedrawAfterSave({ overlay: !!document.querySelector('.overlay'), activeTag: active && active.tagName })) return;
+      if (!Store.shouldRedrawAfterSave({ overlay: !!document.querySelector('.overlay'), activeTag: active && active.tagName })) { redrawDeferred = true; return; }
+      redrawDeferred = false;
       render();
     };
     draw();
-    setTimeout(draw, 0);
   }
 
   // ---------- router ----------
@@ -98,9 +99,9 @@
     push() { this.pending = true; setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
     finishApplied(applied, fromConflict) {
       const dropped = applied.dropped || [];
-      this.requeue = !!applied.requeue;
+      this.requeue = !!(applied.requeue || Store.unsaved);
       if (dropped.length) toast('Someone else updated ' + dropped.join(', ') + '. Loaded the latest version. Please redo that change.');
-      else if (fromConflict && !applied.requeue) toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
+      else if (fromConflict && !this.requeue) toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
       if (this.requeue) { this.pending = true; setSync('saving'); return; }
       this.pending = false;
       clearTimeout(this.timer);
@@ -121,21 +122,24 @@
         this.finishApplied(applied, false);
       } catch (e) {
         if (e.status === 409) {
-          const dirty = JSON.stringify(Store.state) !== JSON.stringify(sent);
           if (e.body && e.body.data) {
             this.version = e.body.version;
             const applied = Store.applyServerSave(e.body.data, sent);
             this.finishApplied(applied, true);
-          } else if (dirty) {
-            this.requeue = true;
-            this.pending = true;
-            setSync('saving');
-            toast((e.body && e.body.error) || 'Change refused. Your newer edits are still here.');
           } else {
-            this.pending = false;
-            setSync('conflict');
-            toast((e.body && e.body.error) || 'Change refused. Reloaded the last saved version.');
-            await this.reload();
+            try {
+              const w = await api('GET', '/api/workspace');
+              this.version = w.version;
+              const refused = Store.refusedTokens(e.body && e.body.error);
+              const applied = Store.applyServerSave(w.data, sent, { refused });
+              toast((e.body && e.body.error) || 'Change refused.');
+              this.finishApplied(applied, true);
+            } catch (err) {
+              this.pending = false;
+              setSync('conflict');
+              toast((e.body && e.body.error) || 'Change refused. Reloaded the last saved version.');
+              await this.reload();
+            }
           }
         } else if (e.status === 422) {
           // The server refused an invoice over the agreement's 12-month term / total cap: drop the change.
@@ -150,11 +154,10 @@
           try {
             const w = await api('GET', '/api/workspace');
             this.version = w.version;
-            const applied = Store.applyServerSave(w.data, sent);
+            const refused = Store.refusedTokens(message);
+            const applied = Store.applyServerSave(w.data, sent, { refused });
             toast(message);
-            if (applied.requeue) { this.requeue = true; this.pending = true; setSync('saving'); }
-            else { setSync('conflict'); renderWhenSafe(); }
-            if (applied.dropped && applied.dropped.length) toast('Please redo your change to ' + applied.dropped.join(', ') + '.');
+            this.finishApplied(applied, true);
           } catch (err) {
             setSync('offline');
             this.timer = setTimeout(() => this.flush(), 5000);
@@ -564,10 +567,11 @@
     });
   }
 
-  function itemModal(disputeId, i) {
-    const isNew = i === undefined || i === '';
+  function itemModal(disputeId, itemId) {
     const opened = Store.get.dispute(disputeId);
-    const it = isNew ? { creditor: '', fields: [] } : opened.items[Number(i)];
+    const isNew = !itemId;
+    if (!isNew) (opened.items || []).forEach(row => { if (row && !row.id) row.id = Store.uid(); });
+    const it = isNew ? { id: Store.uid(), creditor: '', fields: [] } : (opened.items || []).find(row => row && row.id === itemId);
     modal({
       title: isNew ? 'Add disputed item' : 'Edit item',
       body: `<div class="form-grid">${field('Creditor / furnisher', 'creditor', it.creditor, { required: true })}${field('Account # (masked)', 'accountNumber', it.accountNumber)}
@@ -576,14 +580,15 @@
         ${field('Correction requested', 'requested', it.requested, { cls: 'span2' })}
         ${field('Supporting evidence', 'evidence', it.evidence, { cls: 'span2' })}</div>`,
       foot: `${isNew ? '' : '<button type="button" class="btn danger" data-del style="margin-right:auto">Remove</button>'}<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>`,
-      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const live = Store.get.dispute(disputeId); if (!live) return; live.items.splice(Number(i), 1); UI.close(); commit(); }; },
+      onOpen: f => { const del = f.querySelector('[data-del]'); if (del) del.onclick = () => { const live = Store.get.dispute(disputeId); if (!live) return; live.items = (live.items || []).filter(row => row && row.id !== itemId); UI.close(); commit(); }; },
       onSubmit: x => {
         if (!x.creditor || x.discrepancy.length < 12) { toast('Add the creditor and a specific description'); return false; }
         const live = Store.get.dispute(disputeId);
         if (!live) { toast('That dispute is no longer in the workspace.'); return false; }
-        const item = isNew ? { creditor: '', fields: [] } : live.items[Number(i)];
+        live.items = live.items || [];
+        const item = isNew ? { id: it.id, creditor: '', fields: [] } : live.items.find(row => row && row.id === itemId);
         if (!item) { toast('That item is no longer on the dispute.'); return false; }
-        Object.assign(item, x, { fields: x.fields ? x.fields.split(',').map(s => s.trim()).filter(Boolean) : [] });
+        Object.assign(item, x, { id: item.id, fields: x.fields ? x.fields.split(',').map(s => s.trim()).filter(Boolean) : [] });
         if (isNew) live.items.push(item);
         commit();
       }
@@ -1047,10 +1052,22 @@
     'aq-add': el => aqModal(el.dataset.id),
     'aq-edit': el => aqModal(el.dataset.id, el.dataset.deal),
     'aq-note': el => {
-      const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal);
-      const cur = (d.checks || {})[el.dataset.key] || {};
-      const chk = root.Acquisition.CHECKS.find(x => x.key === el.dataset.key);
-      modal({ title: chk.label, body: field('What did you find? (source, date, document)', 'note', cur.note || '', { type: 'textarea', rows: 4 }), onSubmit: x => { d.checks = d.checks || {}; d.checks[el.dataset.key] = Object.assign({ status: 'pending' }, cur, { note: x.note, at: T() }); commit(null, c.id); } });
+      const clientId = el.dataset.id;
+      const dealId = el.dataset.deal;
+      const key = el.dataset.key;
+      const c = Store.get.client(clientId);
+      const d = c && (c.deals || []).find(x => x.id === dealId);
+      if (!d) { toast('That business is no longer on the client.'); return; }
+      const cur = (d.checks || {})[key] || {};
+      const chk = root.Acquisition.CHECKS.find(x => x.key === key);
+      modal({ title: chk.label, body: field('What did you find? (source, date, document)', 'note', cur.note || '', { type: 'textarea', rows: 4 }), onSubmit: x => {
+        const live = Store.get.client(clientId);
+        const deal = live && (live.deals || []).find(row => row.id === dealId);
+        if (!deal) { toast('That business is no longer on the client.'); return false; }
+        deal.checks = deal.checks || {};
+        deal.checks[key] = Object.assign({ status: 'pending' }, cur, { note: x.note, at: T() });
+        commit(null, live.id);
+      } });
     },
     'aq-print': el => { const c = Store.get.client(el.dataset.id); const d = c.deals.find(x => x.id === el.dataset.deal); UI.printDoc('Due diligence — ' + d.name, root.Acquisition.report(d, c, T(), S().settings.company)); },
     'aq-delete': el => { const c = Store.get.client(el.dataset.id); if (!UI.ask('Remove this business and its checklist?')) return; c.deals = c.deals.filter(x => x.id !== el.dataset.deal); commit('Removed acquisition target', c.id); go(`#/clients/${c.id}/acquisition`); },
@@ -1078,7 +1095,20 @@
     'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId); } },
     'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; copyText(url, 'Partner sign-up link', 'Sign-up link copied'); },
     'ref-invite': el => { const r = S().referrals.find(x => x.id === el.dataset.id); Remote.flushNow().then(() => api('POST', '/api/invites', { role: 'partner', referralId: r.id, name: r.name, email: r.email })).then(x => modal({ title: 'Partner portal invitation', body: `<p class="small">Send this one-time link to ${esc(r.name)}. It expires in ${x.expiresInDays} days.</p><input readonly value="${esc(x.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); },
-    'ref-payout': el => { const r = S().referrals.find(x => x.id === el.dataset.id); const k = root.Sales.commissions(S(), r, T()); modal({ title: 'Record payout — ' + r.name, body: `<div class="form-grid">${field('Amount ($)', 'amount', k.owed, { type: 'number', attrs: 'step="0.01" min="0"' })}${field('Date paid', 'date', T(), { type: 'date' })}${field('Note', 'note', '', { cls: 'span2' })}</div>`, onSubmit: d => { if (!(Number(d.amount) > 0)) return false; r.payouts = r.payouts || []; r.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note }); commit(`Recorded ${UI.money(d.amount)} payout to ${r.name}`); } }); },
+    'ref-payout': el => {
+      const id = el.dataset.id;
+      const r = S().referrals.find(x => x.id === id);
+      if (!r) { toast('That referral partner is no longer in the workspace.'); return; }
+      const k = root.Sales.commissions(S(), r, T());
+      modal({ title: 'Record payout for ' + r.name, body: `<div class="form-grid">${field('Amount ($)', 'amount', k.owed, { type: 'number', attrs: 'step="0.01" min="0"' })}${field('Date paid', 'date', T(), { type: 'date' })}${field('Note', 'note', '', { cls: 'span2' })}</div>`, onSubmit: d => {
+        const live = S().referrals.find(x => x.id === id);
+        if (!live) { toast('That referral partner is no longer in the workspace.'); return false; }
+        if (!(Number(d.amount) > 0)) return false;
+        live.payouts = live.payouts || [];
+        live.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note });
+        commit(`Recorded ${UI.money(d.amount)} payout to ${live.name}`);
+      } });
+    },
     'mail-lob': el => {
       const d = Store.get.dispute(el.dataset.id);
       const c = Store.get.client(d.clientId);
@@ -1152,7 +1182,7 @@
     'disputes-from-audit': el => disputesFromAudit(el.dataset.id),
     'new-dispute': el => newDisputeModal(el.dataset.client || (S().clients[0] || {}).id, el.dataset.type ? { type: el.dataset.type, recipient: 'Dun & Bradstreet', title: 'Business bureau correction request' } : undefined),
     'delete-dispute': el => { const d = Store.get.dispute(el.dataset.id); if (!UI.ask('Delete this dispute and its letter?')) return; S().disputes = S().disputes.filter(x => x.id !== d.id); S().letters = S().letters.filter(l => l.disputeId !== d.id); Store.log(`Deleted dispute to ${d.recipient}`, d.clientId); Store.save(); go(`#/clients/${d.clientId}/disputes`); },
-    'edit-item': el => itemModal(el.dataset.id, el.dataset.i),
+    'edit-item': el => itemModal(el.dataset.id, el.dataset.item),
     'edit-recipient': el => { const id = el.dataset.id; const d = Store.get.dispute(id); modal({ title: 'Recipient', body: `${field('Recipient', 'recipient', d.recipient)}<div style="height:12px"></div>${field('Address (non-bureau recipients)', 'recipientAddress', d.recipientAddress, { type: 'textarea', rows: 3 })}<div style="height:12px"></div>${field('Notes', 'notes', d.notes, { type: 'textarea', rows: 3 })}`, onSubmit: x => { const live = Store.get.dispute(id); if (!live) { toast('That dispute is no longer in the workspace.'); return false; } Object.assign(live, x); commit(); } }); },
     'gen-letter': el => { const d = Store.get.dispute(el.dataset.id); const l = d.letterId && Store.get.letter(d.letterId); if (l && l.text && !l.text.startsWith('(Generated') && !UI.ask('Regenerate and replace any edits to this letter?')) return; generateLetter(d); },
     'print-letter': el => { const l = Store.get.letter(el.dataset.id); UI.printDoc('Dispute letter', l.text); },
@@ -1568,7 +1598,15 @@
       }
     });
     let timer;
-    document.addEventListener('focusout', () => setTimeout(() => renderWhenSafe(), 0));
+    let pointerDown = false;
+    document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
+    document.addEventListener('pointerup', () => setTimeout(() => { pointerDown = false; }, 0), true);
+    document.addEventListener('focusout', () => {
+      if (!redrawDeferred) return;
+      const run = () => { if (redrawDeferred) renderWhenSafe(); };
+      if (pointerDown) document.addEventListener('click', () => setTimeout(run, 0), { capture: false, once: true });
+      else setTimeout(run, 0);
+    });
     document.addEventListener('input', e => {
       if (e.target.id === 'addr-q') { document.getElementById('addr-results').innerHTML = Views.addressList(e.target.value); return; }
       if (e.target.id === 'lib-q') { document.getElementById('lib-results').innerHTML = Views.libraryResults(e.target.value); return; }
@@ -1704,6 +1742,7 @@
     runEngine().then(n => { if (n) render(); }).catch(e => console.error(e));
     setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
+  root.root = root;
   root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
   document.addEventListener('DOMContentLoaded', boot);
-})(window);
+})(typeof window !== 'undefined' ? window : (typeof root !== 'undefined' ? root : globalThis));
