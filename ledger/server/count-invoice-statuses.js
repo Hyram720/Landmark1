@@ -42,13 +42,40 @@ const duplicatePayTokens = {
   sharedTokens: duplicateGroups.length,
   invoices: duplicateGroups.reduce((sum, n) => sum + n, 0)
 };
+const shapeErrors = workspaceShapeErrors(data && data.workspace);
 const deployGate = {
   outside: outside,
   duplicatePayTokens,
-  ready: outside === 0 && duplicatePayTokens.sharedTokens === 0,
-  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0 and no pay token is shared. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+  shapeErrors,
+  ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0,
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, deployGate }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, deployGate }, null, 2) + '\n');
+
+function workspaceShapeErrors(ws) {
+  const errors = [];
+  const lists = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'addressBook', 'automations'];
+  const maps = ['automationLog', 'violations', 'settings'];
+  const needsId = lists.filter(key => key !== 'addressBook');
+  const workspace = ws || {};
+  lists.forEach(key => {
+    if (workspace[key] == null) return;
+    if (!Array.isArray(workspace[key])) { errors.push({ key, id: '', reason: key + ' must be a list.' }); return; }
+    if (!needsId.includes(key)) return;
+    workspace[key].forEach(row => {
+      if (row && typeof row === 'object' && !Array.isArray(row) && !String(row.id || '').trim()) errors.push({ key, id: '', reason: 'A ' + key + ' record is missing an id.' });
+    });
+  });
+  maps.forEach(key => {
+    if (workspace[key] == null) return;
+    if (Array.isArray(workspace[key]) || typeof workspace[key] !== 'object') { errors.push({ key, id: '', reason: key + ' must be a map.' }); return; }
+    if (key !== 'violations') return;
+    Object.keys(workspace[key]).forEach(id => {
+      if (!String(id || '').trim()) errors.push({ key, id: '', reason: 'A violations record is missing an id.' });
+    });
+  });
+  return errors;
+}
 
 function decode(raw, secret) {
   const parsed = JSON.parse(raw);

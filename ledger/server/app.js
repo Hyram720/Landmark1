@@ -369,7 +369,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const rows = data[key];
       if (!Array.isArray(rows)) continue;
       for (const row of rows) {
-        if (row && typeof row === 'object' && !Array.isArray(row) && !row.id) return reject(422, 'A ' + key + ' record is missing an id.', [{ key, id: '', field: 'id', reason: 'A ' + key + ' record is missing an id.' }]);
+        if (row && typeof row === 'object' && !Array.isArray(row) && !String(row.id || '').trim()) return reject(422, 'A ' + key + ' record is missing an id.', [{ key, id: '', field: 'id', reason: 'A ' + key + ' record is missing an id.' }]);
+      }
+    }
+    if (data.violations && typeof data.violations === 'object' && !Array.isArray(data.violations)) {
+      for (const id of Object.keys(data.violations)) {
+        if (!String(id || '').trim()) return reject(422, 'A violations record is missing an id.', [{ key: 'violations', id: '', field: 'id', reason: 'A violations record is missing an id.' }]);
       }
     }
     const before = D().workspace;

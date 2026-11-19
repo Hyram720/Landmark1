@@ -82,7 +82,20 @@
     el.className = 'badge plain ' + (state === 'saved' ? 'b-ok' : state === 'offline' ? 'b-high' : 'b-low');
   }
   const Remote = {
-    version: 0, timer: null, pending: false, sending: false, badSaves: 0, savedWaiters: [], user: null,
+    version: 0, timer: null, pending: false, sending: false, refusalCounts: null, savedWaiters: [], user: null,
+    noteRefusals(tokens) {
+      if (!this.refusalCounts) this.refusalCounts = new Map();
+      const repeated = [];
+      const seen = new Set();
+      (tokens || []).forEach(token => {
+        if (!token || seen.has(token)) return;
+        seen.add(token);
+        const n = (this.refusalCounts.get(token) || 0) + 1;
+        this.refusalCounts.set(token, n);
+        if (n >= 2) repeated.push(token);
+      });
+      return repeated;
+    },
     afterSave(fn) { this.savedWaiters.push(fn); },
     finishWaiters() { const fns = this.savedWaiters.splice(0); fns.forEach(fn => fn()); },
     async start(user) {
@@ -164,19 +177,11 @@
       const dropped = applied.dropped || [];
       const refused = applied.refused || [];
       const reverted = applied.reverted || [];
-      if (this.badSaves >= 2 && applied.refusedTokens && applied.refusedTokens.length) Store.revertTokens(applied.refusedTokens);
+      const repeated = applied.repeated || [];
+      if (repeated.length) Store.revertTokens(repeated);
       this.rememberDirty();
       this.requeue = !!(applied.requeue || Store.unsaved);
-      if (this.badSaves >= 2 && (applied.refused || []).length) {
-        toast('Saving stopped after a repeated refusal.');
-        if (!Store.unsaved) {
-          this.requeue = false;
-          this.pending = false;
-          setSync('conflict');
-          this.ensurePoll();
-          return;
-        }
-      }
+      if (repeated.length) toast('Saving stopped after a repeated refusal.');
       if (refused.length) toast('Not allowed: ' + refused.join('; '));
       if (reverted.length) toast('Not saved: ' + reverted.join(', ') + '.');
       if (dropped.length) toast('Someone else updated ' + dropped.join(', ') + '. Loaded the latest version. Please redo that change.');
@@ -184,7 +189,7 @@
       if (this.requeue) { this.pending = true; setSync('saving'); return; }
       this.pending = false;
       clearTimeout(this.timer);
-      setSync(dropped.length || refused.length || fromConflict ? 'conflict' : 'saved');
+      setSync(dropped.length || refused.length || reverted.length || fromConflict ? 'conflict' : 'saved');
       if (!dropped.length && !refused.length && !fromConflict) this.finishWaiters();
       renderWhenSafe();
       this.ensurePoll();
@@ -198,7 +203,7 @@
       try {
         const r = await api('PUT', '/api/workspace', { baseVersion: this.version, data: sent });
         this.version = r.version;
-        this.badSaves = 0;
+        this.refusalCounts = new Map();
         const applied = r.data ? Store.applyServerSave(r.data, sent, { accepted: true }) : { requeue: false, conflict: false, dropped: [], refused: [], reverted: [] };
         this.finishApplied(applied, false);
       } catch (e) {
@@ -208,12 +213,12 @@
           const applied = Store.applyServerSave(e.body.data, sent);
           this.finishApplied(applied, true);
         } else if (refusal) {
-          this.badSaves = (this.badSaves || 0) + 1;
           try {
             const w = await api('GET', '/api/workspace');
             this.version = w.version;
             const listed = Array.isArray(e.body && e.body.refused) ? e.body.refused : null;
             const applied = Store.applyServerSave(w.data, sent, listed ? { rejected: true, refused: listed } : { rejected: true });
+            applied.repeated = this.noteRefusals(applied.refusedTokens);
             this.finishApplied(applied, true);
           } catch (err) {
             this.pending = false;

@@ -294,6 +294,17 @@
     }
     return false;
   }
+  function shapeOf(snap, key) {
+    if (!snap || snap[key] == null) return '';
+    if (Array.isArray(snap[key])) return 'list';
+    if (isPlainObject(snap[key])) return 'map';
+    return 'other';
+  }
+  function serverFilledField(field, sentValue, remoteValue) {
+    if (blankValue(sentValue)) return true;
+    if (field !== 'onboarding' || !sentValue || typeof sentValue !== 'object' || !remoteValue || typeof remoteValue !== 'object') return false;
+    return Object.keys(sentValue).every(key => blankValue(sentValue[key]) || sameJson(sentValue[key], remoteValue[key]));
+  }
   function changedFields(left, right) {
     const a = left || {};
     const b = right || {};
@@ -334,6 +345,16 @@
     const explicit = Array.isArray(opts.refused);
     const refusedByToken = explicit ? parseRefused(opts.refused) : new Map();
     const pending = dirtyNow(localSnap);
+    Array.from(refusedByToken.keys()).forEach(token => {
+      const split = token.indexOf('/');
+      const key = token.slice(0, split);
+      const id = token.slice(split + 1);
+      if (id) return;
+      const info = refusedByToken.get(token);
+      pending.forEach((row, pendingToken) => {
+        if (pendingToken.indexOf(key + '/') === 0) refusedByToken.set(pendingToken, info);
+      });
+    });
     const serverIdx = indexWorkspace(server);
     const sentIdx = indexWorkspace(sent || {});
     adopt(server, { keepDirty: true });
@@ -353,26 +374,15 @@
       const refusal = refusedByToken.get(token);
       const fallbackRefusal = !explicit && opts.rejected && sentThis;
       const label = recordLabel(key, localRow || sentRow || kept, id);
-      const changedByUser = changedFields(userShape(key, localRow) || userShape(key, sentRow), userShape(key, kept));
-      const refusedUntouched = refusal && [...refusal.fields].some(field => field && changedByUser.indexOf(field) < 0);
-      const lockedInvoice = key === 'invoices' && remoteRow && (remoteRow.status === 'issued' || remoteRow.status === 'paid' || remoteRow.status === 'void');
-      if ((refusal && (refusal.fields.size === 0 || !remoteRow || !localRow || refusedUntouched || lockedInvoice)) || fallbackRefusal) {
-        refused.push(refusal && refusal.reasons.length ? refusal.reasons.join(' ') : label);
-        if (localRow && !lockedInvoice) keepPostSend(key, id, localRow, sentRow, remoteRow, asList, touchedAfterSend);
+      const serverShape = shapeOf(server, key);
+      const localShape = shapeOf(localSnap, key);
+      if (serverShape && localShape && serverShape !== localShape) {
+        refused.push(key + ' has the wrong shape on the server.');
         setBase(key, id, remoteRow);
         return;
       }
-      if (refusal && refusal.fields.size) {
-        const out = JSON.parse(JSON.stringify(localRow));
-        const remoteUser = userShape(key, remoteRow) || {};
-        refusal.fields.forEach(field => {
-          if (field === 'id') return;
-          if (!Object.prototype.hasOwnProperty.call(remoteUser, field)) delete out[field];
-          else out[field] = remoteUser[field];
-        });
-        const next = overlayOwned(key, out, remoteRow);
-        refused.push(refusal.reasons.length ? refusal.reasons.join(' ') : label + ' ' + Array.from(refusal.fields).join(', '));
-        if (next && next.id && !sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+      if (refusal || fallbackRefusal) {
+        refused.push(refusal && refusal.reasons.length ? refusal.reasons.join(' ') : label);
         setBase(key, id, remoteRow);
         return;
       }
@@ -393,7 +403,9 @@
         return;
       }
       if (opts.accepted && !touchedAfterSend) {
-        const lost = changedFields(userShape(key, sentRow), userShape(key, remoteRow)).filter(field => !blankValue((userShape(key, sentRow) || {})[field]));
+        const sentUser = userShape(key, sentRow) || {};
+        const remoteUser = userShape(key, remoteRow) || {};
+        const lost = changedFields(sentUser, remoteUser).filter(field => !serverFilledField(field, sentUser[field], remoteUser[field]));
         setBase(key, id, remoteRow);
         if (lost.length) reverted.push(label + ' (' + lost.join(', ') + ')');
         return;
@@ -408,7 +420,7 @@
           if (!sameJson(localUser[field], sentUser[field])) {
             if (localUser[field] === undefined) delete out[field];
             else out[field] = localUser[field];
-          } else if (!sameJson(sentUser[field], remoteUser[field]) && !blankValue(sentUser[field])) lost.push(field);
+          } else if (!sameJson(sentUser[field], remoteUser[field]) && !serverFilledField(field, sentUser[field], remoteUser[field])) lost.push(field);
         });
         const next = overlayOwned(key, out, remoteRow);
         if (lost.length) reverted.push(label + ' (' + lost.join(', ') + ')');
@@ -453,17 +465,6 @@
       const id = token.slice(split + 1);
       writeRow(key, id, baseRow(key, id), listPreferred(key, state));
     });
-  }
-  function keepPostSend(key, id, localRow, sentRow, remoteRow, asList, touchedAfterSend) {
-    if (!touchedAfterSend) return;
-    const localUser = userShape(key, localRow) || {};
-    const sentUser = userShape(key, sentRow) || {};
-    const out = remoteRow && typeof remoteRow === 'object' ? JSON.parse(JSON.stringify(remoteRow)) : {};
-    Object.keys(localUser).forEach(field => {
-      if (!sameJson(localUser[field], sentUser[field])) out[field] = localUser[field];
-    });
-    const next = overlayOwned(key, out, remoteRow);
-    if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
   }
   function mergeFields(key, base, sent, local, remote) {
     const b = userShape(key, base) || {};

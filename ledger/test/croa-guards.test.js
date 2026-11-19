@@ -2055,7 +2055,8 @@ test('logout waits for the save and leaving warns while changes are unsaved', ()
   assert.match(logout, /await Remote\.flushNow\(\)/);
   assert.match(logout, /Store\.unsaved/);
   assert.match(appJs, /beforeunload/);
-  assert.match(appJs, /badSaves >= 2/);
+  assert.match(appJs, /noteRefusals/);
+  assert.match(appJs, /refusalCounts/);
   assert.match(appJs, /Not allowed: /);
   assert.match(appJs, /Not saved: /);
   assert.match(appJs, /Someone else updated /);
@@ -2477,6 +2478,184 @@ test('the dirty session copy stores only that user\'s dirty records', () => {
   assert.strictEqual(fresh.state.clients.find(row => row.id === 'd').email, 'bea@guard.test');
   fresh.applyDirtySnapshot([{ key: 'clients', id: 'ghost', row: { name: 'No Id' } }]);
   assert.ok(fresh.state.clients.every(row => row.id));
+});
+
+test('moving a dispute or letter onto a held client is refused', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-move@guard.test', status: 'active' });
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-move@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = [{ id: 'move-d', clientId: 'clear', recipient: 'Equifax', status: 'draft', items: [] }];
+    g.body.data.letters = [{ id: 'move-l', clientId: 'clear', text: 'Letter', status: 'draft' }];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-move@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.disputes.find(row => row.id === 'move-d').clientId = 'held';
+    sent.letters.find(row => row.id === 'move-l').clientId = 'held';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409);
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.id === 'move-d' && row.field === 'clientId'));
+    assert.ok(denied.body.refused.some(row => row.key === 'letters' && row.id === 'move-l' && row.field === 'clientId'));
+    const after = await owner('GET', '/api/workspace');
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'move-d').clientId, 'clear');
+    assert.strictEqual(after.body.data.letters.find(row => row.id === 'move-l').clientId, 'clear');
+  });
+});
+
+test('id-less disputes and violations are refused and a deleted dispute is not restored as a fragment', async () => {
+  await withOwner(async ({ owner }) => {
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = [{}];
+    g.body.data.violations = { '': { status: 'new' } };
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(denied.status, 422);
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.field === 'id'));
+    const again = await owner('GET', '/api/workspace');
+    again.body.data.disputes = [];
+    again.body.data.violations = { '': { status: 'new' } };
+    const violations = await owner('PUT', '/api/workspace', { baseVersion: again.body.version, data: again.body.data });
+    assert.strictEqual(violations.status, 422);
+    assert.ok(violations.body.refused.some(row => row.key === 'violations' && row.field === 'id'));
+    const stored = await owner('GET', '/api/workspace');
+    assert.ok(!(stored.body.data.disputes || []).some(row => row && !row.id));
+    assert.ok(!stored.body.data.violations || !Object.prototype.hasOwnProperty.call(stored.body.data.violations, ''));
+  });
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada' }], disputes: [{ id: 'd', clientId: 'c', recipient: 'Equifax', items: [{ id: 'item', creditor: 'Bank' }] }] });
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.disputes[0].recipient = 'Experian';
+  const server = JSON.parse(JSON.stringify(sent));
+  server.disputes = [];
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(Store.state.disputes.length, 0);
+  assert.ok(applied.dropped.some(label => /Equifax|d/.test(label)));
+  assert.strictEqual(applied.requeue, false);
+});
+
+test('deleting a draft during a save keeps the invoice created at the same time', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada' }], invoices: [{ id: 'draft', clientId: 'c', description: 'Old', amount: 50, status: 'draft' }] });
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.invoices = [{ id: 'fresh', clientId: 'c', description: 'New', amount: 40, status: 'draft' }];
+  const server = JSON.parse(JSON.stringify(sent));
+  const applied = Store.applyServerSave(server, sent, { accepted: true });
+  assert.ok(!Store.state.invoices.some(row => row.id === 'draft'));
+  assert.ok(Store.state.invoices.some(row => row.id === 'fresh' && row.description === 'New'));
+  assert.ok(Store.state.invoices.every(row => row.id));
+  assert.strictEqual(applied.requeue, true);
+  assert.strictEqual(applied.reverted.length, 0);
+});
+
+test('a refused invoice is restored whole, and a wrong server shape does not stay dirty', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-inv@guard.test', status: 'active' });
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-inv@guard.test', status: 'active', pricePerResult: 50 });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = [{ id: 'cd', clientId: 'clear', items: [{ id: 'ci', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
+    g.body.data.invoices = [
+      { id: 'held-inv', clientId: 'held', description: 'Draft', amount: 50, status: 'draft' },
+      { id: 'locked', clientId: 'clear', disputeId: 'cd', itemId: 'ci', description: 'Fee', notes: '', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }
+    ];
+    const seeded = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(seeded.status, 200, JSON.stringify(seeded.body));
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-heldinv@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const issued = JSON.parse(JSON.stringify(before.body.data));
+    issued.invoices.find(row => row.id === 'held-inv').status = 'issued';
+    issued.tasks = issued.tasks || [];
+    issued.tasks.push({ id: 'keep-task', title: 'Still save this', done: false, clientId: 'clear' });
+    const held = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: issued });
+    assert.strictEqual(held.status, 409);
+    assert.ok(held.body.refused.some(row => row.key === 'invoices' && row.id === 'held-inv'));
+    const Store = loadStore();
+    Store.adopt(before.body.data);
+    Store.state.invoices.find(row => row.id === 'held-inv').status = 'issued';
+    Store.state.tasks = Store.state.tasks || [];
+    Store.state.tasks.push({ id: 'keep-task', title: 'Still save this', done: false, clientId: 'clear' });
+    const applied = Store.applyServerSave(before.body.data, issued, { rejected: true, refused: held.body.refused });
+    assert.strictEqual(Store.state.invoices.find(row => row.id === 'held-inv').status, 'draft');
+    assert.ok(Store.state.tasks.some(row => row.id === 'keep-task'));
+    assert.ok(applied.refused.length);
+    const voided = JSON.parse(JSON.stringify(before.body.data));
+    const locked = voided.invoices.find(row => row.id === 'locked');
+    locked.status = 'void';
+    locked.voidReason = 'staff tried';
+    const voidDeny = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: voided });
+    assert.strictEqual(voidDeny.status, 403);
+    const voidStore = loadStore();
+    voidStore.adopt(before.body.data);
+    const liveLocked = voidStore.state.invoices.find(row => row.id === 'locked');
+    liveLocked.status = 'void';
+    liveLocked.voidReason = 'staff tried';
+    const voidApplied = voidStore.applyServerSave(before.body.data, voided, { rejected: true, refused: voidDeny.body.refused });
+    assert.strictEqual(voidStore.state.invoices.find(row => row.id === 'locked').status, 'issued');
+    assert.strictEqual(voidApplied.requeue, false);
+    const both = JSON.parse(JSON.stringify(before.body.data));
+    const row = both.invoices.find(item => item.id === 'locked');
+    row.amount = 80;
+    row.description = 'Changed fee';
+    const multi = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: both });
+    assert.strictEqual(multi.status, 409);
+    const fields = multi.body.refused.filter(item => item.id === 'locked').map(item => item.field);
+    assert.ok(fields.includes('amount'));
+    assert.ok(fields.includes('description'));
+    const multiStore = loadStore();
+    multiStore.adopt(before.body.data);
+    const edited = multiStore.state.invoices.find(item => item.id === 'locked');
+    edited.amount = 80;
+    edited.description = 'Changed fee';
+    const multiApplied = multiStore.applyServerSave(before.body.data, both, { rejected: true, refused: multi.body.refused });
+    assert.strictEqual(multiStore.state.invoices.find(item => item.id === 'locked').amount, 50);
+    assert.strictEqual(multiStore.state.invoices.find(item => item.id === 'locked').description, 'Fee');
+    assert.strictEqual(multiApplied.requeue, false);
+  });
+  const Store = loadStore();
+  const server = { version: 2, clients: [{ id: 'c', name: 'Ada', notes: '' }], addressBook: { bad: { name: 'North' } } };
+  Store.adopt(server);
+  assert.strictEqual(Store.unsaved, false);
+  Store.state.addressBook = [{ name: 'North', address: '1 Main' }];
+  const applied = Store.applyServerSave(server, JSON.parse(JSON.stringify(Store.state)), { rejected: true, refused: [{ key: 'addressBook', id: '', field: '', reason: 'addressBook must be a list.' }] });
+  assert.ok(!Array.isArray(Store.state.addressBook));
+  assert.strictEqual(Store.unsaved, false);
+  assert.ok(applied.refused.length);
+  const filled = loadStore();
+  filled.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', onboarding: { disclosureSignedAt: '2026-11-01' } }] });
+  const sent = JSON.parse(JSON.stringify(filled.state));
+  const remote = JSON.parse(JSON.stringify(sent));
+  remote.clients[0].onboarding = { disclosureSignedAt: '2026-11-01', contractSignedAt: null };
+  const quiet = filled.applyServerSave(remote, sent, { accepted: true });
+  assert.strictEqual(quiet.reverted.length, 0);
+  assert.strictEqual(filled.unsaved, false);
+});
+
+test('a refusal is counted per record, and the deploy gate reports a bad shape', () => {
+  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const note = appJs.slice(appJs.indexOf('noteRefusals(tokens)'), appJs.indexOf('afterSave'));
+  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
+  assert.match(note, /refusalCounts\.get\(token\)/);
+  assert.match(note, /n >= 2/);
+  assert.match(flush, /this\.refusalCounts = new Map\(\)/);
+  assert.doesNotMatch(flush, /badSaves/);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-shape-'));
+  const file = path.join(dir, 'ledger-db.json');
+  const body = JSON.stringify({ workspace: { invoices: [{ id: 'ok', status: 'draft' }], disputes: [{}], violations: { '': { status: 'new' } }, addressBook: { bad: { name: 'North' } } } });
+  fs.writeFileSync(file, body);
+  const ran = spawnSync(process.execPath, [path.join(import.meta.dirname, '../server/count-invoice-statuses.js'), file], { encoding: 'utf8' });
+  assert.strictEqual(ran.status, 0, ran.stderr);
+  const out = JSON.parse(ran.stdout);
+  assert.ok(out.shapeErrors.some(row => row.key === 'disputes' && row.id === ''));
+  assert.ok(out.shapeErrors.some(row => row.key === 'violations'));
+  assert.ok(out.shapeErrors.some(row => row.key === 'addressBook'));
+  assert.strictEqual(out.deployGate.ready, false);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), body);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 

@@ -78,15 +78,16 @@ export function serviceWorkBlocked(before, after) {
   const priorDisputes = (before && before.disputes) || [];
   const priorLetters = (before && before.letters) || [];
   const signatures = (after && after.signatures) || [];
+  const refused = [];
   for (const c of (after && after.clients) || []) {
     if (!clientServiceOnHold(c, undefined, signatures)) continue;
     const id = c.id;
-    const count = (list) => (list || []).filter(d => d && d.clientId === id).length;
     const held = `${c.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
-    const added = (list, prior, key) => (list || []).filter(row => row && row.clientId === id && !(prior || []).some(old => old && old.id === row.id)).map(row => ({ key, id: row.id, field: '', reason: held }));
-    const disputeAdds = added(after.disputes, priorDisputes, 'disputes');
-    const letterAdds = added(after.letters, priorLetters, 'letters');
-    if (disputeAdds.length || letterAdds.length) return { error: held, refused: disputeAdds.concat(letterAdds) };
+    const onThisClient = (prior, row) => (prior || []).some(old => old && old.id && row.id && old.id === row.id && old.clientId === id);
+    const added = (list, prior, key) => (list || []).filter(row => row && row.clientId === id && !onThisClient(prior, row)).map(row => ({ key, id: row.id || '', field: 'clientId', reason: held }));
+    refused.push(...added(after.disputes, priorDisputes, 'disputes'));
+    refused.push(...added(after.letters, priorLetters, 'letters'));
   }
-  return null;
+  if (!refused.length) return null;
+  return { error: refused[0].reason, refused };
 }
