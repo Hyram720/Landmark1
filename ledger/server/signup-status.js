@@ -99,7 +99,10 @@ function collectHeld(before, after) {
   ((before && before.clients) || []).forEach(add);
   ((after && after.clients) || []).forEach(add);
   removedHeldClients(before).concat(removedHeldClients(after)).forEach(row => {
-    if (!heldById.has(row.id)) heldById.set(String(row.id), row.reason || heldReason({ name: row.name || row.id }));
+    const id = String(row.id);
+    const live = ((after && after.clients) || []).find(c => c && c.id === id);
+    if (live && !clientServiceOnHold(live, undefined, signatures)) return;
+    if (!heldById.has(id)) heldById.set(id, row.reason || heldReason({ name: row.name || id }));
   });
   return heldById;
 }
@@ -216,6 +219,12 @@ export function serviceWorkBlocked(before, after) {
     }
     remember(tomb.clients, c.id, reason);
   });
+  const signatures = (after && after.signatures) || (before && before.signatures) || [];
+  tomb.clients = tomb.clients.filter(row => {
+    const live = afterClients.find(c => c && c.id === row.id);
+    if (live && !clientServiceOnHold(live, undefined, signatures)) return false;
+    return true;
+  });
   if (after && typeof after === 'object') after.heldServiceIds = tomb;
   const reused = (list, id) => (list || []).find(row => row && row.id === id);
   ((after && after.disputes) || []).forEach(row => {
@@ -246,6 +255,100 @@ export function serviceWorkBlocked(before, after) {
     if (!row || typeof row !== 'object' || byId(priorLetters, row.id)) return;
     const hit = reused(tomb.letters, row.id);
     if (hit) push('letters', row.id, 'id', hit.reason);
+  });
+  ((after && after.clients) || []).forEach(c => {
+    if (!c || !c.id) return;
+    const old = ((before && before.clients) || []).find(row => row && row.id === c.id);
+    if (!old || (old.kind || 'personal') === (c.kind || 'personal')) return;
+    if (!heldById.get(c.id)) return;
+    const hasWork = priorDisputes.concat((after && after.disputes) || []).some(row => row && row.clientId === c.id) || priorLetters.concat((after && after.letters) || []).some(row => row && row.clientId === c.id);
+    if (!hasWork) return;
+    push('clients', c.id, 'kind', heldById.get(c.id));
+  });
+  const reportHeld = new Map();
+  const accountHeld = new Map();
+  const noteReport = (report) => {
+    if (!report || !report.id) return;
+    const reason = reasonForClient(report.clientId);
+    if (!reason) return;
+    if (!reportHeld.has(report.id)) reportHeld.set(report.id, { reason, clientId: report.clientId });
+    (report.accounts || []).forEach(acct => {
+      if (acct && acct.id && !accountHeld.has(acct.id)) accountHeld.set(acct.id, { reason, clientId: report.clientId, reportId: report.id });
+    });
+  };
+  ((before && before.reports) || []).forEach(noteReport);
+  ((after && after.reports) || []).forEach(noteReport);
+  ((after && after.reports) || []).forEach(report => {
+    const old = byId((before && before.reports) || [], report.id);
+    if (!old || String(old.clientId || '') === String(report.clientId || '')) return;
+    const reason = reasonForClient(old.clientId);
+    if (reason) push('reports', report.id, 'clientId', reason);
+  });
+  const priorAccount = new Map();
+  ((before && before.reports) || []).forEach(report => {
+    (report.accounts || []).forEach(acct => { if (acct && acct.id) priorAccount.set(acct.id, report); });
+  });
+  ((after && after.reports) || []).forEach(report => {
+    (report.accounts || []).forEach(acct => {
+      if (!acct || !acct.id) return;
+      const prev = priorAccount.get(acct.id);
+      if (!prev || prev.id === report.id) return;
+      const reason = reasonForClient(prev.clientId);
+      if (reason && String(prev.clientId || '') !== String(report.clientId || '')) push('reports', report.id, 'accounts', reason);
+    });
+  });
+  const fileReason = (row, owners) => {
+    if (!row || typeof row !== 'object') return '';
+    if (row.reportId && reportHeld.has(row.reportId)) owners.add(reportHeld.get(row.reportId).clientId);
+    if (row.accountId && accountHeld.has(row.accountId)) owners.add(accountHeld.get(row.accountId).clientId);
+    let reason = '';
+    if (row.reportId && reportHeld.has(row.reportId)) reason = reportHeld.get(row.reportId).reason;
+    if (!reason && row.accountId && accountHeld.has(row.accountId)) reason = accountHeld.get(row.accountId).reason;
+    (row.items || []).forEach(item => {
+      const nested = fileReason(item, owners);
+      if (!reason && nested) reason = nested;
+    });
+    return reason;
+  };
+  const foreignFile = (row) => {
+    const owners = new Set();
+    const reason = fileReason(row, owners);
+    if (!reason) return '';
+    if (owners.size === 1 && owners.has(row.clientId)) return '';
+    return reason;
+  };
+  const blockedDispute = new Map();
+  ((after && after.disputes) || []).forEach(row => {
+    const reason = foreignFile(row);
+    if (!reason || !row || !row.id) return;
+    blockedDispute.set(row.id, reason);
+    push('disputes', row.id, 'items', reason);
+    const old = byId(priorDisputes, row.id);
+    if (old) return;
+    disputeSend.forEach(field => {
+      if (field === 'letterId') return;
+      if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push('disputes', row.id, field, reason);
+    });
+  });
+  ((after && after.letters) || []).forEach(row => {
+    if (!row || typeof row !== 'object') return;
+    let reason = foreignFile(row);
+    if (!reason && row.disputeId && blockedDispute.has(row.disputeId)) reason = blockedDispute.get(row.disputeId);
+    if (!reason) {
+      const linked = ((after && after.disputes) || []).find(item => item && item.letterId && item.letterId === row.id && blockedDispute.has(item.id));
+      if (linked) reason = blockedDispute.get(linked.id);
+    }
+    if (!reason) return;
+    const old = byId(priorLetters, row.id);
+    if (!old) {
+      letterSend.forEach(field => {
+        if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push('letters', row.id, field, reason);
+      });
+      return;
+    }
+    letterSend.forEach(field => {
+      if (valueChanged(old[field], row[field])) push('letters', row.id, field, reason);
+    });
   });
   ((after && after.letters) || []).forEach(row => {
     checkRow(row, priorLetters, 'letters', letterSend);

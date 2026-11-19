@@ -45,15 +45,17 @@ const duplicatePayTokens = {
 const shapeReport = workspaceShapeReport(data && data.workspace);
 const shapeErrors = shapeReport.shapeErrors;
 const missingIdWarnings = shapeReport.missingIdWarnings;
+const orphans = orphanWork(data && data.workspace);
 const deployGate = {
   outside: outside,
   duplicatePayTokens,
   shapeErrors,
   missingIdWarnings,
+  orphans,
   ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0,
-  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. missingIdWarnings lists legacy rows that have no id, by key and count. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes and letters whose client is no longer in the workspace. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, deployGate }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, deployGate }, null, 2) + '\n');
 
 function workspaceShapeReport(ws) {
   const shapeErrors = [];
@@ -84,6 +86,13 @@ function workspaceShapeReport(ws) {
   });
   const missingIdWarnings = Object.keys(missingCounts).map(key => ({ key, count: missingCounts[key] }));
   return { shapeErrors, missingIdWarnings };
+}
+
+function orphanWork(ws) {
+  const workspace = ws || {};
+  const ids = new Set(((workspace.clients) || []).filter(row => row && row.id).map(row => row.id));
+  const list = (rows, key) => (rows || []).filter(row => row && row.id && row.clientId && !ids.has(row.clientId)).map(row => ({ key, id: row.id, clientId: row.clientId }));
+  return { disputes: list(workspace.disputes, 'disputes'), letters: list(workspace.letters, 'letters') };
 }
 
 function decode(raw, secret) {

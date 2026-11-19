@@ -2374,3 +2374,110 @@ test('deleting a held client who still has work is refused, and an orphan stays 
     assert.ok(!removed.body.data.clients.some(row => row.id === 'empty-held'));
   });
 });
+
+test('a cleared client cannot dispute a held client report or move that report', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-file@guard.test', status: 'active' });
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-file@guard.test', status: 'lead' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    built.db.data.workspace.reports = [
+      { id: 'rep-h', clientId: 'held', bureau: 'Equifax', accounts: [{ id: 'acct-h', creditor: 'North Bank' }] },
+      { id: 'rep-c', clientId: 'clear', bureau: 'Experian', accounts: [] }
+    ];
+    const before = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.disputes = [{ id: 'clear-d', clientId: 'clear', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-18', letterId: 'clear-l', items: [{ id: 'item-1', reportId: 'rep-h', accountId: 'acct-h', creditor: 'North Bank' }] }];
+    sent.letters = [{ id: 'clear-l', clientId: 'clear', disputeId: 'clear-d', status: 'approved', approvedAt: '2026-11-18', sentAt: '2026-11-18', text: 'Sent letter' }];
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.id === 'clear-d' && row.field === 'items'));
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.id === 'clear-d' && row.field === 'status'));
+    assert.ok(denied.body.refused.some(row => row.key === 'letters' && row.id === 'clear-l' && (row.field === 'status' || row.field === 'approvedAt' || row.field === 'text')));
+    const after = await owner('GET', '/api/workspace');
+    assert.ok(!(after.body.data.disputes || []).some(row => row && row.id === 'clear-d'));
+    assert.strictEqual(after.body.data.reports.find(row => row.id === 'rep-h').clientId, 'held');
+    const moved = JSON.parse(JSON.stringify(before.body.data));
+    moved.reports.find(row => row.id === 'rep-h').clientId = 'clear';
+    const reportMove = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: moved });
+    assert.strictEqual(reportMove.status, 409, JSON.stringify(reportMove.body));
+    assert.ok(reportMove.body.refused.some(row => row.key === 'reports' && row.id === 'rep-h' && row.field === 'clientId'));
+    const shifted = JSON.parse(JSON.stringify(before.body.data));
+    const heldReport = shifted.reports.find(row => row.id === 'rep-h');
+    const account = heldReport.accounts.find(row => row.id === 'acct-h');
+    heldReport.accounts = [];
+    shifted.reports.find(row => row.id === 'rep-c').accounts = [account];
+    const accountMove = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: shifted });
+    assert.strictEqual(accountMove.status, 409, JSON.stringify(accountMove.body));
+    assert.ok(accountMove.body.refused.some(row => row.key === 'reports' && row.id === 'rep-c' && row.field === 'accounts'));
+  });
+});
+
+test('a held client with disputes cannot switch type to mark a dispute sent', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-kind@guard.test', status: 'lead' });
+    built.db.data.workspace.disputes = [{ id: 'held-d', clientId: 'held', recipient: 'Equifax', status: 'draft', items: [] }];
+    const before = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.clients.find(row => row.id === 'held').kind = 'business';
+    sent.disputes.find(row => row.id === 'held-d').status = 'sent';
+    sent.disputes.find(row => row.id === 'held-d').sentAt = '2026-11-18';
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'clients' && row.id === 'held' && row.field === 'kind'));
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.id === 'held-d' && row.field === 'status'));
+    const onlyKind = JSON.parse(JSON.stringify(before.body.data));
+    onlyKind.clients.find(row => row.id === 'held').kind = 'business';
+    const switched = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: onlyKind });
+    assert.strictEqual(switched.status, 409, JSON.stringify(switched.body));
+    assert.ok(switched.body.refused.some(row => row.key === 'clients' && row.id === 'held' && row.field === 'kind'));
+    const after = await owner('GET', '/api/workspace');
+    assert.strictEqual(after.body.data.clients.find(row => row.id === 'held').kind, 'personal');
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'held-d').status, 'draft');
+  });
+});
+
+test('a removed held client is not held after the owner adds them back clear', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'back', name: 'Back Client', kind: 'personal', email: 'back-held@guard.test', status: 'lead' });
+    const before = await owner('GET', '/api/workspace');
+    const dropped = JSON.parse(JSON.stringify(before.body.data));
+    dropped.clients = dropped.clients.filter(row => row.id !== 'back');
+    const removed = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: dropped });
+    assert.strictEqual(removed.status, 200, JSON.stringify(removed.body));
+    assert.ok((removed.body.data.heldServiceIds.clients || []).some(row => row.id === 'back'));
+    const again = JSON.parse(JSON.stringify(removed.body.data));
+    again.clients.push({ id: 'back', name: 'Back Client', kind: 'personal', email: 'back-held@guard.test', status: 'active' });
+    const restored = await owner('PUT', '/api/workspace', { baseVersion: removed.body.version, data: again });
+    assert.strictEqual(restored.status, 200, JSON.stringify(restored.body));
+    seedSignedClient(built.db.data.workspace, 'back');
+    const clear = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(clear.body.data));
+    sent.disputes = [{ id: 'back-d', clientId: 'back', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-18', items: [] }];
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: clear.body.version, data: sent });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.ok(!(saved.body.data.heldServiceIds.clients || []).some(row => row.id === 'back'));
+    assert.strictEqual(saved.body.data.disputes.find(row => row.id === 'back-d').status, 'sent');
+  });
+});
+
+test('the deploy gate lists orphan disputes and blank client rows', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-orphan-'));
+  const file = path.join(dir, 'ledger-db.json');
+  const body = JSON.stringify({ workspace: { invoices: [{ id: 'ok', status: 'draft' }], clients: [null], disputes: [{ id: 'gone-d', clientId: 'missing' }], letters: [{ id: 'gone-l', clientId: 'missing' }] } });
+  fs.writeFileSync(file, body);
+  const script = path.join(import.meta.dirname, '../server/count-invoice-statuses.js');
+  const out = JSON.parse(spawnSync(process.execPath, [script, file], { encoding: 'utf8' }).stdout);
+  assert.ok(out.shapeErrors.some(row => row.key === 'clients' && /empty row/.test(row.reason)));
+  assert.ok(out.orphans.disputes.some(row => row.id === 'gone-d' && row.clientId === 'missing'));
+  assert.ok(out.orphans.letters.some(row => row.id === 'gone-l'));
+  assert.deepStrictEqual(out.deployGate.orphans.disputes, out.orphans.disputes);
+  assert.strictEqual(out.deployGate.ready, false);
+  const orphanOnly = path.join(dir, 'orphan-only.json');
+  const orphanBody = JSON.stringify({ workspace: { invoices: [{ id: 'ok', status: 'draft' }], clients: [{ id: 'ada' }], disputes: [{ id: 'gone-d', clientId: 'missing' }], letters: [] } });
+  fs.writeFileSync(orphanOnly, orphanBody);
+  const listed = JSON.parse(spawnSync(process.execPath, [script, orphanOnly], { encoding: 'utf8' }).stdout);
+  assert.strictEqual(listed.deployGate.ready, true);
+  assert.deepStrictEqual(listed.orphans.disputes, [{ key: 'disputes', id: 'gone-d', clientId: 'missing' }]);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), body);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
