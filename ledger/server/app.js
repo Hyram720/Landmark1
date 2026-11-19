@@ -364,6 +364,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (data[key] != null && (Array.isArray(data[key]) || typeof data[key] !== 'object')) return reject(400, key + ' must be a map.', [{ key, id: '', field: '', reason: key + ' must be a map.' }]);
     }
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
+    const idRequired = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'automations'];
+    for (const key of idRequired) {
+      const rows = data[key];
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        if (row && typeof row === 'object' && !Array.isArray(row) && !row.id) return reject(422, 'A ' + key + ' record is missing an id.', [{ key, id: '', field: 'id', reason: 'A ' + key + ' record is missing an id.' }]);
+      }
+    }
     const before = D().workspace;
     const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
     const pendingAudits = [];
@@ -525,7 +533,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function invoiceBillingBlocked(before, data) {
     const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     const billable = inv => inv && (inv.status === 'issued' || inv.status === 'paid');
-    const stop = (inv, field, reason) => ({ error: reason, refused: [{ key: 'invoices', id: inv && inv.id, field, reason }] });
+    const stop = (inv, field, reason) => {
+      const prev = prior.get(inv && inv.id);
+      const changed = prev ? changedInvoiceKeys(prev, inv) : [];
+      const fields = [...new Set([field].concat(changed).filter(Boolean))];
+      return { error: reason, refused: fields.map(name => ({ key: 'invoices', id: inv && inv.id, field: name, reason })) };
+    };
     for (const inv of (data.invoices || []).filter(billable)) {
       const prev = prior.get(inv.id);
       if (prev && billable(prev) && !invoiceChanged(prev, inv)) continue;
@@ -1043,7 +1056,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   }
   function guardIssuedInvoices(before, data, req) {
     const audits = [];
-    const refuseInv = (status, error, id, field) => ({ status, error, refused: [{ key: 'invoices', id, field: field || '', reason: error }] });
+    const refuseInv = (status, error, id, field) => {
+      const fields = [...new Set((Array.isArray(field) ? field : [field || '']).filter(name => name || name === ''))];
+      return { status, error, refused: fields.map(name => ({ key: 'invoices', id, field: name || '', reason: error })) };
+    };
     const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     for (const inv of (data && data.invoices) || []) {
       if (!inv) continue;
@@ -1074,9 +1090,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (prev.status === 'void') {
         if (!inv) return refuseInv(409, 'A voided invoice cannot be deleted.', prev.id, '');
         const changed = changedInvoiceKeys(prev, inv);
-        if (changed.includes('status')) return refuseInv(409, 'A voided invoice cannot be reopened.', prev.id, 'status');
-        if (changed.includes('voidReason')) return refuseInv(409, 'The void reason cannot be changed.', prev.id, 'voidReason');
-        if (changed.length) return refuseInv(409, 'A voided invoice cannot be changed.', prev.id, changed[0]);
+        if (changed.includes('status')) return refuseInv(409, 'A voided invoice cannot be reopened.', prev.id, changed);
+        if (changed.includes('voidReason')) return refuseInv(409, 'The void reason cannot be changed.', prev.id, changed);
+        if (changed.length) return refuseInv(409, 'A voided invoice cannot be changed.', prev.id, changed);
         continue;
       }
       if (prev.status !== 'issued' && prev.status !== 'paid') continue;
@@ -1090,7 +1106,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (leaving) { allowed.add('status'); allowed.add('voidReason'); }
       if (!prev.payToken && inv.status === 'issued') allowed.add('payToken');
       const changed = changedInvoiceKeys(prev, inv).filter(key => !allowed.has(key));
-      if (changed.length) return refuseInv(409, prev.status === 'paid' ? 'The invoice is locked once it is paid.' : 'The invoice is locked once it is issued.', prev.id, changed[0]);
+      if (changed.length) return refuseInv(409, prev.status === 'paid' ? 'The invoice is locked once it is paid.' : 'The invoice is locked once it is issued.', prev.id, changed);
       if (markingPaid) inv.paidAt = today();
       if (prev.payToken) inv.payToken = prev.payToken;
       if (!leaving) continue;

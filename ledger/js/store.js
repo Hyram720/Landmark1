@@ -269,8 +269,10 @@
     }
     return LIST_KEYS.has(key);
   }
+  const ID_KEYS = new Set(['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'automations']);
   function writeRow(key, id, row, asList) {
     if (key === 'settings') { state.settings = row || {}; return; }
+    if (row && ID_KEYS.has(key) && !row.id) return;
     if (asList) {
       const list = Array.isArray(state[key]) ? state[key] : (state[key] = []);
       const idx = list.findIndex((item, i) => recordId(item, i) === id);
@@ -351,23 +353,43 @@
       const refusal = refusedByToken.get(token);
       const fallbackRefusal = !explicit && opts.rejected && sentThis;
       const label = recordLabel(key, localRow || sentRow || kept, id);
-      if ((refusal && (refusal.fields.size === 0 || !remoteRow)) || fallbackRefusal) {
+      const changedByUser = changedFields(userShape(key, localRow) || userShape(key, sentRow), userShape(key, kept));
+      const refusedUntouched = refusal && [...refusal.fields].some(field => field && changedByUser.indexOf(field) < 0);
+      const lockedInvoice = key === 'invoices' && remoteRow && (remoteRow.status === 'issued' || remoteRow.status === 'paid' || remoteRow.status === 'void');
+      if ((refusal && (refusal.fields.size === 0 || !remoteRow || !localRow || refusedUntouched || lockedInvoice)) || fallbackRefusal) {
         refused.push(refusal && refusal.reasons.length ? refusal.reasons.join(' ') : label);
-        keepPostSend(key, id, localRow, sentRow, remoteRow, asList, touchedAfterSend);
+        if (localRow && !lockedInvoice) keepPostSend(key, id, localRow, sentRow, remoteRow, asList, touchedAfterSend);
         setBase(key, id, remoteRow);
         return;
       }
       if (refusal && refusal.fields.size) {
-        const out = localRow && typeof localRow === 'object' ? JSON.parse(JSON.stringify(localRow)) : {};
+        const out = JSON.parse(JSON.stringify(localRow));
         const remoteUser = userShape(key, remoteRow) || {};
         refusal.fields.forEach(field => {
+          if (field === 'id') return;
           if (!Object.prototype.hasOwnProperty.call(remoteUser, field)) delete out[field];
           else out[field] = remoteUser[field];
         });
         const next = overlayOwned(key, out, remoteRow);
         refused.push(refusal.reasons.length ? refusal.reasons.join(' ') : label + ' ' + Array.from(refusal.fields).join(', '));
-        if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+        if (next && next.id && !sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
         setBase(key, id, remoteRow);
+        return;
+      }
+      if (localRow == null) {
+        const serverMoved = !opts.accepted && remoteRow && !sameJson(userShape(key, remoteRow), userShape(key, kept)) && !sameJson(userShape(key, remoteRow), userShape(key, sentRow));
+        if (serverMoved) {
+          dropped.push(label);
+          setBase(key, id, remoteRow);
+          return;
+        }
+        writeRow(key, id, null, asList);
+        setBase(key, id, remoteRow);
+        return;
+      }
+      if (!remoteRow && kept) {
+        dropped.push(label);
+        setBase(key, id, null);
         return;
       }
       if (opts.accepted && !touchedAfterSend) {
@@ -390,21 +412,47 @@
         });
         const next = overlayOwned(key, out, remoteRow);
         if (lost.length) reverted.push(label + ' (' + lost.join(', ') + ')');
-        if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+        if (next && (next.id || !ID_KEYS.has(key)) && !sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
         setBase(key, id, remoteRow);
         return;
       }
       const merged = mergeFields(key, kept, sentRow, localRow, remoteRow);
       if (merged.conflicts.length) dropped.push(label + ' ' + merged.conflicts.join(', '));
       const next = overlayOwned(key, merged.row, remoteRow);
-      if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+      if (next && (next.id || !ID_KEYS.has(key)) && !sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
       setBase(key, id, remoteRow);
     });
     Object.keys(serverIdx).forEach(key => {
       serverIdx[key].forEach((row, id) => { if (!pending.has(tokenOf(key, id))) setBase(key, id, row); });
     });
     const still = dirtyNow(state);
-    return { requeue: still.size > 0, conflict: dropped.length > 0, dropped, refused, reverted };
+    const refusedTokens = [];
+    refusedByToken.forEach((info, token) => refusedTokens.push(token));
+    return { requeue: still.size > 0, conflict: dropped.length > 0, dropped, refused, reverted, refusedTokens };
+  }
+  function dirtySnapshot() {
+    const records = [];
+    dirtyNow(state).forEach((row, token) => {
+      const split = token.indexOf('/');
+      records.push({ key: token.slice(0, split), id: token.slice(split + 1), row: row ? JSON.parse(JSON.stringify(row)) : null });
+    });
+    return records;
+  }
+  function applyDirtySnapshot(records) {
+    (records || []).forEach(item => {
+      if (!item || !item.key || item.id == null) return;
+      if (item.row && ID_KEYS.has(item.key) && !item.row.id) return;
+      writeRow(item.key, item.id, item.row, listPreferred(item.key, state));
+    });
+  }
+  function revertTokens(tokens) {
+    (tokens || []).forEach(token => {
+      const split = String(token).indexOf('/');
+      if (split < 0) return;
+      const key = token.slice(0, split);
+      const id = token.slice(split + 1);
+      writeRow(key, id, baseRow(key, id), listPreferred(key, state));
+    });
   }
   function keepPostSend(key, id, localRow, sentRow, remoteRow, asList, touchedAfterSend) {
     if (!touchedAfterSend) return;
@@ -502,7 +550,7 @@
     return d.status;
   }
 
-  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, stageLocal, applyServerSave, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; }, get unsaved() { return dirtyNow(state).size > 0; } };
+  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, stageLocal, applyServerSave, dirtySnapshot, applyDirtySnapshot, revertTokens, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; }, get unsaved() { return dirtyNow(state).size > 0; } };
   root.root = root;
   root.Store = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

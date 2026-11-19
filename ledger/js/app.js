@@ -91,7 +91,7 @@
       const r = await api('GET', '/api/workspace');
       this.version = r.version;
       Store.adopt(r.data);
-      this.restoreDirty(r.data);
+      this.restoreDirty();
       Store.setRemote(this);
       this.ensurePoll();
     },
@@ -99,20 +99,48 @@
       if (this.pollTimer) return;
       this.pollTimer = setInterval(() => this.poll().catch(() => {}), 15000);
     },
+    dirtyStorageKey() {
+      const id = this.user && (this.user.id || this.user.email) || '';
+      return 'ledger-dirty:' + id;
+    },
+    clearDirtyStores() {
+      try {
+        if (!root.sessionStorage) return;
+        root.sessionStorage.removeItem('ledger-dirty');
+        const keys = [];
+        for (let i = 0; i < root.sessionStorage.length; i++) {
+          const key = root.sessionStorage.key(i);
+          if (key && key.indexOf('ledger-dirty:') === 0) keys.push(key);
+        }
+        keys.forEach(key => root.sessionStorage.removeItem(key));
+      } catch (e) { /* private mode */ }
+    },
     rememberDirty() {
       try {
         if (!root.sessionStorage) return;
-        if (!Store.unsaved) root.sessionStorage.removeItem('ledger-dirty');
-        else root.sessionStorage.setItem('ledger-dirty', JSON.stringify(Store.state));
+        const key = this.dirtyStorageKey();
+        root.sessionStorage.removeItem('ledger-dirty');
+        if (!Store.unsaved || !(this.user && (this.user.id || this.user.email))) { root.sessionStorage.removeItem(key); return; }
+        root.sessionStorage.setItem(key, JSON.stringify({ userId: this.user.id || this.user.email, records: Store.dirtySnapshot() }));
       } catch (e) { /* private mode */ }
     },
-    restoreDirty(server) {
+    restoreDirty() {
       try {
-        const raw = root.sessionStorage && root.sessionStorage.getItem('ledger-dirty');
+        if (!root.sessionStorage || !(this.user && (this.user.id || this.user.email))) return;
+        root.sessionStorage.removeItem('ledger-dirty');
+        const mine = this.dirtyStorageKey();
+        const keys = [];
+        for (let i = 0; i < root.sessionStorage.length; i++) {
+          const key = root.sessionStorage.key(i);
+          if (key && key.indexOf('ledger-dirty:') === 0 && key !== mine) keys.push(key);
+        }
+        keys.forEach(key => root.sessionStorage.removeItem(key));
+        const raw = root.sessionStorage.getItem(mine);
         if (!raw) return;
         const saved = JSON.parse(raw);
-        Store.stageLocal(saved);
-        Store.applyServerSave(server, saved);
+        const userId = this.user.id || this.user.email;
+        if (!saved || saved.userId !== userId || !Array.isArray(saved.records)) { root.sessionStorage.removeItem(mine); return; }
+        Store.applyDirtySnapshot(saved.records);
       } catch (e) { /* ignore a damaged draft */ }
     },
     async flushNow() { clearTimeout(this.timer); if (this.pending) await this.flush(); },
@@ -136,15 +164,18 @@
       const dropped = applied.dropped || [];
       const refused = applied.refused || [];
       const reverted = applied.reverted || [];
+      if (this.badSaves >= 2 && applied.refusedTokens && applied.refusedTokens.length) Store.revertTokens(applied.refusedTokens);
       this.rememberDirty();
       this.requeue = !!(applied.requeue || Store.unsaved);
-      if (this.requeue && this.badSaves >= 2) {
-        this.requeue = false;
-        this.pending = false;
-        setSync('conflict');
+      if (this.badSaves >= 2 && (applied.refused || []).length) {
         toast('Saving stopped after a repeated refusal.');
-        this.ensurePoll();
-        return;
+        if (!Store.unsaved) {
+          this.requeue = false;
+          this.pending = false;
+          setSync('conflict');
+          this.ensurePoll();
+          return;
+        }
       }
       if (refused.length) toast('Not allowed: ' + refused.join('; '));
       if (reverted.length) toast('Not saved: ' + reverted.join(', ') + '.');
@@ -1407,6 +1438,7 @@
       try { await Remote.flushNow(); }
       catch (e) { toast(e.message || 'Could not save your latest changes.'); return; }
       if (Store.unsaved) { toast('Some changes are still unsaved. Stay on this page to retry.'); return; }
+      Remote.clearDirtyStores();
       await api('POST', '/api/logout');
       location.reload();
     },
