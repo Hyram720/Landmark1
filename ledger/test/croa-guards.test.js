@@ -25,6 +25,11 @@ function listen(app) {
   return { server, base, client };
 }
 
+function todayEt() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  return `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+}
+
 function futureWindow() {
   const end = new Date(Date.now() + 14 * 864e5);
   return { cancellationWindowEndsAt: end.toISOString().slice(0, 10), cancellationWindowEndsAtTs: end.toISOString() };
@@ -402,7 +407,7 @@ test('a written cancellation is recorded once and then holds the work', async ()
     const staff = live.client();
     const inv = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-note@guard.test' });
     assert.strictEqual((await staff('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
-    const receivedAt = new Date().toISOString().slice(0, 10);
+    const receivedAt = todayEt();
     const recorded = await staff('POST', '/api/clients/note/cancel', { method: 'mail', receivedAt });
     assert.strictEqual(recorded.status, 200);
     assert.strictEqual((await staff('POST', '/api/clients/note/cancel', { method: 'email', receivedAt })).status, 409);
@@ -442,5 +447,60 @@ test('a retired enrolled client id cannot come back as a business client', async
     const reborn = await owner('PUT', '/api/workspace', { baseVersion: again.body.version, data: again.body.data });
     assert.strictEqual(reborn.status, 409);
     assert.match(reborn.body.error, /retired/);
+  });
+});
+
+test('a legacy paid invoice does not block an unrelated save', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'oldpay', name: 'Old Pay', kind: 'personal', email: 'oldpay@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'oldpay');
+    built.db.data.workspace.invoices = built.db.data.workspace.invoices || [];
+    built.db.data.workspace.invoices.push({ id: 'legacy-paid', clientId: 'oldpay', description: 'Old payment', amount: 40, status: 'paid', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.tasks = g.body.data.tasks || [];
+    g.body.data.tasks.push({ id: 'task-old', clientId: 'oldpay', title: 'Call the client', due: '2020-07-01', done: false });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+  });
+});
+
+test('changing an issued invoice amount must match the price per result', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'price', name: 'Price Client', kind: 'personal', email: 'price@guard.test', status: 'active', pricePerResult: 50, onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'price');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = g.body.data.disputes || [];
+    g.body.data.invoices = g.body.data.invoices || [];
+    g.body.data.disputes.push({ id: 'pd', clientId: 'price', items: [{ id: 'pi', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] });
+    g.body.data.invoices.push({ id: 'price-1', clientId: 'price', disputeId: 'pd', itemId: 'pi', description: 'Deletion', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const next = await owner('GET', '/api/workspace');
+    next.body.data.invoices.find(i => i.id === 'price-1').amount = 60;
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: next.body.version, data: next.body.data });
+    assert.strictEqual(saved.status, 409);
+    assert.match(saved.body.error, /price per result/);
+  });
+});
+
+test('a cancelled client stays cancelled when a save sets the status back to active', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'stay', name: 'Stay Cancelled', kind: 'personal', email: 'stay@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'stay');
+    const receivedAt = todayEt();
+    assert.strictEqual((await owner('POST', '/api/clients/stay/cancel', { method: 'email', receivedAt })).status, 200);
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.clients.find(c => c.id === 'stay').status = 'active';
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    assert.strictEqual((await owner('GET', '/api/workspace')).body.data.clients.find(c => c.id === 'stay').status, 'cancelled');
+  });
+});
+
+test('a cancellation date after today or an impossible date is refused', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'when', name: 'When Cancel', kind: 'personal', email: 'when@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'when');
+    assert.strictEqual((await owner('POST', '/api/clients/when/cancel', { method: 'mail', receivedAt: '2099-01-01' })).status, 400);
+    assert.strictEqual((await owner('POST', '/api/clients/when/cancel', { method: 'mail', receivedAt: '2026-02-31' })).status, 400);
+    const receivedAt = todayEt();
+    assert.strictEqual((await owner('POST', '/api/clients/when/cancel', { method: 'other', receivedAt })).status, 200);
   });
 });

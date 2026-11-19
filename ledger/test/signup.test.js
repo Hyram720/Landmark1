@@ -254,7 +254,7 @@ test('signup, CROA gate, invite still works, newsletter, magic link, rate limit'
     patRow.onboarding.contractSignedAt = '2026-10-01';
     patRow.status = 'paused';
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: cancelled.body.version, data: cancelled.body.data })).status, 200);
-    assert.strictEqual((await owner('GET', '/api/workspace')).body.data.clients.find(c => c.email === 'pat@signup.test').status, 'paused');
+    assert.strictEqual((await owner('GET', '/api/workspace')).body.data.clients.find(c => c.email === 'pat@signup.test').status, 'cancelled');
 
     assert.strictEqual(kitCalls().length, 0, 'unchecked marketing consent does not post');
     const sam = await anon('POST', '/api/signup', { firstName: 'Sam', lastName: 'List', email: 'sam@signup.test', password: 'sam password 1', acceptAccountTerms: true, state: 'NJ', njResident: true, marketingConsent: true });

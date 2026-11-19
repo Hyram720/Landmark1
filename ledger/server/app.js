@@ -393,6 +393,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       return res.status(400).json({ error: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' });
     }
     for (const c of data.clients) applySignupStatus(c);
+    for (const c of data.clients) if (c && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
     try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }
@@ -448,9 +449,19 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!dispute) return null;
     return (dispute.items || []).find(it => it && it.id === inv.itemId && it.bureau) || null;
   }
+  function invoiceField(inv, key) {
+    return inv && inv[key] == null ? '' : String(inv[key]);
+  }
+  function invoiceChanged(prev, inv) {
+    if (!prev) return true;
+    return ['status', 'itemId', 'disputeId', 'clientId', 'amount', 'serviceCompletedAt', 'issuedAt', 'bureauResultAt', 'reportId', 'documentId'].some(key => invoiceField(prev, key) !== invoiceField(inv, key));
+  }
   function invoiceBillingBlocked(before, data) {
+    const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     const billable = inv => inv && (inv.status === 'issued' || inv.status === 'paid');
     for (const inv of (data.invoices || []).filter(billable)) {
+      const prev = prior.get(inv.id);
+      if (prev && billable(prev) && !invoiceChanged(prev, inv)) continue;
       const billed = (data.clients || []).find(x => x && x.id === inv.clientId);
       if (!billed || billed.kind === 'business') continue;
       if (clientServiceOnHold(billed, undefined, data.signatures)) return `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`;
@@ -462,6 +473,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const report = (item.reportId || inv.reportId) && (data.reports || []).find(r => r && r.id === (item.reportId || inv.reportId) && r.clientId === inv.clientId && r.date);
       const doc = (item.documentId || inv.documentId) && (data.documents || []).find(d => d && d.id === (item.documentId || inv.documentId) && d.clientId === inv.clientId && (d.uploadedAt || d.date));
       if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return 'An invoice must name the dated bureau result for the deleted item.';
+      if (prev && billable(prev) && invoiceField(prev, 'amount') !== invoiceField(inv, 'amount')) {
+        const price = Number(billed.pricePerResult);
+        if (!(price > 0) || Number(inv.amount) !== price) return 'The invoice amount must equal the price per result.';
+      }
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
       if (dup) return 'Only one invoice can be issued for each deleted item and bureau.';
     }
@@ -857,6 +872,15 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
   });
 
+  function receivedOnOrBeforeToday(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split('-').map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return false;
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const today = `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+    return value <= today;
+  }
   app.post('/api/clients/:id/cancel', need('owner', 'staff'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
     if (!c) return res.status(404).json({ error: 'Client not found' });
@@ -866,7 +890,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const method = String((req.body || {}).method || '');
     const receivedAt = String((req.body || {}).receivedAt || '');
     if (!['mail', 'email', 'other'].includes(method)) return res.status(400).json({ error: 'Say how the written notice arrived: mail, email, or other.' });
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(receivedAt)) return res.status(400).json({ error: 'Enter the date the written notice was received.' });
+    if (!receivedOnOrBeforeToday(receivedAt)) return res.status(400).json({ error: 'Enter the date the written notice was received. It cannot be after today.' });
     c.onboarding.cancelledAt = receivedAt;
     c.onboarding.cancelledAtTs = new Date().toISOString();
     c.onboarding.cancellationMethod = method;
