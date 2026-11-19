@@ -72,7 +72,7 @@
         }
         if (made.length) App().commit(`Drafted ${made.length} Metro 2 letter(s) — review and approve before mailing`, cid, made.map(row => 'disputes/' + row.id));
         if (problems.length) toast(problems.join(' · '));
-        else toast(`${made} draft letter(s) created. Review, edit and approve each one before mailing.`);
+        else toast(`${made.length} draft letter(s) created. Review, edit and approve each one before mailing.`);
         App().go(`#/clients/${cid}/disputes`);
       } });
   }
