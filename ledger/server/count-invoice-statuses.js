@@ -31,7 +31,18 @@ for (const inv of invoices) {
   counts[status] = (counts[status] || 0) + 1;
 }
 const outside = Object.values(counts).reduce((sum, n) => sum + n, 0);
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts }, null, 2) + '\n');
+const tokenCounts = {};
+for (const inv of invoices) {
+  if (!inv || !inv.payToken) continue;
+  const token = String(inv.payToken);
+  tokenCounts[token] = (tokenCounts[token] || 0) + 1;
+}
+const duplicateGroups = Object.values(tokenCounts).filter(n => n > 1);
+const duplicatePayTokens = {
+  sharedTokens: duplicateGroups.length,
+  invoices: duplicateGroups.reduce((sum, n) => sum + n, 0)
+};
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens }, null, 2) + '\n');
 
 function decode(raw, secret) {
   const parsed = JSON.parse(raw);

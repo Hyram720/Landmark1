@@ -97,6 +97,7 @@ export function mountSignup(app, deps) {
       db.persist();
       return res.json(SIGNUP_OK);
     }
+    const matchedClient = (workspace().clients || []).find(c => c && String(c.email || '').trim().toLowerCase() === email);
     const clientId = uid();
     const now = new Date().toISOString();
     const client = {
@@ -124,6 +125,7 @@ export function mountSignup(app, deps) {
       signupIp: req.ip,
       signupUserAgent: String(req.get('user-agent') || '').slice(0, 300)
     };
+    if (matchedClient) client.possible_duplicate = matchedClient.id;
     const user = {
       id: uid(),
       name: client.name,
@@ -138,6 +140,10 @@ export function mountSignup(app, deps) {
       authMethod: mode
     };
     workspace().clients.push(client);
+    if (matchedClient) {
+      workspace().tasks = workspace().tasks || [];
+      workspace().tasks.push({ id: uid(), clientId, title: `Review a possible duplicate signup for ${client.name} and merge it with the existing client if they are the same person.`, due: new Date().toISOString().slice(0, 10), done: false, createdAt: now, kind: 'possible_duplicate', matchedClientId: matchedClient.id });
+    }
     D().users.push(user);
     const raw = issueVerify(user);
     activity(`Self-signup pending: ${client.name}. No service work until CROA onboarding clears.`, clientId);

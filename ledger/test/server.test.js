@@ -198,8 +198,9 @@ test('the server refuses invoices over the 12-month term / $1,188 cap', async ()
   book.invoices.push({ id: 'capi1', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i1', description: 'Service', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
   const ok = await owner('PUT', '/api/workspace', { baseVersion: next.body.version, data: book });
   assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
-  book.invoices.push({ id: 'capi2', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i2', description: 'More service', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
-  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ok.body.version, data: book })).status, 200, 'exactly $1,188 is allowed');
+  const second = await owner('GET', '/api/workspace');
+  second.body.data.invoices.push({ id: 'capi2', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i2', description: 'More service', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
+  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: second.body.version, data: second.body.data })).status, 200, 'exactly $1,188 is allowed');
   const saved = await owner('GET', '/api/workspace');
   saved.body.data.invoices.push({ id: 'capi3', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i3', description: 'Over the cap', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
   const no = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: saved.body.data });
@@ -368,17 +369,20 @@ test('invoice pay link uses Authorize.net hosted page and confirms payment', asy
   mockExternal();
   try {
     assert.strictEqual((await anon('GET', '/pay/nope')).status, 404);
-    const none = await anon('GET', '/pay/paytokentest123');
+    const payToken = (await owner('GET', '/api/workspace')).body.data.invoices.find(i => i.id === 'inv9abc').payToken;
+    assert.notStrictEqual(payToken, 'paytokentest123');
+    assert.ok(payToken.length >= 43);
+    const none = await anon('GET', '/pay/' + payToken);
     assert.match(none.body, /isn’t set up yet/);
     const s = await owner('PUT', '/api/settings/payments', { loginId: 'LOGIN1234', transactionKey: 'TXKEY', sandbox: true });
     assert.strictEqual(s.status, 200); assert.strictEqual(s.body.sandbox, true);
-    const page = await anon('GET', '/pay/paytokentest123');
+    const page = await anon('GET', '/pay/' + payToken);
     assert.match(page.body, /test\.authorize\.net\/payment\/payment/); assert.match(page.body, /FORMTOKEN/);
     const hpp = JSON.parse(calls.filter(c => c.u.includes('authorize.net') && String((c.opts || {}).body || '').includes('getHostedPaymentPageRequest')).pop().opts.body).getHostedPaymentPageRequest;
     const payOpts = JSON.parse(hpp.hostedPaymentSettings.setting.find(s => s.settingName === 'hostedPaymentPaymentOptions').settingValue);
     assert.strictEqual(payOpts.showBankAccount, false, 'eCheck / bank account is off');
     assert.strictEqual(payOpts.showCreditCard, true, 'cards stay on');
-    const done = await anon('GET', '/pay/paytokentest123/done');
+    const done = await anon('GET', '/pay/' + payToken + '/done');
     assert.match(done.body, /Thank you/);
     const inv = (await owner('GET', '/api/workspace')).body.data.invoices.find(i => i.id === 'inv9abc');
     assert.strictEqual(inv.status, 'paid'); assert.strictEqual(inv.transId, '555');

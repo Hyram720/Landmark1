@@ -360,7 +360,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (old) {
         if (Object.prototype.hasOwnProperty.call(old, 'signupSource')) c.signupSource = old.signupSource;
         else delete c.signupSource;
-      } else c.signupSource = false;
+        if (Object.prototype.hasOwnProperty.call(old, 'possible_duplicate')) c.possible_duplicate = old.possible_duplicate;
+        else delete c.possible_duplicate;
+      } else {
+        c.signupSource = false;
+        delete c.possible_duplicate;
+      }
     }
     restoreServerOwnedEnrollment(data, before, priorClients);
     for (const c of data.clients) {
@@ -971,13 +976,15 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   }
   function normalizeClientName(value) {
     let raw = String(value || '').trim();
+    const suffixes = new Set(['llc', 'inc', 'co', 'corp', 'ltd']);
     const comma = raw.indexOf(',');
     if (comma > 0) {
       const last = raw.slice(0, comma).trim();
       const rest = raw.slice(comma + 1).trim();
-      if (last && rest && !/\s/.test(last)) raw = rest + ' ' + last;
+      const restWords = rest.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
+      const suffixOnly = restWords.length > 0 && restWords.every(word => suffixes.has(word));
+      if (last && rest && !suffixOnly) raw = rest + ' ' + last;
     }
-    const suffixes = new Set(['llc', 'inc', 'co', 'corp', 'ltd']);
     const words = raw.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(w => w && !suffixes.has(w));
     if (words.length <= 2) return words.join(' ');
     return [words[0]].concat(words.slice(1, -1).filter(w => w.length > 1), words[words.length - 1]).join(' ');
@@ -997,16 +1004,28 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     return local + '@' + domain;
   }
   const INVOICE_STATUSES = new Set(['draft', 'issued', 'paid', 'void']);
-  const ISSUED_LOCK = ['clientId', 'disputeId', 'itemId', 'description', 'issuedAt'];
+  function changedInvoiceKeys(prev, inv) {
+    const keys = new Set([...Object.keys(prev || {}), ...Object.keys(inv || {})]);
+    const changed = [];
+    for (const key of keys) if (invoiceField(prev, key) !== invoiceField(inv, key)) changed.push(key);
+    return changed;
+  }
+  function mintPayToken(invoices) {
+    const used = new Set();
+    for (const inv of invoices || []) if (inv && inv.payToken) used.add(String(inv.payToken));
+    let token = '';
+    do { token = crypto.randomBytes(32).toString('base64url'); } while (used.has(token));
+    return token;
+  }
   function guardIssuedInvoices(before, data, req) {
     const audits = [];
     const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     for (const inv of (data && data.invoices) || []) {
       if (!inv) continue;
-      if (inv.status === 'draft') delete inv.payToken;
       const prev = prior.get(inv.id);
       const leavingBilled = prev && (prev.status === 'issued' || prev.status === 'paid') && inv.status !== 'issued' && inv.status !== 'paid';
       if (!INVOICE_STATUSES.has(inv.status) && !leavingBilled) return { status: 400, error: 'Invoice status must be draft, issued, paid, or void.' };
+      if (inv.status === 'draft') delete inv.payToken;
     }
     const next = new Map(((data && data.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     for (const prev of (before && before.invoices) || []) {
@@ -1014,12 +1033,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const inv = next.get(prev.id);
       if (prev.status === 'void') {
         if (!inv) return { status: 409, error: 'A voided invoice cannot be deleted.' };
-        if (inv.status !== 'void') return { status: 409, error: 'A voided invoice cannot be reopened.' };
-        if (String(inv.voidReason || '') !== String(prev.voidReason || '')) return { status: 409, error: 'The void reason cannot be changed.' };
-        if (Number(inv.amount) !== Number(prev.amount)) return { status: 409, error: 'A voided invoice cannot be changed.' };
-        for (const key of ISSUED_LOCK.concat(['paidAt', 'serviceCompletedAt'])) {
-          if (invoiceField(prev, key) !== invoiceField(inv, key)) return { status: 409, error: 'A voided invoice cannot be changed.' };
-        }
+        const changed = changedInvoiceKeys(prev, inv);
+        if (changed.includes('status')) return { status: 409, error: 'A voided invoice cannot be reopened.' };
+        if (changed.includes('voidReason')) return { status: 409, error: 'The void reason cannot be changed.' };
+        if (changed.length) return { status: 409, error: 'A voided invoice cannot be changed.' };
         continue;
       }
       if (prev.status !== 'issued' && prev.status !== 'paid') continue;
@@ -1027,21 +1044,30 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (prev.status === 'paid' && inv.status === 'issued') return { status: 409, error: 'A paid invoice can only be voided.' };
       const leaving = inv.status !== 'issued' && inv.status !== 'paid';
       if (leaving && req.user.role !== 'owner') return { status: 403, error: 'Only the owner can void an issued or paid invoice.' };
-      if (Number(inv.amount) !== Number(prev.amount)) return { status: 409, error: 'The invoice amount is locked once it is issued.' };
-      for (const key of ISSUED_LOCK) {
-        if (invoiceField(prev, key) !== invoiceField(inv, key)) return { status: 409, error: 'The invoice is locked once it is issued.' };
-      }
-      if (prev.paidAt && invoiceField(prev, 'paidAt') !== invoiceField(inv, 'paidAt')) return { status: 409, error: 'The paid date is locked once it is set.' };
-      if (prev.paidAt) inv.paidAt = prev.paidAt;
-      if (prev.status === 'paid') {
-        for (const key of ['serviceCompletedAt', 'dueAt', 'notes']) {
-          if (invoiceField(prev, key) !== invoiceField(inv, key)) return { status: 409, error: 'The invoice is locked once it is paid.' };
-        }
-      }
+      const markingPaid = prev.status === 'issued' && inv.status === 'paid';
+      const allowed = new Set();
+      if (markingPaid) { allowed.add('status'); allowed.add('paidAt'); }
+      if (leaving) { allowed.add('status'); allowed.add('voidReason'); }
+      if (!prev.payToken && inv.status === 'issued') allowed.add('payToken');
+      const changed = changedInvoiceKeys(prev, inv).filter(key => !allowed.has(key));
+      if (changed.includes('paidAt')) return { status: 409, error: 'The paid date is set by the server when the invoice is marked paid.' };
+      if (changed.length) return { status: 409, error: prev.status === 'paid' ? 'The invoice is locked once it is paid.' : 'The invoice is locked once it is issued.' };
+      if (markingPaid) inv.paidAt = today();
+      if (prev.payToken) inv.payToken = prev.payToken;
       if (!leaving) continue;
       if (!String(inv.voidReason || '').trim()) return { status: 400, error: 'A reason is required to void this invoice.' };
+      if (prev.voidReason && String(inv.voidReason) !== String(prev.voidReason)) return { status: 409, error: 'The void reason cannot be changed.' };
       inv.status = 'void';
       audits.push({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: prev.id, clientId: prev.clientId, reason: String(inv.voidReason).trim() }) });
+    }
+    for (const inv of (data && data.invoices) || []) {
+      if (!inv || inv.status === 'draft') continue;
+      const prev = prior.get(inv.id);
+      const kept = prev && prev.payToken && (prev.status === 'issued' || prev.status === 'paid' || prev.status === 'void');
+      if (kept) { inv.payToken = prev.payToken; continue; }
+      if (inv.status !== 'issued') { delete inv.payToken; continue; }
+      const others = (data.invoices || []).filter(other => other && other !== inv && other.payToken);
+      inv.payToken = mintPayToken(others);
     }
     return { audits };
   }
@@ -1075,6 +1101,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     c.onboarding.cancellationTimely = pendingReview ? null : timely;
     c.onboarding.postmarkReview = pendingReview ? 'postmark_needs_owner_review' : (postmarkEarly ? 'confirmed' : null);
     c.status = 'cancelled';
+    if (pendingReview) {
+      workspace().tasks = workspace().tasks || [];
+      workspace().tasks.push({ id: uid(), clientId: c.id, title: `Review the postmark for ${c.name}. Confirm or reject it before timely or late is decided.`, due: today(), done: false, createdAt: new Date().toISOString(), kind: 'postmark_needs_owner_review' });
+    }
     const refund = pendingReview ? false : settleTimelyCancellation(c, req.user.email, timely);
     db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt, postmarkAt: postmarkAt || null, timely, postmarkReview: c.onboarding.postmarkReview, refund }) });
     if (postmarkEarly && !pendingReview) db.audit({ actor: req.user.email, action: 'client.cancel.postmark', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, receivedAt, postmarkAt }) });
@@ -1117,6 +1147,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     c.onboarding.cancellationTimely = timely;
     c.onboarding.postmarkReview = decision === 'confirm' ? 'confirmed' : 'rejected';
     const refund = settleTimelyCancellation(c, req.user.email, timely);
+    for (const task of workspace().tasks || []) {
+      if (task && task.clientId === c.id && task.kind === 'postmark_needs_owner_review' && !task.done) task.done = true;
+    }
     db.audit({ actor: req.user.email, action: 'client.cancel.postmark_review', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, decision, receivedAt, postmarkAt, timely, refund }) });
     activity(`${req.user.email} ${decision === 'confirm' ? 'confirmed' : 'rejected'} the postmark for ${c.name}. ${timely ? 'Timely.' : 'Late.'}`, c.id);
     commitWorkspace(req.user.email, 'client.cancel.postmark_review', c.id);
@@ -1709,18 +1742,29 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   });
 
   // ---------- online invoice payments ----------
-  const findInvoiceByToken = t => (workspace().invoices || []).find(i => i.payToken && i.payToken === t);
+  function invoicesSharingToken(token) {
+    const value = String(token || '');
+    if (!value) return [];
+    return (workspace().invoices || []).filter(i => i && i.payToken && String(i.payToken) === value);
+  }
+  function findInvoiceByToken(token) {
+    const matches = invoicesSharingToken(token);
+    if (matches.length !== 1) return null;
+    return matches[0];
+  }
   function legacyInvoiceStatus(status) {
     return status == null || status === '' || status === 'open';
   }
-  // N40b is waiting on Fred. A paper-signed personal client with contract dates and no server
-  // signature rows keeps the previous croaStatus pay gate. The signature-row hold is not applied.
+  // N40b is waiting on Fred. A paper-signed personal client with contract dates and no
+  // server signature rows keeps the previous croaStatus pay gate. Any electronic
+  // signature row stays on the server hold instead.
   function isLegacyPaperPayClient(c, signatures) {
     if (!c || c.kind === 'business' || c.signupSource === 'self') return false;
     const o = c.onboarding || {};
     if (!(o.contractSignedAt || o.contractSignedAtTs)) return false;
-    const rows = (signatures || []).filter(s => s && s.clientId === c.id);
-    return !(rows.some(s => s.doc === 'disclosure') && rows.some(s => s.doc === 'contract'));
+    const rows = (signatures || []).filter(s => s && s.clientId === c.id && (s.doc === 'disclosure' || s.doc === 'contract'));
+    if (rows.length) return false;
+    return true;
   }
   function legacyPaperPayHold(c) {
     const cs = Store.croaStatus(c);
@@ -1740,18 +1784,24 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   }
   async function confirmPayment(inv) {
     const a = anet();
-    if (!a || inv.status === 'paid') return inv.status === 'paid';
-    if (inv.status !== 'issued' && !legacyInvoiceStatus(inv.status)) return false;
-    const hit = await findPayment(a, inv);
+    if (!a || !inv || !inv.payToken) return !!(inv && inv.status === 'paid');
+    const matches = invoicesSharingToken(inv.payToken);
+    const current = matches.find(i => i.id === inv.id && i.clientId === inv.clientId && i.status === inv.status);
+    if (matches.length !== 1 || !current) return false;
+    if (current.status === 'paid') return true;
+    if (current.status !== 'issued' && !legacyInvoiceStatus(current.status)) return false;
+    const hit = await findPayment(a, current);
     if (!hit) return false;
-    Object.assign(inv, { status: 'paid', paidAt: today(), transId: hit.transId, paidVia: 'Authorize.net' });
-    activity(`Online payment received: $${Number(inv.amount).toFixed(2)} — ${inv.description}`, inv.clientId);
-    commitWorkspace('payment', 'invoice.paid', inv.id);
+    Object.assign(current, { status: 'paid', paidAt: today(), transId: hit.transId, paidVia: 'Authorize.net' });
+    activity(`Online payment received: $${Number(current.amount).toFixed(2)} for ${current.description}`, current.clientId);
+    commitWorkspace('payment', 'invoice.paid', current.id);
     return true;
   }
   app.get('/pay/:token', async (req, res) => {
-    const inv = findInvoiceByToken(req.params.token);
+    const matches = invoicesSharingToken(req.params.token);
     const co = company();
+    if (matches.length > 1) return res.status(409).send(payPage('Payment link', '<h1>This payment link cannot be used</h1><p class="muted">It does not identify a single invoice.</p>'));
+    const inv = matches[0];
     if (!inv || inv.status === 'void') return res.status(404).send(payPage('Invoice not found', '<h1>Invoice not found</h1><p class="muted">This payment link is not valid. Please contact us.</p>'));
     if (inv.status === 'paid') return res.send(payPage('Paid', `<h1>Thank you</h1><p>This invoice was paid${inv.paidAt ? ' on ' + htmlEsc(inv.paidAt) : ''}.</p>`));
     if (inv.status === 'draft') return res.status(409).send(payPage('Draft invoice', '<h1>This invoice is still a draft</h1><p class="muted">A draft cannot be paid.</p>'));
