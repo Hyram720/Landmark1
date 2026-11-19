@@ -1607,6 +1607,7 @@ test('the save response returns the server pay token and a later save can use it
 
 test('the browser adopts the saved workspace and does not mint pay tokens', () => {
   const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const views = fs.readFileSync(path.join(import.meta.dirname, '../js/views.js'), 'utf8');
   const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
   assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
   assert.match(flush, /renderWhenSafe\(\)/);
@@ -1617,7 +1618,12 @@ test('the browser adopts the saved workspace and does not mint pay tokens', () =
   assert.match(voidAct, /find\(x => x && x\.id === id\)/);
   assert.match(voidAct, /logVoidIfSaved/);
   assert.doesNotMatch(voidAct, /Voided invoice/);
-  assert.match(appJs, /Store\.get\.client\(clientId\)/);
+  assert.match(flush, /status === 400 \|\| e\.status === 403/);
+  assert.match(flush, /!e\.status \|\| e\.status >= 500/);
+  assert.match(appJs, /focusout/);
+  assert.match(appJs, /Store\.get\.dispute\(disputeId\)/);
+  assert.match(appJs, /vendorAccounts\.find\(x => x\.id === vid\)/);
+  assert.match(views, /ledgerUser && root\.ledgerUser\.role === 'owner'/);
 });
 
 test('staff cannot close or delete a server review task', async () => {
@@ -1704,7 +1710,9 @@ test('an edit made while a save is in flight is kept and the server pay token is
   server.invoices[0].payToken = 'server-token';
   server.invoices[0].paidAt = '2026-11-18';
   server.clients[0].zip = '';
-  assert.strictEqual(Store.applyServerSave(server, sent), true);
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(applied.requeue, true);
+  assert.strictEqual(applied.conflict, false);
   assert.strictEqual(state.clients[0].zip, '08002');
   assert.strictEqual(state.invoices[0].payToken, 'server-token');
   assert.strictEqual(state.invoices[0].paidAt, '2026-11-18');
@@ -1830,6 +1838,62 @@ test('a coach reminder at 8:55 PM ET uses that Eastern date', async () => {
     built.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('a same-record conflict keeps the server copy and replays the other edit', () => {
+  const Store = loadStore();
+  const state = Store.state;
+  state.clients = [{ id: 'c', name: 'Ada', city: '' }];
+  state.tasks = [];
+  const sent = JSON.parse(JSON.stringify(state));
+  state.clients[0].city = 'Staff City';
+  state.tasks.push({ id: 'staff-task', title: 'Staff follow-up', done: false });
+  const server = JSON.parse(JSON.stringify(sent));
+  server.clients[0].city = 'Cherry Hill';
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(applied.conflict, true);
+  assert.strictEqual(applied.requeue, true);
+  assert.ok(applied.dropped.some(label => /Ada/.test(label)));
+  assert.strictEqual(state.clients[0].city, 'Cherry Hill');
+  assert.ok(state.tasks.some(task => task.id === 'staff-task'));
+});
+
+test('another user\'s city and dispute recipient survive a staff re-save after 409', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada-race@guard.test', status: 'lead', city: '' });
+    built.db.data.workspace.disputes = built.db.data.workspace.disputes || [];
+    built.db.data.workspace.disputes.push({ id: 'race-dispute', clientId: 'ada', type: 'cra_611', round: 1, recipient: 'Experian', status: 'draft', items: [] });
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-race@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    const ownerCopy = await owner('GET', '/api/workspace');
+    ownerCopy.body.data.clients.find(row => row.id === 'ada').city = 'Cherry Hill';
+    ownerCopy.body.data.disputes.find(row => row.id === 'race-dispute').recipient = 'Equifax';
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ownerCopy.body.version, data: ownerCopy.body.data })).status, 200);
+    const conflict = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(conflict.status, 409);
+    assert.ok(conflict.body.data);
+    const Store = loadStore();
+    Store.adopt(sent);
+    const quiet = Store.applyServerSave(conflict.body.data, sent);
+    assert.strictEqual(quiet.requeue, false);
+    assert.strictEqual(Store.state.clients.find(row => row.id === 'ada').city, 'Cherry Hill');
+    assert.strictEqual(Store.state.disputes.find(row => row.id === 'race-dispute').recipient, 'Equifax');
+    Store.adopt(sent);
+    Store.state.tasks = Store.state.tasks || [];
+    Store.state.tasks.push({ id: 'staff-task', title: 'Staff follow-up', done: false, clientId: 'ada' });
+    const replay = Store.applyServerSave(conflict.body.data, sent);
+    assert.strictEqual(replay.requeue, true);
+    assert.strictEqual(replay.conflict, false);
+    const saved = await staff('PUT', '/api/workspace', { baseVersion: conflict.body.version, data: Store.state });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    const after = await owner('GET', '/api/workspace');
+    assert.strictEqual(after.body.data.clients.find(row => row.id === 'ada').city, 'Cherry Hill');
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'race-dispute').recipient, 'Equifax');
+    assert.ok(after.body.data.tasks.some(row => row.id === 'staff-task'));
+  });
 });
 
 

@@ -160,28 +160,71 @@
     if (!state) { state = next; return; }
     stitchCollections(state, next);
   }
-  function ownedValue(row, key) {
-    if (!row || row[key] == null || row[key] === '') return '';
-    return JSON.stringify(row[key]);
+  function sameJson(a, b) {
+    const stable = value => {
+      if (Array.isArray(value)) return value.map(stable);
+      if (value && typeof value === 'object') {
+        const out = {};
+        Object.keys(value).sort().forEach(key => { out[key] = stable(value[key]); });
+        return out;
+      }
+      return value;
+    };
+    return JSON.stringify(stable(a == null ? null : a)) === JSON.stringify(stable(b == null ? null : b));
   }
-  // Keep edits made while a save was in flight. Copy only the invoice fields the
-  // server decided, and only when this browser did not change that field after send.
+  function rowsById(list) {
+    const map = new Map();
+    (list || []).forEach(row => { if (row && row.id) map.set(row.id, row); });
+    return map;
+  }
+  const REPLAY_LISTS = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences'];
+  // Adopt the server workspace, then replay only records this browser changed after `sent`.
+  // A record changed on both sides is a conflict: keep the server copy and do not re-save.
   function applyServerSave(server, sent) {
-    if (!server) return false;
-    if (JSON.stringify(state) === JSON.stringify(sent)) { adopt(server); return false; }
-    const sentRows = new Map(((sent && sent.invoices) || []).filter(row => row && row.id).map(row => [row.id, row]));
-    const serverRows = new Map(((server && server.invoices) || []).filter(row => row && row.id).map(row => [row.id, row]));
-    (state.invoices || []).forEach(inv => {
-      const prior = sentRows.get(inv.id);
-      const remote = serverRows.get(inv.id);
-      if (!prior || !remote) return;
-      ['payToken', 'paidAt', 'transId', 'paidVia', 'status'].forEach(key => {
-        if (ownedValue(inv, key) !== ownedValue(prior, key)) return;
-        if (remote[key] == null || remote[key] === '') delete inv[key];
-        else inv[key] = remote[key];
+    if (!server) return { requeue: false, conflict: false };
+    const localSnap = JSON.parse(JSON.stringify(state));
+    if (sameJson(localSnap, sent)) {
+      adopt(server);
+      return { requeue: false, conflict: false };
+    }
+    const replays = [];
+    const dropped = [];
+    REPLAY_LISTS.forEach(key => {
+      const sentRows = rowsById(sent && sent[key]);
+      const localRows = rowsById(localSnap[key]);
+      const serverRows = rowsById(server[key]);
+      const ids = new Set([...sentRows.keys(), ...localRows.keys()]);
+      ids.forEach(id => {
+        const before = sentRows.get(id) || null;
+        const nowRow = localRows.get(id) || null;
+        if (!sameJson(before, nowRow)) {
+          const remote = serverRows.get(id) || null;
+          if (!sameJson(before, remote)) dropped.push(recordLabel(key, nowRow || before, id));
+          else replays.push({ key, id, nowRow });
+        }
       });
     });
-    return true;
+    if (!sameJson(sent && sent.settings, localSnap.settings)) {
+      if (!sameJson(sent && sent.settings, server.settings)) dropped.push('settings');
+      else replays.push({ key: 'settings', replace: localSnap.settings });
+    }
+    adopt(server);
+    replays.forEach(change => {
+      if (Object.prototype.hasOwnProperty.call(change, 'replace')) {
+        state[change.key] = change.replace;
+        return;
+      }
+      const list = state[change.key] || (state[change.key] = []);
+      const idx = list.findIndex(row => row && row.id === change.id);
+      if (!change.nowRow) { if (idx >= 0) list.splice(idx, 1); return; }
+      if (idx >= 0) list[idx] = change.nowRow;
+      else list.push(change.nowRow);
+    });
+    return { requeue: replays.length > 0, conflict: dropped.length > 0, dropped };
+  }
+  function recordLabel(key, row, id) {
+    const name = row && (row.name || row.title || row.recipient || row.description || row.vendor) || id;
+    return String(key).replace(/s$/, '') + ' ' + name;
   }
   function shouldRedrawAfterSave(env) {
     if (!env) return true;
