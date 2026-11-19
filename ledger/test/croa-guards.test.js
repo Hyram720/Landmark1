@@ -584,7 +584,7 @@ test('a new invoice is refused when no price is set or the result date is before
     priced.body.data.invoices = [{ id: 'early-result', clientId: 'noprice', disputeId: 'np', itemId: 'npi', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
     const early = await owner('PUT', '/api/workspace', { baseVersion: priced.body.version, data: priced.body.data });
     assert.strictEqual(early.status, 409);
-    assert.match(early.body.error, /before the contract was signed/);
+    assert.match(early.body.error, /after the cancellation window/);
   });
 });
 
@@ -595,7 +595,7 @@ test('a timely written cancellation with an invoice creates a refund task', asyn
     const deadline = cancellationWindow('2020-01-06T16:00:00.000Z').deadlineDateEt;
     const g = await owner('GET', '/api/workspace');
     g.body.data.disputes = [{ id: 'td', clientId: 'time', items: [{ id: 'ti', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
-    g.body.data.invoices = [{ id: 'time-1', clientId: 'time', disputeId: 'td', itemId: 'ti', description: 'Deletion', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
+    g.body.data.invoices = [{ id: 'time-1', clientId: 'time', disputeId: 'td', itemId: 'ti', description: 'Deletion', amount: 50, status: 'paid', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
     const future = await owner('POST', '/api/clients/time/cancel', { method: 'mail', receivedAt: todayEt(), postmarkAt: '2099-01-01' });
     assert.strictEqual(future.status, 400);
@@ -671,6 +671,137 @@ test('a matching email or name requires the owner to create a business client', 
     after.body.data.clients.push({ id: 'ada-again', name: 'New Name', kind: 'business', email: 'ada.person@guard.test', status: 'lead', onboarding: {} });
     const again = await staff('PUT', '/api/workspace', { baseVersion: after.body.version, data: after.body.data });
     assert.strictEqual(again.status, 409);
+  });
+});
+
+test('a postmark after the received date is refused and timeliness uses the earlier date', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'mark', name: 'Mark Date', kind: 'personal', email: 'mark@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'mark');
+    const latePost = await owner('POST', '/api/clients/mark/cancel', { method: 'mail', receivedAt: '2020-11-28', postmarkAt: '2020-12-02' });
+    assert.strictEqual(latePost.status, 400);
+    assert.match(latePost.body.error, /cannot be after the date the notice was received/);
+    const deadline = cancellationWindow('2020-01-06T16:00:00.000Z').deadlineDateEt;
+    const timely = await owner('POST', '/api/clients/mark/cancel', { method: 'mail', receivedAt: '2020-12-02', postmarkAt: deadline });
+    assert.strictEqual(timely.status, 200);
+    assert.strictEqual(timely.body.timely, true);
+  });
+});
+
+test('the cancelled-on field is not an editable date', () => {
+  const views = fs.readFileSync(path.join(import.meta.dirname, '../js/views.js'), 'utf8');
+  const compliance = views.slice(views.indexOf('function clientCompliance'), views.indexOf('function clientDocuments'));
+  assert.match(compliance, /data-cancelled-on/);
+  assert.match(compliance, /Record a written cancellation/);
+  assert.doesNotMatch(compliance, /UI\.field\('Cancelled on'/);
+});
+
+test('an issued or paid invoice cannot be deleted, and voiding is owner-only with the item locked', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'voidme', name: 'Void Me', kind: 'personal', email: 'voidme@guard.test', status: 'active', pricePerResult: 50, onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'voidme');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = [{ id: 'vd', clientId: 'voidme', items: [{ id: 'vi', item: 'Late fee', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
+    g.body.data.invoices = [{ id: 'void-1', clientId: 'voidme', disputeId: 'vd', itemId: 'vi', description: 'Deletion', amount: 50, status: 'paid', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const staff = live.client();
+    const inv = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-void@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const dropped = await owner('GET', '/api/workspace');
+    dropped.body.data.invoices = [];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: dropped.body.version, data: dropped.body.data })).status, 409);
+    const asStaff = await owner('GET', '/api/workspace');
+    asStaff.body.data.invoices.find(i => i.id === 'void-1').status = 'void';
+    asStaff.body.data.invoices.find(i => i.id === 'void-1').voidReason = 'duplicate';
+    assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: asStaff.body.version, data: asStaff.body.data })).status, 403);
+    const noReason = await owner('GET', '/api/workspace');
+    noReason.body.data.invoices.find(i => i.id === 'void-1').status = 'void';
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: noReason.body.version, data: noReason.body.data })).status, 400);
+    const ok = await owner('GET', '/api/workspace');
+    const invoice = ok.body.data.invoices.find(i => i.id === 'void-1');
+    invoice.status = 'void';
+    invoice.voidReason = 'billed the wrong client';
+    ok.body.data.disputes.find(d => d.id === 'vd').items.find(it => it.id === 'vi').result = 'corrected';
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ok.body.version, data: ok.body.data })).status, 200);
+    const saved = await owner('GET', '/api/workspace');
+    assert.strictEqual(saved.body.data.invoices.find(i => i.id === 'void-1').status, 'void');
+    assert.strictEqual(saved.body.data.disputes.find(d => d.id === 'vd').items.find(it => it.id === 'vi').result, 'deleted');
+    const audit = await owner('GET', '/api/audit');
+    assert.ok(audit.body.some(a => a.action === 'invoice.void' && /billed the wrong client/.test(a.detail)));
+  });
+});
+
+test('a bureau result date in the future or inside the cancellation window is refused', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'resultday', name: 'Result Day', kind: 'personal', email: 'resultday@guard.test', status: 'active', pricePerResult: 50, onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'resultday');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = [{ id: 'rd', clientId: 'resultday', items: [{ id: 'ri', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2099-01-01' }] }];
+    g.body.data.invoices = [{ id: 'result-future', clientId: 'resultday', disputeId: 'rd', itemId: 'ri', description: 'Deletion', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
+    const future = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(future.status, 409);
+    assert.match(future.body.error, /after today/);
+    const next = await owner('GET', '/api/workspace');
+    next.body.data.disputes = [{ id: 'rd', clientId: 'resultday', items: [{ id: 'ri', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-01-06' }] }];
+    next.body.data.invoices = [{ id: 'result-window', clientId: 'resultday', disputeId: 'rd', itemId: 'ri', description: 'Deletion', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
+    const inside = await owner('PUT', '/api/workspace', { baseVersion: next.body.version, data: next.body.data });
+    assert.strictEqual(inside.status, 409);
+    assert.match(inside.body.error, /after the cancellation window/);
+  });
+});
+
+test('normalized names and emails still require the owner for a business client', async () => {
+  await withOwner(async ({ owner, live }) => {
+    await addClient(owner, { id: 'norm', name: 'Ada Person', kind: 'personal', email: 'adaperson@gmail.com', status: 'active', onboarding: {} });
+    const staff = live.client();
+    const inv = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-norm@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const asStaff = await owner('GET', '/api/workspace');
+    asStaff.body.data.clients.push({ id: 'norm-biz', name: 'Ada  Q.  Person LLC', kind: 'business', email: 'a.da.person+tag@gmail.com', status: 'lead', onboarding: {} });
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: asStaff.body.version, data: asStaff.body.data });
+    assert.strictEqual(denied.status, 409);
+    const edit = await owner('GET', '/api/workspace');
+    edit.body.data.clients.push({ id: 'plain-biz', name: 'Plain Books', kind: 'business', email: 'plain@guard.test', status: 'lead', onboarding: {} });
+    assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: edit.body.version, data: edit.body.data })).status, 200);
+    const renamed = await owner('GET', '/api/workspace');
+    renamed.body.data.clients.find(c => c.id === 'plain-biz').name = 'Ada Person Inc';
+    assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: renamed.body.version, data: renamed.body.data })).status, 409);
+    const asOwner = await owner('GET', '/api/workspace');
+    asOwner.body.data.clients.find(c => c.id === 'plain-biz').name = 'Ada Person Corp';
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: asOwner.body.version, data: asOwner.body.data })).status, 200);
+    const audit = await owner('GET', '/api/audit');
+    assert.ok(audit.body.some(a => a.action === 'client.business_match' && a.detail.includes('plain-biz')));
+  });
+});
+
+test('a timely cancellation voids unpaid invoices and refunds only paid ones', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'mix', name: 'Mix Bill', kind: 'personal', email: 'mix@guard.test', status: 'active', pricePerResult: 50, onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'mix');
+    const deadline = cancellationWindow('2020-01-06T16:00:00.000Z').deadlineDateEt;
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = [{ id: 'md', clientId: 'mix', items: [
+      { id: 'unpaid', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' },
+      { id: 'paiditem', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2020-06-02' }
+    ] }];
+    g.body.data.invoices = [
+      { id: 'mix-issued', clientId: 'mix', disputeId: 'md', itemId: 'unpaid', description: 'Open', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' },
+      { id: 'mix-paid', clientId: 'mix', disputeId: 'md', itemId: 'paiditem', description: 'Paid', amount: 50, status: 'paid', issuedAt: '2020-06-02', serviceCompletedAt: '2020-06-02' }
+    ];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const done = await owner('POST', '/api/clients/mix/cancel', { method: 'mail', receivedAt: '2020-12-02', postmarkAt: deadline });
+    assert.strictEqual(done.status, 200);
+    assert.strictEqual(done.body.timely, true);
+    assert.strictEqual(done.body.refundTask, true);
+    const saved = await owner('GET', '/api/workspace');
+    assert.strictEqual(saved.body.data.invoices.find(i => i.id === 'mix-issued').status, 'void');
+    assert.strictEqual(saved.body.data.invoices.find(i => i.id === 'mix-issued').voidReason, 'timely CROA cancellation');
+    assert.strictEqual(saved.body.data.invoices.find(i => i.id === 'mix-paid').status, 'paid');
+    const task = saved.body.data.tasks.find(t => t.clientId === 'mix' && /Refund/.test(t.title));
+    assert.ok(task);
+    assert.match(task.title, /paid/);
+    const audit = await owner('GET', '/api/audit');
+    assert.ok(audit.body.some(a => a.action === 'invoice.void' && /timely CROA cancellation/.test(a.detail)));
   });
 });
 

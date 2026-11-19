@@ -1056,7 +1056,7 @@ test('invited clients use the final CROA texts, the bracket gate, and the cancel
     assert.match(noResultSave.body.error, /deleted item/);
     const ready = await owner('GET', '/api/workspace');
     const withResult = JSON.parse(JSON.stringify(ready.body.data));
-    withResult.disputes.push({ id: 'result-d', clientId: 'inv-open', items: [{ id: 'result-i', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2026-12-03' }] });
+    withResult.disputes.push({ id: 'result-d', clientId: 'inv-open', items: [{ id: 'result-i', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] });
     withResult.invoices.push({ id: 'after-result', clientId: 'inv-open', disputeId: 'result-d', itemId: 'result-i', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-12-03', serviceCompletedAt: '2026-12-03' });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ready.body.version, data: withResult })).status, 200);
     const fd = new FormData();

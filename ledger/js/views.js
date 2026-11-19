@@ -288,7 +288,7 @@
         ${UI.field('Disclosure acknowledged', 'disclosureSignedAt', o.disclosureSignedAt, { type: 'date', help: 'Must be given as a separate document before the contract' })}
         ${UI.field('Contract signed', 'contractSignedAt', o.contractSignedAt, { type: 'date', help: cs.deadline ? 'Cancellation deadline: midnight ' + date(cs.deadline) : '' })}
         ${UI.field('Authorization to prepare disputes', 'authorizationAt', o.authorizationAt, { type: 'date' })}
-        ${UI.field('Cancelled on', 'cancelledAt', o.cancelledAt, { type: 'date', help: 'If cancelled, confirm no invoice was issued' })}
+        <p class="small" data-cancelled-on><b>Cancelled on</b> ${o.cancelledAt ? esc(date(o.cancelledAt)) : 'Not recorded.'} Use Record a written cancellation. This date is not typed in here.</p>
         ${UI.field('Photo ID received', 'idReceived', o.idReceived, { type: 'date' })}
         ${UI.field('Proof of address received', 'addressProofReceived', o.addressProofReceived, { type: 'date' })}
       </div><div class="row" style="margin-top:14px"><button class="btn primary">Save record</button>${cs.retainUntil ? `<span class="small muted">Retain signed disclosure until ${date(cs.retainUntil)} (§ 1679c(c))</span>` : ''}</div></form>` + cancelButton)}

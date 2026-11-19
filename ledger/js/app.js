@@ -1110,7 +1110,21 @@
     'letter-edit': () => {},
     'new-invoice': el => invoiceModal(el.dataset.client || (S().clients[0] || {}).id),
     'invoice-paid': el => { const i = S().invoices.find(x => x.id === el.dataset.id); i.status = 'paid'; i.paidAt = T(); commit(`Payment received ${UI.money(i.amount)}`, i.clientId); },
-    'invoice-void': el => { const i = S().invoices.find(x => x.id === el.dataset.id); if (!UI.ask('Void this invoice?')) return; i.status = 'void'; commit('Voided invoice: ' + i.description, i.clientId); },
+    'invoice-void': el => {
+      const i = S().invoices.find(x => x.id === el.dataset.id);
+      if (!i) return;
+      if (i.status !== 'issued' && i.status !== 'paid') { i.status = 'void'; commit('Voided invoice: ' + i.description, i.clientId); return; }
+      modal({
+        title: 'Void invoice',
+        body: field('Reason', 'voidReason', '', { required: true, cls: 'span2' }),
+        onSubmit: d => {
+          if (!String(d.voidReason || '').trim()) { toast('A reason is required'); return false; }
+          i.status = 'void';
+          i.voidReason = String(d.voidReason).trim();
+          commit('Voided invoice: ' + i.description, i.clientId);
+        }
+      });
+    },
     'invoice-print': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const c = Store.get.client(i.clientId); const co = S().settings.company; UI.printDoc('Invoice', `${co.name}\n${co.address}\n\nINVOICE\n\nBill to: ${c.name}\n${c.address || ''}\n\nIssued: ${i.issuedAt}\nService completed: ${i.serviceCompletedAt}\n\n${i.description}\n\nAmount: ${UI.money(i.amount)}\nStatus: ${i.status}\n\nThis invoice is for services already performed. No fees are charged in advance of services (15 U.S.C. § 1679b(b)).`); },
     'export-invoices': () => UI.download(`ledger-invoices-${T()}.csv`, 'client,description,serviceCompletedAt,issuedAt,status,amount,paidAt\n' + S().invoices.map(i => [Store.get.client(i.clientId) ? Store.get.client(i.clientId).name : '', i.description, i.serviceCompletedAt, i.issuedAt, i.status, i.amount, i.paidAt || ''].map(v => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv'),
     'print-doc': el => printClientDoc(el.dataset.doc, el.dataset.id),

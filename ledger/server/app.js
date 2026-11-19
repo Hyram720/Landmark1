@@ -375,8 +375,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     data.knownClients = JSON.parse(JSON.stringify((before && before.knownClients) || []));
     const rememberClient = (c) => {
       if (!c || !c.id) return;
-      const email = String(c.email || '').trim().toLowerCase();
-      const name = String(c.name || '').trim().toLowerCase();
+      const email = normalizeClientEmail(c.email);
+      const name = normalizeClientName(c.name);
       const row = data.knownClients.find(k => k && k.id === c.id);
       if (row) { row.email = email; row.name = name; }
       else data.knownClients.push({ id: c.id, email, name });
@@ -384,14 +384,16 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const old of priorClients.values()) rememberClient(old);
     for (const c of data.clients || []) rememberClient(c);
     for (const c of data.clients || []) {
-      if (!c || priorClients.has(c.id) || c.kind !== 'business') continue;
-      const email = String(c.email || '').trim().toLowerCase();
-      const name = String(c.name || '').trim().toLowerCase();
-      const clash = data.knownClients.some(k => k && k.id !== c.id && ((email && k.email === email) || (name && k.name === name)));
+      if (!c || c.kind !== 'business') continue;
+      const email = normalizeClientEmail(c.email);
+      const name = normalizeClientName(c.name);
+      const clash = data.knownClients.some(k => k && k.id !== c.id && ((email && normalizeClientEmail(k.email) === email) || (name && normalizeClientName(k.name) === name)));
       if (!clash) continue;
       if (req.user.role !== 'owner') return res.status(409).json({ error: 'A client with this email or name already exists. Only the owner can add a business client for that person.' });
       db.audit({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, email, name }) });
     }
+    const invoiceGuard = guardIssuedInvoices(before, data, req);
+    if (invoiceGuard) return res.status(invoiceGuard.status).json({ error: invoiceGuard.error });
     lockInvoicedDisputeItems(before, data);
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return res.status(409).json({ error: billingBlock });
@@ -494,9 +496,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const report = (item.reportId || inv.reportId) && (data.reports || []).find(r => r && r.id === (item.reportId || inv.reportId) && r.clientId === inv.clientId && r.date);
       const doc = (item.documentId || inv.documentId) && (data.documents || []).find(d => d && d.id === (item.documentId || inv.documentId) && d.clientId === inv.clientId && (d.uploadedAt || d.date));
       if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return 'An invoice must name the dated bureau result for the deleted item.';
-      const signedDay = String((billed.onboarding && (billed.onboarding.contractSignedAt || billed.onboarding.contractSignedAtTs)) || '').slice(0, 10);
+      const signedAt = billed.onboarding && (billed.onboarding.contractSignedAtTs || billed.onboarding.contractSignedAt);
+      let deadline = String((billed.onboarding && billed.onboarding.cancellationWindowEndsAt) || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) && signedAt) deadline = cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
       const resultDay = String(stamp || (report && report.date) || (doc && (doc.date || doc.uploadedAt)) || '').slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(signedDay) && /^\d{4}-\d{2}-\d{2}$/.test(resultDay) && resultDay < signedDay) return 'The bureau result date cannot be before the contract was signed.';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && /^\d{4}-\d{2}-\d{2}$/.test(deadline) && resultDay <= deadline) return 'The bureau result date must be after the cancellation window.';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && resultDay > todayEtYmd()) return 'The bureau result date cannot be after today.';
       const price = Number(billed.pricePerResult);
       if (!(price > 0) || Number(inv.amount) !== price) return 'The invoice amount must equal the price per result.';
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
@@ -508,7 +513,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const seen = new Set();
     const locked = [];
     for (const inv of [].concat((before && before.invoices) || [], data.invoices || [])) {
-      if (!inv || (inv.status !== 'issued' && inv.status !== 'paid') || !inv.disputeId || !inv.itemId) continue;
+      if (!inv || !inv.disputeId || !inv.itemId) continue;
+      const stillBilled = inv.status === 'issued' || inv.status === 'paid' || inv.status === 'void';
+      if (!stillBilled) continue;
       const key = inv.disputeId + '\0' + inv.itemId;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -924,14 +931,49 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
   });
 
+  function todayEtYmd(now = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+    return `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+  }
   function receivedOnOrBeforeToday(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const [year, month, day] = value.split('-').map(Number);
     const parsed = new Date(Date.UTC(year, month - 1, day));
     if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return false;
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-    const today = `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
-    return value <= today;
+    return value <= todayEtYmd();
+  }
+  function normalizeClientName(value) {
+    const suffixes = new Set(['llc', 'inc', 'co', 'corp', 'ltd']);
+    const words = String(value || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(w => w && !suffixes.has(w));
+    if (words.length <= 2) return words.join(' ');
+    return [words[0]].concat(words.slice(1, -1).filter(w => w.length > 1), words[words.length - 1]).join(' ');
+  }
+  function normalizeClientEmail(value) {
+    const email = String(value || '').trim().toLowerCase();
+    const at = email.lastIndexOf('@');
+    if (at < 1) return email;
+    let local = email.slice(0, at);
+    let domain = email.slice(at + 1);
+    const plus = local.indexOf('+');
+    if (plus >= 0) local = local.slice(0, plus);
+    if (domain === 'gmail.com' || domain === 'googlemail.com') {
+      local = local.replace(/\./g, '');
+      domain = 'gmail.com';
+    }
+    return local + '@' + domain;
+  }
+  function guardIssuedInvoices(before, data, req) {
+    const next = new Map(((data && data.invoices) || []).filter(Boolean).map(i => [i.id, i]));
+    for (const prev of (before && before.invoices) || []) {
+      if (!prev || (prev.status !== 'issued' && prev.status !== 'paid')) continue;
+      const inv = next.get(prev.id);
+      if (!inv) return { status: 409, error: 'An issued or paid invoice cannot be deleted.' };
+      if (inv.status !== 'void') continue;
+      if (req.user.role !== 'owner') return { status: 403, error: 'Only the owner can void an issued or paid invoice.' };
+      if (!String(inv.voidReason || '').trim()) return { status: 400, error: 'A reason is required to void this invoice.' };
+      db.audit({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: prev.id, clientId: prev.clientId, reason: String(inv.voidReason).trim() }) });
+    }
+    return null;
   }
   app.post('/api/clients/:id/cancel', need('owner', 'staff'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
@@ -947,7 +989,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (/^\d{4}-\d{2}-\d{2}$/.test(signedDay) && receivedAt < signedDay) return res.status(400).json({ error: 'The notice cannot be received before the contract was signed.' });
     const postmarkAt = String((req.body || {}).postmarkAt || (req.body || {}).sentAt || '').trim();
     if (postmarkAt && !receivedOnOrBeforeToday(postmarkAt)) return res.status(400).json({ error: 'The postmark or sent date cannot be after today.' });
-    const compared = postmarkAt || receivedAt;
+    if (postmarkAt && postmarkAt > receivedAt) return res.status(400).json({ error: 'The postmark or sent date cannot be after the date the notice was received.' });
+    const compared = postmarkAt && postmarkAt < receivedAt ? postmarkAt : receivedAt;
     let timely = false;
     const signedAt = c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt;
     if (signedAt) timely = compared <= cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
@@ -958,8 +1001,17 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     c.onboarding.cancellationPostmarkAt = postmarkAt || null;
     c.onboarding.cancellationTimely = timely;
     c.status = 'cancelled';
-    const refund = timely && (workspace().invoices || []).some(i => i && i.clientId === c.id && (i.status === 'issued' || i.status === 'paid'));
-    if (refund) workspace().tasks.push({ id: uid(), clientId: c.id, title: `Refund ${c.name}. The cancellation was timely and an invoice was already issued.`, due: today(), done: false, createdAt: new Date().toISOString() });
+    const paid = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'paid');
+    const issued = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'issued');
+    if (timely) {
+      for (const inv of issued) {
+        inv.status = 'void';
+        inv.voidReason = 'timely CROA cancellation';
+        db.audit({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: inv.id, clientId: c.id, reason: 'timely CROA cancellation' }) });
+      }
+    }
+    const refund = timely && paid.length > 0;
+    if (refund) workspace().tasks.push({ id: uid(), clientId: c.id, title: `Refund ${c.name} for an invoice that was paid. The cancellation was timely.`, due: today(), done: false, createdAt: new Date().toISOString() });
     db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt, postmarkAt: postmarkAt || null, timely, refund }) });
     activity(`${c.name} cancelled by ${method}. ${timely ? 'Timely.' : 'Late.'}${refund ? ' Refund task created.' : ''}`, c.id);
     commitWorkspace(req.user.email, 'client.cancel', c.id);
