@@ -42,39 +42,48 @@ const duplicatePayTokens = {
   sharedTokens: duplicateGroups.length,
   invoices: duplicateGroups.reduce((sum, n) => sum + n, 0)
 };
-const shapeErrors = workspaceShapeErrors(data && data.workspace);
+const shapeReport = workspaceShapeReport(data && data.workspace);
+const shapeErrors = shapeReport.shapeErrors;
+const missingIdWarnings = shapeReport.missingIdWarnings;
 const deployGate = {
   outside: outside,
   duplicatePayTokens,
   shapeErrors,
+  missingIdWarnings,
   ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0,
-  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. missingIdWarnings lists legacy rows that have no id, by key and count. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, deployGate }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, deployGate }, null, 2) + '\n');
 
-function workspaceShapeErrors(ws) {
-  const errors = [];
+function workspaceShapeReport(ws) {
+  const shapeErrors = [];
+  const missingCounts = {};
   const lists = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'addressBook', 'automations'];
   const maps = ['automationLog', 'violations', 'settings'];
   const needsId = lists.filter(key => key !== 'addressBook');
   const workspace = ws || {};
+  const noteMissing = (key) => { missingCounts[key] = (missingCounts[key] || 0) + 1; };
   lists.forEach(key => {
     if (workspace[key] == null) return;
-    if (!Array.isArray(workspace[key])) { errors.push({ key, id: '', reason: key + ' must be a list.' }); return; }
+    if (!Array.isArray(workspace[key])) { shapeErrors.push({ key, id: '', reason: key + ' must be a list.' }); return; }
+    workspace[key].forEach(row => {
+      if (row == null) shapeErrors.push({ key, id: '', reason: key + ' contains an empty row.' });
+    });
     if (!needsId.includes(key)) return;
     workspace[key].forEach(row => {
-      if (row && typeof row === 'object' && !Array.isArray(row) && !String(row.id || '').trim()) errors.push({ key, id: '', reason: 'A ' + key + ' record is missing an id.' });
+      if (row && typeof row === 'object' && !Array.isArray(row) && !String(row.id || '').trim()) noteMissing(key);
     });
   });
   maps.forEach(key => {
     if (workspace[key] == null) return;
-    if (Array.isArray(workspace[key]) || typeof workspace[key] !== 'object') { errors.push({ key, id: '', reason: key + ' must be a map.' }); return; }
+    if (Array.isArray(workspace[key]) || typeof workspace[key] !== 'object') { shapeErrors.push({ key, id: '', reason: key + ' must be a map.' }); return; }
     if (key !== 'violations') return;
     Object.keys(workspace[key]).forEach(id => {
-      if (!String(id || '').trim()) errors.push({ key, id: '', reason: 'A violations record is missing an id.' });
+      if (!String(id || '').trim()) noteMissing(key);
     });
   });
-  return errors;
+  const missingIdWarnings = Object.keys(missingCounts).map(key => ({ key, count: missingCounts[key] }));
+  return { shapeErrors, missingIdWarnings };
 }
 
 function decode(raw, secret) {

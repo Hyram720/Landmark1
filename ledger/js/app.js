@@ -82,20 +82,7 @@
     el.className = 'badge plain ' + (state === 'saved' ? 'b-ok' : state === 'offline' ? 'b-high' : 'b-low');
   }
   const Remote = {
-    version: 0, timer: null, pending: false, sending: false, refusalCounts: null, savedWaiters: [], user: null,
-    noteRefusals(tokens) {
-      if (!this.refusalCounts) this.refusalCounts = new Map();
-      const repeated = [];
-      const seen = new Set();
-      (tokens || []).forEach(token => {
-        if (!token || seen.has(token)) return;
-        seen.add(token);
-        const n = (this.refusalCounts.get(token) || 0) + 1;
-        this.refusalCounts.set(token, n);
-        if (n >= 2) repeated.push(token);
-      });
-      return repeated;
-    },
+    version: 0, timer: null, pending: false, sending: false, savedWaiters: [], user: null,
     afterSave(fn) { this.savedWaiters.push(fn); },
     finishWaiters() { const fns = this.savedWaiters.splice(0); fns.forEach(fn => fn()); },
     async start(user) {
@@ -104,148 +91,54 @@
       const r = await api('GET', '/api/workspace');
       this.version = r.version;
       Store.adopt(r.data);
-      this.restoreDirty();
       Store.setRemote(this);
-      this.ensurePoll();
-    },
-    ensurePoll() {
-      if (this.pollTimer) return;
-      this.pollTimer = setInterval(() => this.poll().catch(() => {}), 15000);
-    },
-    dirtyStorageKey() {
-      const id = this.user && (this.user.id || this.user.email) || '';
-      return 'ledger-dirty:' + id;
-    },
-    clearDirtyStores() {
-      try {
-        if (!root.sessionStorage) return;
-        root.sessionStorage.removeItem('ledger-dirty');
-        const keys = [];
-        for (let i = 0; i < root.sessionStorage.length; i++) {
-          const key = root.sessionStorage.key(i);
-          if (key && key.indexOf('ledger-dirty:') === 0) keys.push(key);
-        }
-        keys.forEach(key => root.sessionStorage.removeItem(key));
-      } catch (e) { /* private mode */ }
-    },
-    rememberDirty() {
-      try {
-        if (!root.sessionStorage) return;
-        const key = this.dirtyStorageKey();
-        root.sessionStorage.removeItem('ledger-dirty');
-        if (!Store.unsaved || !(this.user && (this.user.id || this.user.email))) { root.sessionStorage.removeItem(key); return; }
-        root.sessionStorage.setItem(key, JSON.stringify({ userId: this.user.id || this.user.email, records: Store.dirtySnapshot() }));
-      } catch (e) { /* private mode */ }
-    },
-    restoreDirty() {
-      try {
-        if (!root.sessionStorage || !(this.user && (this.user.id || this.user.email))) return;
-        root.sessionStorage.removeItem('ledger-dirty');
-        const mine = this.dirtyStorageKey();
-        const keys = [];
-        for (let i = 0; i < root.sessionStorage.length; i++) {
-          const key = root.sessionStorage.key(i);
-          if (key && key.indexOf('ledger-dirty:') === 0 && key !== mine) keys.push(key);
-        }
-        keys.forEach(key => root.sessionStorage.removeItem(key));
-        const raw = root.sessionStorage.getItem(mine);
-        if (!raw) return;
-        const saved = JSON.parse(raw);
-        const userId = this.user.id || this.user.email;
-        if (!saved || saved.userId !== userId || !Array.isArray(saved.records)) { root.sessionStorage.removeItem(mine); return; }
-        Store.applyDirtySnapshot(saved.records);
-      } catch (e) { /* ignore a damaged draft */ }
+      setInterval(() => this.poll().catch(() => {}), 15000);
     },
     async flushNow() { clearTimeout(this.timer); if (this.pending) await this.flush(); },
-    async reload() {
-      this.rememberDirty();
-      if ((this.pending || Store.unsaved) && !this.sending) {
-        try { await this.flushNow(); } catch (e) { /* refresh around whatever is still dirty */ }
-      }
-      const local = JSON.parse(JSON.stringify(Store.state));
-      const dirty = Store.unsaved;
-      const w = await api('GET', '/api/workspace');
-      this.version = w.version;
-      if (dirty) Store.applyServerSave(w.data, local);
-      else Store.adopt(w.data);
-      this.rememberDirty();
-      render();
-      this.ensurePoll();
-    },
-    push() { this.pending = true; this.rememberDirty(); setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
-    finishApplied(applied, fromConflict) {
-      const dropped = applied.dropped || [];
-      const refused = applied.refused || [];
-      const reverted = applied.reverted || [];
-      const repeated = applied.repeated || [];
-      if (repeated.length) Store.revertTokens(repeated);
-      this.rememberDirty();
-      this.requeue = !!(applied.requeue || Store.unsaved);
-      if (repeated.length) toast('Saving stopped after a repeated refusal.');
-      if (refused.length) toast('Not allowed: ' + refused.join('; '));
-      if (reverted.length) toast('Not saved: ' + reverted.join(', ') + '.');
-      if (dropped.length) toast('Someone else updated ' + dropped.join(', ') + '. Loaded the latest version. Please redo that change.');
-      else if (fromConflict && !refused.length && !reverted.length && !this.requeue) toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
-      if (this.requeue) { this.pending = true; setSync('saving'); return; }
-      this.pending = false;
-      clearTimeout(this.timer);
-      setSync(dropped.length || refused.length || reverted.length || fromConflict ? 'conflict' : 'saved');
-      if (!dropped.length && !refused.length && !fromConflict) this.finishWaiters();
-      renderWhenSafe();
-      this.ensurePoll();
-    },
+    async reload() { const w = await api('GET', '/api/workspace'); this.version = w.version; Store.adopt(w.data); render(); },
+    push() { this.pending = true; setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
     async flush() {
       if (this.sending) return;
       this.sending = true;
-      this.requeue = false;
       clearTimeout(this.timer);
       const sent = JSON.parse(JSON.stringify(Store.state));
+      let requeue = false;
       try {
         const r = await api('PUT', '/api/workspace', { baseVersion: this.version, data: sent });
         this.version = r.version;
-        this.refusalCounts = new Map();
-        const applied = r.data ? Store.applyServerSave(r.data, sent, { accepted: true }) : { requeue: false, conflict: false, dropped: [], refused: [], reverted: [] };
-        this.finishApplied(applied, false);
+        requeue = r.data ? Store.applyServerSave(r.data, sent) : false;
+        if (requeue) { this.pending = true; setSync('saving'); }
+        else { this.pending = false; clearTimeout(this.timer); setSync('saved'); renderWhenSafe(); this.finishWaiters(); }
       } catch (e) {
-        const refusal = e.status === 400 || e.status === 403 || e.status === 422 || (e.status === 409 && !(e.body && e.body.data));
+        const refused = e.status === 400 || e.status === 403 || e.status === 422 || (e.status === 409 && !(e.body && e.body.data));
         if (e.status === 409 && e.body && e.body.data) {
           this.version = e.body.version;
-          const applied = Store.applyServerSave(e.body.data, sent);
-          this.finishApplied(applied, true);
-        } else if (refusal) {
-          try {
-            const w = await api('GET', '/api/workspace');
-            this.version = w.version;
-            const listed = Array.isArray(e.body && e.body.refused) ? e.body.refused : null;
-            const applied = Store.applyServerSave(w.data, sent, listed ? { rejected: true, refused: listed } : { rejected: true });
-            applied.repeated = this.noteRefusals(applied.refusedTokens);
-            this.finishApplied(applied, true);
-          } catch (err) {
+          requeue = Store.applyServerSave(e.body.data, sent);
+          if (requeue) { this.pending = true; setSync('saving'); }
+          else {
             this.pending = false;
             setSync('conflict');
-            toast('Not allowed: ' + ((e.body && e.body.error) || 'Change refused.'));
-            await this.reload();
+            toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
+            renderWhenSafe();
           }
+        } else if (refused) {
+          this.pending = false;
+          requeue = false;
+          const reasons = Array.isArray(e.body && e.body.refused) ? e.body.refused.map(row => row && row.reason).filter(Boolean) : [];
+          toast(reasons.length ? 'Not allowed: ' + reasons.join('; ') : ((e.body && e.body.error) || 'Change refused.'));
+          try { await this.reload(); } catch (err) { setSync('conflict'); }
         } else if (e.status === 401) location.reload();
         else if (!e.status || e.status >= 500) { setSync('offline'); this.pending = true; this.timer = setTimeout(() => this.flush(), 5000); }
-        else { this.pending = false; this.requeue = false; setSync('conflict'); toast('Not allowed: ' + ((e.body && e.body.error) || 'Change refused.')); await this.reload(); }
+        else { this.pending = false; requeue = false; setSync('conflict'); toast((e.body && e.body.error) || 'Change refused.'); await this.reload(); }
       } finally {
         this.sending = false;
-        this.rememberDirty();
-        if (this.pending && this.requeue) this.push();
-        this.ensurePoll();
+        if (this.pending && requeue) this.push();
       }
     },
     async poll() {
-      if (this.sending || this.pending || document.querySelector('.overlay') || document.activeElement && document.activeElement.matches('textarea,input')) return;
+      if (this.pending || document.querySelector('.overlay') || document.activeElement && document.activeElement.matches('textarea,input')) return;
       const r = await api('GET', '/api/workspace/version');
-      if (r.version === this.version) return;
-      const w = await api('GET', '/api/workspace');
-      this.version = w.version;
-      if (Store.unsaved) Store.applyServerSave(w.data, JSON.parse(JSON.stringify(Store.state)));
-      else Store.adopt(w.data);
-      this.rememberDirty();
-      render();
+      if (r.version !== this.version) { const w = await api('GET', '/api/workspace'); this.version = w.version; Store.adopt(w.data); render(); }
     }
   };
 
@@ -1439,14 +1332,7 @@
 
   Object.assign(A, {
     'ai': el => root.Assistant.toggle(undefined, el.dataset.id),
-    'logout': async () => {
-      try { await Remote.flushNow(); }
-      catch (e) { toast(e.message || 'Could not save your latest changes.'); return; }
-      if (Store.unsaved) { toast('Some changes are still unsaved. Stay on this page to retry.'); return; }
-      Remote.clearDirtyStores();
-      await api('POST', '/api/logout');
-      location.reload();
-    },
+    'logout': async () => { await api('POST', '/api/logout'); location.reload(); },
     'invite-staff': () => modal({
       title: 'Invite staff member',
       body: `<div class="form-grid">${field('Name', 'name', '', { required: true })}${field('Email', 'email', '', { type: 'email', required: true })}</div>`,
@@ -1681,11 +1567,6 @@
     let pointerDown = false;
     document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
     document.addEventListener('pointerup', () => setTimeout(() => { pointerDown = false; }, 0), true);
-    window.addEventListener('beforeunload', (e) => {
-      if (!Store.unsaved && !Remote.pending) return;
-      e.preventDefault();
-      e.returnValue = '';
-    });
     document.addEventListener('focusout', () => {
       if (!redrawDeferred) return;
       const run = () => { if (redrawDeferred) renderWhenSafe(); };

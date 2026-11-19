@@ -85,8 +85,25 @@ export function serviceWorkBlocked(before, after) {
     const held = `${c.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
     const onThisClient = (prior, row) => (prior || []).some(old => old && old.id && row.id && old.id === row.id && old.clientId === id);
     const added = (list, prior, key) => (list || []).filter(row => row && row.clientId === id && !onThisClient(prior, row)).map(row => ({ key, id: row.id || '', field: 'clientId', reason: held }));
+    const sendFields = { disputes: ['status', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate'], letters: ['status', 'approvedAt', 'text', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate'] };
+    const changedSend = (list, prior, key) => {
+      const out = [];
+      (list || []).forEach(row => {
+        if (!row || row.clientId !== id) return;
+        const old = (prior || []).find(item => item && item.id && row.id && item.id === row.id && item.clientId === id);
+        if (!old) return;
+        sendFields[key].forEach(field => {
+          const before = old[field] == null ? '' : old[field];
+          const afterValue = row[field] == null ? '' : row[field];
+          if (String(before) !== String(afterValue)) out.push({ key, id: row.id, field, reason: held });
+        });
+      });
+      return out;
+    };
     refused.push(...added(after.disputes, priorDisputes, 'disputes'));
     refused.push(...added(after.letters, priorLetters, 'letters'));
+    refused.push(...changedSend(after.disputes, priorDisputes, 'disputes'));
+    refused.push(...changedSend(after.letters, priorLetters, 'letters'));
   }
   if (!refused.length) return null;
   return { error: refused[0].reason, refused };

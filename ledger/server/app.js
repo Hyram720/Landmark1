@@ -364,20 +364,34 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (data[key] != null && (Array.isArray(data[key]) || typeof data[key] !== 'object')) return reject(400, key + ' must be a map.', [{ key, id: '', field: '', reason: key + ' must be a map.' }]);
     }
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
+    const before = D().workspace;
     const idRequired = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'automations'];
+    const sameRow = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    for (const key of listKeys) {
+      const rows = data[key];
+      if (!Array.isArray(rows)) continue;
+      if (rows.some(row => row == null)) return reject(422, 'A ' + key + ' list contains an empty row.', [{ key, id: '', field: '', reason: 'A ' + key + ' list contains an empty row.' }]);
+    }
     for (const key of idRequired) {
       const rows = data[key];
       if (!Array.isArray(rows)) continue;
+      const prior = ((before && before[key]) || []).filter(row => row && typeof row === 'object');
+      const used = new Set();
       for (const row of rows) {
-        if (row && typeof row === 'object' && !Array.isArray(row) && !String(row.id || '').trim()) return reject(422, 'A ' + key + ' record is missing an id.', [{ key, id: '', field: 'id', reason: 'A ' + key + ' record is missing an id.' }]);
+        if (!row || typeof row !== 'object' || Array.isArray(row) || String(row.id || '').trim()) continue;
+        const match = prior.findIndex((old, index) => !used.has(index) && !String(old.id || '').trim() && sameRow(old, row));
+        if (match >= 0) { used.add(match); continue; }
+        return reject(422, 'A ' + key + ' record is missing an id.', [{ key, id: '', field: 'id', reason: 'A ' + key + ' record is missing an id.' }]);
       }
     }
     if (data.violations && typeof data.violations === 'object' && !Array.isArray(data.violations)) {
+      const priorViolations = (before && before.violations && typeof before.violations === 'object' && !Array.isArray(before.violations)) ? before.violations : {};
       for (const id of Object.keys(data.violations)) {
-        if (!String(id || '').trim()) return reject(422, 'A violations record is missing an id.', [{ key: 'violations', id: '', field: 'id', reason: 'A violations record is missing an id.' }]);
+        if (String(id || '').trim()) continue;
+        if (sameRow(priorViolations[id], data.violations[id])) continue;
+        return reject(422, 'A violations record is missing an id.', [{ key: 'violations', id: '', field: 'id', reason: 'A violations record is missing an id.' }]);
       }
     }
-    const before = D().workspace;
     const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
     const pendingAudits = [];
     for (const c of data.clients || []) {
