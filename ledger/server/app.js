@@ -526,8 +526,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (invoiceGuard.status) return reject(invoiceGuard.status, invoiceGuard.error, invoiceGuard.refused);
     pendingAudits.push(...invoiceGuard.audits);
     lockInvoicedDisputeItems(before, data);
-    const stamped = stampServerWork(before, data);
-    if (stamped) return reject(409, stamped.error, stamped.refused);
+    const stamped = stampServerWork(before, data, { role: req.user.role, email: req.user.email });
+    if (stamped && stamped.error) return reject(409, stamped.error, stamped.refused);
+    for (const row of (stamped && stamped.orphanDeletes) || []) pendingAudits.push({ actor: req.user.email, action: 'dispute.orphan_delete', detail: JSON.stringify(row) });
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return reject(409, billingBlock.error, billingBlock.refused);
     const over = Billing.capViolations(before, data);
@@ -560,6 +561,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const idCount = new Map();
     for (const c of data.clients || []) if (isRecord(c) && c.id) idCount.set(c.id, (idCount.get(c.id) || 0) + 1);
     const ambiguousIds = new Set([...idCount].filter(([, count]) => count > 1).map(([id]) => id));
+    const priorIdCount = new Map();
+    for (const old of (before && before.clients) || []) if (old && old.id) priorIdCount.set(old.id, (priorIdCount.get(old.id) || 0) + 1);
+    for (const [id, count] of idCount) {
+      if (count > 1 && count > (priorIdCount.get(id) || 0)) identityRefused.push({ key: 'clients', id, field: 'id', reason: 'A client id cannot be duplicated.' });
+    }
     for (const c of data.clients || []) {
       if (!isRecord(c) || !c.id) continue;
       const old = priorClients.get(c.id);
@@ -581,18 +587,40 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       seenIdentity.add(c.identity);
       const snapName = safeLine(c.name, 80);
       const snapAddress = safeLine([c.address, c.city, c.state, c.zip].filter(Boolean).join(', '), 120);
-      const ownerEdit = req.user.role === 'owner' && old && (safeLine(old.name, 80) !== snapName || safeLine([old.address, old.city, old.state, old.zip].filter(Boolean).join(', '), 120) !== snapAddress);
-      if (!old || !old.mailName || ownerEdit) {
-        const problem = snapshotProblem(snapName, snapAddress);
-        if (problem) identityRefused.push({ key: 'clients', id: c.id, field: 'name', reason: problem });
-        else {
-          c.mailName = snapName;
-          c.mailAddress = snapAddress;
-        }
-      } else {
+      const priorName = old ? safeLine(old.name, 80) : '';
+      const priorAddress = old ? safeLine([old.address, old.city, old.state, old.zip].filter(Boolean).join(', '), 120) : '';
+      const profileChanged = !old || priorName !== snapName || priorAddress !== snapAddress || String((old && old.email) || '').toLowerCase() !== String(c.email || '').toLowerCase();
+      const boundLogin = !!(old && (D().users || []).some(u => u && u.role === 'client' && !u.disabled && u.clientId === c.id && u.clientIdentity && u.clientIdentity === old.identity));
+      if (boundLogin && profileChanged) {
+        if (req.user.role !== 'owner') return reject(403, 'Only the owner can change the name, email, or address of a client who has a portal login.', [{ key: 'clients', id: c.id, field: 'name', reason: 'Only the owner can change the name, email, or address of a client who has a portal login.' }]);
+        pendingAudits.push({ actor: req.user.email, action: 'client.bound_profile', detail: JSON.stringify({ clientId: c.id, name: priorName !== snapName, email: String((old && old.email) || '').toLowerCase() !== String(c.email || '').toLowerCase(), address: priorAddress !== snapAddress }) });
+      }
+      const snapshotChanged = !old || !old.mailSnapshotAt || priorName !== snapName || priorAddress !== snapAddress;
+      if (!snapshotChanged && old) {
         c.mailName = old.mailName;
         c.mailAddress = old.mailAddress;
+        c.mailSnapshotAt = old.mailSnapshotAt;
+        c.mailSnapshotConfirmed = old.mailSnapshotConfirmed === true;
+        c.mailNeedsConfirm = !!old.mailNeedsConfirm;
+      } else {
+        const problem = snapshotProblem(snapName, snapAddress);
+        const confirm = req.user.role === 'owner' && c.confirmMailSnapshot === true;
+        if (!problem || confirm) {
+          c.mailName = snapName;
+          c.mailAddress = snapAddress;
+          c.mailSnapshotAt = new Date().toISOString();
+          c.mailSnapshotConfirmed = true;
+          c.mailNeedsConfirm = false;
+          if (confirm && problem) pendingAudits.push({ actor: req.user.email, action: 'client.mail_snapshot.confirm', detail: c.id });
+        } else {
+          c.mailName = old && old.mailName ? old.mailName : '';
+          c.mailAddress = old && old.mailAddress ? old.mailAddress : '';
+          c.mailSnapshotAt = old && old.mailSnapshotAt || null;
+          c.mailSnapshotConfirmed = !!(old && old.mailSnapshotConfirmed);
+          c.mailNeedsConfirm = true;
+        }
       }
+      delete c.confirmMailSnapshot;
     }
     if (identityRefused.length) return reject(409, identityRefused[0].reason, identityRefused);
     if (ambiguousIds.size) {
@@ -700,7 +728,6 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!clientId || !bureau) return;
     const key = holdKey(clientId, bureau);
     const prior = outcomes.get(key);
-    if (prior && prior.cleared) return;
     outcomes.set(key, {
       key,
       clientId: String(clientId),
@@ -722,7 +749,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (row.serverSentAt || row.sentAt || row.sentDate) return true;
     return String(row.status || '') === 'sent';
   }
-  function stampServerWork(before, data) {
+  function stampServerWork(before, data, actor) {
     const today = todayEtYmd();
     const prior = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
     const refused = [];
@@ -743,25 +770,43 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         clearReason: row.clearReason || ''
       });
     }
+    const tombs = new Map();
+    for (const row of (before && before.mailedDisputeTombstones) || []) if (row && row.id) tombs.set(row.id, Object.assign({}, row));
+    const clientIds = new Set((data.clients || []).filter(c => c && c.id).map(c => c.id));
     const nextDisputeIds = new Set((data.disputes || []).filter(d => d && d.id).map(d => d.id));
+    const orphanDeletes = [];
     for (const oldDispute of (before && before.disputes) || []) {
       if (!oldDispute || !oldDispute.id || nextDisputeIds.has(oldDispute.id)) continue;
-      if (wasSent(oldDispute)) push(oldDispute.id, 'id', 'A mailed dispute cannot be deleted.');
+      if (!wasSent(oldDispute)) continue;
+      const orphan = !clientIds.has(oldDispute.clientId);
+      if (orphan && actor && actor.role === 'owner') {
+        const stamp = { id: oldDispute.id, clientId: oldDispute.clientId || '', serverSentAt: oldDispute.serverSentAt || '', deletedAt: new Date().toISOString(), deletedBy: actor.email || '', items: (oldDispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: !!it.resultRecordedOnHold, result: it.result || '' })) };
+        tombs.set(oldDispute.id, stamp);
+        orphanDeletes.push({ id: oldDispute.id, clientId: oldDispute.clientId || '' });
+        continue;
+      }
+      push(oldDispute.id, 'id', 'A mailed dispute cannot be deleted.');
     }
     for (const d of data.disputes || []) {
       if (!d || !d.id) continue;
+      if (tombs.has(d.id) && !(prior.get(d.id) && prior.get(d.id).id === d.id)) push(d.id, 'id', 'A removed mailed dispute cannot be added again.');
       const old = prior.get(d.id);
+      if (old && String(old.clientId || '') !== String(d.clientId || '')) {
+        const resulted = !!old.outcome || (old.items || []).some(it => it && it.result);
+        if (wasSent(old) || resulted) {
+          push(d.id, 'clientId', 'A mailed or resulted dispute cannot move to another client.');
+          d.clientId = old.clientId;
+        }
+      }
       const client = (data.clients || []).find(c => c && c.id === d.clientId);
       const onHold = !!(client && client.kind !== 'business' && clientServiceOnHold(client, undefined, data.signatures));
       if (old && wasSent(old)) {
-        const previous = earliestDay([old.serverSentAt, old.sentAt, old.sentDate]) || today;
-        const submitted = earliestDay([d.sentAt, d.sentDate, d.serverSentAt]);
-        if ((submitted && submitted !== previous) || recordedDay(d.sentAt) !== recordedDay(old.sentAt) || recordedDay(d.sentDate) !== recordedDay(old.sentDate)) {
+        if (recordedDay(d.sentAt) !== recordedDay(old.sentAt) || recordedDay(d.sentDate) !== recordedDay(old.sentDate)) {
           push(d.id, 'sentAt', 'The mailed date cannot be changed after the dispute is sent.');
         }
         d.sentAt = old.sentAt == null ? null : old.sentAt;
         d.sentDate = old.sentDate == null ? null : old.sentDate;
-        d.serverSentAt = previous;
+        d.serverSentAt = old.serverSentAt || today;
       } else if (wasSent(d)) {
         d.serverSentAt = today;
       } else {
@@ -783,6 +828,22 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
           oldItem && oldItem.bureauResultAt, oldItem && oldItem.resultAt, oldItem && oldItem.resultDate
         ]);
         const resulted = item.result === 'deleted' || item.result === 'corrected' || (oldItem && (oldItem.result === 'deleted' || oldItem.result === 'corrected'));
+        const disputeLocked = !!(old && (wasSent(old) || old.outcome || (old.items || []).some(it => it && it.result)));
+        if (oldItem && (disputeLocked || oldItem.result === 'deleted' || oldItem.resultRecordedOnHold)) {
+          if (String(oldItem.bureau || '') !== String(item.bureau || '')) {
+            push(d.id, 'bureau', 'The bureau on a mailed or resulted dispute cannot be changed.');
+            item.bureau = oldItem.bureau == null ? null : oldItem.bureau;
+          }
+        }
+        if (oldItem && (oldItem.result === 'deleted' || oldItem.resultRecordedOnHold)) {
+          for (const field of ['creditor', 'accountNumber', 'accountId']) {
+            if (String(oldItem[field] || '') !== String(item[field] || '')) {
+              push(d.id, field, 'The creditor and account on a held or deleted item cannot be changed.');
+              item[field] = oldItem[field] == null ? null : oldItem[field];
+            }
+          }
+        }
+        if (oldItem && oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
         if (oldItem && oldItem.serverResultAt) item.serverResultAt = earliestDay([oldItem.serverResultAt, typed]) || oldItem.serverResultAt;
         else if (resulted && typed) item.serverResultAt = typed < today ? typed : today;
         else delete item.serverResultAt;
@@ -798,6 +859,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if ((mailedDuring || outcomeDuring || resultDuring) && (bad.length || !known.length)) {
         push(d.id, 'bureau', 'Name the bureau as Equifax, Experian, or TransUnion.');
       }
+      const recipientBureau = bureauEnum(d.recipient);
+      if (recipientBureau) {
+        for (const item of d.items || []) {
+          if (!item || !item.bureau) continue;
+          if (bureauEnum(item.bureau) !== recipientBureau) push(d.id, 'bureau', 'Each item bureau must match the dispute recipient.');
+        }
+      }
       if (mailedDuring || outcomeDuring || resultDuring) {
         const why = outcomeDuring ? 'outcome' : (resultDuring ? 'result' : 'mailed');
         const at = earliestDay([d.serverSentAt, outcomeDay]) || '';
@@ -805,15 +873,20 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       }
       for (const item of d.items || []) {
         if (!item || typeof item !== 'object') continue;
-        const bureau = bureauEnum(item.bureau);
-        const row = bureau ? outcomes.get(holdKey(d.clientId, bureau)) : null;
-        if (row && row.onHold && !row.cleared) item.resultRecordedOnHold = true;
-        else delete item.resultRecordedOnHold;
+        const oldItem = oldItems.find(it => it && String(it.id) === String(item.id));
+        if (oldItem && oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
+        else {
+          const bureau = bureauEnum(item.bureau);
+          const row = bureau ? outcomes.get(holdKey(d.clientId, bureau)) : null;
+          if (row && row.onHold && !row.cleared) item.resultRecordedOnHold = true;
+          else delete item.resultRecordedOnHold;
+        }
       }
     }
     data.heldOutcomes = Array.from(outcomes.values());
-    if (!refused.length) return null;
-    return { error: refused[0].reason, refused };
+    data.mailedDisputeTombstones = Array.from(tombs.values());
+    if (refused.length) return { error: refused[0].reason, refused };
+    return orphanDeletes.length ? { orphanDeletes } : null;
   }
   function recordedMailedDay(dispute) {
     return dispute ? recordedDay(dispute.serverSentAt) : '';
@@ -894,6 +967,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (resultDay > todayEtYmd()) return stop(inv, 'bureauResultAt', 'The bureau result date cannot be after today.');
       if (item.resultRecordedOnHold || heldOutcome) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
       if (!mailedDay || (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && mailedDay <= deadline)) return stop(inv, 'sentAt', 'The dispute must have been mailed after the cancellation window.');
+      if (resultDay < mailedDay) return stop(inv, 'bureauResultAt', 'The bureau result date must be on or after the mailed date.');
       const price = Number(billed.pricePerResult);
       if (!(price > 0) || Number(inv.amount) !== price) return stop(inv, 'amount', 'The invoice amount must equal the price per result.');
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
@@ -1009,7 +1083,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     db.audit({ actor: req.user.email, action: 'invite.create', detail: `${role} ${email || (c && c.name) || (rf && rf.name) || ''}` });
     db.persist();
     const page = role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app';
-    const url = `${req.protocol}://${req.get('host')}/${page}#invite=${token}`;
+    const url = `${publicOrigin.replace(/\/$/, '')}/${page}#invite=${token}`;
     const to = (email || (c && c.email) || (rf && rf.email) || '').toLowerCase();
     let emailed = false;
     if ((req.body || {}).sendEmail && mailEnabled() && /^\S+@\S+\.\S+$/.test(to)) {
@@ -1066,10 +1140,27 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const c = workspace().clients.find(row => row && row.id === req.params.id);
     if (!c) return res.status(404).json({ error: 'Client not found' });
     const bureau = bureauEnum((req.body || {}).bureau);
+    const disputeId = String((req.body || {}).disputeId || '').trim();
     const reason = String((req.body || {}).reason || '').trim().slice(0, 500);
     if (bureau == null || !bureau) return res.status(400).json({ error: 'Name the bureau as Equifax, Experian, or TransUnion.' });
-    if (!reason) return res.status(400).json({ error: 'A written reason is required.' });
+    if (!disputeId || !reason.includes(disputeId)) return res.status(400).json({ error: 'The reason must name the dispute that was mailed again after the cancellation window.' });
     const ws = workspace();
+    const named = (ws.disputes || []).find(d => d && d.id === disputeId && d.clientId === c.id);
+    if (!named) return res.status(400).json({ error: 'That dispute is not on this client.' });
+    const namedBureaus = (named.items || []).map(it => it && bureauEnum(it.bureau)).filter(Boolean);
+    if (bureauEnum(named.recipient)) namedBureaus.push(bureauEnum(named.recipient));
+    if (!namedBureaus.includes(bureau)) return res.status(400).json({ error: 'That dispute is not for this bureau.' });
+    const end = windowEndDay(c);
+    const namedMailed = recordedDay(named.serverSentAt);
+    if (!end || !namedMailed || namedMailed <= end) return res.status(409).json({ error: 'That dispute must have been mailed after the cancellation window.' });
+    const open = (ws.disputes || []).filter(d => d && d.clientId === c.id && ((d.items || []).some(it => it && bureauEnum(it.bureau) === bureau) || bureauEnum(d.recipient) === bureau));
+    for (const dispute of open) {
+      const mailed = recordedDay(dispute.serverSentAt);
+      if (!mailed || mailed <= end) return res.status(409).json({ error: 'Every open dispute for this bureau must have been mailed after the cancellation window.' });
+      const resultDays = (dispute.items || []).filter(it => it && it.result).map(it => recordedDay(it.serverResultAt)).filter(Boolean);
+      if ((dispute.items || []).some(it => it && it.result && !recordedDay(it.serverResultAt))) return res.status(409).json({ error: 'Every result for this bureau needs a date after the cancellation window.' });
+      if (resultDays.some(day => day <= end || day < mailed)) return res.status(409).json({ error: 'Every result date must be after the cancellation window and on or after the mailed date.' });
+    }
     ws.heldOutcomes = Array.isArray(ws.heldOutcomes) ? ws.heldOutcomes : [];
     const row = ws.heldOutcomes.find(item => item && item.key === holdKey(c.id, bureau));
     if (!row || !row.onHold || row.cleared) return res.status(409).json({ error: 'No hold is recorded for that bureau.' });
@@ -1758,6 +1849,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (channel === 'sms' && (template === 'disclosure-1679c' || template === 'cancellation-1679e')) {
       return res.status(409).json({ error: 'This notice can be sent by email or the portal only, not by text message.' });
     }
+    if (held && c.mailNeedsConfirm) return res.status(409).json({ error: 'Confirm this client\'s name and address before sending.' });
     if (held) {
       const supplied = String(subject || '').trim() || String(body || '').trim() || String((req.body || {}).purpose || '').trim();
       if (supplied || !HELD_TEMPLATE_IDS.includes(template)) return res.status(409).json({ error: 'This client is on hold. Only a server template can be sent, with no message text.' });

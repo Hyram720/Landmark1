@@ -181,6 +181,7 @@ test('the server refuses invoices over the 12-month term / $1,188 cap', async ()
   const g = await owner('GET', '/api/workspace');
   const w = g.body.data;
   const day = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10);
+  const resultDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   w.clients.push({ id: 'capc', name: 'Casey Cap', firstName: 'Casey', lastName: 'Cap', kind: 'personal', email: 'cap@example.test', status: 'active', pricePerResult: 594, onboarding: {} });
   const created = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w });
   assert.strictEqual(created.status, 200);
@@ -191,9 +192,9 @@ test('the server refuses invoices over the 12-month term / $1,188 cap', async ()
   const book = next.body.data;
   book.disputes = book.disputes || [];
   book.disputes.push({ id: 'cap-d', clientId: 'capc', sentAt: day, items: [
-    { id: 'cap-i1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: day },
-    { id: 'cap-i2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: day },
-    { id: 'cap-i3', creditor: 'East Bank', bureau: 'TransUnion', result: 'deleted', bureauResultAt: day }
+    { id: 'cap-i1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: resultDay },
+    { id: 'cap-i2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: resultDay },
+    { id: 'cap-i3', creditor: 'East Bank', bureau: 'TransUnion', result: 'deleted', bureauResultAt: resultDay }
   ] });
   book.invoices.push({ id: 'capi1', clientId: 'capc', disputeId: 'cap-d', itemId: 'cap-i1', description: 'Service', amount: 594, status: 'issued', issuedAt: day, serviceCompletedAt: day });
   const ok = await owner('PUT', '/api/workspace', { baseVersion: next.body.version, data: book });
@@ -335,7 +336,8 @@ test('online mailing through Lob is gated, then mails an approved letter and tra
     const g2 = await owner('GET', '/api/workspace');
     const book = g2.body.data;
     book.letters.push({ id: 'l9', clientId: 'c9', disputeId: 'd9', type: 'cra_611', status: 'approved', text: 'Morgan Mailer\n12 Example Rd\n\nRe: dispute\n\nPlease correct the balance.' });
-    book.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ id: 'd9-i', creditor: 'Example Bank', bureau: 'Experian', discrepancy: 'Balance should be zero. Paid in full.', result: 'deleted', bureauResultAt: signed }], letterId: 'l9', sentAt: signed });
+    const resultDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    book.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ id: 'd9-i', creditor: 'Example Bank', bureau: 'Experian', discrepancy: 'Balance should be zero. Paid in full.', result: 'deleted', bureauResultAt: resultDay }], letterId: 'l9', sentAt: signed });
     book.invoices.push({ id: 'inv9abc', clientId: 'c9', disputeId: 'd9', itemId: 'd9-i', description: 'Letter mailed', amount: 49, status: 'issued', issuedAt: signed, serviceCompletedAt: signed, payToken: 'paytokentest123' });
     book.referrals = book.referrals || [];
     book.referrals.push({ id: 'ref9', name: 'Pat Partner', email: 'pat@example.test', commissionType: 'flat', commissionAmount: 25 });

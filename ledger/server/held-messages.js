@@ -20,9 +20,6 @@ export const HELD_TEMPLATE_IDS = [
 const ADMIN = new Set(['invite', 'login', 'reset', 'verify']);
 const POSTMARK = new Set(['timely', 'late']);
 
-const SNAPSHOT_WORDS = /\b(experian|equifax|transunion|deleted|deletion|collection|dispute|disputed|score|tradeline|removed|bureau)\b/i;
-const SNAPSHOT_URL = /https?:\/\/|www\.|\b[\p{L}\p{N}.-]+\.(com|net|org|io|co|test)\b/iu;
-
 export function safeLine(value, max) {
   return String(value || '')
     .replace(/[^\p{L}\p{N}\s.'’,#/-]/gu, '')
@@ -31,17 +28,33 @@ export function safeLine(value, max) {
     .slice(0, max);
 }
 
+function normalizeSnapshot(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function snapshotProblem(name, address) {
-  const text = `${name || ''} ${address || ''}`;
-  if (SNAPSHOT_URL.test(text)) return 'The name and address on file cannot include a web address.';
-  if (SNAPSHOT_WORDS.test(text)) return 'The name and address on file cannot include credit-file wording.';
+  const text = normalizeSnapshot(`${name || ''} ${address || ''}`);
+  const flat = text.toLowerCase().replace(/([\p{L}])\1+/gu, '$1');
+  if (/https?:\/\/|www\./i.test(text) || /[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})?(?:\.[\p{L}\p{N}]{2,})+/u.test(text)) {
+    return 'This name or address needs the owner to confirm it before a held template can be sent.';
+  }
+  if (/\b(experian|equifax|transunion)\b/.test(flat) || /\bdelet/.test(flat) || /\bremov/.test(flat)) {
+    return 'This name or address needs the owner to confirm it before a held template can be sent.';
+  }
+  const marks = flat.match(/\b(tu|eq|ex)\b/g) || [];
+  if (marks.length >= 2) return 'This name or address needs the owner to confirm it before a held template can be sent.';
   return '';
 }
 
 export function templateClient(client) {
   const c = Object.assign({}, client || {});
-  const mailed = snapshotProblem('', c.mailAddress) ? '' : safeLine(c.mailAddress, 160);
-  const named = snapshotProblem(c.mailName, '') ? '' : safeLine(c.mailName, 80);
+  const blocked = c.mailNeedsConfirm === true && c.mailSnapshotConfirmed !== true && snapshotProblem(c.mailName, c.mailAddress);
+  const mailed = blocked ? '' : safeLine(c.mailAddress, 160);
+  const named = blocked ? '' : safeLine(c.mailName, 80);
   c.name = named || 'Client';
   c.firstName = '';
   c.lastName = '';

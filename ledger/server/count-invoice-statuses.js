@@ -47,6 +47,7 @@ const shapeErrors = shapeReport.shapeErrors;
 const missingIdWarnings = shapeReport.missingIdWarnings;
 const orphans = orphanWork(data && data.workspace);
 const crossClient = crossClientLinks(data && data.workspace);
+const reinviteLogins = unmatchedPortalLogins(data);
 const deployGate = {
   outside: outside,
   duplicatePayTokens,
@@ -55,9 +56,25 @@ const deployGate = {
   orphans,
   crossClient,
   ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0,
-  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes, letters, and reports whose client is no longer in the workspace. crossClient lists a dispute or letter on one client whose items, report, or account cite another client. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes, letters, and reports whose client is no longer in the workspace. crossClient lists a dispute or letter on one client whose items, report, or account cite another client. reinviteLogins lists portal logins whose email does not match the client, or that the migration left unbound. Those people need a new invitation after deploy. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, crossClient, deployGate }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, crossClient, reinviteLogins, deployGate }, null, 2) + '\n');
+
+function unmatchedPortalLogins(data) {
+  const clients = ((data && data.workspace && data.workspace.clients) || []).filter(c => c && c.id);
+  const byId = new Map(clients.map(c => [c.id, c]));
+  const rows = [];
+  for (const u of (data && data.users) || []) {
+    if (!u || u.role !== 'client' || u.disabled) continue;
+    const client = byId.get(u.clientId);
+    const loginEmail = String(u.email || '').toLowerCase().trim();
+    const clientEmail = client ? String(client.email || '').toLowerCase().trim() : '';
+    if (u.portalLinkNeedsInvite || !client || loginEmail !== clientEmail) {
+      rows.push({ email: u.email || '', clientId: u.clientId || '', reason: !client ? 'client missing' : (loginEmail !== clientEmail ? 'email does not match' : 'needs a new invitation') });
+    }
+  }
+  return rows;
+}
 
 function workspaceShapeReport(ws) {
   const shapeErrors = [];
