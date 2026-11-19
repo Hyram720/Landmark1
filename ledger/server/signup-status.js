@@ -83,8 +83,10 @@ export function serviceWorkBlocked(before, after) {
     const id = c.id;
     const count = (list) => (list || []).filter(d => d && d.clientId === id).length;
     const held = `${c.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
-    if (count(after.disputes) > count(priorDisputes)) return held;
-    if (count(after.letters) > count(priorLetters)) return held;
+    const added = (list, prior, key) => (list || []).filter(row => row && row.clientId === id && !(prior || []).some(old => old && old.id === row.id)).map(row => ({ key, id: row.id, field: '', reason: held }));
+    const disputeAdds = added(after.disputes, priorDisputes, 'disputes');
+    const letterAdds = added(after.letters, priorLetters, 'letters');
+    if (disputeAdds.length || letterAdds.length) return { error: held, refused: disputeAdds.concat(letterAdds) };
   }
   return null;
 }

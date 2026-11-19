@@ -349,7 +349,20 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   app.get('/api/workspace/version', need('owner', 'staff'), (req, res) => res.json({ version: D().workspaceVersion }));
   app.put('/api/workspace', need('owner', 'staff'), (req, res) => {
     const { baseVersion, data } = req.body || {};
-    if (!data || data.version !== 2 || !Array.isArray(data.clients)) return res.status(400).json({ error: 'Invalid workspace' });
+    const reject = (status, error, refused) => {
+      const body = { error };
+      if (Array.isArray(refused) && refused.length) body.refused = refused.map(row => ({ key: row.key || '', id: row.id || '', field: row.field || '', reason: row.reason || error }));
+      return res.status(status).json(body);
+    };
+    if (!data || data.version !== 2 || !Array.isArray(data.clients)) return reject(400, 'Invalid workspace');
+    const listKeys = ['reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'addressBook', 'automations'];
+    const mapKeys = ['automationLog', 'violations', 'settings'];
+    for (const key of listKeys) {
+      if (data[key] != null && !Array.isArray(data[key])) return reject(400, key + ' must be a list.', [{ key, id: '', field: '', reason: key + ' must be a list.' }]);
+    }
+    for (const key of mapKeys) {
+      if (data[key] != null && (Array.isArray(data[key]) || typeof data[key] !== 'object')) return reject(400, key + ' must be a map.', [{ key, id: '', field: '', reason: key + ' must be a map.' }]);
+    }
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
     const before = D().workspace;
     const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
@@ -371,9 +384,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const c of data.clients) {
       const old = priorClients.get(c && c.id);
       if (!old || (old.kind || 'personal') === (c.kind || 'personal')) continue;
-      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the client type.' });
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can change the client type.', [{ key: 'clients', id: c.id, field: 'kind', reason: 'Only the owner can change the client type.' }]);
       const becomingPersonal = old.kind === 'business' && (c.kind || 'personal') !== 'business';
-      if (!becomingPersonal && (inCancellationWindow(old) || enrollmentOpenOrSigned(old, data.signatures))) return res.status(409).json({ error: 'The client type cannot change during enrollment or after the agreement is signed.' });
+      if (!becomingPersonal && (inCancellationWindow(old) || enrollmentOpenOrSigned(old, data.signatures))) return reject(409, 'The client type cannot change during enrollment or after the agreement is signed.', [{ key: 'clients', id: c.id, field: 'kind', reason: 'The client type cannot change during enrollment or after the agreement is signed.' }]);
       pendingAudits.push({ actor: req.user.email, action: 'client.kind', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, old: old.kind || 'personal', new: c.kind || 'personal' }) });
     }
     data.retiredClientIds = JSON.parse(JSON.stringify((before && before.retiredClientIds) || []));
@@ -381,11 +394,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const nextIds = new Set((data.clients || []).filter(Boolean).map(c => c.id));
     for (const old of priorClients.values()) {
       if (!old || nextIds.has(old.id) || old.kind === 'business' || !enrollmentOpenOrSigned(old, data.signatures)) continue;
-      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can delete a client who has started enrollment.' });
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can delete a client who has started enrollment.', [{ key: 'clients', id: old.id, field: '', reason: 'Only the owner can delete a client who has started enrollment.' }]);
       if (!data.retiredClientIds.includes(old.id)) data.retiredClientIds.push(old.id);
     }
     for (const c of data.clients) {
-      if (c && !priorClients.has(c.id) && data.retiredClientIds.includes(c.id)) return res.status(409).json({ error: 'This client id was retired and cannot be recreated.' });
+      if (c && !priorClients.has(c.id) && data.retiredClientIds.includes(c.id)) return reject(409, 'This client id was retired and cannot be recreated.', [{ key: 'clients', id: c.id, field: 'id', reason: 'This client id was retired and cannot be recreated.' }]);
     }
     data.knownClients = JSON.parse(JSON.stringify((before && before.knownClients) || []));
     const rememberClient = (c) => {
@@ -414,33 +427,35 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       delete c.businessMatchApproval;
       const matched = data.knownClients.filter(k => k && k.id !== c.id && ((email && normalizeClientEmail(k.email) === email) || (name && normalizeClientName(k.name) === name)));
       if (!matched.length) continue;
-      if (req.user.role !== 'owner') return res.status(409).json({ error: 'A client with this email or name already exists. Only the owner can add a business client for that person.' });
+      if (req.user.role !== 'owner') return reject(409, 'A client with this email or name already exists. Only the owner can add a business client for that person.', [{ key: 'clients', id: c.id, field: 'name', reason: 'A client with this email or name already exists. Only the owner can add a business client for that person.' }]);
       c.businessMatchApproval = { user: req.user.email, at: new Date().toISOString(), matchedIds: matched.map(k => k.id), name, email };
       pendingAudits.push({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: c.businessMatchApproval.at, clientId: c.id, email, name, matchedIds: c.businessMatchApproval.matchedIds }) });
     }
     const invoiceGuard = guardIssuedInvoices(before, data, req);
-    if (invoiceGuard.status) return res.status(invoiceGuard.status).json({ error: invoiceGuard.error });
+    if (invoiceGuard.status) return reject(invoiceGuard.status, invoiceGuard.error, invoiceGuard.refused);
     pendingAudits.push(...invoiceGuard.audits);
     lockInvoicedDisputeItems(before, data);
     const billingBlock = invoiceBillingBlocked(before, data);
-    if (billingBlock) return res.status(409).json({ error: billingBlock });
-    // 12-month term / total cap per client agreement (Billing.capCheck): reject any new or increased
-    // invoice that would push a client's total for the term over the cap, or bill after the term ends.
+    if (billingBlock) return reject(409, billingBlock.error, billingBlock.refused);
     const over = Billing.capViolations(before, data);
     if (over.length) {
       db.audit({ actor: req.user.email, action: 'invoice.cap_blocked', detail: over.map(v => v.invoice.id).join(',').slice(0, 200) });
-      return res.status(422).json({ error: `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`, violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })) });
+      const reason = `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`;
+      return res.status(422).json({
+        error: reason,
+        violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })),
+        refused: over.map(v => ({ key: 'invoices', id: v.invoice.id, field: 'amount', reason: v.reason }))
+      });
     }
-    // TODO(billing): signup does not create or collect invoices. Cap checks above stay in billing.js.
     const held = serviceWorkBlocked(before, data);
-    if (held) return res.status(409).json({ error: held });
+    if (held) return reject(409, held.error, held.refused);
     for (const c of data.clients) {
       if (!c || c.kind === 'business') continue;
       const old = priorClients.get(c.id);
       if (!old || enrollmentSnapshot(old) === enrollmentSnapshot(c)) continue;
-      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the price and Schedule A.' });
-      if (contractIsSigned(old)) return res.status(409).json({ error: 'The contract is already signed. Price and Schedule A cannot be changed.' });
-      return res.status(400).json({ error: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' });
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can change the price and Schedule A.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'Only the owner can change the price and Schedule A.' }]);
+      if (contractIsSigned(old)) return reject(409, 'The contract is already signed. Price and Schedule A cannot be changed.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'The contract is already signed. Price and Schedule A cannot be changed.' }]);
+      return reject(400, 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' }]);
     }
     for (const c of data.clients) applySignupStatus(c);
     for (const c of data.clients) if (c && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
@@ -510,30 +525,31 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function invoiceBillingBlocked(before, data) {
     const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     const billable = inv => inv && (inv.status === 'issued' || inv.status === 'paid');
+    const stop = (inv, field, reason) => ({ error: reason, refused: [{ key: 'invoices', id: inv && inv.id, field, reason }] });
     for (const inv of (data.invoices || []).filter(billable)) {
       const prev = prior.get(inv.id);
       if (prev && billable(prev) && !invoiceChanged(prev, inv)) continue;
       const billed = (data.clients || []).find(x => x && x.id === inv.clientId);
       if (!billed || billed.kind === 'business') continue;
-      if (clientServiceOnHold(billed, undefined, data.signatures)) return `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`;
-      if (serviceDateInsideWindow(billed, inv)) return 'The service date is inside the cancellation window.';
+      if (clientServiceOnHold(billed, undefined, data.signatures)) return stop(inv, 'clientId', `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`);
+      if (serviceDateInsideWindow(billed, inv)) return stop(inv, 'serviceCompletedAt', 'The service date is inside the cancellation window.');
       const item = deletedInvoiceItem(data, inv);
-      if (!item) return 'An invoice must name the deleted item and its bureau.';
-      if (item.result !== 'deleted') return 'An invoice can be issued only for a deleted item, not a correction.';
+      if (!item) return stop(inv, 'itemId', 'An invoice must name the deleted item and its bureau.');
+      if (item.result !== 'deleted') return stop(inv, 'itemId', 'An invoice can be issued only for a deleted item, not a correction.');
       const stamp = item.bureauResultAt || item.resultDate || inv.bureauResultAt;
       const report = (item.reportId || inv.reportId) && (data.reports || []).find(r => r && r.id === (item.reportId || inv.reportId) && r.clientId === inv.clientId && r.date);
       const doc = (item.documentId || inv.documentId) && (data.documents || []).find(d => d && d.id === (item.documentId || inv.documentId) && d.clientId === inv.clientId && (d.uploadedAt || d.date));
-      if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return 'An invoice must name the dated bureau result for the deleted item.';
+      if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return stop(inv, 'bureauResultAt', 'An invoice must name the dated bureau result for the deleted item.');
       const signedAt = billed.onboarding && (billed.onboarding.contractSignedAtTs || billed.onboarding.contractSignedAt);
       let deadline = String((billed.onboarding && billed.onboarding.cancellationWindowEndsAt) || '');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) && signedAt) deadline = cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
       const resultDay = String(stamp || (report && report.date) || (doc && (doc.date || doc.uploadedAt)) || '').slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && /^\d{4}-\d{2}-\d{2}$/.test(deadline) && resultDay <= deadline) return 'The bureau result date must be after the cancellation window.';
-      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && resultDay > todayEtYmd()) return 'The bureau result date cannot be after today.';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && /^\d{4}-\d{2}-\d{2}$/.test(deadline) && resultDay <= deadline) return stop(inv, 'bureauResultAt', 'The bureau result date must be after the cancellation window.');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(resultDay) && resultDay > todayEtYmd()) return stop(inv, 'bureauResultAt', 'The bureau result date cannot be after today.');
       const price = Number(billed.pricePerResult);
-      if (!(price > 0) || Number(inv.amount) !== price) return 'The invoice amount must equal the price per result.';
+      if (!(price > 0) || Number(inv.amount) !== price) return stop(inv, 'amount', 'The invoice amount must equal the price per result.');
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
-      if (dup) return 'Only one invoice can be issued for each deleted item and bureau.';
+      if (dup) return stop(inv, 'itemId', 'Only one invoice can be issued for each deleted item and bureau.');
     }
     return null;
   }
@@ -1027,12 +1043,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   }
   function guardIssuedInvoices(before, data, req) {
     const audits = [];
+    const refuseInv = (status, error, id, field) => ({ status, error, refused: [{ key: 'invoices', id, field: field || '', reason: error }] });
     const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     for (const inv of (data && data.invoices) || []) {
       if (!inv) continue;
       const prev = prior.get(inv.id);
       const leavingBilled = prev && (prev.status === 'issued' || prev.status === 'paid') && inv.status !== 'issued' && inv.status !== 'paid';
-      if (!INVOICE_STATUSES.has(inv.status) && !leavingBilled) return { status: 400, error: 'Invoice status must be draft, issued, paid, or void.' };
+      if (!INVOICE_STATUSES.has(inv.status) && !leavingBilled) return refuseInv(400, 'Invoice status must be draft, issued, paid, or void.', inv.id, 'status');
       if (inv.status === 'draft') delete inv.payToken;
       if (!prev || (prev.status !== 'paid' && prev.status !== 'void')) {
         delete inv.transId;
@@ -1040,7 +1057,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         if (inv.status === 'paid') {
           const service = String(inv.serviceCompletedAt || '').slice(0, 10);
           const paidOn = today();
-          if (/^\d{4}-\d{2}-\d{2}$/.test(service) && paidOn < service) return { status: 409, error: 'The paid date cannot be before the service was completed.' };
+          if (/^\d{4}-\d{2}-\d{2}$/.test(service) && paidOn < service) return refuseInv(409, 'The paid date cannot be before the service was completed.', inv.id, 'paidAt');
           inv.paidAt = paidOn;
         } else delete inv.paidAt;
       } else {
@@ -1055,30 +1072,30 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (!prev) continue;
       const inv = next.get(prev.id);
       if (prev.status === 'void') {
-        if (!inv) return { status: 409, error: 'A voided invoice cannot be deleted.' };
+        if (!inv) return refuseInv(409, 'A voided invoice cannot be deleted.', prev.id, '');
         const changed = changedInvoiceKeys(prev, inv);
-        if (changed.includes('status')) return { status: 409, error: 'A voided invoice cannot be reopened.' };
-        if (changed.includes('voidReason')) return { status: 409, error: 'The void reason cannot be changed.' };
-        if (changed.length) return { status: 409, error: 'A voided invoice cannot be changed.' };
+        if (changed.includes('status')) return refuseInv(409, 'A voided invoice cannot be reopened.', prev.id, 'status');
+        if (changed.includes('voidReason')) return refuseInv(409, 'The void reason cannot be changed.', prev.id, 'voidReason');
+        if (changed.length) return refuseInv(409, 'A voided invoice cannot be changed.', prev.id, changed[0]);
         continue;
       }
       if (prev.status !== 'issued' && prev.status !== 'paid') continue;
-      if (!inv) return { status: 409, error: 'An issued or paid invoice cannot be deleted.' };
-      if (prev.status === 'paid' && inv.status === 'issued') return { status: 409, error: 'A paid invoice can only be voided.' };
+      if (!inv) return refuseInv(409, 'An issued or paid invoice cannot be deleted.', prev.id, '');
+      if (prev.status === 'paid' && inv.status === 'issued') return refuseInv(409, 'A paid invoice can only be voided.', prev.id, 'status');
       const leaving = inv.status !== 'issued' && inv.status !== 'paid';
-      if (leaving && req.user.role !== 'owner') return { status: 403, error: 'Only the owner can void an issued or paid invoice.' };
+      if (leaving && req.user.role !== 'owner') return refuseInv(403, 'Only the owner can void an issued or paid invoice.', prev.id, 'status');
       const markingPaid = prev.status === 'issued' && inv.status === 'paid';
       const allowed = new Set();
       if (markingPaid) { allowed.add('status'); allowed.add('paidAt'); }
       if (leaving) { allowed.add('status'); allowed.add('voidReason'); }
       if (!prev.payToken && inv.status === 'issued') allowed.add('payToken');
       const changed = changedInvoiceKeys(prev, inv).filter(key => !allowed.has(key));
-      if (changed.length) return { status: 409, error: prev.status === 'paid' ? 'The invoice is locked once it is paid.' : 'The invoice is locked once it is issued.' };
+      if (changed.length) return refuseInv(409, prev.status === 'paid' ? 'The invoice is locked once it is paid.' : 'The invoice is locked once it is issued.', prev.id, changed[0]);
       if (markingPaid) inv.paidAt = today();
       if (prev.payToken) inv.payToken = prev.payToken;
       if (!leaving) continue;
-      if (!String(inv.voidReason || '').trim()) return { status: 400, error: 'A reason is required to void this invoice.' };
-      if (prev.voidReason && String(inv.voidReason) !== String(prev.voidReason)) return { status: 409, error: 'The void reason cannot be changed.' };
+      if (!String(inv.voidReason || '').trim()) return refuseInv(400, 'A reason is required to void this invoice.', prev.id, 'voidReason');
+      if (prev.voidReason && String(inv.voidReason) !== String(prev.voidReason)) return refuseInv(409, 'The void reason cannot be changed.', prev.id, 'voidReason');
       inv.status = 'void';
       audits.push({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: prev.id, clientId: prev.clientId, reason: String(inv.voidReason).trim() }) });
     }

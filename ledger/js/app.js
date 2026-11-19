@@ -82,7 +82,7 @@
     el.className = 'badge plain ' + (state === 'saved' ? 'b-ok' : state === 'offline' ? 'b-high' : 'b-low');
   }
   const Remote = {
-    version: 0, timer: null, pending: false, sending: false, savedWaiters: [], user: null,
+    version: 0, timer: null, pending: false, sending: false, badSaves: 0, savedWaiters: [], user: null,
     afterSave(fn) { this.savedWaiters.push(fn); },
     finishWaiters() { const fns = this.savedWaiters.splice(0); fns.forEach(fn => fn()); },
     async start(user) {
@@ -91,23 +91,72 @@
       const r = await api('GET', '/api/workspace');
       this.version = r.version;
       Store.adopt(r.data);
+      this.restoreDirty(r.data);
       Store.setRemote(this);
-      setInterval(() => this.poll().catch(() => {}), 15000);
+      this.ensurePoll();
+    },
+    ensurePoll() {
+      if (this.pollTimer) return;
+      this.pollTimer = setInterval(() => this.poll().catch(() => {}), 15000);
+    },
+    rememberDirty() {
+      try {
+        if (!root.sessionStorage) return;
+        if (!Store.unsaved) root.sessionStorage.removeItem('ledger-dirty');
+        else root.sessionStorage.setItem('ledger-dirty', JSON.stringify(Store.state));
+      } catch (e) { /* private mode */ }
+    },
+    restoreDirty(server) {
+      try {
+        const raw = root.sessionStorage && root.sessionStorage.getItem('ledger-dirty');
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        Store.stageLocal(saved);
+        Store.applyServerSave(server, saved);
+      } catch (e) { /* ignore a damaged draft */ }
     },
     async flushNow() { clearTimeout(this.timer); if (this.pending) await this.flush(); },
-    async reload() { const w = await api('GET', '/api/workspace'); this.version = w.version; Store.adopt(w.data); render(); },
-    push() { this.pending = true; setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
+    async reload() {
+      this.rememberDirty();
+      if ((this.pending || Store.unsaved) && !this.sending) {
+        try { await this.flushNow(); } catch (e) { /* refresh around whatever is still dirty */ }
+      }
+      const local = JSON.parse(JSON.stringify(Store.state));
+      const dirty = Store.unsaved;
+      const w = await api('GET', '/api/workspace');
+      this.version = w.version;
+      if (dirty) Store.applyServerSave(w.data, local);
+      else Store.adopt(w.data);
+      this.rememberDirty();
+      render();
+      this.ensurePoll();
+    },
+    push() { this.pending = true; this.rememberDirty(); setSync('saving'); clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), 500); },
     finishApplied(applied, fromConflict) {
       const dropped = applied.dropped || [];
+      const refused = applied.refused || [];
+      const reverted = applied.reverted || [];
+      this.rememberDirty();
       this.requeue = !!(applied.requeue || Store.unsaved);
+      if (this.requeue && this.badSaves >= 2) {
+        this.requeue = false;
+        this.pending = false;
+        setSync('conflict');
+        toast('Saving stopped after a repeated refusal.');
+        this.ensurePoll();
+        return;
+      }
+      if (refused.length) toast('Not allowed: ' + refused.join('; '));
+      if (reverted.length) toast('Not saved: ' + reverted.join(', ') + '.');
       if (dropped.length) toast('Someone else updated ' + dropped.join(', ') + '. Loaded the latest version. Please redo that change.');
-      else if (fromConflict && !this.requeue) toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
+      else if (fromConflict && !refused.length && !reverted.length && !this.requeue) toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
       if (this.requeue) { this.pending = true; setSync('saving'); return; }
       this.pending = false;
       clearTimeout(this.timer);
-      setSync(dropped.length || fromConflict ? 'conflict' : 'saved');
-      if (!dropped.length && !fromConflict) this.finishWaiters();
+      setSync(dropped.length || refused.length || fromConflict ? 'conflict' : 'saved');
+      if (!dropped.length && !refused.length && !fromConflict) this.finishWaiters();
       renderWhenSafe();
+      this.ensurePoll();
     },
     async flush() {
       if (this.sending) return;
@@ -118,61 +167,49 @@
       try {
         const r = await api('PUT', '/api/workspace', { baseVersion: this.version, data: sent });
         this.version = r.version;
-        const applied = r.data ? Store.applyServerSave(r.data, sent) : { requeue: false, conflict: false };
+        this.badSaves = 0;
+        const applied = r.data ? Store.applyServerSave(r.data, sent, { accepted: true }) : { requeue: false, conflict: false, dropped: [], refused: [], reverted: [] };
         this.finishApplied(applied, false);
       } catch (e) {
-        if (e.status === 409) {
-          if (e.body && e.body.data) {
-            this.version = e.body.version;
-            const applied = Store.applyServerSave(e.body.data, sent);
-            this.finishApplied(applied, true);
-          } else {
-            try {
-              const w = await api('GET', '/api/workspace');
-              this.version = w.version;
-              const refused = Store.refusedTokens(e.body && e.body.error);
-              const applied = Store.applyServerSave(w.data, sent, { refused });
-              toast((e.body && e.body.error) || 'Change refused.');
-              this.finishApplied(applied, true);
-            } catch (err) {
-              this.pending = false;
-              setSync('conflict');
-              toast((e.body && e.body.error) || 'Change refused. Reloaded the last saved version.');
-              await this.reload();
-            }
-          }
-        } else if (e.status === 422) {
-          // The server refused an invoice over the agreement's 12-month term / total cap: drop the change.
-          this.pending = false; this.requeue = false; setSync('conflict');
-          toast((e.body.error || 'Change refused by the server') + ' Reloaded the last saved version.');
-          await this.reload();
-        } else if (e.status === 401) location.reload();
-        else if (e.status === 400 || e.status === 403) {
-          this.pending = false;
-          this.requeue = false;
-          const message = (e.body && e.body.error) || 'Change refused.';
+        const refusal = e.status === 400 || e.status === 403 || e.status === 422 || (e.status === 409 && !(e.body && e.body.data));
+        if (e.status === 409 && e.body && e.body.data) {
+          this.version = e.body.version;
+          const applied = Store.applyServerSave(e.body.data, sent);
+          this.finishApplied(applied, true);
+        } else if (refusal) {
+          this.badSaves = (this.badSaves || 0) + 1;
           try {
             const w = await api('GET', '/api/workspace');
             this.version = w.version;
-            const refused = Store.refusedTokens(message);
-            const applied = Store.applyServerSave(w.data, sent, { refused });
-            toast(message);
+            const listed = Array.isArray(e.body && e.body.refused) ? e.body.refused : null;
+            const applied = Store.applyServerSave(w.data, sent, listed ? { rejected: true, refused: listed } : { rejected: true });
             this.finishApplied(applied, true);
           } catch (err) {
-            setSync('offline');
-            this.timer = setTimeout(() => this.flush(), 5000);
+            this.pending = false;
+            setSync('conflict');
+            toast('Not allowed: ' + ((e.body && e.body.error) || 'Change refused.'));
+            await this.reload();
           }
-        } else if (!e.status || e.status >= 500) { setSync('offline'); this.pending = true; this.timer = setTimeout(() => this.flush(), 5000); }
-        else { this.pending = false; this.requeue = false; setSync('conflict'); toast((e.body && e.body.error) || 'Change refused.'); await this.reload(); }
+        } else if (e.status === 401) location.reload();
+        else if (!e.status || e.status >= 500) { setSync('offline'); this.pending = true; this.timer = setTimeout(() => this.flush(), 5000); }
+        else { this.pending = false; this.requeue = false; setSync('conflict'); toast('Not allowed: ' + ((e.body && e.body.error) || 'Change refused.')); await this.reload(); }
       } finally {
         this.sending = false;
+        this.rememberDirty();
         if (this.pending && this.requeue) this.push();
+        this.ensurePoll();
       }
     },
     async poll() {
-      if (this.pending || document.querySelector('.overlay') || document.activeElement && document.activeElement.matches('textarea,input')) return;
+      if (this.sending || this.pending || document.querySelector('.overlay') || document.activeElement && document.activeElement.matches('textarea,input')) return;
       const r = await api('GET', '/api/workspace/version');
-      if (r.version !== this.version) { const w = await api('GET', '/api/workspace'); this.version = w.version; Store.adopt(w.data); render(); }
+      if (r.version === this.version) return;
+      const w = await api('GET', '/api/workspace');
+      this.version = w.version;
+      if (Store.unsaved) Store.applyServerSave(w.data, JSON.parse(JSON.stringify(Store.state)));
+      else Store.adopt(w.data);
+      this.rememberDirty();
+      render();
     }
   };
 
@@ -1366,7 +1403,13 @@
 
   Object.assign(A, {
     'ai': el => root.Assistant.toggle(undefined, el.dataset.id),
-    'logout': async () => { await api('POST', '/api/logout'); location.reload(); },
+    'logout': async () => {
+      try { await Remote.flushNow(); }
+      catch (e) { toast(e.message || 'Could not save your latest changes.'); return; }
+      if (Store.unsaved) { toast('Some changes are still unsaved. Stay on this page to retry.'); return; }
+      await api('POST', '/api/logout');
+      location.reload();
+    },
     'invite-staff': () => modal({
       title: 'Invite staff member',
       body: `<div class="form-grid">${field('Name', 'name', '', { required: true })}${field('Email', 'email', '', { type: 'email', required: true })}</div>`,
@@ -1601,6 +1644,11 @@
     let pointerDown = false;
     document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
     document.addEventListener('pointerup', () => setTimeout(() => { pointerDown = false; }, 0), true);
+    window.addEventListener('beforeunload', (e) => {
+      if (!Store.unsaved && !Remote.pending) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
     document.addEventListener('focusout', () => {
       if (!redrawDeferred) return;
       const run = () => { if (redrawDeferred) renderWhenSafe(); };

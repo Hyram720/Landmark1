@@ -1609,7 +1609,7 @@ test('the browser adopts the saved workspace and does not mint pay tokens', () =
   const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
   const views = fs.readFileSync(path.join(import.meta.dirname, '../js/views.js'), 'utf8');
   const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
+  assert.match(flush, /Store\.applyServerSave\(r\.data, sent/);
   assert.match(flush, /finishApplied\(applied, false\)/);
   assert.match(flush, /e\.body && e\.body\.data/);
   assert.match(flush, /await this\.reload\(\)/);
@@ -1991,9 +1991,333 @@ test('a refused invoice is named and the other notes in the batch are kept', () 
   const sent = JSON.parse(JSON.stringify(Store.state));
   const applied = Store.applyServerSave(server, sent, { refused: ['invoices/bad'] });
   assert.strictEqual(applied.requeue, true);
-  assert.ok(applied.dropped.some(label => /bad|Fee/.test(label)));
+  assert.strictEqual(applied.dropped.length, 0);
+  assert.ok(applied.refused.some(label => /bad|Fee/.test(label)));
   for (let n = 0; n < 8; n++) assert.strictEqual(Store.state.clients.find(row => row.id === 'c' + n).notes, 'Note for Client ' + n);
   assert.strictEqual(Store.state.invoices.find(row => row.id === 'bad').description, 'Fee');
+});
+
+test('deleting an enrolled client names that client and does not retry the delete', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'enrolled', name: 'Enrolled Client', kind: 'personal', email: 'enrolled@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'enrolled');
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-del@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.clients = sent.clients.filter(row => row.id !== 'enrolled');
+    sent.activity = sent.activity || [];
+    sent.activity.unshift({ id: 'act-del', at: '2026-11-18T12:00:00.000Z', text: 'Deleted client Enrolled Client', clientId: 'enrolled' });
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 403);
+    assert.ok(Array.isArray(denied.body.refused));
+    assert.ok(denied.body.refused.some(row => row.key === 'clients' && row.id === 'enrolled' && row.reason && row.field === ''));
+    const Store = loadStore();
+    Store.adopt(before.body.data);
+    Store.state.clients = Store.state.clients.filter(row => row.id !== 'enrolled');
+    Store.state.activity = Store.state.activity || [];
+    Store.state.activity.unshift({ id: 'act-del', at: '2026-11-18T12:00:00.000Z', text: 'Deleted client Enrolled Client', clientId: 'enrolled' });
+    const applied = Store.applyServerSave(before.body.data, sent, { rejected: true, refused: denied.body.refused });
+    assert.ok(Store.state.clients.some(row => row.id === 'enrolled'));
+    assert.ok(applied.refused.some(label => /enrollment|enrolled|owner/i.test(label)));
+    assert.strictEqual(applied.dropped.length, 0);
+    assert.ok(Store.state.activity.some(row => row.id === 'act-del'));
+    const fallback = loadStore();
+    fallback.adopt(before.body.data);
+    fallback.state.clients = fallback.state.clients.filter(row => row.id !== 'enrolled');
+    fallback.state.activity = fallback.state.activity || [];
+    fallback.state.activity.unshift({ id: 'act-del', at: '2026-11-18T12:00:00.000Z', text: 'Deleted client Enrolled Client', clientId: 'enrolled' });
+    const droppedAll = fallback.applyServerSave(before.body.data, sent, { rejected: true });
+    assert.ok(fallback.state.clients.some(row => row.id === 'enrolled'));
+    assert.ok(!fallback.state.activity.some(row => row.id === 'act-del'));
+    assert.strictEqual(droppedAll.requeue, false);
+  });
+});
+
+test('a saved field the server puts back is cleared and named', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', notes: '', onboarding: { disclosureSignedAt: null } }] });
+  const server = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients.find(row => row.id === 'c').onboarding.disclosureSignedAt = '2026-11-01';
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  const applied = Store.applyServerSave(server, sent, { accepted: true });
+  assert.strictEqual(applied.requeue, false);
+  assert.strictEqual(Store.unsaved, false);
+  assert.ok(applied.reverted.some(label => /Ada/.test(label)));
+  assert.strictEqual(Store.state.clients.find(row => row.id === 'c').onboarding.disclosureSignedAt, null);
+});
+
+test('logout waits for the save and leaving warns while changes are unsaved', () => {
+  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const storeJs = fs.readFileSync(path.join(import.meta.dirname, '../js/store.js'), 'utf8');
+  const logout = appJs.slice(appJs.indexOf("'logout'"), appJs.indexOf("'invite-staff'"));
+  assert.match(logout, /await Remote\.flushNow\(\)/);
+  assert.match(logout, /Store\.unsaved/);
+  assert.match(appJs, /beforeunload/);
+  assert.match(appJs, /badSaves >= 2/);
+  assert.match(appJs, /Not allowed: /);
+  assert.match(appJs, /Not saved: /);
+  assert.match(appJs, /Someone else updated /);
+  assert.doesNotMatch(storeJs, /refusedTokens/);
+  assert.doesNotMatch(appJs, /indexOf\(id\)/);
+});
+
+test('a client type change is named once and the dispute edit still saves', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada-type@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'ada');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = g.body.data.disputes || [];
+    g.body.data.disputes.push({ id: 'd1', clientId: 'ada', recipient: 'Equifax', status: 'draft', items: [] });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-type@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.clients.find(row => row.id === 'ada').kind = 'business';
+    sent.disputes.find(row => row.id === 'd1').recipient = 'Experian';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 403);
+    const hit = denied.body.refused.find(row => row.id === 'ada');
+    assert.strictEqual(hit.key, 'clients');
+    assert.strictEqual(hit.field, 'kind');
+    assert.match(hit.reason, /client type/);
+    const Store = loadStore();
+    Store.adopt(before.body.data);
+    Store.state.clients.find(row => row.id === 'ada').kind = 'business';
+    Store.state.disputes.find(row => row.id === 'd1').recipient = 'Experian';
+    const applied = Store.applyServerSave(before.body.data, sent, { rejected: true, refused: denied.body.refused });
+    assert.strictEqual(Store.state.clients.find(row => row.id === 'ada').kind, 'personal');
+    assert.strictEqual(Store.state.disputes.find(row => row.id === 'd1').recipient, 'Experian');
+    assert.strictEqual(applied.dropped.length, 0);
+    assert.strictEqual(applied.refused.length, 1);
+    assert.match(applied.refused[0], /Not allowed|client type/);
+    assert.strictEqual(applied.requeue, true);
+    const replay = JSON.parse(JSON.stringify(before.body.data));
+    replay.disputes.find(row => row.id === 'd1').recipient = 'Experian';
+    const saved = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: replay });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    const settled = Store.applyServerSave(saved.body.data, JSON.parse(JSON.stringify(Store.state)), { accepted: true });
+    assert.strictEqual(settled.requeue, false);
+    assert.strictEqual(Store.unsaved, false);
+    assert.strictEqual(Store.state.clients.filter(row => row.id === 'ada').length, 1);
+    assert.strictEqual(saved.body.data.clients.find(row => row.id === 'ada').kind, 'personal');
+    assert.strictEqual(saved.body.data.disputes.find(row => row.id === 'd1').recipient, 'Experian');
+  });
+});
+
+test('an enrolled-client delete drops only that client and a duplicate business client is named once', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada Person', kind: 'personal', email: 'ada-dup@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'ada');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = g.body.data.disputes || [];
+    g.body.data.disputes.push({ id: 'd-keep', clientId: 'ada', recipient: 'Equifax', status: 'draft', items: [] });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-dup@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.clients = sent.clients.filter(row => row.id !== 'ada');
+    sent.disputes.find(row => row.id === 'd-keep').recipient = 'Experian';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 403);
+    assert.ok(denied.body.refused.some(row => row.key === 'clients' && row.id === 'ada' && /enrollment/.test(row.reason)));
+    const Store = loadStore();
+    Store.adopt(before.body.data);
+    Store.state.clients = Store.state.clients.filter(row => row.id !== 'ada');
+    Store.state.disputes.find(row => row.id === 'd-keep').recipient = 'Experian';
+    const applied = Store.applyServerSave(before.body.data, sent, { rejected: true, refused: denied.body.refused });
+    assert.ok(Store.state.clients.some(row => row.id === 'ada'));
+    assert.strictEqual(Store.state.disputes.find(row => row.id === 'd-keep').recipient, 'Experian');
+    assert.strictEqual(applied.refused.length, 1);
+    assert.strictEqual(applied.dropped.length, 0);
+    const replay = JSON.parse(JSON.stringify(before.body.data));
+    replay.disputes.find(row => row.id === 'd-keep').recipient = 'Experian';
+    assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: replay })).status, 200);
+    const dup = JSON.parse(JSON.stringify(replay));
+    dup.clients.push({ id: 'biz-ada', name: 'Ada Person', kind: 'business', email: 'biz-ada@guard.test', status: 'active' });
+    dup.disputes.find(row => row.id === 'd-keep').notes = 'kept';
+    const blocked = await staff('PUT', '/api/workspace', { baseVersion: (await staff('GET', '/api/workspace')).body.version, data: dup });
+    assert.strictEqual(blocked.status, 409);
+    const named = blocked.body.refused.find(row => row.id === 'biz-ada');
+    assert.strictEqual(named.key, 'clients');
+    assert.strictEqual(named.field, 'name');
+    assert.match(named.reason, /already exists/);
+    const latest = await staff('GET', '/api/workspace');
+    const again = loadStore();
+    again.adopt(latest.body.data);
+    again.state.clients.push({ id: 'biz-ada', name: 'Ada Person', kind: 'business', email: 'biz-ada@guard.test', status: 'active' });
+    again.state.disputes.find(row => row.id === 'd-keep').notes = 'kept';
+    const second = again.applyServerSave(latest.body.data, dup, { rejected: true, refused: blocked.body.refused });
+    assert.ok(!again.state.clients.some(row => row.id === 'biz-ada'));
+    assert.strictEqual(again.state.disputes.find(row => row.id === 'd-keep').notes, 'kept');
+    assert.strictEqual(second.refused.length, 1);
+    assert.strictEqual(second.dropped.length, 0);
+    const without = JSON.parse(JSON.stringify(latest.body.data));
+    without.disputes.find(row => row.id === 'd-keep').notes = 'kept';
+    const settled = await staff('PUT', '/api/workspace', { baseVersion: latest.body.version, data: without });
+    assert.strictEqual(settled.status, 200, JSON.stringify(settled.body));
+    assert.ok(!settled.body.data.clients.some(row => row.id === 'biz-ada'));
+    assert.strictEqual(settled.body.data.disputes.find(row => row.id === 'd-keep').notes, 'kept');
+  });
+});
+
+test('the first address book entry stays a list and a wrong shape is refused', async () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada' }] });
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.addressBook = [{ name: 'North Bank', address: '1 Main', category: 'bureau' }];
+  const server = JSON.parse(JSON.stringify(sent));
+  delete server.addressBook;
+  const applied = Store.applyServerSave(server, sent);
+  assert.ok(Array.isArray(Store.state.addressBook));
+  assert.strictEqual(Store.state.addressBook.length, 1);
+  assert.strictEqual(Store.state.addressBook[0].name, 'North Bank');
+  assert.strictEqual(applied.requeue, true);
+  await withOwner(async ({ owner }) => {
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.addressBook = { bad: { name: 'North Bank' } };
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(denied.status, 400);
+    const hit = denied.body.refused.find(row => row.key === 'addressBook');
+    assert.ok(hit);
+    assert.match(hit.reason, /list/);
+    g.body.data.addressBook = [{ name: 'North Bank', address: '1 Main' }];
+    const ok = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    assert.ok(Array.isArray(ok.body.data.addressBook));
+  });
+});
+
+test('a lock refusal drops only that invoice and the other invoice edits still save', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'pay', name: 'Pay Client', kind: 'personal', email: 'pay-lock@guard.test', status: 'active', pricePerResult: 50, onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'pay');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.disputes = [
+      { id: 'pd1', clientId: 'pay', items: [{ id: 'pi1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] },
+      { id: 'pd2', clientId: 'pay', items: [{ id: 'pi2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2020-06-01' }] }
+    ];
+    g.body.data.invoices = [
+      { id: 'locked', clientId: 'pay', disputeId: 'pd1', itemId: 'pi1', description: 'Fee', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' },
+      { id: 'draft', clientId: 'pay', description: 'Draft', amount: 50, status: 'draft', notes: '' },
+      { id: 'payme', clientId: 'pay', disputeId: 'pd2', itemId: 'pi2', description: 'Second', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }
+    ];
+    const seeded = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(seeded.status, 200, JSON.stringify(seeded.body));
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-lock@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.invoices.find(row => row.id === 'locked').description = 'Changed fee';
+    sent.invoices.find(row => row.id === 'draft').notes = 'draft note';
+    sent.invoices.find(row => row.id === 'payme').status = 'paid';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409);
+    assert.strictEqual(denied.body.refused.length, 1);
+    assert.strictEqual(denied.body.refused[0].key, 'invoices');
+    assert.strictEqual(denied.body.refused[0].id, 'locked');
+    assert.strictEqual(denied.body.refused[0].field, 'description');
+    const Store = loadStore();
+    Store.adopt(before.body.data);
+    Store.state.invoices.find(row => row.id === 'locked').description = 'Changed fee';
+    Store.state.invoices.find(row => row.id === 'draft').notes = 'draft note';
+    Store.state.invoices.find(row => row.id === 'payme').status = 'paid';
+    const applied = Store.applyServerSave(before.body.data, sent, { rejected: true, refused: denied.body.refused });
+    assert.strictEqual(Store.state.invoices.find(row => row.id === 'locked').description, 'Fee');
+    assert.strictEqual(Store.state.invoices.find(row => row.id === 'draft').notes, 'draft note');
+    assert.strictEqual(Store.state.invoices.find(row => row.id === 'payme').status, 'paid');
+    assert.strictEqual(applied.dropped.length, 0);
+    assert.match(applied.refused[0], /locked once it is issued/);
+    const replay = JSON.parse(JSON.stringify(before.body.data));
+    replay.invoices.find(row => row.id === 'draft').notes = 'draft note';
+    replay.invoices.find(row => row.id === 'payme').status = 'paid';
+    const saved = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: replay });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.strictEqual(saved.body.data.invoices.find(row => row.id === 'locked').description, 'Fee');
+    assert.strictEqual(saved.body.data.invoices.find(row => row.id === 'draft').notes, 'draft note');
+    assert.strictEqual(saved.body.data.invoices.find(row => row.id === 'payme').status, 'paid');
+  });
+});
+
+test('server-filled onboarding on a new client is not someone else updated', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [] });
+  Store.state.clients.push({ id: 'new', name: 'Ada', email: 'ada@new.test', notes: 'typed during create' });
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  const server = JSON.parse(JSON.stringify(sent));
+  server.clients[0].onboarding = { disclosureSignedAt: null, contractSignedAt: null, cancellationWindowEndsAt: null };
+  const applied = Store.applyServerSave(server, sent, { accepted: true });
+  assert.strictEqual(applied.requeue, false);
+  assert.strictEqual(applied.conflict, false);
+  assert.strictEqual(applied.dropped.length, 0);
+  assert.strictEqual(applied.reverted.length, 0);
+  assert.strictEqual(Store.unsaved, false);
+  assert.strictEqual(Store.state.clients.length, 1);
+  assert.strictEqual(Store.state.clients[0].notes, 'typed during create');
+  assert.strictEqual(Store.state.clients[0].onboarding.disclosureSignedAt, null);
+  Store.state.clients[0].notes = 'typed after';
+  const later = JSON.parse(JSON.stringify(Store.state));
+  const filled = JSON.parse(JSON.stringify(server));
+  const kept = Store.applyServerSave(filled, sent, { accepted: true });
+  assert.strictEqual(Store.state.clients.length, 1);
+  assert.strictEqual(Store.state.clients[0].notes, 'typed after');
+  assert.strictEqual(kept.dropped.length, 0);
+  assert.strictEqual(kept.requeue, true);
+  void later;
+});
+
+test('a reload keeps dirty records and polling resumes', () => {
+  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const reload = appJs.slice(appJs.indexOf('async reload()'), appJs.indexOf('push()'));
+  const poll = appJs.slice(appJs.indexOf('async poll()'), appJs.indexOf('async function offerSavedPassword'));
+  assert.match(reload, /flushNow/);
+  assert.match(reload, /applyServerSave/);
+  assert.match(reload, /ensurePoll/);
+  assert.match(poll, /applyServerSave/);
+  assert.match(appJs, /sessionStorage/);
+  assert.match(appJs, /ledger-dirty/);
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', notes: '', city: '' }] });
+  Store.state.clients[0].notes = 'still typing';
+  const local = JSON.parse(JSON.stringify(Store.state));
+  const server = JSON.parse(JSON.stringify(Store.state));
+  server.clients[0].notes = '';
+  server.clients[0].city = 'Cherry Hill';
+  Store.applyServerSave(server, local);
+  assert.strictEqual(Store.state.clients[0].notes, 'still typing');
+  assert.strictEqual(Store.state.clients[0].city, 'Cherry Hill');
+  assert.strictEqual(Store.unsaved, true);
+});
+
+test('different fields of the same record merge and the same field conflicts', () => {
+  const Store = loadStore();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', city: '', notes: '' }] });
+  const sent = JSON.parse(JSON.stringify(Store.state));
+  Store.state.clients[0].notes = 'staff note';
+  const server = JSON.parse(JSON.stringify(sent));
+  server.clients[0].city = 'Cherry Hill';
+  const applied = Store.applyServerSave(server, sent);
+  assert.strictEqual(applied.conflict, false);
+  assert.strictEqual(applied.dropped.length, 0);
+  assert.strictEqual(Store.state.clients[0].city, 'Cherry Hill');
+  assert.strictEqual(Store.state.clients[0].notes, 'staff note');
+  assert.strictEqual(applied.requeue, true);
+  const clash = loadStore();
+  clash.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', city: '', notes: '' }] });
+  const clashSent = JSON.parse(JSON.stringify(clash.state));
+  clash.state.clients[0].city = 'Staff City';
+  const other = JSON.parse(JSON.stringify(clashSent));
+  other.clients[0].city = 'Cherry Hill';
+  const hit = clash.applyServerSave(other, clashSent);
+  assert.strictEqual(hit.conflict, true);
+  assert.ok(hit.dropped.some(label => /city/.test(label)));
+  assert.strictEqual(clash.state.clients[0].city, 'Cherry Hill');
 });
 
 

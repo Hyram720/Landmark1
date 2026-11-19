@@ -257,20 +257,21 @@
     });
     return found;
   }
-  function refusedTokens(message) {
-    const msg = String(message || '');
-    const tokens = Array.from(dirtyNow(state).keys());
-    const named = tokens.filter(token => { const id = token.slice(token.indexOf('/') + 1); return id && msg.indexOf(id) >= 0; });
-    if (named.length) return named;
-    if (/invoice|void|paid date|pay token|locked/i.test(msg)) return tokens.filter(token => token.indexOf('invoices/') === 0);
-    if (/task/i.test(msg) && /owner/i.test(msg)) return tokens.filter(token => token.indexOf('tasks/') === 0);
-    if (tokens.length === 1) return tokens;
-    return [];
+  const LIST_KEYS = new Set(['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'addressBook', 'automations']);
+  const MAP_KEYS = new Set(['automationLog', 'violations', 'settings']);
+  function listPreferred(key, serverSnap, sentSnap, localSnap) {
+    if (MAP_KEYS.has(key)) return false;
+    const snaps = [serverSnap, sentSnap, localSnap];
+    for (let i = 0; i < snaps.length; i++) {
+      const snap = snaps[i];
+      if (!snap || snap[key] == null) continue;
+      if (Array.isArray(snap[key])) return true;
+    }
+    return LIST_KEYS.has(key);
   }
-  function writeRow(key, id, row) {
+  function writeRow(key, id, row, asList) {
     if (key === 'settings') { state.settings = row || {}; return; }
-    const value = state[key];
-    if (Array.isArray(value) || (!isPlainObject(value) && row && row.id)) {
+    if (asList) {
       const list = Array.isArray(state[key]) ? state[key] : (state[key] = []);
       const idx = list.findIndex((item, i) => recordId(item, i) === id);
       if (row == null) { if (idx >= 0) list.splice(idx, 1); return; }
@@ -282,17 +283,61 @@
     if (row == null) delete bag[id];
     else bag[id] = row;
   }
+  function blankValue(value) {
+    if (value == null || value === '') return true;
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') {
+      const keys = Object.keys(value);
+      return keys.length === 0 || keys.every(key => blankValue(value[key]));
+    }
+    return false;
+  }
+  function changedFields(left, right) {
+    const a = left || {};
+    const b = right || {};
+    const names = new Set(Object.keys(a).concat(Object.keys(b)));
+    const out = [];
+    names.forEach(field => { if (!sameJson(a[field], b[field])) out.push(field); });
+    return out;
+  }
+  function parseRefused(list) {
+    const byToken = new Map();
+    (list || []).forEach(item => {
+      let token = '';
+      let field = '';
+      let reason = '';
+      if (typeof item === 'string') token = item;
+      else if (item && item.key) {
+        token = tokenOf(item.key, item.id || '');
+        field = item.field || '';
+        reason = item.reason || '';
+      }
+      if (!token) return;
+      const cur = byToken.get(token) || { fields: new Set(), reasons: [] };
+      if (field) cur.fields.add(field);
+      if (reason) cur.reasons.push(reason);
+      byToken.set(token, cur);
+    });
+    return byToken;
+  }
+  function stageLocal(ws) {
+    state = migrate(JSON.parse(JSON.stringify(ws || empty())));
+  }
   // Adopt the server copy, then put back every record still dirty since the base we edited from.
-  // A record is cleared only when the server accepts its user-editable fields, or when that record was refused.
+  // A refused record is named from the server's structured refusal and is not replayed.
   function applyServerSave(server, sent, options) {
-    if (!server) return { requeue: false, conflict: false, dropped: [] };
+    if (!server) return { requeue: false, conflict: false, dropped: [], refused: [], reverted: [] };
+    const opts = options || {};
     const localSnap = JSON.parse(JSON.stringify(state));
-    const refused = new Set((options && options.refused) || []);
+    const explicit = Array.isArray(opts.refused);
+    const refusedByToken = explicit ? parseRefused(opts.refused) : new Map();
     const pending = dirtyNow(localSnap);
     const serverIdx = indexWorkspace(server);
     const sentIdx = indexWorkspace(sent || {});
     adopt(server, { keepDirty: true });
     const dropped = [];
+    const refused = [];
+    const reverted = [];
     pending.forEach((localRow, token) => {
       const split = token.indexOf('/');
       const key = token.slice(0, split);
@@ -300,21 +345,95 @@
       const remoteRow = readIndexed(serverIdx, key, id);
       const kept = baseRow(key, id);
       const sentRow = readIndexed(sentIdx, key, id);
-      const serverMoved = !sameJson(userShape(key, remoteRow), userShape(key, kept)) && !sameJson(userShape(key, remoteRow), userShape(key, sentRow));
-      if (refused.has(token) || refused.has(id) || serverMoved) {
-        dropped.push(recordLabel(key, localRow || kept, id));
+      const asList = listPreferred(key, server, sent, localSnap);
+      const touchedAfterSend = !sameJson(userShape(key, localRow), userShape(key, sentRow));
+      const sentThis = !sameJson(userShape(key, sentRow), userShape(key, kept));
+      const refusal = refusedByToken.get(token);
+      const fallbackRefusal = !explicit && opts.rejected && sentThis;
+      const label = recordLabel(key, localRow || sentRow || kept, id);
+      if ((refusal && (refusal.fields.size === 0 || !remoteRow)) || fallbackRefusal) {
+        refused.push(refusal && refusal.reasons.length ? refusal.reasons.join(' ') : label);
+        keepPostSend(key, id, localRow, sentRow, remoteRow, asList, touchedAfterSend);
         setBase(key, id, remoteRow);
         return;
       }
-      const next = overlayOwned(key, localRow, remoteRow);
-      if (sameJson(userShape(key, next), userShape(key, remoteRow))) { setBase(key, id, remoteRow); return; }
-      writeRow(key, id, next);
+      if (refusal && refusal.fields.size) {
+        const out = localRow && typeof localRow === 'object' ? JSON.parse(JSON.stringify(localRow)) : {};
+        const remoteUser = userShape(key, remoteRow) || {};
+        refusal.fields.forEach(field => {
+          if (!Object.prototype.hasOwnProperty.call(remoteUser, field)) delete out[field];
+          else out[field] = remoteUser[field];
+        });
+        const next = overlayOwned(key, out, remoteRow);
+        refused.push(refusal.reasons.length ? refusal.reasons.join(' ') : label + ' ' + Array.from(refusal.fields).join(', '));
+        if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+        setBase(key, id, remoteRow);
+        return;
+      }
+      if (opts.accepted && !touchedAfterSend) {
+        const lost = changedFields(userShape(key, sentRow), userShape(key, remoteRow)).filter(field => !blankValue((userShape(key, sentRow) || {})[field]));
+        setBase(key, id, remoteRow);
+        if (lost.length) reverted.push(label + ' (' + lost.join(', ') + ')');
+        return;
+      }
+      if (opts.accepted && touchedAfterSend) {
+        const sentUser = userShape(key, sentRow) || {};
+        const localUser = userShape(key, localRow) || {};
+        const remoteUser = userShape(key, remoteRow) || {};
+        const out = remoteRow && typeof remoteRow === 'object' ? JSON.parse(JSON.stringify(remoteRow)) : {};
+        const lost = [];
+        new Set(Object.keys(sentUser).concat(Object.keys(localUser), Object.keys(remoteUser))).forEach(field => {
+          if (!sameJson(localUser[field], sentUser[field])) {
+            if (localUser[field] === undefined) delete out[field];
+            else out[field] = localUser[field];
+          } else if (!sameJson(sentUser[field], remoteUser[field]) && !blankValue(sentUser[field])) lost.push(field);
+        });
+        const next = overlayOwned(key, out, remoteRow);
+        if (lost.length) reverted.push(label + ' (' + lost.join(', ') + ')');
+        if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+        setBase(key, id, remoteRow);
+        return;
+      }
+      const merged = mergeFields(key, kept, sentRow, localRow, remoteRow);
+      if (merged.conflicts.length) dropped.push(label + ' ' + merged.conflicts.join(', '));
+      const next = overlayOwned(key, merged.row, remoteRow);
+      if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+      setBase(key, id, remoteRow);
     });
-    serverIdx && Object.keys(serverIdx).forEach(key => {
+    Object.keys(serverIdx).forEach(key => {
       serverIdx[key].forEach((row, id) => { if (!pending.has(tokenOf(key, id))) setBase(key, id, row); });
     });
     const still = dirtyNow(state);
-    return { requeue: still.size > 0, conflict: dropped.length > 0, dropped: dropped };
+    return { requeue: still.size > 0, conflict: dropped.length > 0, dropped, refused, reverted };
+  }
+  function keepPostSend(key, id, localRow, sentRow, remoteRow, asList, touchedAfterSend) {
+    if (!touchedAfterSend) return;
+    const localUser = userShape(key, localRow) || {};
+    const sentUser = userShape(key, sentRow) || {};
+    const out = remoteRow && typeof remoteRow === 'object' ? JSON.parse(JSON.stringify(remoteRow)) : {};
+    Object.keys(localUser).forEach(field => {
+      if (!sameJson(localUser[field], sentUser[field])) out[field] = localUser[field];
+    });
+    const next = overlayOwned(key, out, remoteRow);
+    if (!sameJson(userShape(key, next), userShape(key, remoteRow))) writeRow(key, id, next, asList);
+  }
+  function mergeFields(key, base, sent, local, remote) {
+    const b = userShape(key, base) || {};
+    const s = userShape(key, sent) || {};
+    const l = userShape(key, local) || {};
+    const r = userShape(key, remote) || {};
+    const out = remote && typeof remote === 'object' ? JSON.parse(JSON.stringify(remote)) : {};
+    const conflicts = [];
+    new Set(Object.keys(b).concat(Object.keys(s), Object.keys(l), Object.keys(r))).forEach(field => {
+      const localChanged = !sameJson(l[field], b[field]);
+      const serverChanged = !sameJson(r[field], b[field]) && !sameJson(r[field], s[field]);
+      if (localChanged && serverChanged && !sameJson(l[field], r[field])) { conflicts.push(field); return; }
+      if (localChanged) {
+        if (l[field] === undefined) delete out[field];
+        else out[field] = l[field];
+      }
+    });
+    return { row: out, conflicts };
   }
   function recordLabel(key, row, id) {
     const name = row && (row.name || row.title || row.recipient || row.description || row.vendor) || id;
@@ -383,7 +502,7 @@
     return d.status;
   }
 
-  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, applyServerSave, refusedTokens, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; }, get unsaved() { return dirtyNow(state).size > 0; } };
+  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, stageLocal, applyServerSave, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; }, get unsaved() { return dirtyNow(state).size > 0; } };
   root.root = root;
   root.Store = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
