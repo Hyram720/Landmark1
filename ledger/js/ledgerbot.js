@@ -162,7 +162,7 @@
         r.inquiries = lines(d.inquiries).map((l, i) => { const [creditor, date, kind, flag] = l.split('|').map(x => (x || '').trim()); return { id: 'inq-' + i + '-' + (creditor || '').toLowerCase().replace(/\W+/g, '').slice(0, 12), creditor, date, kind: /soft/i.test(kind || '') ? 'soft' : 'hard', clientSays: /unrec/i.test(flag || '') ? 'unrecognized' : 'authorized' }; });
         c.aka = lines(d.aka); c.previousAddresses = lines(d.previousAddresses); c.employers = lines(d.clientEmployers);
         (r.accounts || []).forEach(t => { const v = d['says:' + t.id]; if (v) t.clientSays = v; else delete t.clientSays; t.clientExplanation = String(d['why:' + t.id] || '').trim(); if (!t.clientExplanation) delete t.clientExplanation; });
-        App().commit(`Updated personal info & inquiries for ${c.name} (${r.bureau})`, cid);
+        App().commit(`Updated personal info & inquiries for ${c.name} (${r.bureau})`, cid, 'reports/' + r.id);
         App().go(`#/clients/${cid}/audit`);
       } });
   }
@@ -193,7 +193,7 @@
         const tl = lines(d.tradelines).map((l, i) => { const [creditor, last4, status, balance, limit, opened, lastReported, closedOn] = l.split('|').map(x => (x || '').trim()); return { id: `${id}-t${i}`, creditor, accountNumber: last4, status: (status || 'open').toLowerCase(), balance, limit, opened, lastReported, closedOn }; });
         const pr = lines(d.records).map((l, i) => { const [type, filedOn, status, securedParty, amount, clientSatisfiedOn, docRef] = l.split('|').map(x => (x || '').trim()); return { id: `${id}-p${i}`, type: (type || '').toLowerCase(), filedOn, status: (status || 'open').toLowerCase(), securedParty, amount, clientSatisfiedOn, docRef }; });
         c.businessReports.push({ id, bureau: d.bureau, date: d.date, profile: { name: d.name, address: d.address, phone: d.phone, formedOn: d.formedOn, yearsInBusiness: d.yearsInBusiness, naics: d.naics, sic: d.sic }, tradelines: tl, publicRecords: pr });
-        App().commit(`Added ${d.bureau} business report for ${c.name}`, cid);
+        App().commit(`Added ${d.bureau} business report for ${c.name}`, cid, 'clients/' + c.id);
         const n = DisputeReasons.suggestionsFor(S(), cid).filter(x => x.business).length;
         toast(n ? `${n} business item(s) ready for a correction letter — use ✦ Dispute letters` : 'Saved. No business inaccuracies found.');
         App().go(`#/clients/${cid}/business`);

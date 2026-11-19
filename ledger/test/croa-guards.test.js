@@ -5019,3 +5019,66 @@ test('a repeated refusal stops saving only when nothing else is still unsaved', 
   assert.strictEqual(Store.unsaved, false);
   clearInterval(Remote.pollTimer);
 });
+
+test('mark paid, a recorded response, and a single mailing log through commit and drop when refused', () => {
+  const toasts = [];
+  let modalOpts = null;
+  const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Map, Error, URLSearchParams, crypto, setTimeout, clearTimeout, setInterval, clearInterval, navigator: {}, location: { hash: '#/', protocol: 'file:' }, fetch: () => Promise.reject(new Error('offline')) };
+  ctx.globalThis = ctx;
+  ctx.self = ctx;
+  ctx.top = ctx;
+  ctx.window = ctx;
+  ctx.addEventListener = () => {};
+  ctx.document = { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], addEventListener: () => {}, documentElement: { dataset: {} }, activeElement: null };
+  ctx.UI = {
+    esc: value => String(value == null ? '' : value),
+    icon: () => '',
+    field: () => '',
+    modal: opts => { modalOpts = opts; },
+    toast: msg => toasts.push(msg),
+    close() {},
+    money: amount => '$' + Number(amount || 0).toFixed(2),
+    DSTATE: { deleted: ['Deleted'] },
+    ask: () => true
+  };
+  ctx.Views = { openDisputes: () => [], alerts: () => [], dashboard: () => '' };
+  ctx.Metro2 = { ACCOUNT_STATUS: {} };
+  ctx.Letters = { validate: () => [] };
+  ctx.Sample = { build: () => ({ clients: [] }) };
+  vm.createContext(ctx);
+  const root = path.join(import.meta.dirname, '../js');
+  for (const file of ['law.js', 'store.js', 'app.js']) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), ctx, { filename: file });
+  const Store = ctx.Store;
+  const A = ctx.App.A;
+  const cleared = { disclosureSignedAt: '2020-01-06', contractSignedAt: '2020-01-06', cancellationWindowEndsAt: '2020-01-09' };
+  function refuse(base, token) {
+    const sent = JSON.parse(JSON.stringify(Store.state));
+    const [key, id] = token.split('/');
+    const applied = Store.applyServerSave(base, sent, { rejected: true, refused: [{ key, id, field: 'status', reason: 'Not allowed' }] });
+    return applied;
+  }
+  Store.load();
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', kind: 'personal', onboarding: cleared }], invoices: [{ id: 'inv1', clientId: 'c', amount: 50, status: 'issued', description: 'Deletion' }], settings: {} });
+  const paidBase = JSON.parse(JSON.stringify(Store.state));
+  A['invoice-paid']({ dataset: { id: 'inv1' } });
+  assert.ok(Store.state.activity.some(row => /Payment received/.test(row.text) && row.record.includes('invoices/inv1')));
+  refuse(paidBase, 'invoices/inv1');
+  assert.ok(!Store.state.activity.some(row => /Payment received/.test(row.text)));
+
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', kind: 'personal', onboarding: cleared }], disputes: [{ id: 'd1', clientId: 'c', recipient: 'TransUnion', type: 'cra_611', status: 'sent', sentAt: '2026-11-01', items: [] }], settings: {} });
+  const responseBase = JSON.parse(JSON.stringify(Store.state));
+  A['record-response']({ dataset: { id: 'd1' } });
+  modalOpts.onSubmit({ outcome: 'deleted', respondedAt: '2026-11-18', notes: '' });
+  assert.ok(Store.state.activity.some(row => /response recorded/.test(row.text) && row.record.includes('disputes/d1')));
+  refuse(responseBase, 'disputes/d1');
+  assert.ok(!Store.state.activity.some(row => /response recorded/.test(row.text)));
+
+  Store.adopt({ version: 2, clients: [{ id: 'c', name: 'Ada', kind: 'personal', onboarding: cleared }], disputes: [{ id: 'd1', clientId: 'c', recipient: 'Equifax', type: 'cra_611', status: 'ready', round: 1, letterId: 'l1', items: [] }], letters: [{ id: 'l1', clientId: 'c', disputeId: 'd1', status: 'approved', text: 'Letter' }], settings: {} });
+  const mailBase = JSON.parse(JSON.stringify(Store.state));
+  A['mark-sent']({ dataset: { id: 'd1' } });
+  modalOpts.onSubmit({ sentAt: '2026-11-18', tracking: '9400', receivedAt: '2026-11-20' });
+  assert.ok(Store.state.activity.some(row => /mailed to Equifax/.test(row.text) && row.record.includes('disputes/d1') && row.record.includes('letters/l1')));
+  refuse(mailBase, 'disputes/d1');
+  assert.ok(!Store.state.activity.some(row => /mailed to Equifax/.test(row.text)));
+  clearInterval(ctx.App.Remote.pollTimer);
+});
