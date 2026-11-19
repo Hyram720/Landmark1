@@ -12,12 +12,16 @@
     const wins = [];
     reports.forEach(r => {
       const out = Results.applyNewReport(S(), r, T());
-      out.wins.forEach(w => wins.push(w));
+      out.wins.forEach(w => {
+        wins.push(w);
+        const tokens = ['reports/' + r.id];
+        if (w.disputeId) tokens.push('disputes/' + w.disputeId);
+        Store.log(`${w.kind === 'deleted' ? 'REMOVED' : 'Corrected'}: ${w.creditor} on ${w.bureau}`, r.clientId, tokens);
+      });
     });
     if (wins.length) {
       const cid = reports[0].clientId;
       const c = Store.get.client(cid);
-      wins.forEach(w => Store.log(`${w.kind === 'deleted' ? 'REMOVED' : 'Corrected'}: ${w.creditor} on ${w.bureau}`, cid));
       S().tasks.push({ id: Store.uid(), clientId: cid, title: `Tell ${c.name} about ${wins.length} result(s) and plan the next round`, due: T(), done: false, createdAt: Store.now() });
     }
     return wins;

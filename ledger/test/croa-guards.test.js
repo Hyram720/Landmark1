@@ -4505,8 +4505,8 @@ test('a lock refusal drops only that invoice and the other invoice edits still s
     seedSignedClient(built.db.data.workspace, 'pay');
     const g = await owner('GET', '/api/workspace');
     g.body.data.disputes = [
-      { id: 'pd1', clientId: 'pay', items: [{ id: 'pi1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] },
-      { id: 'pd2', clientId: 'pay', items: [{ id: 'pi2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2020-06-01' }] }
+      { id: 'pd1', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] },
+      { id: 'pd2', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2020-06-01' }] }
     ];
     g.body.data.invoices = [
       { id: 'locked', clientId: 'pay', disputeId: 'pd1', itemId: 'pi1', description: 'Fee', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' },
@@ -4735,7 +4735,7 @@ test('a refused invoice field the user did not change reverts the whole invoice 
     locked.status = 'issued';
     locked.description = 'Fee';
     locked.notes = '';
-    issued.body.data.disputes = [{ id: 'pd', clientId: 'pay', items: [{ id: 'pi', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
+    issued.body.data.disputes = [{ id: 'pd', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
     locked.disputeId = 'pd';
     locked.itemId = 'pi';
     locked.amount = 50;
@@ -4835,7 +4835,7 @@ test('a refused invoice is restored whole, and a wrong server shape does not sta
     await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-inv@guard.test', status: 'active', pricePerResult: 50 });
     seedSignedClient(built.db.data.workspace, 'clear');
     const g = await owner('GET', '/api/workspace');
-    g.body.data.disputes = [{ id: 'cd', clientId: 'clear', items: [{ id: 'ci', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
+    g.body.data.disputes = [{ id: 'cd', clientId: 'clear', sentAt: '2020-06-01', items: [{ id: 'ci', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
     g.body.data.invoices = [
       { id: 'held-inv', clientId: 'held', description: 'Draft', amount: 50, status: 'draft' },
       { id: 'locked', clientId: 'clear', disputeId: 'cd', itemId: 'ci', description: 'Fee', notes: '', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }
@@ -5080,5 +5080,102 @@ test('mark paid, a recorded response, and a single mailing log through commit an
   assert.ok(Store.state.activity.some(row => /mailed to Equifax/.test(row.text) && row.record.includes('disputes/d1') && row.record.includes('letters/l1')));
   refuse(mailBase, 'disputes/d1');
   assert.ok(!Store.state.activity.some(row => /mailed to Equifax/.test(row.text)));
+  clearInterval(ctx.App.Remote.pollTimer);
+});
+
+test('every activity line names the record it describes', () => {
+  const misses = [];
+  for (const file of fs.readdirSync(path.join(import.meta.dirname, '../js')).filter(name => name.endsWith('.js'))) {
+    const source = fs.readFileSync(path.join(import.meta.dirname, '../js', file), 'utf8');
+    const re = /(?:Store\.log|App\(\)\.commit|(?<![\w.])commit)\(/g;
+    let match;
+    while ((match = re.exec(source))) {
+      const call = argShape(source, match.index + match[0].length - 1);
+      if (!call.started || call.count >= 3 || call.first === 'null') continue;
+      const line = source.slice(0, match.index).split('\n').length;
+      misses.push(file + ':' + line);
+    }
+  }
+  assert.deepStrictEqual(misses, []);
+});
+
+function argShape(source, openParen) {
+  let i = openParen + 1;
+  let depth = 1;
+  let commas = 0;
+  let started = false;
+  let quote = '';
+  let templateDepth = 0;
+  const first = [];
+  while (i < source.length && depth > 0) {
+    const ch = source[i];
+    if (quote === '`' && ch === '$' && source[i + 1] === '{') { templateDepth++; quote = ''; depth++; i += 2; continue; }
+    if (quote) {
+      if (ch === '\\') { i += 2; continue; }
+      if (ch === quote) quote = '';
+      else if (commas === 0) first.push(ch);
+      i++;
+      continue;
+    }
+    if (ch === '}') {
+      depth--;
+      if (templateDepth && depth === 1) { templateDepth--; quote = '`'; }
+      if (depth === 0) break;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; started = true; i++; continue; }
+    if (ch === '(' || ch === '[' || ch === '{') { depth++; i++; continue; }
+    if (ch === ')' || ch === ']' || ch === '}') { depth--; if (depth === 0) break; i++; continue; }
+    if (ch === ',' && depth === 1) { commas++; i++; continue; }
+    if (depth === 1 && !/\s/.test(ch)) { started = true; if (commas === 0) first.push(ch); }
+    i++;
+  }
+  return { started, count: started ? commas + 1 : 0, first: first.join('').trim() };
+}
+
+test('a refused held-report move drops the tradeline line, and a refused Metro 2 draft drops its line', async () => {
+  const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Map, Error, URLSearchParams, crypto, setTimeout, clearTimeout, setInterval, clearInterval, navigator: {}, location: { hash: '#/', protocol: 'file:' }, fetch: () => Promise.reject(new Error('offline')) };
+  ctx.globalThis = ctx;
+  ctx.self = ctx;
+  ctx.top = ctx;
+  ctx.window = ctx;
+  ctx.addEventListener = () => {};
+  ctx.document = { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], addEventListener: () => {}, createElement: () => ({ style: {}, setAttribute() {}, onclick: null }), body: { appendChild() {} }, documentElement: { dataset: {} }, activeElement: null };
+  let modalOpts = null;
+  ctx.UI = { esc: value => String(value == null ? '' : value), icon: () => '', field: () => '', modal: opts => { modalOpts = opts; }, toast() {}, close() {}, money: n => '$' + Number(n || 0).toFixed(2), DSTATE: { deleted: ['Deleted'] }, ask: () => true, printHtml() {}, printDoc() {}, download() {} };
+  ctx.Views = { openDisputes: () => [], alerts: () => [], dashboard: () => '', clientFindings: () => [] };
+  ctx.Metro2 = { ACCOUNT_STATUS: {}, PORTFOLIO_TYPE: {}, ECOA: {}, COMPLIANCE_CONDITION: {}, CONSUMER_INFO_INDICATOR: {} };
+  ctx.Letters = { validate: () => [], build: () => ({ ok: true, text: 'Letter' }) };
+  ctx.Sample = { build: () => ({ clients: [] }) };
+  ctx.DisputeReasons = { suggestionsFor: () => [{ bureau: 'Equifax', letterType: 'cra_611', creditor: 'Held Bank', accountId: 'acct1', reportId: 'rep1', discrepancy: 'Balance', requested: 'Delete', fields: [], code: 'X', severity: 'high', title: 'Balance', kb: [], needsClientConfirmation: false }], checkRepeat: () => ({ ok: true, blocked: [] }) };
+  ctx.KB = { byId: () => null };
+  vm.createContext(ctx);
+  const root = path.join(import.meta.dirname, '../js');
+  for (const file of ['law.js', 'store.js', 'app.js', 'ledgerbot.js']) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), ctx, { filename: file });
+  const Store = ctx.Store;
+  Store.load();
+  Store.adopt({ version: 2, clients: [{ id: 'held', name: 'Ada', kind: 'personal', onboarding: {} }], reports: [{ id: 'rep1', clientId: 'held', bureau: 'Equifax', date: '2026-11-01', accounts: [{ id: 'acct1', creditor: 'Held Bank' }] }] });
+  const reportBase = JSON.parse(JSON.stringify(Store.state));
+  ctx.App.A['edit-tradeline']({ dataset: { report: 'rep1', id: 'acct1' } });
+  modalOpts.onSubmit({ creditor: 'Held Bank' });
+  assert.ok(Store.state.activity.some(row => row.text === 'Updated tradeline Held Bank (Equifax)' && row.record.includes('reports/rep1')));
+  const sentReport = JSON.parse(JSON.stringify(Store.state));
+  Store.applyServerSave(reportBase, sentReport, { rejected: true, refused: [{ key: 'reports', id: 'rep1', field: 'clientId', reason: 'This report stays with the held client.' }] });
+  assert.ok(!Store.state.activity.some(row => /Updated tradeline Held Bank/.test(row.text)));
+
+  Store.adopt({ version: 2, clients: [{ id: 'held', name: 'Ada', kind: 'personal', onboarding: {} }], reports: [], disputes: [] });
+  ctx.App.generateLetter = () => {};
+  await ctx.LedgerBot.lettersModal('held');
+  await modalOpts.onSubmit({ pick: '0', confirmed: 'yes' });
+  const drafted = Store.state.disputes[0];
+  assert.ok(drafted && Store.state.activity.some(row => /Drafted 1 Metro 2 letter/.test(row.text) && row.record.includes('disputes/' + drafted.id)));
+  const letterBase = JSON.parse(JSON.stringify(Store.state));
+  letterBase.disputes = [];
+  letterBase.letters = [];
+  letterBase.activity = [];
+  const sentLetters = JSON.parse(JSON.stringify(Store.state));
+  Store.applyServerSave(letterBase, sentLetters, { rejected: true, refused: [{ key: 'disputes', id: drafted.id, field: 'clientId', reason: 'This client is on hold.' }] });
+  assert.ok(!Store.state.activity.some(row => /Drafted 1 Metro 2 letter/.test(row.text)));
   clearInterval(ctx.App.Remote.pollTimer);
 });

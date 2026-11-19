@@ -372,7 +372,7 @@
     const tiedRecords = new Set();
     const priorActivity = new Set(bases.activity ? bases.activity.keys() : []);
     const noteTied = (key, id) => {
-      if (!id || (key !== 'clients' && key !== 'disputes' && key !== 'letters' && key !== 'invoices')) return;
+      if (!id || !['clients', 'disputes', 'letters', 'invoices', 'reports', 'tasks', 'sequences', 'referrals', 'partnerReferrals', 'offers', 'automations'].includes(key)) return;
       tiedRecords.add(key + '/' + id);
     };
     pending.forEach((localRow, token) => {

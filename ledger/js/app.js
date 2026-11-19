@@ -851,7 +851,7 @@
         let saved = list.find(x => x.id === id);
         if (!saved) { saved = Object.assign({}, r); list.push(saved); }
         Object.assign(saved, { delayDays: Number(d.delayDays) || 0, channel: d.channel, subject: d.subject, body: d.body });
-        commit('Updated automation “' + (Au.TRIGGERS[r.trigger] || r.trigger) + '”');
+        commit('Updated automation “' + (Au.TRIGGERS[r.trigger] || r.trigger) + '”', null, 'automations/' + saved.id);
       }
     });
   }
@@ -1007,11 +1007,14 @@
   function runSequences(onlyId) {
     const Sq = root.Sequences, t = T();
     let n = 0;
+    const tokens = [];
     (S().sequences || []).filter(q => q.status !== 'stopped' && (!onlyId || q.id === onlyId)).forEach(q => {
       Sq.plan(S(), q, t).forEach(p => {
         const disp = { id: Store.uid(), clientId: q.clientId, type: p.type, round: nextRound(q.clientId, p.recipient), recipient: p.recipient, recipientAddress: p.recipientAddress, status: 'draft', items: p.items, letterId: null, createdAt: Store.now(), sentAt: null, receivedAt: null, dueAt: null, tracking: '', outcome: null, respondedAt: null, notes: `Sequence “${q.title}” — Letter ${p.step}, after ${p.parent.recipient} ${p.parent.outcome ? 'answered: ' + p.parent.outcome.replace('_', ' ') : 'did not answer by the deadline'}.`, seqId: q.id, parentId: p.parent.id, strategyStep: Math.min(p.step, 3) };
         S().disputes.push(disp);
         buildLetter(disp);
+        tokens.push('disputes/' + disp.id);
+        if (q.id) tokens.push('sequences/' + q.id);
         n++;
       });
       const st = Sq.status(S(), q, t);
@@ -1024,7 +1027,7 @@
       }
       if (st.state === 'won' && !q.completedAt) { q.completedAt = Store.now(); Store.log(`Sequence “${q.title}” completed — items removed or corrected`, q.clientId, 'sequences/' + q.id); }
     });
-    if (n) { Store.log(`Sequences: drafted ${n} due letter(s) / step(s)`); Store.save(); }
+    if (n) { Store.log(`Sequences: drafted ${n} due letter(s) / step(s)`, null, tokens); Store.save(); }
     return n;
   }
 
@@ -1182,8 +1185,8 @@
     'invoice-check': el => { Remote.flushNow().then(() => api('POST', `/api/invoices/${el.dataset.id}/check`)).then(r => Remote.reload().then(() => toast(r.paid ? 'Payment found — marked paid' : 'No payment found yet')), e => toast(e.message)); },
     'pending-import': el => { const p = (S().pendingImports || []).find(x => x.id === el.dataset.id); if (!p) return; root.AIFlow.reviewScan(p.clientId, p.result, p.docName, p.docId); },
     'pending-dismiss': el => { S().pendingImports = (S().pendingImports || []).filter(x => x.id !== el.dataset.id); commit(); },
-    'auto-toggle': el => { setRule(el.dataset.id, el.checked); commit(`${el.checked ? 'Turned on' : 'Turned off'} an automation`); },
-    'auto-all': () => { root.Automations.rules(S()).forEach(r => setRule(r.id, true)); commit('Turned on all recommended automations'); toast('Automations on — they apply to events from now on'); },
+    'auto-toggle': el => { setRule(el.dataset.id, el.checked); commit(`${el.checked ? 'Turned on' : 'Turned off'} an automation`, null, 'automations/' + el.dataset.id); },
+    'auto-all': () => { root.Automations.rules(S()).forEach(r => setRule(r.id, true)); commit('Turned on all recommended automations', null, 'settings/automations'); toast('Automations on — they apply to events from now on'); },
     'auto-run': () => { runEngine(true).then(n => { toast(n ? `${n} action(s) ran` : 'Nothing due right now'); render(); }); },
     'auto-edit': el => autoEdit(el.dataset.id),
     'vio-packet': el => { const c = Store.get.client(el.dataset.client); if (!UI.ask(`Print the attorney packet for ${c.name}? Share it only with the client’s written permission.`)) return; UI.printDoc('Attorney packet — ' + c.name, root.Violations.packet(S(), c.id, null, T(), S().settings.company)); Store.log('Prepared attorney review packet', c.id, 'clients/' + c.id); Store.save(); },
@@ -1194,7 +1197,7 @@
         onSubmit: d => { if (!d.consent) { toast('Get the client’s permission first'); return false; } S().violations = S().violations || {}; keys.forEach(k => { S().violations[k] = Object.assign(S().violations[k] || { status: 'new' }, { attorney: d.attorney, sentAt: d.sentAt, notes: d.notes, status: 'referred' }); }); commit(`Referred to attorney ${d.attorney}`, el.dataset.client, 'clients/' + el.dataset.client); } });
     },
     'addr-add': () => modal({ title: 'Add a creditor address', body: `<div class="form-grid">${field('Company name (as it appears on reports)', 'name', '', { required: true, cls: 'span2' })}${field('Dispute / correspondence address', 'address', '', { type: 'textarea', rows: 3, cls: 'span2', help: 'Last line: City, ST 12345' })}${field('Type', 'category', '', { type: 'select', options: ['collection agency', 'debt buyer', 'card issuer', 'bank', 'auto lender', 'student loan servicer', 'mortgage servicer', 'specialty bureau', 'other'] })}</div>`,
-      onSubmit: d => { if (!d.name || !d.address) return false; root.Furnishers.remember(S(), d.name, d.address, d.category); commit('Saved address for ' + d.name); } }),
+      onSubmit: d => { if (!d.name || !d.address) return false; root.Furnishers.remember(S(), d.name, d.address, d.category); commit('Saved address for ' + d.name, null, 'settings/address-book'); } }),
     'use-address': el => { const d = Store.get.dispute(el.dataset.id); const f = root.Furnishers.lookup(S(), d.recipient); if (f) { d.recipientAddress = f.address; commit(`Address for ${d.recipient} filled from the address book`, d.clientId, 'disputes/' + d.id); } },
     'ref-link': el => { const url = `${location.protocol.startsWith('http') ? location.origin : 'https://your-ledger-site'}/apply?ref=${el.dataset.id}`; copyText(url, 'Partner sign-up link', 'Sign-up link copied'); },
     'ref-invite': el => { const r = S().referrals.find(x => x.id === el.dataset.id); Remote.flushNow().then(() => api('POST', '/api/invites', { role: 'partner', referralId: r.id, name: r.name, email: r.email })).then(x => modal({ title: 'Partner portal invitation', body: `<p class="small">Send this one-time link to ${esc(r.name)}. It expires in ${x.expiresInDays} days.</p><input readonly value="${esc(x.url)}" onclick="this.select()" class="mono small">`, foot: '<button type="button" class="btn primary" data-close>Done</button>' }), e => toast(e.message)); },
@@ -1209,7 +1212,7 @@
         if (!(Number(d.amount) > 0)) return false;
         live.payouts = live.payouts || [];
         live.payouts.push({ id: Store.uid(), amount: Number(d.amount), date: d.date, note: d.note });
-        commit(`Recorded ${UI.money(d.amount)} payout to ${live.name}`);
+        commit(`Recorded ${UI.money(d.amount)} payout to ${live.name}`, null, 'referrals/' + live.id);
       } });
     },
     'mail-lob': el => {
@@ -1261,7 +1264,7 @@
     'enrollment-terms': el => enrollmentTermsModal(Store.get.client(el.dataset.id)),
     'load-demo': () => { if (S().clients.length && !UI.ask('Replace the current workspace with demo data?')) return; Store.replace(Sample.build()); toast('Demo workspace loaded'); go('#/'); },
     'reset': () => { if (!UI.ask('Erase every client, report, dispute and invoice in this browser? Export a backup first.')) return; Store.replace(Store.empty()); go('#/'); },
-    'export': () => { UI.download(`ledger-workspace-${T()}.json`, JSON.stringify(S(), null, 2)); Store.log('Exported workspace backup'); Store.save(); },
+    'export': () => { UI.download(`ledger-workspace-${T()}.json`, JSON.stringify(S(), null, 2)); Store.log('Exported workspace backup', null, 'settings/export'); Store.save(); },
     'import': () => pickFile('.json,application/json', txt => {
       try {
         const ws = Store.migrate(JSON.parse(txt));
@@ -1272,8 +1275,9 @@
     'csv-template': () => UI.download('ledger-tradelines-template.csv', TRADELINE_COLS.join(',') + '\nExample Bank,XXXX1234,R,11,250,1000,800,0,,2018-03-01,,2026-09-01,,2026-09-30,1,,,000000000000000000000000,,,\n', 'text/csv'),
     'import-client-csv': () => pickFile('.csv,text/csv', txt => {
       const rows = parseCSV(txt).filter(r => r.firstName || r.name);
-      rows.forEach(r => { const [fn, ...ln] = (r.name || '').split(' '); const first = r.firstName || fn, last = r.lastName || ln.join(' '); S().clients.push({ id: Store.uid(), name: `${first} ${last}`.trim(), firstName: first, lastName: last, kind: 'personal', email: r.email || '', phone: r.phone || '', address: r.address || '', city: r.city || '', state: r.state || '', zip: r.zip || '', dob: '', ssnLast4: '', status: 'lead', createdAt: Store.now(), notes: '', referralId: '', onboarding: {} }); });
-      commit(`Imported ${rows.length} lead(s) from CSV`); toast(`Imported ${rows.length} lead(s). Columns: firstName,lastName,email,phone,address,city,state,zip`);
+      const added = [];
+      rows.forEach(r => { const [fn, ...ln] = (r.name || '').split(' '); const first = r.firstName || fn, last = r.lastName || ln.join(' '); const id = Store.uid(); added.push('clients/' + id); S().clients.push({ id, name: `${first} ${last}`.trim(), firstName: first, lastName: last, kind: 'personal', email: r.email || '', phone: r.phone || '', address: r.address || '', city: r.city || '', state: r.state || '', zip: r.zip || '', dob: '', ssnLast4: '', status: 'lead', createdAt: Store.now(), notes: '', referralId: '', onboarding: {} }); });
+      commit(`Imported ${rows.length} lead(s) from CSV`, null, added.length ? added : 'settings/import'); toast(`Imported ${rows.length} lead(s). Columns: firstName,lastName,email,phone,address,city,state,zip`);
     }),
     'new-task': el => modal({
       title: 'New task',
@@ -1421,7 +1425,7 @@
         if (!partner) { toast('That partner is no longer in the workspace.'); return false; }
         Object.assign(partner, d);
         if (isNew) { partner.id = Store.uid(); partner.createdAt = T(); S().referrals.push(partner); }
-        commit((isNew ? 'Added' : 'Updated') + ' referral partner ' + d.name);
+        commit((isNew ? 'Added' : 'Updated') + ' referral partner ' + d.name, null, 'referrals/' + partner.id);
       }
     });
   }
@@ -1471,7 +1475,7 @@
         Object.assign(live, d, { payout: d.payout ? Number(d.payout) : '' });
         if (isNew) { live.id = Store.uid(); live.clicks = 0; S().partnerReferrals.push(live); }
         const o = S().offers.find(x => x.id === d.offerId);
-        commit(`${isNew ? 'Recommended' : 'Updated recommendation:'} ${o ? o.name : 'offer'}`, d.clientId);
+        commit(`${isNew ? 'Recommended' : 'Updated recommendation:'} ${o ? o.name : 'offer'}`, d.clientId, 'partnerReferrals/' + live.id);
       }
     });
   }
@@ -1521,7 +1525,7 @@
     'new-offer': () => modal({
       title: 'Custom partner offer',
       body: `<div class="form-grid">${field('Name', 'name', '', { required: true })}${field('Audience', 'audience', 'personal', { type: 'select', options: [['personal', 'Personal'], ['business', 'Business']] })}${field('Category', 'category', '')}${field('Program / network', 'program', '')}${field('Referral bonus', 'bonus', '')}${field('Website (https://…)', 'url', '')}${field('Your affiliate link', 'affiliateUrl', '', { cls: 'span2' })}${field('Notes', 'note', '', { type: 'textarea', rows: 2, cls: 'span2' })}</div>`,
-      onSubmit: d => { if (!d.name || !/^https:\/\//.test(d.url || d.affiliateUrl)) { toast('Name and an https:// link are required'); return false; } S().offers.push(Object.assign({ id: Store.uid(), key: 'custom-' + Date.now(), status: 'verify', cookie: '—', sources: [], joinUrl: '', enabled: true, verifiedAt: T() }, d)); commit('Added partner offer ' + d.name); }
+      onSubmit: d => { if (!d.name || !/^https:\/\//.test(d.url || d.affiliateUrl)) { toast('Name and an https:// link are required'); return false; } const offer = Object.assign({ id: Store.uid(), key: 'custom-' + Date.now(), status: 'verify', cookie: '—', sources: [], joinUrl: '', enabled: true, verifiedAt: T() }, d); S().offers.push(offer); commit('Added partner offer ' + d.name, null, 'offers/' + offer.id); }
     }),
     'portal-invite': async el => {
       const c = Store.get.client(el.dataset.id);
@@ -1653,7 +1657,7 @@
     'select-all': el => { document.querySelectorAll('.pick').forEach(x => { x.checked = el.checked; }); updateBulk(); },
     'bulk-email': () => { const emails = picked().map(id => Store.get.client(id)).filter(c => c && c.email).map(c => c.email); if (!emails.length) return toast('No emails on the selected profiles'); location.href = `mailto:?bcc=${encodeURIComponent(emails.join(','))}`; },
     'bulk-export': () => { const rows = picked().map(id => Store.get.client(id)); UI.download(`ledger-clients-${T()}.csv`, 'name,type,status,email,phone,state,added\n' + rows.map(c => [c.name, c.kind, c.status, c.email, c.phone, c.state, String(c.createdAt).slice(0, 10)].map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv'); },
-    'bulk-task': () => { const ids = picked(); modal({ title: `Task for ${ids.length} client(s)`, body: `<div class="form-grid">${field('Task', 'title', '', { required: true, cls: 'span2' })}${field('Due', 'due', Law.addDays(T(), 3), { type: 'date' })}</div>`, onSubmit: d => { if (!d.title) return false; ids.forEach(id => S().tasks.push({ id: Store.uid(), clientId: id, title: d.title, due: d.due, done: false, createdAt: Store.now() })); commit(`Added task “${d.title}” for ${ids.length} clients`); } }); },
+    'bulk-task': () => { const ids = picked(); modal({ title: `Task for ${ids.length} client(s)`, body: `<div class="form-grid">${field('Task', 'title', '', { required: true, cls: 'span2' })}${field('Due', 'due', Law.addDays(T(), 3), { type: 'date' })}</div>`, onSubmit: d => { if (!d.title) return false; const made = []; ids.forEach(id => { const task = { id: Store.uid(), clientId: id, title: d.title, due: d.due, done: false, createdAt: Store.now() }; S().tasks.push(task); made.push('tasks/' + task.id); }); commit(`Added task “${d.title}” for ${ids.length} clients`, null, made); } }); },
     'onboarding-link': () => {
       const base = (Store.remote ? location.origin : 'https://your-domain.com') + '/apply';
       modal({ title: 'Client onboarding link', wide: true,
@@ -1743,7 +1747,7 @@
       if (e.target.matches('[data-act="vio-status"]')) {
         S().violations = S().violations || {};
         S().violations[e.target.dataset.key] = Object.assign(S().violations[e.target.dataset.key] || {}, { status: e.target.value, updatedAt: T() });
-        commit('Updated violation status');
+        commit('Updated violation status', null, 'settings/violations');
       }
       if (e.target.matches('[data-act="ref-stage"]')) {
         const r = S().partnerReferrals.find(x => x.id === e.target.dataset.id);
@@ -1805,13 +1809,13 @@
         const o = S().offers.find(x => x.id === f.dataset.id);
         if (d.affiliateUrl && !/^https:\/\//.test(d.affiliateUrl)) { toast('Links must start with https://'); return; }
         o.affiliateUrl = d.affiliateUrl;
-        commit(`Saved affiliate link for ${o.name}`);
+        commit(`Saved affiliate link for ${o.name}`, null, 'offers/' + o.id);
         toast('Saved');
       }
       if (f.dataset.form === 'billing') {
         if (d.payLink && !/^https:\/\//.test(d.payLink)) { toast('Payment link must start with https://'); return; }
         S().settings.billing = Object.assign({}, root.Billing.DEFAULTS, S().settings.billing || {}, d, { perLetter: Number(d.perLetter) || 0, perDelete: Number(d.perDelete) || 0, monthly: Number(d.monthly) || 0, dueDays: Number(d.dueDays) || 0 });
-        commit('Updated billing settings');
+        commit('Updated billing settings', null, 'settings/billing');
         toast('Saved');
       }
       if (f.dataset.form === 'company') {
@@ -1819,7 +1823,7 @@
         S().settings.company = co;
         S().settings.defaultFee = defaultFee;
         S().settings.mailTransitDays = Number(mailTransitDays) || 5;
-        commit('Updated company settings');
+        commit('Updated company settings', null, 'settings/company');
         toast('Saved');
       }
     });

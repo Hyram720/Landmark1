@@ -49,7 +49,7 @@
         if (!d.confirmed) { toast('Client confirmation is required'); return false; }
         const by = {};
         picked.forEach(it => { const k = it.bureau + '|' + it.letterType; (by[k] = by[k] || []).push(it); });
-        let made = 0; const problems = [];
+        const made = []; const problems = [];
         for (const list of Object.values(by)) {
           const recipient = list[0].bureau, letterType = list[0].letterType;
           let text = null, warnings = [];
@@ -68,9 +68,9 @@
           S().disputes.push(disp);
           App().generateLetter(disp); // template letter (also validates specificity)
           if (text) { const l = Store.get.letter(disp.letterId); if (l) { l.text = text; l.status = 'draft'; } }
-          made += 1;
+          made.push(disp);
         }
-        if (made) App().commit(`Drafted ${made} Metro 2 letter(s) — review and approve before mailing`, cid);
+        if (made.length) App().commit(`Drafted ${made.length} Metro 2 letter(s) — review and approve before mailing`, cid, made.map(row => 'disputes/' + row.id));
         if (problems.length) toast(problems.join(' · '));
         else toast(`${made} draft letter(s) created. Review, edit and approve each one before mailing.`);
         App().go(`#/clients/${cid}/disputes`);
