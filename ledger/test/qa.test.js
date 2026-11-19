@@ -131,7 +131,8 @@ test('intake validation: email, state, SMS needs phone; SSNs are scrubbed', asyn
 });
 
 test('pay page: CROA guard refuses payment before service is complete / window cleared', async () => {
-  await saveWs(ws => { ws.invoices = ws.invoices || []; ws.invoices.push({ id: 'inv1', clientId: 'cb', amount: 99, description: 'Round 1', status: 'draft', payToken: 'paytokqa1' }); });
+  db.data.workspace.invoices = db.data.workspace.invoices || [];
+  db.data.workspace.invoices.push({ id: 'inv1', clientId: 'cb', amount: 99, description: 'Round 1', status: 'issued', payToken: 'paytokqa1' });
   const r = await anon('GET', '/pay/paytokqa1');
   assert.strictEqual(r.status, 409);
   assert.match(r.body, /can’t be paid online yet/);

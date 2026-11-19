@@ -353,6 +353,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
     const before = D().workspace;
     const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
+    const pendingAudits = [];
     restoreServerOwnedEnrollment(data, before, priorClients);
     for (const c of data.clients) {
       const old = priorClients.get(c && c.id);
@@ -360,7 +361,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the client type.' });
       const becomingPersonal = old.kind === 'business' && (c.kind || 'personal') !== 'business';
       if (!becomingPersonal && (inCancellationWindow(old) || enrollmentOpenOrSigned(old, data.signatures))) return res.status(409).json({ error: 'The client type cannot change during enrollment or after the agreement is signed.' });
-      db.audit({ actor: req.user.email, action: 'client.kind', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, old: old.kind || 'personal', new: c.kind || 'personal' }) });
+      pendingAudits.push({ actor: req.user.email, action: 'client.kind', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, old: old.kind || 'personal', new: c.kind || 'personal' }) });
     }
     data.retiredClientIds = JSON.parse(JSON.stringify((before && before.retiredClientIds) || []));
     const nextIds = new Set((data.clients || []).filter(Boolean).map(c => c.id));
@@ -401,10 +402,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (!matched.length) continue;
       if (req.user.role !== 'owner') return res.status(409).json({ error: 'A client with this email or name already exists. Only the owner can add a business client for that person.' });
       c.businessMatchApproval = { user: req.user.email, at: new Date().toISOString(), matchedIds: matched.map(k => k.id), name, email };
-      db.audit({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: c.businessMatchApproval.at, clientId: c.id, email, name, matchedIds: c.businessMatchApproval.matchedIds }) });
+      pendingAudits.push({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: c.businessMatchApproval.at, clientId: c.id, email, name, matchedIds: c.businessMatchApproval.matchedIds }) });
     }
     const invoiceGuard = guardIssuedInvoices(before, data, req);
-    if (invoiceGuard) return res.status(invoiceGuard.status).json({ error: invoiceGuard.error });
+    if (invoiceGuard.status) return res.status(invoiceGuard.status).json({ error: invoiceGuard.error });
+    pendingAudits.push(...invoiceGuard.audits);
     lockInvoicedDisputeItems(before, data);
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return res.status(409).json({ error: billingBlock });
@@ -428,6 +430,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     for (const c of data.clients) applySignupStatus(c);
     for (const c of data.clients) if (c && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
+    for (const entry of pendingAudits) db.audit(entry);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
     try { auth.onWorkspaceSaved(before, data, req); } catch (e) { console.error('[notify]', e.message); }
@@ -946,6 +949,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
     return `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
   }
+  function calendarDaysBetween(earlier, later) {
+    const [y1, m1, d1] = earlier.split('-').map(Number);
+    const [y2, m2, d2] = later.split('-').map(Number);
+    return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
+  }
   function receivedOnOrBeforeToday(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const [year, month, day] = value.split('-').map(Number);
@@ -954,8 +962,15 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     return value <= todayEtYmd();
   }
   function normalizeClientName(value) {
+    let raw = String(value || '').trim();
+    const comma = raw.indexOf(',');
+    if (comma > 0) {
+      const last = raw.slice(0, comma).trim();
+      const rest = raw.slice(comma + 1).trim();
+      if (last && rest && !/\s/.test(last)) raw = rest + ' ' + last;
+    }
     const suffixes = new Set(['llc', 'inc', 'co', 'corp', 'ltd']);
-    const words = String(value || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(w => w && !suffixes.has(w));
+    const words = raw.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(w => w && !suffixes.has(w));
     if (words.length <= 2) return words.join(' ');
     return [words[0]].concat(words.slice(1, -1).filter(w => w.length > 1), words[words.length - 1]).join(' ');
   }
@@ -974,10 +989,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     return local + '@' + domain;
   }
   const INVOICE_STATUSES = new Set(['draft', 'issued', 'paid', 'void']);
+  const ISSUED_LOCK = ['clientId', 'disputeId', 'itemId', 'description', 'issuedAt'];
   function guardIssuedInvoices(before, data, req) {
+    const audits = [];
     const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     for (const inv of (data && data.invoices) || []) {
       if (!inv) continue;
+      if (inv.status === 'draft') delete inv.payToken;
       const prev = prior.get(inv.id);
       const leavingBilled = prev && (prev.status === 'issued' || prev.status === 'paid') && inv.status !== 'issued' && inv.status !== 'paid';
       if (!INVOICE_STATUSES.has(inv.status) && !leavingBilled) return { status: 400, error: 'Invoice status must be draft, issued, paid, or void.' };
@@ -987,20 +1005,32 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (!prev) continue;
       const inv = next.get(prev.id);
       if (prev.status === 'void') {
-        if (inv && inv.status !== 'void') return { status: 409, error: 'A voided invoice cannot be reopened.' };
+        if (!inv) return { status: 409, error: 'A voided invoice cannot be deleted.' };
+        if (inv.status !== 'void') return { status: 409, error: 'A voided invoice cannot be reopened.' };
+        if (String(inv.voidReason || '') !== String(prev.voidReason || '')) return { status: 409, error: 'The void reason cannot be changed.' };
+        if (Number(inv.amount) !== Number(prev.amount)) return { status: 409, error: 'A voided invoice cannot be changed.' };
+        for (const key of ISSUED_LOCK.concat(['paidAt', 'serviceCompletedAt'])) {
+          if (invoiceField(prev, key) !== invoiceField(inv, key)) return { status: 409, error: 'A voided invoice cannot be changed.' };
+        }
         continue;
       }
       if (prev.status !== 'issued' && prev.status !== 'paid') continue;
       if (!inv) return { status: 409, error: 'An issued or paid invoice cannot be deleted.' };
+      if (prev.status === 'paid' && inv.status === 'issued') return { status: 409, error: 'A paid invoice can only be voided.' };
       const leaving = inv.status !== 'issued' && inv.status !== 'paid';
       if (leaving && req.user.role !== 'owner') return { status: 403, error: 'Only the owner can void an issued or paid invoice.' };
       if (Number(inv.amount) !== Number(prev.amount)) return { status: 409, error: 'The invoice amount is locked once it is issued.' };
+      for (const key of ISSUED_LOCK) {
+        if (invoiceField(prev, key) !== invoiceField(inv, key)) return { status: 409, error: 'The invoice is locked once it is issued.' };
+      }
+      if (prev.paidAt && invoiceField(prev, 'paidAt') !== invoiceField(inv, 'paidAt')) return { status: 409, error: 'The paid date is locked once it is set.' };
+      if (prev.paidAt) inv.paidAt = prev.paidAt;
       if (!leaving) continue;
       if (!String(inv.voidReason || '').trim()) return { status: 400, error: 'A reason is required to void this invoice.' };
       inv.status = 'void';
-      db.audit({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: prev.id, clientId: prev.clientId, reason: String(inv.voidReason).trim() }) });
+      audits.push({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: prev.id, clientId: prev.clientId, reason: String(inv.voidReason).trim() }) });
     }
-    return null;
+    return { audits };
   }
   app.post('/api/clients/:id/cancel', need('owner', 'staff'), (req, res) => {
     const c = workspace().clients.find(x => x.id === req.params.id);
@@ -1017,6 +1047,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const postmarkAt = String((req.body || {}).postmarkAt || (req.body || {}).sentAt || '').trim();
     if (postmarkAt && !receivedOnOrBeforeToday(postmarkAt)) return res.status(400).json({ error: 'The postmark or sent date cannot be after today.' });
     if (postmarkAt && postmarkAt > receivedAt) return res.status(400).json({ error: 'The postmark or sent date cannot be after the date the notice was received.' });
+    if (postmarkAt && /^\d{4}-\d{2}-\d{2}$/.test(signedDay) && postmarkAt < signedDay) return res.status(400).json({ error: 'The postmark or sent date cannot be before the contract was signed.' });
+    const postmarkEarly = !!(postmarkAt && calendarDaysBetween(postmarkAt, receivedAt) > 10);
+    if (postmarkEarly && req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can record a postmark more than 10 days before the notice was received.' });
     const compared = postmarkAt && postmarkAt < receivedAt ? postmarkAt : receivedAt;
     let timely = false;
     const signedAt = c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt;
@@ -1040,6 +1073,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const refund = timely && paid.length > 0;
     if (refund) workspace().tasks.push({ id: uid(), clientId: c.id, title: `Refund ${c.name} for an invoice that was paid. The cancellation was timely.`, due: today(), done: false, createdAt: new Date().toISOString() });
     db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt, postmarkAt: postmarkAt || null, timely, refund }) });
+    if (postmarkEarly) db.audit({ actor: req.user.email, action: 'client.cancel.postmark', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, receivedAt, postmarkAt }) });
     activity(`${c.name} cancelled by ${method}. ${timely ? 'Timely.' : 'Late.'}${refund ? ' Refund task created.' : ''}`, c.id);
     commitWorkspace(req.user.email, 'client.cancel', c.id);
     res.json({ ok: true, cancelledAt: receivedAt, method, timely, refundTask: refund });
@@ -1616,10 +1650,38 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   // ---------- online invoice payments ----------
   const findInvoiceByToken = t => (workspace().invoices || []).find(i => i.payToken && i.payToken === t);
+  function legacyInvoiceStatus(status) {
+    return status == null || status === '' || status === 'open';
+  }
+  // N40b is waiting on Fred. A paper-signed personal client with contract dates and no server
+  // signature rows keeps the previous croaStatus pay gate. The signature-row hold is not applied.
+  function isLegacyPaperPayClient(c, signatures) {
+    if (!c || c.kind === 'business' || c.signupSource === 'self') return false;
+    const o = c.onboarding || {};
+    if (!(o.contractSignedAt || o.contractSignedAtTs)) return false;
+    const rows = (signatures || []).filter(s => s && s.clientId === c.id);
+    return !(rows.some(s => s.doc === 'disclosure') && rows.some(s => s.doc === 'contract'));
+  }
+  function legacyPaperPayHold(c) {
+    const cs = Store.croaStatus(c);
+    return !!(cs.required && (!cs.cleared || cs.cancelled));
+  }
+  function invoicePaymentHeld(c, signatures) {
+    if (!c || c.kind === 'business') return false;
+    if (isLegacyPaperPayClient(c, signatures)) return legacyPaperPayHold(c);
+    return clientServiceOnHold(c, undefined, signatures);
+  }
   const payPage = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${htmlEsc(title)}</title><link rel="stylesheet" href="/css/app.css"></head><body style="background:var(--bg)"><main style="max-width:520px;margin:8vh auto;padding:0 16px"><section class="card"><div class="card-b stack">${body}</div></section></main></body></html>`;
+  const payRefused = (res, co) => res.status(409).send(payPage('Not payable yet', `<h1>This invoice can’t be paid online yet</h1><p class="muted">We only accept payment after the service has been completed and your cancellation period has ended. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
+  function payableInvoice(inv) {
+    if (!inv || inv.status === 'void' || inv.status === 'draft') return false;
+    if (inv.status === 'paid' || inv.status === 'issued') return true;
+    return legacyInvoiceStatus(inv.status);
+  }
   async function confirmPayment(inv) {
     const a = anet();
     if (!a || inv.status === 'paid') return inv.status === 'paid';
+    if (inv.status !== 'issued' && !legacyInvoiceStatus(inv.status)) return false;
     const hit = await findPayment(a, inv);
     if (!hit) return false;
     Object.assign(inv, { status: 'paid', paidAt: today(), transId: hit.transId, paidVia: 'Authorize.net' });
@@ -1632,11 +1694,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const co = company();
     if (!inv || inv.status === 'void') return res.status(404).send(payPage('Invoice not found', '<h1>Invoice not found</h1><p class="muted">This payment link is not valid. Please contact us.</p>'));
     if (inv.status === 'paid') return res.send(payPage('Paid', `<h1>Thank you</h1><p>This invoice was paid${inv.paidAt ? ' on ' + htmlEsc(inv.paidAt) : ''}.</p>`));
-    // CROA § 1679b(b): no payment before the service is fully performed, and nothing inside the
-    // 3-business-day cancellation window. Enforced here too, not just when invoices are created.
+    if (inv.status === 'draft') return res.status(409).send(payPage('Draft invoice', '<h1>This invoice is still a draft</h1><p class="muted">A draft cannot be paid.</p>'));
+    if (!payableInvoice(inv)) return res.status(409).send(payPage('Not payable', '<h1>This invoice cannot be paid online</h1>'));
     const payClient = workspace().clients.find(x => x.id === inv.clientId);
-    const payCs = payClient ? Store.croaStatus(payClient) : null;
-    if (!inv.serviceCompletedAt || (payCs && (!payCs.cleared || payCs.cancelled))) return res.status(409).send(payPage('Not payable yet', `<h1>This invoice can’t be paid online yet</h1><p class="muted">We only accept payment after the service has been completed and your cancellation period has ended. Please contact ${htmlEsc(co.name || 'us')}${co.phone ? ' at ' + htmlEsc(co.phone) : ''}.</p>`));
+    const signatures = workspace().signatures;
+    if (legacyInvoiceStatus(inv.status)) {
+      const payCs = payClient ? Store.croaStatus(payClient) : null;
+      if (!inv.serviceCompletedAt || (payCs && (!payCs.cleared || payCs.cancelled))) return payRefused(res, co);
+    } else if (!inv.serviceCompletedAt || invoicePaymentHeld(payClient, signatures)) return payRefused(res, co);
     const billing = (workspace().settings || {}).billing || {};
     if (billing.provider === 'link' && /^https:\/\//.test(billing.payLink || '')) return res.redirect(302, billing.payLink);
     const a = anet();
@@ -1668,6 +1733,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const ws = workspace();
     const inv = (ws.invoices || []).find(i => i.id === req.params.id);
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    if (inv.status === 'draft') return res.status(409).json({ error: 'A draft invoice cannot be emailed.' });
     const c = ws.clients.find(x => x.id === inv.clientId);
     if (c && ((c.onboarding && c.onboarding.cancelledAt) || clientServiceOnHold(c, undefined, ws.signatures))) return res.status(409).json({ error: 'This client is cancelled or on hold. The invoice cannot be emailed.' });
     const to = String((req.body || {}).to || (c && c.email) || '').trim();
@@ -1675,7 +1741,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!commsConfig().email) return res.status(501).json({ error: 'Email sending is not set up on the server (Resend). Download the PDF and attach it to your own email instead.' });
     const origin = `${req.protocol}://${req.get('host')}`;
     const billing = (ws.settings || {}).billing || {};
-    const payLink = billing.provider === 'link' && billing.payLink ? billing.payLink : billing.provider === 'authorizenet' && inv.payToken ? `${origin}/pay/${inv.payToken}` : '';
+    const payLink = inv.status === 'issued' && (billing.provider === 'link' && billing.payLink ? billing.payLink : billing.provider === 'authorizenet' && inv.payToken ? `${origin}/pay/${inv.payToken}` : '') || '';
     const co = company();
     const note = String((req.body || {}).message || '').trim();
     const body = `Hi ${(c && (c.firstName || c.name)) || ''},\n\n${note ? note + '\n\n' : ''}Your invoice ${Invoices.number(inv)} for ${Invoices.money(inv.amount)} is attached.${payLink && inv.status !== 'paid' ? `\n\nPay securely online: ${payLink}` : ''}\n\n${Invoices.text(ws, inv, { payLink })}\n\nThank you,\n${co.name || ''}${co.phone ? '\n' + co.phone : ''}`;
