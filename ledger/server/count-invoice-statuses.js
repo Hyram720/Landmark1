@@ -52,7 +52,9 @@ const orphans = orphanWork(data && data.workspace);
 const crossClient = crossClientLinks(data && data.workspace);
 const reinviteRows = unmatchedPortalLogins(data);
 const reinviteLogins = showReinviteEmails ? reinviteRows : reinviteRows.length;
-const unstampedMailed = unstampedMailedDisputes(data && data.workspace);
+const mailedReview = mailedReviewReport(data && data.workspace);
+const unstampedMailed = mailedReview.unstampedMailed;
+const heldUndated = mailedReview.heldUndated;
 const deployGate = {
   outside: outside,
   duplicatePayTokens,
@@ -61,14 +63,43 @@ const deployGate = {
   orphans,
   crossClient,
   unstampedMailed,
+  heldUndated,
   ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0 && unstampedMailed === 0,
-  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, no workspace shape is wrong, and unstampedMailed is 0. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes, letters, and reports whose client is no longer in the workspace. crossClient lists a dispute or letter on one client whose items, report, or account cite another client. unstampedMailed counts mailed disputes that have no server mailed date. ready is false until that count is 0. Set LEDGER_MIGRATE_LEGACY_MAILED=1 for one startup to stamp those dates from the typed mailed date, then review any row that still has no date. reinviteLogins is a count of portal logins the migration left unbound or whose email does not match the client. Review that count before any invitation goes out. Pass --reinvite-emails to print those email addresses. They do not by themselves make ready false. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, no workspace shape is wrong, and unstampedMailed is 0. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes, letters, and reports whose client is no longer in the workspace. crossClient lists a dispute or letter on one client whose items, report, or account cite another client. unstampedMailed counts mailed disputes that have neither a server mailed date nor a retirement. ready is false until that count is 0. heldUndated lists the undated mailed rows whose bureau is already on hold. The owner dates or retires those rows. A date inside the cancellation window or before the contract stays held and cannot be billed. reinviteLogins is a count of portal logins the migration left unbound or whose email does not match the client. Review that count before any invitation goes out. Pass --reinvite-emails to print those email addresses. They do not by themselves make ready false. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, crossClient, unstampedMailed, reinviteLogins, deployGate }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, crossClient, unstampedMailed, heldUndated, reinviteLogins, deployGate }, null, 2) + '\n');
 
-function unstampedMailedDisputes(ws) {
+function mailedReviewReport(ws) {
+  const workspace = ws || {};
   const day = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').slice(0, 10));
-  return ((ws && ws.disputes) || []).filter(d => d && (d.sentAt || d.sentDate || d.serverSentAt || String(d.status || '') === 'sent') && !day(d.serverSentAt)).length;
+  const retired = new Set(((workspace.mailedDisputeTombstones) || []).filter(row => row && row.retired && row.id).map(row => row.id));
+  const heldKeys = new Set(((workspace.heldOutcomes) || []).filter(row => row && row.onHold && !row.cleared && row.key).map(row => row.key));
+  const bureauOf = (value) => {
+    const raw = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (!raw) return '';
+    if (raw === 'exp' || raw.startsWith('experian')) return 'experian';
+    if (raw === 'efx' || raw === 'eq' || raw.startsWith('equifax')) return 'equifax';
+    if (raw === 'tu' || raw.startsWith('transunion')) return 'transunion';
+    return '';
+  };
+  const heldUndated = [];
+  let unstampedMailed = 0;
+  for (const dispute of workspace.disputes || []) {
+    if (!dispute || retired.has(dispute.id)) continue;
+    const sent = !!(dispute.sentAt || dispute.sentDate || dispute.serverSentAt || String(dispute.status || '') === 'sent');
+    if (!sent || day(dispute.serverSentAt)) continue;
+    unstampedMailed += 1;
+    const bureaus = [];
+    for (const item of dispute.items || []) {
+      const bureau = item && bureauOf(item.bureau);
+      if (bureau && !bureaus.includes(bureau)) bureaus.push(bureau);
+    }
+    const recipient = bureauOf(dispute.recipient);
+    if (recipient && !bureaus.includes(recipient)) bureaus.push(recipient);
+    const held = bureaus.filter(bureau => heldKeys.has(String(dispute.clientId || '') + '\n' + bureau));
+    if (held.length) heldUndated.push({ id: dispute.id, clientId: dispute.clientId || '', bureaus: held });
+  }
+  return { unstampedMailed, heldUndated };
 }
 
 function unmatchedPortalLogins(data) {

@@ -105,7 +105,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         if (!c.mailAddress) c.mailAddress = safeLine([c.address, c.city, c.state, c.zip].filter(Boolean).join(', '), 120);
         if (!c.mailSnapshotAt) {
           c.mailSnapshotAt = new Date().toISOString();
-          c.mailSnapshotConfirmed = true;
+          const problem = snapshotProblem(c.mailName, c.mailAddress);
+          c.mailSnapshotConfirmed = !problem;
+          if (problem) c.mailNeedsConfirm = true;
         }
         if (ambiguous.has(c.id)) {
           c.identityAmbiguous = true;
@@ -603,6 +605,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     lockInvoicedDisputeItems(before, data);
     const stamped = stampServerWork(before, data, { role: req.user.role, email: req.user.email });
     if (stamped && stamped.error) return reject(409, stamped.error, stamped.refused);
+    for (const inv of data.invoices || []) {
+      if (!inv || inv.confirmNoAccountHold !== true) continue;
+      if (req.user.role !== 'owner') return reject(403, 'Only the owner can confirm a deletion when a held item has no account number.', [{ key: 'invoices', id: inv.id, field: 'confirmNoAccountHold', reason: 'Only the owner can confirm a deletion when a held item has no account number.' }]);
+      inv.noAccountHoldConfirmedBy = req.user.email;
+      delete inv.confirmNoAccountHold;
+      pendingAudits.push({ actor: req.user.email, action: 'invoice.no_account_hold.confirm', detail: JSON.stringify({ invoiceId: inv.id, clientId: inv.clientId || '' }) });
+    }
     for (const row of (stamped && stamped.orphanDeletes) || []) pendingAudits.push({ actor: req.user.email, action: 'dispute.orphan_delete', detail: JSON.stringify(row) });
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return reject(409, billingBlock.error, billingBlock.refused);
@@ -671,6 +680,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         pendingAudits.push({ actor: req.user.email, action: 'client.bound_profile', detail: JSON.stringify({ clientId: c.id, name: priorName !== snapName, email: String((old && old.email) || '').toLowerCase() !== String(c.email || '').toLowerCase(), address: priorAddress !== snapAddress }) });
       }
       const snapshotChanged = !old || !old.mailSnapshotAt || priorName !== snapName || priorAddress !== snapAddress;
+      if (c.confirmMailSnapshot === true && req.user.role !== 'owner') return reject(403, 'Only the owner can confirm this client\'s name and address.', [{ key: 'clients', id: c.id, field: 'confirmMailSnapshot', reason: 'Only the owner can confirm this client\'s name and address.' }]);
       const confirm = req.user.role === 'owner' && c.confirmMailSnapshot === true;
       if (confirm) {
         c.mailName = snapName;
@@ -678,7 +688,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         c.mailSnapshotAt = new Date().toISOString();
         c.mailSnapshotConfirmed = true;
         c.mailNeedsConfirm = false;
-        pendingAudits.push({ actor: req.user.email, action: 'client.mail_snapshot.confirm', detail: c.id });
+        pendingAudits.push({ actor: req.user.email, action: 'client.mail_snapshot.confirm', detail: JSON.stringify({ clientId: c.id, name: snapName, address: snapAddress }) });
       } else if (!snapshotChanged && old) {
         c.mailName = old.mailName;
         c.mailAddress = old.mailAddress;
@@ -781,32 +791,35 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     return String(clientId || '') + '\n' + bureau;
   }
   function creditorKey(item) {
-    return String((item && item.creditor) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    let key = String((item && item.creditor) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    let prev = '';
+    while (key && key !== prev) {
+      prev = key;
+      key = key.replace(/(na|inc|llc|corp)$/, (suffix, _m, offset) => offset >= 3 ? '' : suffix);
+    }
+    return key;
   }
-  function accountKey(item) {
-    const raw = String((item && (item.accountNumber || item.accountId)) || '');
+  function accountLast4(item) {
+    const raw = String((item && (item.accountNumber || item.accountId)) || '').replace(/-(\d)\s*$/, '');
     const digits = raw.replace(/\D/g, '');
-    return digits || raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return digits ? digits.slice(-4) : '';
   }
   function sameHeldAccount(held, item) {
     if (!held || !item) return false;
     const bureau = bureauEnum(held.bureau);
     if (!bureau || bureau !== bureauEnum(item.bureau)) return false;
+    const heldLast = accountLast4(held);
+    const itemLast = accountLast4(item);
+    if (heldLast && itemLast && heldLast === itemLast) return true;
     const creditor = creditorKey(held);
-    if (!creditor || creditor !== creditorKey(item)) return false;
-    const heldAccount = accountKey(held);
-    const itemAccount = accountKey(item);
-    if (!heldAccount || !itemAccount) return false;
-    return heldAccount === itemAccount;
+    return !!(creditor && creditor === creditorKey(item) && !itemLast);
   }
   function citesHeldAccount(dispute, heldItems) {
     return (dispute.items || []).some(item => (heldItems || []).some(held => {
       if (!item || bureauEnum(item.bureau) !== bureauEnum(held.bureau)) return false;
-      const creditor = creditorKey(held);
-      if (!creditor || creditor !== creditorKey(item)) return false;
-      const heldAccount = accountKey(held);
-      if (!heldAccount) return true;
-      return accountKey(item) === heldAccount;
+      const heldLast = accountLast4(held);
+      const itemLast = accountLast4(item);
+      return !!(heldLast && itemLast && heldLast === itemLast);
     }));
   }
   function windowEndDay(client) {
@@ -898,10 +911,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const oldDispute of (before && before.disputes) || []) {
       if (!oldDispute || !oldDispute.id || nextDisputeIds.has(oldDispute.id)) continue;
       if (!wasSent(oldDispute)) continue;
+      const stamp = { id: oldDispute.id, clientId: oldDispute.clientId || '', serverSentAt: oldDispute.serverSentAt || '', deletedAt: new Date().toISOString(), deletedBy: (actor && actor.email) || '', items: (oldDispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: !!it.resultRecordedOnHold, result: it.result || '' })) };
+      tombs.set(oldDispute.id, stamp);
       const orphan = oldDispute.clientId && !priorClientIds.has(oldDispute.clientId);
       if (orphan && actor && actor.role === 'owner') {
-        const stamp = { id: oldDispute.id, clientId: oldDispute.clientId || '', serverSentAt: oldDispute.serverSentAt || '', deletedAt: new Date().toISOString(), deletedBy: actor.email || '', items: (oldDispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: !!it.resultRecordedOnHold, result: it.result || '' })) };
-        tombs.set(oldDispute.id, stamp);
         orphanDeletes.push({ id: oldDispute.id, clientId: oldDispute.clientId || '' });
         continue;
       }
@@ -928,6 +941,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         d.sentDate = old.sentDate == null ? null : old.sentDate;
         if (recordedDay(old.serverSentAt)) d.serverSentAt = recordedDay(old.serverSentAt);
         else delete d.serverSentAt;
+        if (String(old.status || '') === 'sent' && String(d.status || '') !== 'sent') {
+          push(d.id, 'status', 'A mailed dispute cannot be moved off sent.');
+        }
+        if (String(old.status || '') === 'sent') d.status = 'sent';
         if (String(old.recipient || '') !== String(d.recipient || '')) {
           push(d.id, 'recipient', 'The recipient cannot be changed after the dispute is mailed.');
           d.recipient = old.recipient == null ? null : old.recipient;
@@ -999,17 +1016,15 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       for (const item of d.items || []) {
         if (!item || typeof item !== 'object') continue;
         const oldItem = oldItems.find(it => it && String(it.id) === String(item.id));
+        const resulted = item.result === 'deleted' || item.result === 'corrected' || (oldItem && (oldItem.result === 'deleted' || oldItem.result === 'corrected'));
         if (oldItem && oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
-        else {
+        else if (resulted) {
           const bureau = bureauEnum(item.bureau);
           const row = bureau ? outcomes.get(holdKey(d.clientId, bureau)) : null;
-          if (row && row.onHold && !row.cleared) item.resultRecordedOnHold = true;
+          const copied = heldAccounts.some(held => held.clientId === String(d.clientId) && sameHeldAccount(held, item));
+          if ((row && row.onHold && !row.cleared) || copied) item.resultRecordedOnHold = true;
           else delete item.resultRecordedOnHold;
-        }
-        const deletedNow = item.result === 'deleted' || (oldItem && oldItem.result === 'deleted');
-        if (!item.resultRecordedOnHold && deletedNow && heldAccounts.some(held => held.clientId === String(d.clientId) && sameHeldAccount(held, item))) {
-          item.resultRecordedOnHold = true;
-        }
+        } else delete item.resultRecordedOnHold;
         noteHeld(d.clientId, item);
       }
     }
@@ -1078,6 +1093,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const billed = (data.clients || []).find(x => x && x.id === inv.clientId);
       if (!billed) return stop(inv, 'clientId', 'An invoice needs a client who is in the workspace.');
       if (billed.kind === 'business') continue;
+      if (undatedMailedOutstanding(data)) return stop(inv, 'sentAt', 'A mailed dispute has no server mailed date. Date or retire it before invoicing.');
       if (clientServiceOnHold(billed, undefined, data.signatures)) return stop(inv, 'clientId', `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`);
       const item = deletedInvoiceItem(data, inv);
       if (!item) return stop(inv, 'itemId', 'An invoice must name the deleted item and its bureau.');
@@ -1097,6 +1113,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (resultDay > todayEtYmd()) return stop(inv, 'bureauResultAt', 'The bureau result date cannot be after today.');
       const copiedHeld = (data.disputes || []).some(d => d && d.clientId === inv.clientId && (d.items || []).some(it => it && it.id !== item.id && it.resultRecordedOnHold && sameHeldAccount(it, item)))
         || (data.mailedDisputeTombstones || []).some(tomb => tomb && tomb.clientId === inv.clientId && (tomb.items || []).some(it => it && it.resultRecordedOnHold && sameHeldAccount(it, item)));
+      if (currentDispute && currentDispute.legacyMailedUnbillable) return stop(inv, 'sentAt', 'This mailing was recorded inside the cancellation window and cannot be billed.');
+      const noAccountHeld = []
+        .concat(data.disputes || [], (data.mailedDisputeTombstones || []).map(tomb => tomb && { clientId: tomb.clientId, items: tomb.items }))
+        .some(row => row && row.clientId === inv.clientId && (row.items || []).some(it => it && it.id !== item.id && it.resultRecordedOnHold && bureauEnum(it.bureau) === itemBureau && !accountLast4(it)));
+      if (noAccountHeld && !inv.noAccountHoldConfirmedBy) return stop(inv, 'itemId', 'The owner must confirm this deletion before it can be invoiced.');
       if (item.resultRecordedOnHold || heldOutcome || copiedHeld) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
       if (!mailedDay || (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && mailedDay <= deadline)) return stop(inv, 'sentAt', 'The dispute must have been mailed after the cancellation window.');
       if (resultDay < mailedDay) return stop(inv, 'bureauResultAt', 'The bureau result date must be on or after the mailed date.');
@@ -1106,6 +1127,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (dup) return stop(inv, 'itemId', 'Only one invoice can be issued for each deleted item and bureau.');
     }
     return null;
+  }
+  function undatedMailedOutstanding(data) {
+    const retired = new Set(((data && data.mailedDisputeTombstones) || []).filter(row => row && row.retired && row.id).map(row => row.id));
+    const open = ((data && data.disputes) || []).some(row => row && !retired.has(row.id) && wasSent(row) && !recordedDay(row.serverSentAt));
+    const buried = ((data && data.mailedDisputeTombstones) || []).some(row => row && !row.retired && !recordedDay(row.serverSentAt));
+    return open || buried;
   }
   function lockInvoicedDisputeItems(before, data) {
     const seen = new Set();
@@ -1285,14 +1312,15 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const end = windowEndDay(c);
     const namedMailed = recordedDay(named.serverSentAt);
     if (!end || !namedMailed || namedMailed <= end) return res.status(409).json({ error: 'That dispute must have been mailed after the cancellation window.' });
+    const recordedResult = (item) => item && (item.result === 'deleted' || item.result === 'corrected');
     const heldItems = [];
     for (const dispute of ws.disputes || []) {
-      if (!dispute || dispute.clientId !== c.id) continue;
-      for (const item of dispute.items || []) if (item && item.resultRecordedOnHold && bureauEnum(item.bureau) === bureau) heldItems.push({ dispute, item });
+      if (!dispute || dispute.clientId !== c.id || dispute.id === named.id) continue;
+      for (const item of dispute.items || []) if (recordedResult(item) && item.resultRecordedOnHold && bureauEnum(item.bureau) === bureau) heldItems.push({ dispute, item });
     }
     for (const tomb of ws.mailedDisputeTombstones || []) {
       if (!tomb || tomb.clientId !== c.id) continue;
-      for (const item of tomb.items || []) if (item && item.resultRecordedOnHold && bureauEnum(item.bureau) === bureau) heldItems.push({ dispute: tomb, item });
+      for (const item of tomb.items || []) if (recordedResult(item) && item.resultRecordedOnHold && bureauEnum(item.bureau) === bureau) heldItems.push({ dispute: tomb, item });
     }
     if (heldItems.length && !citesHeldAccount(named, heldItems.map(row => row.item))) return res.status(400).json({ error: 'That dispute must cite the account that was recorded during the hold.' });
     const causeDays = heldItems.map(row => recordedDay(row.dispute.serverSentAt)).filter(Boolean);
@@ -1322,6 +1350,74 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     db.audit({ actor: req.user.email, action: 'bureau.hold.clear', detail: JSON.stringify({ clientId: c.id, bureau, reason }) });
     commitWorkspace(req.user.email, 'bureau.hold.clear', c.id);
     res.json({ ok: true, bureau });
+  });
+  function holdBureaus(dispute) {
+    const found = [];
+    const add = (value) => {
+      const bureau = bureauEnum(value);
+      if (bureau && !found.includes(bureau)) found.push(bureau);
+    };
+    for (const item of (dispute && dispute.items) || []) if (item) add(item.bureau);
+    add(dispute && dispute.recipient);
+    return found;
+  }
+  function placeBureauHold(ws, clientId, bureau, at, reason) {
+    ws.heldOutcomes = Array.isArray(ws.heldOutcomes) ? ws.heldOutcomes : [];
+    const key = holdKey(clientId, bureau);
+    const prior = ws.heldOutcomes.find(row => row && row.key === key);
+    if (prior && prior.cleared) return;
+    if (prior) {
+      prior.onHold = true;
+      prior.reason = prior.reason || reason;
+      if (!recordedDay(prior.at) || (at && at < prior.at)) prior.at = at || prior.at || '';
+      return;
+    }
+    ws.heldOutcomes.push({ key, clientId: String(clientId), bureau, at: at || '', onHold: true, reason, cleared: false, clearedAt: null, clearedBy: null, clearReason: '' });
+  }
+  app.post('/api/disputes/:id/legacy-mailed', need('owner'), (req, res) => {
+    const ws = workspace();
+    const dispute = (ws.disputes || []).find(row => row && row.id === req.params.id);
+    if (!dispute) return res.status(404).json({ error: 'Dispute not found' });
+    if (!wasSent(dispute)) return res.status(409).json({ error: 'Only a mailed dispute can be reviewed here.' });
+    if (recordedDay(dispute.serverSentAt)) return res.status(409).json({ error: 'This dispute already has a server mailed date.' });
+    const reason = String((req.body || {}).reason || '').trim().slice(0, 500);
+    if (!reason) return res.status(400).json({ error: 'A reason is required.' });
+    const retire = (req.body || {}).retire === true;
+    if (retire) {
+      ws.mailedDisputeTombstones = Array.isArray(ws.mailedDisputeTombstones) ? ws.mailedDisputeTombstones : [];
+      ws.mailedDisputeTombstones.push({
+        id: dispute.id,
+        clientId: dispute.clientId || '',
+        serverSentAt: '',
+        retired: true,
+        retiredAt: new Date().toISOString(),
+        retiredBy: req.user.email,
+        reason,
+        items: (dispute.items || []).filter(it => it && typeof it === 'object').map(it => ({ id: it.id || '', bureau: it.bureau || '', creditor: it.creditor || '', accountNumber: it.accountNumber || '', serverResultAt: it.serverResultAt || '', resultRecordedOnHold: true, result: it.result || '' }))
+      });
+      ws.disputes = ws.disputes.filter(row => row && row.id !== dispute.id);
+      db.audit({ actor: req.user.email, action: 'dispute.legacy_retire', detail: JSON.stringify({ disputeId: dispute.id, clientId: dispute.clientId || '', reason }) });
+      commitWorkspace(req.user.email, 'dispute.legacy_retire', dispute.id);
+      return res.json({ ok: true, retired: true });
+    }
+    const mailed = recordedDay((req.body || {}).mailedAt);
+    if (!mailed) return res.status(400).json({ error: 'Name the mailed date as YYYY-MM-DD.' });
+    if (mailed > todayEtYmd()) return res.status(400).json({ error: 'The mailed date cannot be after today.' });
+    const client = (ws.clients || []).find(row => row && row.id === dispute.clientId);
+    const end = windowEndDay(client);
+    const signed = client && client.onboarding ? recordedDay(client.onboarding.contractSignedAt || client.onboarding.contractSignedAtTs) : '';
+    const inside = !!(end && mailed <= end);
+    const beforeContract = !!(signed && mailed < signed);
+    const held = !client || client.kind === 'business' ? false : (!end || inside || beforeContract);
+    dispute.serverSentAt = mailed;
+    if (held) {
+      dispute.legacyMailedUnbillable = true;
+      for (const item of dispute.items || []) if (item && (item.result === 'deleted' || item.result === 'corrected')) item.resultRecordedOnHold = true;
+      for (const bureau of holdBureaus(dispute)) placeBureauHold(ws, dispute.clientId, bureau, mailed, beforeContract && !inside ? 'before-contract' : 'mailed');
+    }
+    db.audit({ actor: req.user.email, action: 'dispute.legacy_mailed', detail: JSON.stringify({ disputeId: dispute.id, clientId: dispute.clientId || '', mailedAt: mailed, held, reason }) });
+    commitWorkspace(req.user.email, 'dispute.legacy_mailed', dispute.id);
+    res.json({ ok: true, mailedAt: mailed, held });
   });
   function croaClient(c) { return !!(c && c.kind !== 'business'); }
   function signingStatus(c, pack) {
@@ -1425,7 +1521,18 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const draft = Object.assign({}, c, next);
     if (!mailingAddress(draft)) return res.status(400).json({ error: enrollmentStatus(draft, {}).message });
     Object.assign(c, next);
-    c.mailAddress = safeLine(mailingAddress(c), 160);
+    const snapName = safeLine(c.mailName || c.name, 80);
+    const snapAddress = safeLine(mailingAddress(c), 160);
+    c.mailAddress = snapAddress;
+    if (snapshotProblem(snapName, snapAddress)) {
+      c.mailNeedsConfirm = true;
+      c.mailSnapshotConfirmed = false;
+    } else {
+      c.mailName = snapName;
+      c.mailSnapshotAt = new Date().toISOString();
+      c.mailSnapshotConfirmed = true;
+      c.mailNeedsConfirm = false;
+    }
     c.onboarding = c.onboarding || {};
     invalidateContractView(c.onboarding);
     activity(`${c.name} saved a New Jersey mailing address`, c.id);

@@ -68,6 +68,9 @@ export const STATUTORY_HELD_TEMPLATES = ['disclosure-1679c', 'contract-1679d', '
 
 export function clientForHeldTemplate(client, templateId) {
   if (!client || client.mailNeedsConfirm !== true || !STATUTORY_HELD_TEMPLATES.includes(templateId)) return client;
+  if ((templateId === 'contract-1679d' || templateId === 'signed-copies') && client.mailSnapshotConfirmed === true && client.mailName) {
+    return Object.assign({}, client, { name: client.mailName, firstName: '', lastName: '' });
+  }
   return Object.assign({}, client, { name: '', firstName: '', lastName: '', mailName: '' });
 }
 

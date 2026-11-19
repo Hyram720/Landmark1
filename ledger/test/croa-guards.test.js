@@ -3174,14 +3174,14 @@ test('held templates drop injected result text from the name, address, and compa
     const flagged = saved.body.data.clients.find(row => row.id === 'ada');
     const statutory = renderHeldMessage('contract-1679d', clientForHeldTemplate(flagged, 'contract-1679d'), {});
     assert.doesNotMatch(statutory.text, /score went up/);
-    assert.match(statutory.text, /Client/);
+    assert.match(statutory.text, /Ada Person/);
     const kept = await owner('GET', '/api/workspace');
     assert.strictEqual(kept.body.data.clients.find(row => row.id === 'ada').mailName, 'Ada Person');
     kept.body.data.clients.find(row => row.id === 'ada').confirmMailSnapshot = true;
     const confirmed = await owner('PUT', '/api/workspace', { baseVersion: kept.body.version, data: kept.body.data });
     assert.strictEqual(confirmed.status, 200, JSON.stringify(confirmed.body));
     assert.strictEqual(confirmed.body.data.clients.find(row => row.id === 'ada').mailNeedsConfirm, false);
-    assert.ok((await owner('GET', '/api/audit')).body.some(row => row.action === 'client.mail_snapshot.confirm' && row.actor === 'owner@guard.test'));
+    assert.ok((await owner('GET', '/api/audit')).body.some(row => row.action === 'client.mail_snapshot.confirm' && row.actor === 'owner@guard.test' && /1 Main/.test(row.detail)));
     const renamedBook = await owner('GET', '/api/workspace');
     renamedBook.body.data.clients.find(row => row.id === 'ada').name = 'Ada Q Public';
     const renamed = await owner('PUT', '/api/workspace', { baseVersion: renamedBook.body.version, data: renamedBook.body.data });
@@ -3349,7 +3349,7 @@ test('portal identity migration runs once, and a reused id does not inherit a lo
   const boot = { dataDir: dir, encryptionKey: 'guard-key-not-a-secret-00', selfSignupEnabled: false, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } };
   const first = createApp(boot);
   try {
-    first.db.data.workspace = { clients: [{ id: 'ada', name: 'Bea', kind: 'personal', email: 'bea@guard.test', status: 'lead' }], disputes: [], letters: [], reports: [], invoices: [], signatures: [], settings: { company: {} } };
+    first.db.data.workspace = { clients: [{ id: 'ada', name: 'Bea', kind: 'personal', email: 'bea@guard.test', status: 'lead' }, { id: 'nasty', name: 'Ann Experian deleted', kind: 'personal', email: 'nasty@guard.test', status: 'lead' }], disputes: [], letters: [], reports: [], invoices: [], signatures: [], settings: { company: {} } };
     first.db.data.users.push(
       { id: 'alice', name: 'Alice', email: 'alice@guard.test', role: 'client', clientId: 'ada', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' },
       { id: 'match', name: 'Bea', email: 'bea@guard.test', role: 'client', clientId: 'ada', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' },
@@ -3369,6 +3369,9 @@ test('portal identity migration runs once, and a reused id does not inherit a lo
     assert.strictEqual(bea.mailName, 'Bea');
     assert.ok(bea.mailSnapshotAt);
     assert.strictEqual(bea.mailSnapshotConfirmed, true);
+    const nasty = second.db.data.workspace.clients.find(row => row.id === 'nasty');
+    assert.strictEqual(nasty.mailSnapshotConfirmed, false);
+    assert.strictEqual(nasty.mailNeedsConfirm, true);
     assert.strictEqual(match.clientIdentity, bea.identity);
     assert.ok(!alice.clientIdentity);
     assert.strictEqual(alice.portalLinkNeedsInvite, true);
@@ -3699,7 +3702,7 @@ test('a flagged migration stamps a legacy mailed date, and a date before or insi
     invoiced.body.data.invoices = [{ id: 'early', clientId: 'bill', disputeId: 'before', itemId: 'b1', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-01', serviceCompletedAt: '2026-11-01' }];
     const billed = await owner('PUT', '/api/workspace', { baseVersion: invoiced.body.version, data: invoiced.body.data });
     assert.strictEqual(billed.status, 409, JSON.stringify(billed.body));
-    assert.match(billed.body.error, /mailed after the cancellation window|recorded while the client was on hold/);
+    assert.match(billed.body.error, /no server mailed date|mailed after the cancellation window|recorded while the client was on hold/);
   } finally {
     live.server.close();
     first.shutdown();
@@ -3734,9 +3737,176 @@ test('a flagged migration stamps a legacy mailed date, and a date before or insi
     assert.strictEqual(counted.unstampedMailed, 1);
     assert.strictEqual(counted.deployGate.ready, false);
     assert.strictEqual(counted.deployGate.unstampedMailed, 1);
+    assert.ok(counted.heldUndated.some(row => row.id === 'nodate' && row.bureaus.includes('transunion')));
   } finally {
     live2.server.close();
     flagged.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('near-match held accounts cannot be billed, and a different account cannot clear the hold', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'bill', name: 'Bea Bill', kind: 'personal', email: 'near-bill@guard.test', status: 'active', pricePerResult: 20 });
+    seedSignedClient(built.db.data.workspace, 'bill', { onboarding: { disclosureSignedAt: '2026-10-01', disclosureAcknowledgedAt: '2026-10-01T15:00:00.000Z', contractSignedAt: '2026-10-01', contractSignedAtTs: '2026-10-01T16:00:00.000Z', cancellationWindowEndsAt: '2026-10-06', cancellationWindowEndsAtTs: '2026-10-07T03:59:59.999Z' } });
+    const open = await owner('GET', '/api/workspace');
+    open.body.data.disputes = [
+      { id: 'held-d', clientId: 'bill', status: 'sent', sentAt: '2026-11-02', items: [{ id: 'one', creditor: 'R Bank', accountNumber: '5555', bureau: 'Experian' }] },
+      { id: 'bank', clientId: 'bill', status: 'sent', sentAt: '2026-11-02', items: [{ id: 'seven', creditor: 'C-1 Bank', accountNumber: '7777', bureau: 'Equifax' }] }
+    ];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: open.body.version, data: open.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/bill/cancel', { method: 'email', receivedAt: '2026-10-04' })).status, 200);
+    const held = await owner('GET', '/api/workspace');
+    const first = held.body.data.disputes.find(d => d.id === 'held-d');
+    first.items[0].result = 'deleted';
+    first.items[0].bureauResultAt = todayEt();
+    first.items.push({ id: 'pending', creditor: 'R Bank', accountNumber: '5555', bureau: 'Experian' });
+    const second = held.body.data.disputes.find(d => d.id === 'bank');
+    second.items[0].result = 'deleted';
+    second.items[0].bureauResultAt = todayEt();
+    const recorded = await owner('PUT', '/api/workspace', { baseVersion: held.body.version, data: held.body.data });
+    assert.strictEqual(recorded.status, 200, JSON.stringify(recorded.body));
+    const saved = recorded.body.data.disputes.find(d => d.id === 'held-d').items;
+    assert.strictEqual(saved.find(item => item.id === 'one').resultRecordedOnHold, true);
+    assert.ok(!saved.find(item => item.id === 'pending').resultRecordedOnHold);
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAt = null;
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAtTs = null;
+    for (const id of ['held-d', 'bank']) built.db.data.workspace.disputes.find(d => d.id === id).serverSentAt = '2026-11-02';
+    for (const key of ['bill\nexperian', 'bill\nequifax']) {
+      const row = built.db.data.workspace.heldOutcomes.find(item => item.key === key);
+      if (row) row.at = '2026-11-02';
+    }
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-near@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const book = await staff('GET', '/api/workspace');
+    book.body.data.clients.find(c => c.id === 'bill').confirmMailSnapshot = true;
+    const deniedConfirm = await staff('PUT', '/api/workspace', { baseVersion: book.body.version, data: book.body.data });
+    assert.strictEqual(deniedConfirm.status, 403, JSON.stringify(deniedConfirm.body));
+    const strayBook = await owner('GET', '/api/workspace');
+    strayBook.body.data.disputes.push({ id: 'stray', clientId: 'bill', status: 'sent', sentAt: todayEt(), recipient: 'Experian', items: [{ id: 'stray-item', creditor: 'Other Bank', accountNumber: '1212', bureau: 'Experian' }] });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: strayBook.body.version, data: strayBook.body.data })).status, 200);
+    const strayClear = await owner('POST', '/api/clients/bill/bureau-hold/clear', { bureau: 'Experian', disputeId: 'stray', reason: 'Re-mailed dispute stray after the cancellation window.' });
+    assert.strictEqual(strayClear.status, 400, JSON.stringify(strayClear.body));
+    assert.match(strayClear.body.error, /cite the account/);
+    const remailBook = await owner('GET', '/api/workspace');
+    remailBook.body.data.disputes.push({ id: 'remail', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 're', creditor: 'R Bank', accountNumber: '5555', bureau: 'Experian' }] });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: remailBook.body.version, data: remailBook.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/bill/bureau-hold/clear', { bureau: 'Experian', disputeId: 'remail', reason: 'Re-mailed dispute remail after the cancellation window.' })).status, 200);
+    const eqBook = await owner('GET', '/api/workspace');
+    eqBook.body.data.disputes.push({ id: 'eq-re', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'eq-re-item', creditor: 'C-1 Bank', accountNumber: '7777', bureau: 'Equifax' }] });
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: eqBook.body.version, data: eqBook.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/bill/bureau-hold/clear', { bureau: 'Equifax', disputeId: 'eq-re', reason: 'Re-mailed dispute eq-re after the cancellation window.' })).status, 200);
+    const copies = [
+      { id: 'n3', creditor: 'R Bank', bureau: 'Experian' },
+      { id: 'n4', creditor: 'R Bank NA', accountNumber: '5555', bureau: 'Experian' },
+      { id: 'n5', creditor: 'R Bank', accountNumber: '99995555', bureau: 'Experian' },
+      { id: 'n7', creditor: 'RBank N.A.', accountNumber: '****5555', bureau: 'Experian' },
+      { id: 'c1', creditor: 'C-1 Bank N.A.', accountNumber: '7777', bureau: 'Equifax' },
+      { id: 'acct', creditor: 'Somewhere Else', accountNumber: 'acct 7777-0', bureau: 'Equifax' }
+    ];
+    for (const copy of copies) {
+      const current = await owner('GET', '/api/workspace');
+      const next = JSON.parse(JSON.stringify(current.body.data));
+      next.disputes.push({ id: copy.id, clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: copy.id + '-item', creditor: copy.creditor, accountNumber: copy.accountNumber || '', bureau: copy.bureau, result: 'deleted', bureauResultAt: todayEt() }] });
+      next.invoices.push({ id: copy.id + '-inv', clientId: 'bill', disputeId: copy.id, itemId: copy.id + '-item', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt() });
+      const billed = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: next });
+      assert.strictEqual(billed.status, 409, copy.id + ' ' + JSON.stringify(billed.body));
+      assert.match(billed.body.error, /recorded while the client was on hold|confirm this deletion/i);
+    }
+  });
+});
+
+test('an undated mailed row blocks every per-result invoice until the owner dates or retires it', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'bill', name: 'Bea Bill', kind: 'personal', email: 'undated-bill@guard.test', status: 'active', pricePerResult: 20, address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' });
+    seedSignedClient(built.db.data.workspace, 'bill', { onboarding: { disclosureSignedAt: '2026-10-01', disclosureAcknowledgedAt: '2026-10-01T15:00:00.000Z', contractSignedAt: '2026-10-01', contractSignedAtTs: '2026-10-01T16:00:00.000Z', cancellationWindowEndsAt: '2026-10-06', cancellationWindowEndsAtTs: '2026-10-07T03:59:59.999Z' } });
+    built.db.data.workspace.disputes = [
+      { id: 'legacy', clientId: 'bill', status: 'sent', items: [{ id: 'old', creditor: 'Old Bank', accountNumber: '42', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] },
+      { id: 'bare', clientId: 'bill', status: 'sent', recipient: 'Experian', items: [{ id: 'b1', creditor: 'Bare Bank', bureau: 'Experian' }] }
+    ];
+    const fresh = await owner('GET', '/api/workspace');
+    fresh.body.data.disputes.push({ id: 'fresh', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'new', creditor: 'New Bank', accountNumber: '8888', bureau: 'TransUnion', result: 'deleted', bureauResultAt: todayEt() }] });
+    fresh.body.data.invoices = [{ id: 'fresh-inv', clientId: 'bill', disputeId: 'fresh', itemId: 'new', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt() }];
+    const blocked = await owner('PUT', '/api/workspace', { baseVersion: fresh.body.version, data: fresh.body.data });
+    assert.strictEqual(blocked.status, 409, JSON.stringify(blocked.body));
+    assert.match(blocked.body.error, /no server mailed date/);
+    const unsent = await owner('GET', '/api/workspace');
+    unsent.body.data.disputes.find(d => d.id === 'legacy').status = 'draft';
+    const stayed = await owner('PUT', '/api/workspace', { baseVersion: unsent.body.version, data: unsent.body.data });
+    assert.strictEqual(stayed.status, 409, JSON.stringify(stayed.body));
+    assert.match(stayed.body.error, /moved off sent/);
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-undated@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    assert.strictEqual((await staff('POST', '/api/disputes/legacy/legacy-mailed', { mailedAt: '2026-11-02', reason: 'Staff cannot date this.' })).status, 403);
+    const dated = await owner('POST', '/api/disputes/legacy/legacy-mailed', { mailedAt: '2026-11-02', reason: 'The file shows November 2.' });
+    assert.strictEqual(dated.status, 200, JSON.stringify(dated.body));
+    assert.strictEqual(dated.body.held, false);
+    const retired = await owner('POST', '/api/disputes/bare/legacy-mailed', { retire: true, reason: 'No mailed date can be found.' });
+    assert.strictEqual(retired.status, 200, JSON.stringify(retired.body));
+    const after = await owner('GET', '/api/workspace');
+    after.body.data.disputes.push({ id: 'fresh', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'new', creditor: 'New Bank', accountNumber: '8888', bureau: 'TransUnion', result: 'deleted', bureauResultAt: todayEt() }] });
+    after.body.data.invoices = [{ id: 'fresh-inv', clientId: 'bill', disputeId: 'fresh', itemId: 'new', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt() }];
+    const billed = await owner('PUT', '/api/workspace', { baseVersion: after.body.version, data: after.body.data });
+    assert.strictEqual(billed.status, 200, JSON.stringify(billed.body));
+    const audit = await owner('GET', '/api/audit');
+    assert.ok(audit.body.some(row => row.action === 'dispute.legacy_mailed' && row.actor === 'owner@guard.test'));
+    assert.ok(audit.body.some(row => row.action === 'dispute.legacy_retire' && row.actor === 'owner@guard.test'));
+  });
+});
+
+test('a held item with no account needs the owner to confirm any later deletion on that bureau', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'bill', name: 'Bea Bill', kind: 'personal', email: 'blank-acct@guard.test', status: 'active', pricePerResult: 20 });
+    await addClient(owner, { id: 'ada', name: 'Ada Portal', kind: 'personal', email: 'ada-portal@guard.test', status: 'lead' });
+    seedSignedClient(built.db.data.workspace, 'bill', { onboarding: { disclosureSignedAt: '2026-10-01', disclosureAcknowledgedAt: '2026-10-01T15:00:00.000Z', contractSignedAt: '2026-10-01', contractSignedAtTs: '2026-10-01T16:00:00.000Z', cancellationWindowEndsAt: '2026-10-06', cancellationWindowEndsAtTs: '2026-10-07T03:59:59.999Z' } });
+    const open = await owner('GET', '/api/workspace');
+    open.body.data.disputes = [{ id: 'held-d', clientId: 'bill', status: 'sent', sentAt: '2026-11-02', items: [{ id: 'one', creditor: 'No Number Bank', bureau: 'TransUnion' }] }];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: open.body.version, data: open.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/bill/cancel', { method: 'email', receivedAt: '2026-10-04' })).status, 200);
+    const held = await owner('GET', '/api/workspace');
+    const marked = held.body.data.disputes.find(d => d.id === 'held-d');
+    marked.items[0].result = 'deleted';
+    marked.items[0].bureauResultAt = todayEt();
+    const recorded = await owner('PUT', '/api/workspace', { baseVersion: held.body.version, data: held.body.data });
+    assert.strictEqual(recorded.status, 200, JSON.stringify(recorded.body));
+    assert.strictEqual(recorded.body.data.disputes.find(d => d.id === 'held-d').items[0].resultRecordedOnHold, true);
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAt = null;
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAtTs = null;
+    const hold = built.db.data.workspace.heldOutcomes.find(row => row.key === 'bill\ntransunion');
+    hold.onHold = false;
+    hold.cleared = true;
+    const current = await owner('GET', '/api/workspace');
+    const next = JSON.parse(JSON.stringify(current.body.data));
+    next.disputes.push({ id: 'later', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'two', creditor: 'Other Bank', accountNumber: '1212', bureau: 'TransUnion', result: 'deleted', bureauResultAt: todayEt() }] });
+    next.invoices = [{ id: 'later-inv', clientId: 'bill', disputeId: 'later', itemId: 'two', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt() }];
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: next });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.match(denied.body.error, /confirm this deletion/i);
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-blank@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const staffTry = await owner('GET', '/api/workspace');
+    const staffBody = JSON.parse(JSON.stringify(staffTry.body.data));
+    staffBody.disputes.push({ id: 'later', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'two', creditor: 'Other Bank', accountNumber: '1212', bureau: 'TransUnion', result: 'deleted', bureauResultAt: todayEt() }] });
+    staffBody.invoices = [{ id: 'later-inv', clientId: 'bill', disputeId: 'later', itemId: 'two', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt(), confirmNoAccountHold: true }];
+    const staffDenied = await staff('PUT', '/api/workspace', { baseVersion: staffTry.body.version, data: staffBody });
+    assert.strictEqual(staffDenied.status, 403, JSON.stringify(staffDenied.body));
+    const ownerTry = await owner('GET', '/api/workspace');
+    const ownerBody = JSON.parse(JSON.stringify(ownerTry.body.data));
+    ownerBody.disputes.push({ id: 'later', clientId: 'bill', status: 'sent', sentAt: todayEt(), items: [{ id: 'two', creditor: 'Other Bank', accountNumber: '1212', bureau: 'TransUnion', result: 'deleted', bureauResultAt: todayEt() }] });
+    ownerBody.invoices = [{ id: 'later-inv', clientId: 'bill', disputeId: 'later', itemId: 'two', description: 'Deletion', amount: 20, status: 'issued', issuedAt: todayEt(), serviceCompletedAt: todayEt(), confirmNoAccountHold: true }];
+    const allowed = await owner('PUT', '/api/workspace', { baseVersion: ownerTry.body.version, data: ownerBody });
+    assert.strictEqual(allowed.status, 200, JSON.stringify(allowed.body));
+    const ada = built.db.data.workspace.clients.find(c => c.id === 'ada');
+    built.db.data.users.push({ id: 'ada-login', name: 'Ada', email: 'ada-portal@guard.test', role: 'client', clientId: 'ada', clientIdentity: ada.identity, password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' });
+    const portal = live.client();
+    assert.strictEqual((await portal('POST', '/api/login', { email: 'ada-portal@guard.test', password: 'portal password 1' })).status, 200);
+    const flagged = await portal('POST', '/api/portal/address', { address: 'Experian deleted this', city: 'Newark', state: 'NJ', zip: '07102' });
+    assert.strictEqual(flagged.status, 200, JSON.stringify(flagged.body));
+    const saved = built.db.data.workspace.clients.find(c => c.id === 'ada');
+    assert.strictEqual(saved.mailNeedsConfirm, true);
+    assert.strictEqual(saved.mailSnapshotConfirmed, false);
+  });
 });
