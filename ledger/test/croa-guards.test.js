@@ -4505,8 +4505,8 @@ test('a lock refusal drops only that invoice and the other invoice edits still s
     seedSignedClient(built.db.data.workspace, 'pay');
     const g = await owner('GET', '/api/workspace');
     g.body.data.disputes = [
-      { id: 'pd1', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] },
-      { id: 'pd2', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2020-06-01' }] }
+      { id: 'pd1', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi1', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: todayEt() }] },
+      { id: 'pd2', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: todayEt() }] }
     ];
     g.body.data.invoices = [
       { id: 'locked', clientId: 'pay', disputeId: 'pd1', itemId: 'pi1', description: 'Fee', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' },
@@ -4735,7 +4735,7 @@ test('a refused invoice field the user did not change reverts the whole invoice 
     locked.status = 'issued';
     locked.description = 'Fee';
     locked.notes = '';
-    issued.body.data.disputes = [{ id: 'pd', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
+    issued.body.data.disputes = [{ id: 'pd', clientId: 'pay', sentAt: '2020-06-01', items: [{ id: 'pi', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: todayEt() }] }];
     locked.disputeId = 'pd';
     locked.itemId = 'pi';
     locked.amount = 50;
@@ -4835,7 +4835,7 @@ test('a refused invoice is restored whole, and a wrong server shape does not sta
     await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-inv@guard.test', status: 'active', pricePerResult: 50 });
     seedSignedClient(built.db.data.workspace, 'clear');
     const g = await owner('GET', '/api/workspace');
-    g.body.data.disputes = [{ id: 'cd', clientId: 'clear', sentAt: '2020-06-01', items: [{ id: 'ci', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-06-01' }] }];
+    g.body.data.disputes = [{ id: 'cd', clientId: 'clear', sentAt: '2020-06-01', items: [{ id: 'ci', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: todayEt() }] }];
     g.body.data.invoices = [
       { id: 'held-inv', clientId: 'held', description: 'Draft', amount: 50, status: 'draft' },
       { id: 'locked', clientId: 'clear', disputeId: 'cd', itemId: 'ci', description: 'Fee', notes: '', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }
