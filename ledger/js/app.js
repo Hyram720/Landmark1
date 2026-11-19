@@ -1143,6 +1143,15 @@
     'use-template': el => templateModal(el.dataset.tpl, el.dataset.client),
     'new-client': () => clientModal(),
     'edit-client': el => clientModal(Store.get.client(el.dataset.id)),
+    'confirm-mail-snapshot': el => {
+      if (!(root.ledgerUser && root.ledgerUser.role === 'owner')) { toast('Only the owner can confirm a name and address.'); return; }
+      const current = Store.get.client(el.dataset.id);
+      if (!current) { toast('That client is no longer in the workspace.'); return; }
+      current.confirmMailSnapshot = true;
+      Store.log('Confirmed the mailed name and address for ' + (current.name || 'a client'), current.id, 'clients/' + current.id);
+      Store.save();
+      toast('Name and address confirmed');
+    },
     'enrollment-terms': el => enrollmentTermsModal(Store.get.client(el.dataset.id)),
     'load-demo': () => { if (S().clients.length && !UI.ask('Replace the current workspace with demo data?')) return; Store.replace(Sample.build()); toast('Demo workspace loaded'); go('#/'); },
     'reset': () => { if (!UI.ask('Erase every client, report, dispute and invoice in this browser? Export a backup first.')) return; Store.replace(Store.empty()); go('#/'); },

@@ -28,26 +28,47 @@ export function safeLine(value, max) {
     .slice(0, max);
 }
 
+const HOMOGLYPHS = {
+  '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c', '\u0443': 'y', '\u0445': 'x', '\u0456': 'i', '\u0455': 's',
+  '\u0410': 'a', '\u0415': 'e', '\u041e': 'o', '\u0420': 'p', '\u0421': 'c', '\u0423': 'y', '\u0425': 'x', '\u0406': 'i',
+  '\u03bf': 'o', '\u039f': 'o', '\u03b1': 'a', '\u0391': 'a', '\u03b5': 'e', '\u0395': 'e'
+};
+
 function normalizeSnapshot(value) {
   return String(value || '')
     .normalize('NFKC')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u0430\u0435\u043e\u0440\u0441\u0443\u0445\u0456\u0455\u0410\u0415\u041e\u0420\u0421\u0423\u0425\u0406\u03bf\u039f\u03b1\u0391\u03b5\u0395]/g, ch => HOMOGLYPHS[ch] || ch)
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+function collapseSpacedLetters(value) {
+  return String(value || '').replace(/(?:\b\p{L}\b[\s.]+){2,}\b\p{L}\b/gu, match => match.replace(/[\s.]+/g, ''));
+}
+
 export function snapshotProblem(name, address) {
   const text = normalizeSnapshot(`${name || ''} ${address || ''}`);
-  const flat = text.toLowerCase().replace(/([\p{L}])\1+/gu, '$1');
-  if (/https?:\/\/|www\./i.test(text) || /[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})?(?:\.[\p{L}\p{N}]{2,})+/u.test(text)) {
-    return 'This name or address needs the owner to confirm it before a held template can be sent.';
+  const lower = text.toLowerCase();
+  const warn = 'This name or address needs the owner to confirm it before a held template can be sent.';
+  if (/https?:\/\/|hxxps?:\/\/|www\./i.test(text) || /\bhxxps?\b/.test(lower) || /\bdot\s*com\b/.test(lower) || /[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})?(?:\.[\p{L}\p{N}]{2,})+/u.test(text)) {
+    return warn;
   }
-  if (/\b(experian|equifax|transunion)\b/.test(flat) || /\bdelet/.test(flat) || /\bremov/.test(flat)) {
-    return 'This name or address needs the owner to confirm it before a held template can be sent.';
+  if (/\bcollections\b/.test(lower) || /\bcredit report\b/.test(lower) || /\bpaid off\b/.test(lower) || /\bwiped\b/.test(lower) || /\bnegatives\b/.test(lower) || /\berased\b/.test(lower) || /\btrans\s+union\b/.test(lower)) {
+    return warn;
   }
+  const flat = collapseSpacedLetters(lower.replace(/([\p{L}])\1+/gu, '$1'));
+  if (/\b(experian|equifax|transunion)\b/.test(flat) || /\bdelet/.test(flat) || /\bremov/.test(flat)) return warn;
   const marks = flat.match(/\b(tu|eq|ex)\b/g) || [];
-  if (marks.length >= 2) return 'This name or address needs the owner to confirm it before a held template can be sent.';
+  if (marks.length >= 2) return warn;
   return '';
+}
+
+export const STATUTORY_HELD_TEMPLATES = ['disclosure-1679c', 'contract-1679d', 'signed-copies', 'cancellation-1679e'];
+
+export function clientForHeldTemplate(client, templateId) {
+  if (!client || client.mailNeedsConfirm !== true || !STATUTORY_HELD_TEMPLATES.includes(templateId)) return client;
+  return Object.assign({}, client, { name: '', firstName: '', lastName: '', mailName: '' });
 }
 
 export function templateClient(client) {

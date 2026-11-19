@@ -3,6 +3,7 @@
 // This does not write the database, start the server, or talk to production.
 // Run it on a copy of the data file before deploy:
 //   node ledger/server/count-invoice-statuses.js /path/to/ledger-db.json
+//   node ledger/server/count-invoice-statuses.js /path/to/ledger-db.json --reinvite-emails
 // Encrypted files need LEDGER_ENCRYPTION_KEY in the environment. The key is not printed.
 //
 // Equivalent SQL if those invoices are loaded into a table named invoices:
@@ -15,9 +16,11 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 
 const ALLOWED = new Set(['draft', 'issued', 'paid', 'void']);
-const file = process.argv[2];
+const args = process.argv.slice(2);
+const showReinviteEmails = args.includes('--reinvite-emails');
+const file = args.find(arg => arg !== '--reinvite-emails');
 if (!file) {
-  console.error('Usage: node ledger/server/count-invoice-statuses.js <ledger-db.json>');
+  console.error('Usage: node ledger/server/count-invoice-statuses.js <ledger-db.json> [--reinvite-emails]');
   process.exit(2);
 }
 
@@ -47,7 +50,9 @@ const shapeErrors = shapeReport.shapeErrors;
 const missingIdWarnings = shapeReport.missingIdWarnings;
 const orphans = orphanWork(data && data.workspace);
 const crossClient = crossClientLinks(data && data.workspace);
-const reinviteLogins = unmatchedPortalLogins(data);
+const reinviteRows = unmatchedPortalLogins(data);
+const reinviteLogins = showReinviteEmails ? reinviteRows : reinviteRows.length;
+const unstampedMailed = unstampedMailedDisputes(data && data.workspace);
 const deployGate = {
   outside: outside,
   duplicatePayTokens,
@@ -55,10 +60,16 @@ const deployGate = {
   missingIdWarnings,
   orphans,
   crossClient,
-  ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0,
-  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, and no workspace shape is wrong. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes, letters, and reports whose client is no longer in the workspace. crossClient lists a dispute or letter on one client whose items, report, or account cite another client. reinviteLogins lists portal logins whose email does not match the client, or that the migration left unbound. Those people need a new invitation after deploy. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
+  unstampedMailed,
+  ready: outside === 0 && duplicatePayTokens.sharedTokens === 0 && shapeErrors.length === 0 && unstampedMailed === 0,
+  message: 'Run this on a copy of production before deploy. ready is true only when outside is 0, no pay token is shared, no workspace shape is wrong, and unstampedMailed is 0. A blank client row is a shape error and makes ready false. missingIdWarnings lists legacy rows that have no id, by key and count. orphans lists disputes, letters, and reports whose client is no longer in the workspace. crossClient lists a dispute or letter on one client whose items, report, or account cite another client. unstampedMailed counts mailed disputes that have no server mailed date. ready is false until that count is 0. Set LEDGER_MIGRATE_LEGACY_MAILED=1 for one startup to stamp those dates from the typed mailed date, then review any row that still has no date. reinviteLogins is a count of portal logins the migration left unbound or whose email does not match the client. Review that count before any invitation goes out. Pass --reinvite-emails to print those email addresses. They do not by themselves make ready false. Otherwise review ledger/server/preview-invoice-migration.js and migrate before deploy. This script does not write.'
 };
-process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, crossClient, reinviteLogins, deployGate }, null, 2) + '\n');
+process.stdout.write(JSON.stringify({ file, invoices: invoices.length, outside, counts, duplicatePayTokens, shapeErrors, missingIdWarnings, orphans, crossClient, unstampedMailed, reinviteLogins, deployGate }, null, 2) + '\n');
+
+function unstampedMailedDisputes(ws) {
+  const day = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').slice(0, 10));
+  return ((ws && ws.disputes) || []).filter(d => d && (d.sentAt || d.sentDate || d.serverSentAt || String(d.status || '') === 'sent') && !day(d.serverSentAt)).length;
+}
 
 function unmatchedPortalLogins(data) {
   const clients = ((data && data.workspace && data.workspace.clients) || []).filter(c => c && c.id);
