@@ -369,12 +369,11 @@
     const dropped = [];
     const refused = [];
     const reverted = [];
-    const tiedClients = new Set();
+    const tiedRecords = new Set();
     const priorActivity = new Set(bases.activity ? bases.activity.keys() : []);
-    const noteTied = (key, id, sentRow, keptRow, local) => {
+    const noteTied = (key, id) => {
       if (!id || (key !== 'clients' && key !== 'disputes' && key !== 'letters' && key !== 'invoices')) return;
-      if (key === 'clients') { tiedClients.add(String(id)); return; }
-      [sentRow, keptRow, local].forEach(row => { if (row && row.clientId) tiedClients.add(String(row.clientId)); });
+      tiedRecords.add(key + '/' + id);
     };
     pending.forEach((localRow, token) => {
       const split = token.indexOf('/');
@@ -397,7 +396,7 @@
         return;
       }
       if (refusal || fallbackRefusal) {
-        noteTied(key, id, sentRow, kept, localRow);
+        noteTied(key, id);
         const sentUser = userShape(key, sentRow) || {};
         const localUser = userShape(key, localRow) || {};
         const baseUser = userShape(key, kept) || {};
@@ -487,10 +486,11 @@
     Object.keys(serverIdx).forEach(key => {
       serverIdx[key].forEach((row, id) => { if (!pending.has(tokenOf(key, id))) setBase(key, id, row); });
     });
-    if (tiedClients.size) {
+    if (tiedRecords.size) {
       (state.activity || []).slice().forEach(row => {
         if (!row || !row.id || priorActivity.has(row.id)) return;
-        if (!tiedClients.has(String(row.clientId || ''))) return;
+        const tokens = Array.isArray(row.record) ? row.record.map(String) : (row.record ? [String(row.record)] : []);
+        if (!tokens.some(token => tiedRecords.has(token))) return;
         const remote = readIndexed(serverIdx, 'activity', row.id);
         writeRow('activity', row.id, null, true);
         setBase('activity', row.id, remote || null);
