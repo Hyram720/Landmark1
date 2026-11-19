@@ -20,7 +20,7 @@ import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
 import { applySignupStatus, clientServiceOnHold, mailingBlocked, serviceWorkBlocked } from './signup-status.js';
-import { HELD_TEMPLATE_IDS, renderHeldMessage } from './held-messages.js';
+import { HELD_TEMPLATE_IDS, renderHeldMessage, safeLine } from './held-messages.js';
 import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
@@ -89,6 +89,27 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
   const fileKey = encryptionKey ? crypto.createHash('sha256').update('files:' + encryptionKey).digest() : null;
   const D = () => db.data;
+  (function migratePortalIdentity() {
+    const ws = D().workspace;
+    if (!ws || !Array.isArray(ws.clients)) return;
+    const notes = [];
+    for (const c of ws.clients) {
+      if (!c || !c.id || c.identity) continue;
+      c.identity = uid();
+      notes.push('client ' + c.id);
+    }
+    const byId = new Map(ws.clients.filter(c => c && c.id).map(c => [c.id, c]));
+    for (const u of D().users || []) {
+      if (!u || u.role !== 'client' || u.clientIdentity || !u.clientId) continue;
+      const c = byId.get(u.clientId);
+      if (!c || !c.identity) continue;
+      u.clientIdentity = c.identity;
+      notes.push('login ' + (u.email || u.id));
+    }
+    if (!notes.length) return;
+    db.audit({ actor: 'system:migrate', action: 'portal.identity.migrate', detail: notes.join(', ').slice(0, 800) });
+    db.persist();
+  })();
   setKeyProvider(() => (db.data.secrets && db.data.secrets.anthropicKey) || '');
 
   // ---------- owner access from Railway variables ----------
@@ -408,6 +429,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       }
     }
     const priorClients = new Map(((before && before.clients) || []).filter(c => isRecord(c) && String(c.id || '').trim()).map(c => [c.id, c]));
+    const companyOf = (ws) => stableValue((ws && ws.settings && ws.settings.company) || null);
+    if (req.user.role !== 'owner' && companyOf(before) !== companyOf(data)) return reject(403, 'Only the owner can change the company settings.', [{ key: 'settings', id: 'company', field: 'company', reason: 'Only the owner can change the company settings.' }]);
     const pendingAudits = [];
     for (const c of data.clients || []) {
       if (!isRecord(c)) continue;
@@ -477,7 +500,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (invoiceGuard.status) return reject(invoiceGuard.status, invoiceGuard.error, invoiceGuard.refused);
     pendingAudits.push(...invoiceGuard.audits);
     lockInvoicedDisputeItems(before, data);
-    stampDeletionRecords(before, data);
+    const stamped = stampServerWork(before, data);
+    if (stamped) return reject(409, stamped.error, stamped.refused);
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return reject(409, billingBlock.error, billingBlock.refused);
     const over = Billing.capViolations(before, data);
@@ -503,13 +527,34 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     for (const c of data.clients) if (isRecord(c)) applySignupStatus(c);
     for (const c of data.clients) if (isRecord(c) && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
+    const identityRefused = [];
+    const identityOwner = new Map();
+    for (const old of priorClients.values()) if (old.identity) identityOwner.set(String(old.identity), old.id);
+    const seenIdentity = new Set();
     for (const c of data.clients || []) {
       if (!isRecord(c) || !c.id) continue;
       const old = priorClients.get(c.id);
-      if (old && old.identity) c.identity = old.identity;
-      else c.identity = uid();
-      if (old && old.createdAt) c.createdAt = old.createdAt;
+      const submitted = String(c.identity || '');
+      if (old && old.identity) {
+        if (submitted && submitted !== String(old.identity)) identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'The client identity does not match this id.' });
+        c.identity = old.identity;
+        if (old.createdAt) c.createdAt = old.createdAt;
+      } else if (submitted && identityOwner.has(submitted) && identityOwner.get(submitted) !== c.id) {
+        identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'That identity belongs to another client.' });
+        c.identity = uid();
+      } else {
+        c.identity = uid();
+      }
+      if (seenIdentity.has(c.identity)) identityRefused.push({ key: 'clients', id: c.id, field: 'identity', reason: 'The client identity does not match this id.' });
+      seenIdentity.add(c.identity);
+      const snapName = safeLine(c.name, 80);
+      const snapAddress = safeLine([c.address, c.city, c.state, c.zip].filter(Boolean).join(', '), 120);
+      if (old && old.mailName) c.mailName = old.mailName;
+      else c.mailName = snapName;
+      if (old && old.mailAddress) c.mailAddress = old.mailAddress;
+      else c.mailAddress = snapAddress;
     }
+    if (identityRefused.length) return reject(409, identityRefused[0].reason, identityRefused);
     for (const entry of pendingAudits) db.audit(entry);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
@@ -565,36 +610,65 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
   }
   function recordedResultDay(item) {
-    if (!item) return '';
-    return recordedDay(item.serverResultAt) || recordedDay(item.bureauResultAt) || recordedDay(item.resultAt) || recordedDay(item.resultDate);
+    return item ? recordedDay(item.serverResultAt) : '';
   }
-  function stampDeletionRecords(before, data) {
+  function wasSent(row) {
+    if (!row) return false;
+    if (row.serverSentAt || row.sentAt || row.sentDate) return true;
+    return String(row.status || '') === 'sent';
+  }
+  function stampServerWork(before, data) {
+    const today = todayEtYmd();
     const prior = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
+    const refused = [];
+    const push = (id, field, reason) => refused.push({ key: 'disputes', id: id || '', field, reason });
     for (const d of data.disputes || []) {
       if (!d || !d.id) continue;
       const old = prior.get(d.id);
       const client = (data.clients || []).find(c => c && c.id === d.clientId);
       const onHold = !!(client && client.kind !== 'business' && clientServiceOnHold(client, undefined, data.signatures));
+      if (old && wasSent(old)) {
+        d.serverSentAt = old.serverSentAt || recordedDay(old.sentAt) || recordedDay(old.sentDate) || today;
+        if (recordedDay(d.sentAt) !== recordedDay(old.sentAt) || recordedDay(d.sentDate) !== recordedDay(old.sentDate)) {
+          push(d.id, 'sentAt', 'The mailed date cannot be changed after the dispute is sent.');
+        }
+        d.sentAt = old.sentAt == null ? null : old.sentAt;
+        d.sentDate = old.sentDate == null ? null : old.sentDate;
+      } else if (wasSent(d)) {
+        d.serverSentAt = today;
+      } else {
+        delete d.serverSentAt;
+      }
+      const oldItems = (old && old.items) || [];
+      const nextIds = new Set((d.items || []).filter(it => it && it.id).map(it => String(it.id)));
+      for (const oldItem of oldItems) {
+        if (!oldItem || !oldItem.id) continue;
+        const locked = oldItem.result === 'deleted' || oldItem.resultRecordedOnHold || oldItem.serverResultAt;
+        if (locked && !nextIds.has(String(oldItem.id))) push(d.id, 'items', 'A deleted item cannot change its id.');
+      }
       for (const item of d.items || []) {
         if (!item || typeof item !== 'object') continue;
-        const oldItem = old && (old.items || []).find(it => it && it.id === item.id);
+        const oldItem = oldItems.find(it => it && String(it.id) === String(item.id));
+        if (oldItem && oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
+        else if (item.result === 'deleted' && onHold) item.resultRecordedOnHold = true;
+        else delete item.resultRecordedOnHold;
         if (oldItem && oldItem.serverResultAt) {
+          if (item.serverResultAt && recordedDay(item.serverResultAt) !== recordedDay(oldItem.serverResultAt)) {
+            push(d.id, 'serverResultAt', 'The recorded result date cannot be changed.');
+          }
           item.serverResultAt = oldItem.serverResultAt;
-          if (oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
-          else delete item.resultRecordedOnHold;
-        } else if (item.result === 'deleted') {
-          const day = recordedDay(item.bureauResultAt) || recordedDay(item.resultAt) || recordedDay(item.resultDate);
-          if (day) item.serverResultAt = day;
-          else delete item.serverResultAt;
-          if (onHold) item.resultRecordedOnHold = true;
-          else delete item.resultRecordedOnHold;
+        } else if (item.result === 'deleted' || (oldItem && (oldItem.result === 'deleted' || oldItem.resultRecordedOnHold))) {
+          item.serverResultAt = today;
+        } else {
+          delete item.serverResultAt;
         }
       }
     }
+    if (!refused.length) return null;
+    return { error: refused[0].reason, refused };
   }
   function recordedMailedDay(dispute) {
-    if (!dispute) return '';
-    return recordedDay(dispute.sentAt) || recordedDay(dispute.sentDate);
+    return dispute ? recordedDay(dispute.serverSentAt) : '';
   }
   function deletedInvoiceItem(data, inv) {
     if (!inv || !inv.disputeId || !inv.itemId) return null;
@@ -657,10 +731,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const item = deletedInvoiceItem(data, inv);
       if (!item) return stop(inv, 'itemId', 'An invoice must name the deleted item and its bureau.');
       if (item.result !== 'deleted') return stop(inv, 'itemId', 'An invoice can be issued only for a deleted item, not a correction.');
-      const priorDispute = ((before && before.disputes) || []).find(d => d && d.id === inv.disputeId);
       const currentDispute = (data.disputes || []).find(d => d && d.id === inv.disputeId);
       const resultDay = recordedResultDay(item);
-      const mailedDay = recordedMailedDay(priorDispute) || recordedMailedDay(currentDispute);
+      const mailedDay = recordedMailedDay(currentDispute);
       if (item.resultRecordedOnHold) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
       if (!resultDay) return stop(inv, 'bureauResultAt', 'An invoice must name the dated bureau result for the deleted item.');
       const signedAt = billed.onboarding && (billed.onboarding.contractSignedAtTs || billed.onboarding.contractSignedAt);
@@ -817,13 +890,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   const company = () => workspace().settings.company || {};
   function portalClient(req) {
     const c = workspace().clients.find(row => row && row.id === req.user.clientId);
-    if (!c || req.user.role !== 'client') return c || null;
-    if (req.user.clientIdentity && c.identity && req.user.clientIdentity !== c.identity) return null;
-    if (!req.user.clientIdentity && c.identity) {
-      req.user.clientIdentity = c.identity;
-      db.audit({ actor: req.user.email, action: 'portal.identity.bind', detail: c.id });
-      db.persist();
-    }
+    if (req.user.role !== 'client') return c || null;
+    if (!c || !req.user.clientIdentity || !c.identity || req.user.clientIdentity !== c.identity) return null;
     return c;
   }
   app.post('/api/clients/:id/portal-link', need('owner'), (req, res) => {
@@ -832,9 +900,13 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const email = String((req.body || {}).email || '').toLowerCase().trim();
     const u = D().users.find(row => row && row.role === 'client' && row.email === email);
     if (!u) return res.status(404).json({ error: 'No portal login uses that email' });
+    const clientEmail = String(c.email || '').toLowerCase().trim();
+    const confirm = (req.body || {}).confirm === true;
+    const reason = String((req.body || {}).reason || '').trim().slice(0, 300);
+    if (email !== clientEmail && !(confirm && reason)) return res.status(409).json({ error: 'The login email does not match this client. Confirm with a reason to link a different email.' });
     u.clientId = c.id;
     u.clientIdentity = c.identity;
-    db.audit({ actor: req.user.email, action: 'portal.link', detail: `${email} -> ${c.id}` });
+    db.audit({ actor: req.user.email, action: 'portal.link', detail: email === clientEmail ? `${email} -> ${c.id}` : JSON.stringify({ email, clientId: c.id, clientEmail, reason }) });
     db.persist();
     res.json({ ok: true, clientId: c.id });
   });

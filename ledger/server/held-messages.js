@@ -19,6 +19,46 @@ export const HELD_TEMPLATE_IDS = [
 const ADMIN = new Set(['invite', 'login', 'reset', 'verify']);
 const POSTMARK = new Set(['timely', 'late']);
 
+export function safeLine(value, max) {
+  return String(value || '')
+    .replace(/[^\p{L}\p{N}\s.'’,#/-]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+export function templateClient(client) {
+  const c = Object.assign({}, client || {});
+  c.name = safeLine(c.mailName || c.name, 80) || 'Client';
+  c.firstName = safeLine(c.firstName, 40);
+  c.lastName = safeLine(c.lastName, 40);
+  c.address = safeLine(c.mailAddress || c.address, 80);
+  c.city = safeLine(c.city, 40);
+  c.state = safeLine(c.state, 20);
+  c.zip = String(c.zip || '').replace(/[^\d-]/g, '').slice(0, 10);
+  if (Array.isArray(c.scheduleA)) {
+    c.scheduleA = c.scheduleA.map(row => {
+      if (!row || typeof row !== 'object') return row;
+      return Object.assign({}, row, {
+        item: safeLine(row.item, 80),
+        creditor: safeLine(row.creditor || row.furnisher, 80),
+        bureau: safeLine(row.bureau, 40)
+      });
+    });
+  }
+  return c;
+}
+
+export function templateCompany(company) {
+  const src = company || {};
+  return {
+    name: safeLine(src.name, 120),
+    address: safeLine(src.address, 160),
+    email: safeLine(src.email, 80),
+    phone: safeLine(src.phone, 30)
+  };
+}
+
 function statutoryPart(text) {
   return String(text || '').split(/\n---\n/)[0].replace(/\*\*/g, '').trim();
 }
@@ -29,8 +69,9 @@ export function statutoryDisclosure() {
 
 export function statutoryCancellation(company, deadline) {
   const src = statutoryPart(croaDocs().cancellation);
-  const name = (company && company.name) || '[LEGAL NAME: Fred to confirm]';
-  const address = String((company && company.address) || '[ADDRESS FOR CANCELLATION NOTICES: Fred to provide]').replace(/\n/g, ', ');
+  const safe = templateCompany(company);
+  const name = safe.name || '[LEGAL NAME: Fred to confirm]';
+  const address = safe.address || '[ADDRESS FOR CANCELLATION NOTICES: Fred to provide]';
   const when = deadline || '[DATE: Weekday, Month D, YYYY]';
   return src
     .replace(/\[LEGAL NAME:[^\]]*\]/g, name)
@@ -45,7 +86,8 @@ function deadlineLabel(client) {
     const win = cancellationWindow(signed, new Date());
     return formatDeadlineDateEt(win.deadlineInstant);
   }
-  if (o.cancellationWindowEndsAt) return String(o.cancellationWindowEndsAt);
+  const end = String(o.cancellationWindowEndsAt || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(end)) return end;
   return 'the date in your Notice of Cancellation';
 }
 
@@ -53,10 +95,15 @@ function money(n) {
   return '$' + (Math.round(Number(n) * 100) / 100).toFixed(2);
 }
 
+function safeWhen(value) {
+  const day = String(value || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : 'the date we received it';
+}
+
 export function renderHeldMessage(id, client, ctx) {
-  const c = client || {};
+  const c = templateClient(client);
   const context = ctx || {};
-  const company = context.company || {};
+  const company = templateCompany(context.company);
   if (!HELD_TEMPLATE_IDS.includes(id)) return { error: 'That message is not available while this client is on hold.' };
   if (id === 'disclosure-1679c') {
     return { subject: 'Consumer Credit File Rights Under State and Federal Law', text: statutoryDisclosure() };
@@ -101,7 +148,7 @@ export function renderHeldMessage(id, client, ctx) {
   }
   if (id === 'cancellation-confirmed') {
     const o = c.onboarding || {};
-    const when = o.cancellationReceivedAt || o.cancelledAt || 'the date we received it';
+    const when = safeWhen(o.cancellationReceivedAt || o.cancelledAt);
     let text = 'We received your cancellation. Your contract is cancelled as of ' + when + '.';
     if (o.cancellationTimely === true) text += ' The cancellation was timely.';
     if (o.cancellationTimely === false) text += ' The cancellation was late.';

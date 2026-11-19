@@ -8,6 +8,7 @@ import { sendMail, mailMode } from './mailer.js';
 import { clientAuthMethod } from './auth-method.js';
 import { postKitForm } from './kit-hook.js';
 import { mailingAddress, enrollmentStatus } from './croa-docs.js';
+import { safeLine } from './held-messages.js';
 import { etYmd } from './croa-window.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -129,12 +130,16 @@ export function mountSignup(app, deps) {
       signupUserAgent: String(req.get('user-agent') || '').slice(0, 300)
     };
     if (matchedClient) client.possible_duplicate = matchedClient.id;
+    client.identity = uid();
+    client.mailName = safeLine(client.name, 80);
+    client.mailAddress = safeLine([street, city, 'NJ', zip].filter(Boolean).join(', '), 120);
     const user = {
       id: uid(),
       name: client.name,
       email,
       role: 'client',
       clientId,
+      clientIdentity: client.identity,
       password: passwordHash,
       sessionEpoch: 1,
       createdAt: now,

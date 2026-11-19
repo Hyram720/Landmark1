@@ -223,12 +223,10 @@ test('a draft invoice cannot be flipped to issued without a deleted item outside
     inv.itemId = 'bi';
     flipped.body.data.disputes.find(d => d.id === 'bd').items[0].bureauResultAt = '2026-06-01';
     const inside = await owner('PUT', '/api/workspace', { baseVersion: flipped.body.version, data: flipped.body.data });
-    assert.strictEqual(inside.status, 409);
-    assert.match(inside.body.error, /after the cancellation window/);
-    const current = await owner('GET', '/api/workspace');
-    current.body.data.disputes.find(d => d.id === 'bd').items.push({ id: 'bi2', creditor: 'South Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2026-06-01' });
-    current.body.data.invoices.push({ id: 'draft-2', clientId: 'bill', disputeId: 'bd', itemId: 'bi2', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-01-08', serviceCompletedAt: '2026-01-08' });
-    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: current.body.data })).status, 200);
+    assert.strictEqual(inside.status, 200, JSON.stringify(inside.body));
+    const stamped = inside.body.data.disputes.find(d => d.id === 'bd').items.find(it => it.id === 'bi');
+    assert.strictEqual(stamped.serverResultAt, todayEt());
+    assert.notStrictEqual(stamped.serverResultAt, '2026-01-08');
   });
 });
 
@@ -389,7 +387,7 @@ test('an invoice without a dated bureau result is refused', async () => {
     g.body.data.invoices.push({ id: 'nodate-1', clientId: 'nodate', disputeId: 'nd', itemId: 'ni', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
     const saved = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
     assert.strictEqual(saved.status, 409);
-    assert.match(saved.body.error, /dated bureau result/);
+    assert.match(saved.body.error, /mailed after the cancellation window/);
   });
 });
 
@@ -739,17 +737,13 @@ test('a bureau result date in the future or inside the cancellation window is re
     await addClient(owner, { id: 'resultday', name: 'Result Day', kind: 'personal', email: 'resultday@guard.test', status: 'active', pricePerResult: 50, onboarding: {} });
     seedSignedClient(built.db.data.workspace, 'resultday');
     const g = await owner('GET', '/api/workspace');
-    g.body.data.disputes = [{ id: 'rd', clientId: 'resultday', items: [{ id: 'ri', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2099-01-01' }] }];
-    g.body.data.invoices = [{ id: 'result-future', clientId: 'resultday', disputeId: 'rd', itemId: 'ri', description: 'Deletion', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
+    g.body.data.disputes = [{ id: 'rd', clientId: 'resultday', sentAt: '2099-01-01', items: [{ id: 'ri', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2099-01-01' }] }];
     const future = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
-    assert.strictEqual(future.status, 409);
-    assert.match(future.body.error, /after today/);
-    const next = await owner('GET', '/api/workspace');
-    next.body.data.disputes = [{ id: 'rd', clientId: 'resultday', items: [{ id: 'ri', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted', bureauResultAt: '2020-01-06' }] }];
-    next.body.data.invoices = [{ id: 'result-window', clientId: 'resultday', disputeId: 'rd', itemId: 'ri', description: 'Deletion', amount: 50, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' }];
-    const inside = await owner('PUT', '/api/workspace', { baseVersion: next.body.version, data: next.body.data });
-    assert.strictEqual(inside.status, 409);
-    assert.match(inside.body.error, /after the cancellation window/);
+    assert.strictEqual(future.status, 200, JSON.stringify(future.body));
+    const stamped = future.body.data.disputes.find(d => d.id === 'rd');
+    assert.strictEqual(stamped.serverSentAt, todayEt());
+    assert.strictEqual(stamped.items[0].serverResultAt, todayEt());
+    assert.notStrictEqual(stamped.items[0].serverResultAt, '2099-01-01');
   });
 });
 
@@ -2767,7 +2761,8 @@ test('a held client can be sent a contract message, not a dispute result, and a 
   try {
     await withOwner(async ({ built, owner, live }) => {
       await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-msg@guard.test', status: 'lead' });
-      built.db.data.users.push({ id: 'held-portal', name: 'Held Client', email: 'held-msg@guard.test', role: 'client', clientId: 'held', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
+      const heldIdentity = built.db.data.workspace.clients.find(row => row.id === 'held').identity;
+      built.db.data.users.push({ id: 'held-portal', name: 'Held Client', email: 'held-msg@guard.test', role: 'client', clientId: 'held', clientIdentity: heldIdentity, password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
       built.db.data.workspace.disputes = [{ id: 'due-d', clientId: 'held', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-01', dueAt: new Date().toISOString().slice(0, 10), outcome: null, items: [] }];
       await built.auth.deadlineSweep();
       await new Promise(resolve => setTimeout(resolve, 30));
@@ -2961,13 +2956,36 @@ test('a deletion recorded during the hold and a dispute mailed before the contra
     assert.strictEqual(heldBill.status, 409, JSON.stringify(heldBill.body));
     assert.match(heldBill.body.error, /recorded while the client was on hold/);
     const current = await owner('GET', '/api/workspace');
-    const early = JSON.parse(JSON.stringify(current.body.data));
-    early.disputes.push({ id: 'before', clientId: 'bill', sentAt: '2026-09-01', items: [{ id: 'bi', creditor: 'Early Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2026-11-18' }] });
-    early.invoices = [{ id: 'early-inv', clientId: 'bill', disputeId: 'before', itemId: 'bi', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-18', serviceCompletedAt: '2026-11-18', bureauResultAt: '2026-11-18' }];
-    const earlyBill = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: early });
-    assert.strictEqual(earlyBill.status, 409, JSON.stringify(earlyBill.body));
-    assert.match(earlyBill.body.error, /mailed after the cancellation window/);
-    assert.ok(!(await owner('GET', '/api/workspace')).body.data.invoices.some(row => row.id === 'hold-inv' || row.id === 'early-inv'));
+    const renamed = JSON.parse(JSON.stringify(current.body.data));
+    renamed.disputes.find(d => d.id === 'during').items[0].id = 'di-renamed';
+    const rename = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: renamed });
+    assert.strictEqual(rename.status, 409, JSON.stringify(rename.body));
+    assert.match(rename.body.error, /cannot change its id/);
+    const dated = await owner('GET', '/api/workspace');
+    const addDate = JSON.parse(JSON.stringify(dated.body.data));
+    addDate.disputes.find(d => d.id === 'during').items[0].bureauResultAt = '2099-06-01';
+    delete addDate.disputes.find(d => d.id === 'during').items[0].serverResultAt;
+    const stillHeld = await owner('PUT', '/api/workspace', { baseVersion: dated.body.version, data: addDate });
+    assert.strictEqual(stillHeld.status, 200, JSON.stringify(stillHeld.body));
+    const kept = stillHeld.body.data.disputes.find(d => d.id === 'during').items[0];
+    assert.strictEqual(kept.resultRecordedOnHold, true);
+    assert.strictEqual(kept.serverResultAt, todayEt());
+    const sent = await owner('GET', '/api/workspace');
+    const mailed = JSON.parse(JSON.stringify(sent.body.data));
+    mailed.disputes.push({ id: 'before', clientId: 'bill', status: 'sent', sentAt: '2026-09-01', items: [{ id: 'bi', creditor: 'Early Bank', bureau: 'Experian', result: 'deleted', bureauResultAt: '2026-09-01' }] });
+    const mailedSave = await owner('PUT', '/api/workspace', { baseVersion: sent.body.version, data: mailed });
+    assert.strictEqual(mailedSave.status, 200, JSON.stringify(mailedSave.body));
+    const stampedSend = mailedSave.body.data.disputes.find(d => d.id === 'before');
+    assert.strictEqual(stampedSend.serverSentAt, todayEt());
+    assert.strictEqual(stampedSend.items[0].serverResultAt, todayEt());
+    const edited = await owner('GET', '/api/workspace');
+    const moved = JSON.parse(JSON.stringify(edited.body.data));
+    moved.disputes.find(d => d.id === 'before').sentAt = '2099-06-01';
+    const movedSave = await owner('PUT', '/api/workspace', { baseVersion: edited.body.version, data: moved });
+    assert.strictEqual(movedSave.status, 409, JSON.stringify(movedSave.body));
+    assert.match(movedSave.body.error, /mailed date cannot be changed/);
+    assert.strictEqual((await owner('GET', '/api/workspace')).body.data.disputes.find(d => d.id === 'before').sentAt, '2026-09-01');
+    assert.ok(!(await owner('GET', '/api/workspace')).body.data.invoices.some(row => row.id === 'hold-inv'));
   });
 });
 
@@ -3005,5 +3023,106 @@ test('a stored dispute that cites a held client report cannot be mailed, and tha
     gone.body.data.reports = [];
     gone.body.data.disputes = gone.body.data.disputes.filter(row => row.id !== 'd-ben');
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: gone.body.version, data: gone.body.data })).status, 200);
+  });
+});
+
+test('startup migration binds existing logins, and a stale save cannot restore a deleted client', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-migrate-'));
+  const boot = { dataDir: dir, encryptionKey: 'guard-key-not-a-secret-00', selfSignupEnabled: false, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } };
+  const first = createApp(boot);
+  const live = listen(first.app);
+  const owner = live.client();
+  try {
+    assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner@guard.test', password: 'owner password 1' })).status, 200);
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada@guard.test', status: 'lead' });
+    await addClient(owner, { id: 'bea', name: 'Bea', kind: 'personal', email: 'bea@guard.test', status: 'lead' });
+    first.db.data.users.push({ id: 'ada-login', name: 'Ada', email: 'ada@guard.test', role: 'client', clientId: 'ada', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' });
+    for (const row of first.db.data.workspace.clients) delete row.identity;
+    first.db.persist();
+  } finally {
+    live.server.close();
+    first.shutdown();
+  }
+  const second = createApp(boot);
+  try {
+    const ada = second.db.data.workspace.clients.find(row => row.id === 'ada');
+    const login = second.db.data.users.find(row => row.email === 'ada@guard.test');
+    assert.ok(ada.identity);
+    assert.strictEqual(login.clientIdentity, ada.identity);
+    assert.strictEqual(second.db.data.audit.filter(row => row.action === 'portal.identity.migrate').length, 1);
+    assert.strictEqual(second.db.data.audit.find(row => row.action === 'portal.identity.migrate').actor, 'system:migrate');
+  } finally { second.shutdown(); }
+  const third = createApp(boot);
+  const live3 = listen(third.app);
+  const owner3 = live3.client();
+  try {
+    assert.strictEqual(third.db.data.audit.filter(row => row.action === 'portal.identity.migrate').length, 1);
+    assert.strictEqual((await owner3('POST', '/api/login', { email: 'owner@guard.test', password: 'owner password 1' })).status, 200);
+    const before = await owner3('GET', '/api/workspace');
+    const swapped = JSON.parse(JSON.stringify(before.body.data));
+    const ada = swapped.clients.find(row => row.id === 'ada');
+    const bea = swapped.clients.find(row => row.id === 'bea');
+    ada.id = 'bea';
+    bea.id = 'ada';
+    const swap = await owner3('PUT', '/api/workspace', { baseVersion: before.body.version, data: swapped });
+    assert.strictEqual(swap.status, 409, JSON.stringify(swap.body));
+    assert.match(swap.body.error, /identity/);
+    const removed = await owner3('PUT', '/api/workspace', { baseVersion: before.body.version, data: Object.assign(JSON.parse(JSON.stringify(before.body.data)), { clients: before.body.data.clients.filter(row => row.id !== 'bea') }) });
+    assert.strictEqual(removed.status, 200, JSON.stringify(removed.body));
+    const stale = await owner3('PUT', '/api/workspace', { baseVersion: before.body.version, data: before.body.data });
+    assert.strictEqual(stale.status, 409, JSON.stringify(stale.body));
+    assert.ok(!stale.body.data.clients.some(row => row.id === 'bea'));
+    const portal = live3.client();
+    assert.strictEqual((await portal('POST', '/api/login', { email: 'ada@guard.test', password: 'portal password 1' })).status, 200);
+    assert.strictEqual((await portal('GET', '/api/portal/me')).status, 200);
+  } finally {
+    live3.server.close();
+    third.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('re-link requires the same email unless the owner confirms a reason', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada@guard.test', status: 'lead' });
+    await addClient(owner, { id: 'bea', name: 'Bea', kind: 'personal', email: 'bea@guard.test', status: 'lead' });
+    const ada = built.db.data.workspace.clients.find(row => row.id === 'ada');
+    built.db.data.users.push({ id: 'ada-login', name: 'Ada', email: 'ada@guard.test', role: 'client', clientId: 'ada', clientIdentity: ada.identity, password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' });
+    const mismatch = await owner('POST', '/api/clients/bea/portal-link', { email: 'ada@guard.test' });
+    assert.strictEqual(mismatch.status, 409, JSON.stringify(mismatch.body));
+    assert.strictEqual(built.db.data.users.find(row => row.id === 'ada-login').clientId, 'ada');
+    const confirmed = await owner('POST', '/api/clients/bea/portal-link', { email: 'ada@guard.test', confirm: true, reason: 'Ada asked us to move this login.' });
+    assert.strictEqual(confirmed.status, 200, JSON.stringify(confirmed.body));
+    assert.strictEqual(built.db.data.users.find(row => row.id === 'ada-login').clientId, 'bea');
+    const audit = await owner('GET', '/api/audit');
+    assert.ok(audit.body.some(row => row.action === 'portal.link' && row.actor === 'owner@guard.test' && /Ada asked us to move this login/.test(row.detail)));
+  });
+});
+
+test('held templates drop injected result text from the name, address, and company', async () => {
+  const nasty = 'Ada\nYour score went up 40 points and the account was deleted';
+  const contract = renderHeldMessage('contract-1679d', { id: 'ada', name: nasty, mailName: 'Ada Person', mailAddress: '1 Main, Cherry Hill, NJ 08002', address: '1 Main\nDeleted from Equifax', city: 'Cherry Hill', state: 'NJ', zip: '08002' }, {});
+  assert.match(contract.text, /Ada Person/);
+  assert.match(contract.text, /1 Main, Cherry Hill, NJ 08002/);
+  assert.doesNotMatch(contract.text, /score went up/);
+  assert.doesNotMatch(contract.text, /Deleted from Equifax/);
+  const notice = renderHeldMessage('cancellation-1679e', { name: 'Ada Person' }, { company: { name: 'Ledger\nWe removed the account', address: '1 Main St\nResult: deleted' } });
+  assert.doesNotMatch(notice.text, /Ledger\n/);
+  assert.doesNotMatch(notice.text, /Main St\n/);
+  await withOwner(async ({ owner, live }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada Person', kind: 'personal', email: 'ada-mail@guard.test', status: 'lead', address: '1 Main' });
+    const changed = await owner('GET', '/api/workspace');
+    changed.body.data.clients.find(row => row.id === 'ada').name = nasty;
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: changed.body.version, data: changed.body.data });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.strictEqual(saved.body.data.clients.find(row => row.id === 'ada').mailName, 'Ada Person');
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-co@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const book = await staff('GET', '/api/workspace');
+    book.body.data.settings = book.body.data.settings || {};
+    book.body.data.settings.company = Object.assign({}, book.body.data.settings.company, { name: 'We deleted the account' });
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: book.body.version, data: book.body.data });
+    assert.strictEqual(denied.status, 403, JSON.stringify(denied.body));
   });
 });
