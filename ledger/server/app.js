@@ -354,6 +354,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const before = D().workspace;
     const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
     const pendingAudits = [];
+    for (const c of data.clients || []) {
+      if (!c) continue;
+      const old = priorClients.get(c.id);
+      if (old) {
+        if (Object.prototype.hasOwnProperty.call(old, 'signupSource')) c.signupSource = old.signupSource;
+        else delete c.signupSource;
+      } else c.signupSource = false;
+    }
     restoreServerOwnedEnrollment(data, before, priorClients);
     for (const c of data.clients) {
       const old = priorClients.get(c && c.id);
@@ -437,7 +445,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ version: D().workspaceVersion });
   });
 
-  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs', 'cancellationMethod', 'cancellationReceivedAt', 'cancellationPostmarkAt', 'cancellationTimely'];
+  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs', 'cancellationMethod', 'cancellationReceivedAt', 'cancellationPostmarkAt', 'cancellationTimely', 'postmarkReview'];
   const ENROLLMENT_FIELDS = SERVER_OWNED_ONBOARDING.concat(['disclosureViewedAt', 'contractViewedAt', 'contractViewedSha256', 'contractViewStale', 'authorizationAt', 'esignDemoPassed', 'esignIp', 'esignUserAgent', 'paperRequestedAt']);
   function restoreServerOwnedEnrollment(data, before, priorClients) {
     data.signatures = JSON.parse(JSON.stringify((before && before.signatures) || []));
@@ -1025,6 +1033,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       }
       if (prev.paidAt && invoiceField(prev, 'paidAt') !== invoiceField(inv, 'paidAt')) return { status: 409, error: 'The paid date is locked once it is set.' };
       if (prev.paidAt) inv.paidAt = prev.paidAt;
+      if (prev.status === 'paid') {
+        for (const key of ['serviceCompletedAt', 'dueAt', 'notes']) {
+          if (invoiceField(prev, key) !== invoiceField(inv, key)) return { status: 409, error: 'The invoice is locked once it is paid.' };
+        }
+      }
       if (!leaving) continue;
       if (!String(inv.voidReason || '').trim()) return { status: 400, error: 'A reason is required to void this invoice.' };
       inv.status = 'void';
@@ -1049,34 +1062,81 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (postmarkAt && postmarkAt > receivedAt) return res.status(400).json({ error: 'The postmark or sent date cannot be after the date the notice was received.' });
     if (postmarkAt && /^\d{4}-\d{2}-\d{2}$/.test(signedDay) && postmarkAt < signedDay) return res.status(400).json({ error: 'The postmark or sent date cannot be before the contract was signed.' });
     const postmarkEarly = !!(postmarkAt && calendarDaysBetween(postmarkAt, receivedAt) > 10);
-    if (postmarkEarly && req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can record a postmark more than 10 days before the notice was received.' });
-    const compared = postmarkAt && postmarkAt < receivedAt ? postmarkAt : receivedAt;
-    let timely = false;
+    const pendingReview = postmarkEarly && req.user.role !== 'owner';
     const signedAt = c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt;
-    if (signedAt) timely = compared <= cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+    const compared = postmarkAt && postmarkAt < receivedAt ? postmarkAt : receivedAt;
+    let timely = null;
+    if (!pendingReview && signedAt) timely = compared <= cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
     c.onboarding.cancelledAt = receivedAt;
     c.onboarding.cancelledAtTs = new Date().toISOString();
     c.onboarding.cancellationMethod = method;
     c.onboarding.cancellationReceivedAt = receivedAt;
     c.onboarding.cancellationPostmarkAt = postmarkAt || null;
-    c.onboarding.cancellationTimely = timely;
+    c.onboarding.cancellationTimely = pendingReview ? null : timely;
+    c.onboarding.postmarkReview = pendingReview ? 'postmark_needs_owner_review' : (postmarkEarly ? 'confirmed' : null);
     c.status = 'cancelled';
-    const paid = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'paid');
-    const issued = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'issued');
-    if (timely) {
-      for (const inv of issued) {
-        inv.status = 'void';
-        inv.voidReason = 'timely CROA cancellation';
-        db.audit({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: inv.id, clientId: c.id, reason: 'timely CROA cancellation' }) });
-      }
-    }
-    const refund = timely && paid.length > 0;
-    if (refund) workspace().tasks.push({ id: uid(), clientId: c.id, title: `Refund ${c.name} for an invoice that was paid. The cancellation was timely.`, due: today(), done: false, createdAt: new Date().toISOString() });
-    db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt, postmarkAt: postmarkAt || null, timely, refund }) });
-    if (postmarkEarly) db.audit({ actor: req.user.email, action: 'client.cancel.postmark', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, receivedAt, postmarkAt }) });
-    activity(`${c.name} cancelled by ${method}. ${timely ? 'Timely.' : 'Late.'}${refund ? ' Refund task created.' : ''}`, c.id);
+    const refund = pendingReview ? false : settleTimelyCancellation(c, req.user.email, timely);
+    db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt, postmarkAt: postmarkAt || null, timely, postmarkReview: c.onboarding.postmarkReview, refund }) });
+    if (postmarkEarly && !pendingReview) db.audit({ actor: req.user.email, action: 'client.cancel.postmark', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, receivedAt, postmarkAt }) });
+    activity(`${c.name} cancelled by ${method}. ${pendingReview ? 'Postmark needs owner review.' : timely ? 'Timely.' : 'Late.'}${refund ? ' Refund task created.' : ''}`, c.id);
     commitWorkspace(req.user.email, 'client.cancel', c.id);
-    res.json({ ok: true, cancelledAt: receivedAt, method, timely, refundTask: refund });
+    res.json({ ok: true, cancelledAt: receivedAt, method, timely, postmarkReview: c.onboarding.postmarkReview, refundTask: refund });
+  });
+  function cancellationIsTimely(c, compared) {
+    const signedAt = c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt;
+    if (!signedAt) return false;
+    return compared <= cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+  }
+  function settleTimelyCancellation(c, actor, timely) {
+    if (!timely) return false;
+    const issued = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'issued');
+    for (const inv of issued) {
+      inv.status = 'void';
+      inv.voidReason = 'timely CROA cancellation';
+      db.audit({ actor, action: 'invoice.void', detail: JSON.stringify({ user: actor, at: new Date().toISOString(), invoiceId: inv.id, clientId: c.id, reason: 'timely CROA cancellation' }) });
+    }
+    const paid = (workspace().invoices || []).filter(i => i && i.clientId === c.id && i.status === 'paid');
+    if (!paid.length) return false;
+    workspace().tasks = workspace().tasks || [];
+    if (!workspace().tasks.some(t => t && t.clientId === c.id && /Refund/.test(t.title || '') && /paid/.test(t.title || ''))) {
+      workspace().tasks.push({ id: uid(), clientId: c.id, title: `Refund ${c.name} for an invoice that was paid. The cancellation was timely.`, due: today(), done: false, createdAt: new Date().toISOString() });
+    }
+    return true;
+  }
+  app.post('/api/clients/:id/cancel/postmark-review', need('owner'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    c.onboarding = c.onboarding || {};
+    if (c.onboarding.postmarkReview !== 'postmark_needs_owner_review') return res.status(409).json({ error: 'This cancellation has no postmark waiting for review.' });
+    const decision = String((req.body || {}).decision || '');
+    if (decision !== 'confirm' && decision !== 'reject') return res.status(400).json({ error: 'Confirm or reject the postmark.' });
+    const receivedAt = c.onboarding.cancellationReceivedAt;
+    const postmarkAt = c.onboarding.cancellationPostmarkAt;
+    const compared = decision === 'confirm' && postmarkAt && postmarkAt < receivedAt ? postmarkAt : receivedAt;
+    const timely = cancellationIsTimely(c, compared);
+    c.onboarding.cancellationTimely = timely;
+    c.onboarding.postmarkReview = decision === 'confirm' ? 'confirmed' : 'rejected';
+    const refund = settleTimelyCancellation(c, req.user.email, timely);
+    db.audit({ actor: req.user.email, action: 'client.cancel.postmark_review', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, decision, receivedAt, postmarkAt, timely, refund }) });
+    activity(`${req.user.email} ${decision === 'confirm' ? 'confirmed' : 'rejected'} the postmark for ${c.name}. ${timely ? 'Timely.' : 'Late.'}`, c.id);
+    commitWorkspace(req.user.email, 'client.cancel.postmark_review', c.id);
+    res.json({ ok: true, decision, timely, refundTask: refund });
+  });
+  app.post('/api/clients/:id/cancel/timeliness', need('owner'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    c.onboarding = c.onboarding || {};
+    if (!c.onboarding.cancelledAt) return res.status(409).json({ error: 'No cancellation is recorded.' });
+    if (c.onboarding.postmarkReview === 'postmark_needs_owner_review') return res.status(409).json({ error: 'Review the postmark before changing timeliness.' });
+    if (c.onboarding.cancellationTimely !== false) return res.status(409).json({ error: 'Only a late cancellation can be corrected to timely.' });
+    const reason = String((req.body || {}).reason || '').trim();
+    if (!reason) return res.status(400).json({ error: 'A reason is required to correct a late cancellation to timely.' });
+    c.onboarding.cancellationTimely = true;
+    const refund = settleTimelyCancellation(c, req.user.email, true);
+    db.audit({ actor: req.user.email, action: 'client.cancel.timeliness', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, from: 'late', to: 'timely', reason, refund }) });
+    activity(`${req.user.email} corrected ${c.name}'s cancellation from late to timely. ${reason}`, c.id);
+    commitWorkspace(req.user.email, 'client.cancel.timeliness', c.id);
+    res.json({ ok: true, timely: true, refundTask: refund });
   });
 
   app.post('/api/portal/cancel', need('client'), (req, res) => {
