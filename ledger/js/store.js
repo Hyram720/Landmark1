@@ -315,6 +315,12 @@
     names.forEach(field => { if (!sameJson(a[field], b[field])) out.push(field); });
     return out;
   }
+  function userLost(field, sentValue, remoteValue, baseValue) {
+    if (sameJson(sentValue, baseValue)) return false;
+    if (serverFilledField(field, sentValue, remoteValue)) return false;
+    if (field === 'items' && blankValue(sentValue) && blankValue(remoteValue)) return false;
+    return !sameJson(sentValue, remoteValue);
+  }
   function parseRefused(list) {
     const byToken = new Map();
     (list || []).forEach(item => {
@@ -363,6 +369,13 @@
     const dropped = [];
     const refused = [];
     const reverted = [];
+    const tiedClients = new Set();
+    const priorActivity = new Set(bases.activity ? bases.activity.keys() : []);
+    const noteTied = (key, id, sentRow, keptRow, local) => {
+      if (!id || (key !== 'clients' && key !== 'disputes' && key !== 'letters' && key !== 'invoices')) return;
+      if (key === 'clients') { tiedClients.add(String(id)); return; }
+      [sentRow, keptRow, local].forEach(row => { if (row && row.clientId) tiedClients.add(String(row.clientId)); });
+    };
     pending.forEach((localRow, token) => {
       const split = token.indexOf('/');
       const key = token.slice(0, split);
@@ -384,6 +397,7 @@
         return;
       }
       if (refusal || fallbackRefusal) {
+        noteTied(key, id, sentRow, kept, localRow);
         const sentUser = userShape(key, sentRow) || {};
         const localUser = userShape(key, localRow) || {};
         const baseUser = userShape(key, kept) || {};
@@ -439,7 +453,8 @@
       if (opts.accepted && !touchedAfterSend) {
         const sentUser = userShape(key, sentRow) || {};
         const remoteUser = userShape(key, remoteRow) || {};
-        const lost = changedFields(sentUser, remoteUser).filter(field => !serverFilledField(field, sentUser[field], remoteUser[field]));
+        const baseUser = userShape(key, kept) || {};
+        const lost = changedFields(sentUser, remoteUser).filter(field => userLost(field, sentUser[field], remoteUser[field], baseUser[field]));
         setBase(key, id, remoteRow);
         if (lost.length) reverted.push(label + ' (' + lost.join(', ') + ')');
         return;
@@ -448,13 +463,14 @@
         const sentUser = userShape(key, sentRow) || {};
         const localUser = userShape(key, localRow) || {};
         const remoteUser = userShape(key, remoteRow) || {};
+        const baseUser = userShape(key, kept) || {};
         const out = remoteRow && typeof remoteRow === 'object' ? JSON.parse(JSON.stringify(remoteRow)) : {};
         const lost = [];
         new Set(Object.keys(sentUser).concat(Object.keys(localUser), Object.keys(remoteUser))).forEach(field => {
           if (!sameJson(localUser[field], sentUser[field])) {
             if (localUser[field] === undefined) delete out[field];
             else out[field] = localUser[field];
-          } else if (!sameJson(sentUser[field], remoteUser[field]) && !serverFilledField(field, sentUser[field], remoteUser[field])) lost.push(field);
+          } else if (userLost(field, sentUser[field], remoteUser[field], baseUser[field])) lost.push(field);
         });
         const next = overlayOwned(key, out, remoteRow);
         if (lost.length) reverted.push(label + ' (' + lost.join(', ') + ')');
@@ -471,6 +487,15 @@
     Object.keys(serverIdx).forEach(key => {
       serverIdx[key].forEach((row, id) => { if (!pending.has(tokenOf(key, id))) setBase(key, id, row); });
     });
+    if (tiedClients.size) {
+      (state.activity || []).slice().forEach(row => {
+        if (!row || !row.id || priorActivity.has(row.id)) return;
+        if (!tiedClients.has(String(row.clientId || ''))) return;
+        const remote = readIndexed(serverIdx, 'activity', row.id);
+        writeRow('activity', row.id, null, true);
+        setBase('activity', row.id, remote || null);
+      });
+    }
     const still = dirtyNow(state);
     const refusedTokens = [];
     refusedByToken.forEach((info, token) => refusedTokens.push(token));

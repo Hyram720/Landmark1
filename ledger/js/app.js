@@ -208,10 +208,10 @@
       if (repeated.length) {
         Store.revertTokens(repeated);
         Store.giveUpRefusals(repeated);
-        toast('Saving stopped after a repeated refusal.');
       }
       this.rememberDirty();
       this.requeue = repeated.length ? !!Store.unsaved : !!(applied.requeue || Store.unsaved);
+      if (repeated.length && !this.requeue) toast('Saving stopped after a repeated refusal.');
       if (refused.length) toast('Not allowed: ' + refused.join('; '));
       if (reverted.length) toast('Not saved: ' + reverted.join(', ') + '.');
       if (dropped.length) toast('Someone else updated ' + dropped.join(', ') + '. Loaded the latest version. Please redo that change.');
@@ -1904,6 +1904,6 @@
     setInterval(() => { runSequences(); runEngine().then(n => { if (n) render(); }).catch(e => console.error(e)); }, 30 * 60 * 1000);
   }
   root.root = root;
-  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
+  root.App = { runEngine, runSequences, boot, render, A, api, messageModal, generateLetter, commit, go, tradelineFrom, nextRound, Remote, reload: () => (Store.remote ? Remote.reload() : Promise.resolve()) };
   document.addEventListener('DOMContentLoaded', boot);
 })(typeof window !== 'undefined' ? window : (typeof root !== 'undefined' ? root : globalThis));
