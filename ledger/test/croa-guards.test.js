@@ -1807,7 +1807,8 @@ test('moving a dispute or letter onto a held client is refused', async () => {
     const g = await owner('GET', '/api/workspace');
     g.body.data.disputes = [{ id: 'move-d', clientId: 'clear', recipient: 'Equifax', status: 'draft', items: [] }];
     g.body.data.letters = [{ id: 'move-l', clientId: 'clear', text: 'Letter', status: 'draft' }];
-    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const seeded = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
+    assert.strictEqual(seeded.status, 200, JSON.stringify(seeded.body));
     const staff = live.client();
     const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-move@guard.test' });
     assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
@@ -2480,4 +2481,38 @@ test('the deploy gate lists orphan disputes and blank client rows', () => {
   assert.deepStrictEqual(listed.orphans.disputes, [{ key: 'disputes', id: 'gone-d', clientId: 'missing' }]);
   assert.strictEqual(fs.readFileSync(file, 'utf8'), body);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('an already-sent orphan can record a bureau response, and a dispute without a client cannot be sent', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'other', name: 'Other Client', kind: 'personal', email: 'other-sent@guard.test', status: 'active' });
+    built.db.data.workspace.disputes = [{ id: 'sent-d', clientId: 'gone', recipient: 'TransUnion', status: 'sent', sentAt: '2026-11-01', outcome: null, respondedAt: null, receivedDate: null, items: [] }];
+    const before = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    const dispute = sent.disputes.find(row => row.id === 'sent-d');
+    dispute.outcome = 'deleted';
+    dispute.respondedAt = '2026-11-18';
+    dispute.receivedDate = '2026-11-18';
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    const stored = saved.body.data.disputes.find(row => row.id === 'sent-d');
+    assert.strictEqual(stored.outcome, 'deleted');
+    assert.strictEqual(stored.respondedAt, '2026-11-18');
+    assert.strictEqual(stored.receivedDate, '2026-11-18');
+    const advance = JSON.parse(JSON.stringify(saved.body.data));
+    advance.disputes.find(row => row.id === 'sent-d').tracking = '9400';
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: advance });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.id === 'sent-d' && row.field === 'tracking'));
+    const naked = JSON.parse(JSON.stringify(saved.body.data));
+    naked.disputes.push({ id: 'no-client', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-18', items: [] });
+    const blocked = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: naked });
+    assert.strictEqual(blocked.status, 409, JSON.stringify(blocked.body));
+    assert.ok(blocked.body.refused.some(row => row.key === 'disputes' && row.id === 'no-client' && (row.field === 'status' || row.field === 'sentAt' || row.field === 'clientId')));
+    built.db.data.workspace.disputes.push({ id: 'mail-none', recipient: 'Equifax', status: 'draft', items: [] });
+    const mailed = await owner('POST', '/api/disputes/mail-none/mail', {});
+    assert.strictEqual(mailed.status, 409, JSON.stringify(mailed.body));
+    assert.match(mailed.body.error, /client/);
+    assert.doesNotMatch(mailed.body.error, /Lob API key/);
+  });
 });

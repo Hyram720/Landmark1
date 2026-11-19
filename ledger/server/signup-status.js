@@ -108,10 +108,20 @@ function collectHeld(before, after) {
 }
 
 function clientHoldReason(id, clients, heldById) {
-  if (!id) return '';
+  if (!String(id || '').trim()) return '';
   if (heldById.get(id)) return heldById.get(id);
   if (!(clients || []).some(c => c && c.id === id)) return 'Client ' + id + ' is not in the workspace, so this record stays on hold.';
   return '';
+}
+
+function noClientReason() {
+  return 'This record needs a client before it can be sent.';
+}
+
+function alreadyMailed(row) {
+  if (!row) return false;
+  if (row.sentAt || row.sentDate) return true;
+  return String(row.status || '') === 'sent';
 }
 
 function letterHoldReason(letter, priorLetter, disputes, reasonFor) {
@@ -136,6 +146,7 @@ export function mailingBlocked(ws, dispute) {
   if (!ws || !dispute) return '';
   const heldById = collectHeld(ws, ws);
   const reasonFor = id => clientHoldReason(id, ws.clients || [], heldById);
+  if (!String(dispute.clientId || '').trim()) return noClientReason();
   const own = reasonFor(dispute.clientId);
   if (own) return own;
   const letter = ((ws.letters) || []).find(row => row && row.id && row.id === dispute.letterId);
@@ -150,6 +161,8 @@ export function serviceWorkBlocked(before, after) {
   const byId = (list, id) => (list || []).find(row => row && row.id && id && row.id === id);
   const disputeSend = ['status', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate', 'outcome', 'respondedAt', 'mail', 'dueAt', 'letterId'];
   const letterSend = ['status', 'approvedAt', 'text', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate', 'disputeId'];
+  const bureauResponse = new Set(['outcome', 'respondedAt', 'receivedDate']);
+  const keepResponse = (key, old, field) => key === 'disputes' && alreadyMailed(old) && bureauResponse.has(field);
   const refused = [];
   const seen = new Set();
   const push = (key, id, field, reason) => {
@@ -168,8 +181,23 @@ export function serviceWorkBlocked(before, after) {
     const prevReason = reasonForClient(old && old.clientId);
     const nextReason = reasonForClient(row.clientId);
     if (!old) {
-      if (nextReason) push(key, row.id, 'clientId', nextReason);
+      const bare = !String(row.clientId || '').trim();
+      const reason = nextReason || (bare ? noClientReason() : '');
+      if (!reason) return;
+      if (bare) push(key, row.id, 'clientId', reason);
+      else if (nextReason) push(key, row.id, 'clientId', nextReason);
+      fields.forEach(field => {
+        if (field === 'clientId' || field === 'letterId' || field === 'disputeId') return;
+        if (keepResponse(key, row, field)) return;
+        if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push(key, row.id, field, reason);
+      });
       return;
+    }
+    if (!String(row.clientId || '').trim()) {
+      fields.forEach(field => {
+        if (keepResponse(key, old, field)) return;
+        if (valueChanged(old[field], row[field])) push(key, row.id, field, noClientReason());
+      });
     }
     if (String(old.clientId || '') !== String(row.clientId || '')) {
       if (prevReason) push(key, row.id, 'clientId', prevReason);
@@ -178,6 +206,7 @@ export function serviceWorkBlocked(before, after) {
     if (prevReason || nextReason) {
       const reason = prevReason || nextReason;
       fields.forEach(field => {
+        if (keepResponse(key, old, field)) return;
         if (valueChanged(old[field], row[field])) push(key, row.id, field, reason);
       });
     }
@@ -247,7 +276,7 @@ export function serviceWorkBlocked(before, after) {
       return;
     }
     disputeSend.forEach(field => {
-      if (field === 'letterId') return;
+      if (field === 'letterId' || keepResponse('disputes', old, field)) return;
       if (valueChanged(old[field], row[field])) push('disputes', row.id, field, tied);
     });
   });
