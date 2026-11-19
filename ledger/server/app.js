@@ -19,7 +19,7 @@ import { mountClientAuth } from './client-auth.js';
 import { clientAuthMethod } from './auth-method.js';
 import { mountSignup } from './signup.js';
 import { mountNewsletter } from './newsletter.js';
-import { applySignupStatus, clientServiceOnHold, serviceWorkBlocked } from './signup-status.js';
+import { applySignupStatus, clientServiceOnHold, mailingBlocked, serviceWorkBlocked } from './signup-status.js';
 import { croaDocs, enrollmentBlocksSigning, enrollmentStatus, mailingAddress, personalizeCroaDocs, sha256, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { selfSignupEnabled, SIGNUP_DISABLED } from './signup.js';
 import { resolveSignupAccess } from './public-url.js';
@@ -1706,7 +1706,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const d = ws.disputes.find(x => x.id === req.params.id);
     if (!d) return res.status(404).json({ error: 'Dispute not found' });
     const c = ws.clients.find(x => x.id === d.clientId);
-    if (c && clientServiceOnHold(c, undefined, ws.signatures)) return res.status(409).json({ error: SERVICE_HOLD });
+    const mailHold = mailingBlocked(ws, d);
+    if (mailHold) return res.status(409).json({ error: mailHold });
     const key = secrets().lobKey;
     if (!key) return res.status(501).json({ error: 'Online mailing is off. The owner can add a Lob API key in Settings → Print & mail.' });
     if (d.sentAt) return res.status(409).json({ error: 'Already mailed' });

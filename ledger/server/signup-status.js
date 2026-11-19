@@ -84,18 +84,52 @@ function heldReason(client) {
   return `${client.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
 }
 
+function collectHeld(before, after) {
+  const signatures = (after && after.signatures) || (before && before.signatures) || [];
+  const heldById = new Map();
+  const add = (c) => {
+    if (c && c.id && clientServiceOnHold(c, undefined, signatures) && !heldById.has(c.id)) heldById.set(c.id, heldReason(c));
+  };
+  ((before && before.clients) || []).forEach(add);
+  ((after && after.clients) || []).forEach(add);
+  return heldById;
+}
+
+function letterHoldReason(letter, priorLetter, disputes, heldById) {
+  const reasonFor = id => (id && heldById.get(id)) || '';
+  const owner = reasonFor(letter && letter.clientId) || reasonFor(priorLetter && priorLetter.clientId);
+  if (owner) return owner;
+  const ids = [];
+  if (letter && letter.disputeId) ids.push(letter.disputeId);
+  if (priorLetter && priorLetter.disputeId) ids.push(priorLetter.disputeId);
+  (disputes || []).forEach(row => {
+    if (row && row.letterId && ((letter && row.letterId === letter.id) || (priorLetter && row.letterId === priorLetter.id))) ids.push(row.id);
+  });
+  for (const id of ids) {
+    const dispute = (disputes || []).find(row => row && row.id === id);
+    const reason = reasonFor(dispute && dispute.clientId);
+    if (reason) return reason;
+  }
+  return '';
+}
+
+/** Lob send is blocked when the dispute, its letter, or a dispute tied to that letter is on a held client. */
+export function mailingBlocked(ws, dispute) {
+  if (!ws || !dispute) return '';
+  const heldById = collectHeld(ws, ws);
+  if (dispute.clientId && heldById.get(dispute.clientId)) return heldById.get(dispute.clientId);
+  const letter = ((ws.letters) || []).find(row => row && row.id && row.id === dispute.letterId);
+  return letterHoldReason(letter, letter, ws.disputes || [], heldById);
+}
+
 /** New letters or disputes, and any step toward sending, while a personal client is still inside CROA onboarding. */
 export function serviceWorkBlocked(before, after) {
   const priorDisputes = (before && before.disputes) || [];
   const priorLetters = (before && before.letters) || [];
-  const signatures = (after && after.signatures) || [];
-  const heldById = new Map();
-  for (const c of (after && after.clients) || []) {
-    if (c && c.id && clientServiceOnHold(c, undefined, signatures)) heldById.set(c.id, heldReason(c));
-  }
+  const heldById = collectHeld(before, after);
   const byId = (list, id) => (list || []).find(row => row && row.id && id && row.id === id);
   const disputeSend = ['status', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate', 'outcome', 'respondedAt', 'mail', 'dueAt', 'letterId'];
-  const letterSend = ['status', 'approvedAt', 'text', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate'];
+  const letterSend = ['status', 'approvedAt', 'text', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate', 'disputeId'];
   const refused = [];
   const seen = new Set();
   const push = (key, id, field, reason) => {
@@ -105,25 +139,8 @@ export function serviceWorkBlocked(before, after) {
     refused.push({ key, id: id || '', field, reason });
   };
   const reasonForClient = id => (id && heldById.get(id)) || '';
-  const disputeHeldReason = disputeId => {
-    const prior = byId(priorDisputes, disputeId);
-    const next = byId(after && after.disputes, disputeId);
-    return reasonForClient(prior && prior.clientId) || reasonForClient(next && next.clientId);
-  };
-  const letterTiedReason = letter => {
-    const prior = byId(priorLetters, letter && letter.id);
-    const ids = [];
-    if (letter && letter.disputeId) ids.push(letter.disputeId);
-    if (prior && prior.disputeId) ids.push(prior.disputeId);
-    priorDisputes.concat((after && after.disputes) || []).forEach(row => {
-      if (row && row.letterId && letter && row.letterId === letter.id) ids.push(row.id);
-    });
-    for (const id of ids) {
-      const reason = disputeHeldReason(id);
-      if (reason) return reason;
-    }
-    return '';
-  };
+  const allDisputes = priorDisputes.concat((after && after.disputes) || []);
+  const letterTiedReason = letter => letterHoldReason(letter, byId(priorLetters, letter && letter.id), allDisputes, heldById);
   const checkRow = (row, priorList, key, fields) => {
     if (!row || typeof row !== 'object') return;
     const old = byId(priorList, row.id);
@@ -144,7 +161,57 @@ export function serviceWorkBlocked(before, after) {
       });
     }
   };
-  ((after && after.disputes) || []).forEach(row => checkRow(row, priorDisputes, 'disputes', disputeSend));
+  const priorBag = before && before.heldServiceIds && typeof before.heldServiceIds === 'object' && !Array.isArray(before.heldServiceIds) ? before.heldServiceIds : {};
+  const tomb = {
+    disputes: (Array.isArray(priorBag.disputes) ? priorBag.disputes : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') })),
+    letters: (Array.isArray(priorBag.letters) ? priorBag.letters : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') }))
+  };
+  const remember = (list, id, reason) => {
+    if (!id || list.some(row => row.id === id)) return;
+    list.push({ id: String(id), reason: reason || 'This record belonged to a client who is not active for service work and cannot be recreated.' });
+  };
+  const idsOf = list => new Set((list || []).filter(row => row && row.id).map(row => row.id));
+  const afterDisputeIds = idsOf(after && after.disputes);
+  const afterLetterIds = idsOf(after && after.letters);
+  priorDisputes.forEach(old => {
+    if (!old || !old.id || afterDisputeIds.has(old.id)) return;
+    if (heldById.get(old.clientId)) remember(tomb.disputes, old.id, heldById.get(old.clientId));
+  });
+  priorLetters.forEach(old => {
+    if (!old || !old.id || afterLetterIds.has(old.id)) return;
+    if (heldById.get(old.clientId)) remember(tomb.letters, old.id, heldById.get(old.clientId));
+  });
+  if (after && typeof after === 'object') after.heldServiceIds = tomb;
+  const reused = (list, id) => (list || []).find(row => row && row.id === id);
+  ((after && after.disputes) || []).forEach(row => {
+    checkRow(row, priorDisputes, 'disputes', disputeSend);
+    if (!row || typeof row !== 'object') return;
+    const old = byId(priorDisputes, row.id);
+    if (!old) {
+      const hit = reused(tomb.disputes, row.id);
+      if (hit) push('disputes', row.id, 'id', hit.reason);
+    }
+    const letter = byId((after && after.letters) || [], row.letterId) || byId(priorLetters, row.letterId) || (old && (byId((after && after.letters) || [], old.letterId) || byId(priorLetters, old.letterId)));
+    const tied = letter && letterTiedReason(letter);
+    if (!tied) return;
+    if (!old || valueChanged(old.letterId, row.letterId)) push('disputes', row.id, 'letterId', tied);
+    if (!old) {
+      disputeSend.forEach(field => {
+        if (field === 'letterId') return;
+        if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push('disputes', row.id, field, tied);
+      });
+      return;
+    }
+    disputeSend.forEach(field => {
+      if (field === 'letterId') return;
+      if (valueChanged(old[field], row[field])) push('disputes', row.id, field, tied);
+    });
+  });
+  ((after && after.letters) || []).forEach(row => {
+    if (!row || typeof row !== 'object' || byId(priorLetters, row.id)) return;
+    const hit = reused(tomb.letters, row.id);
+    if (hit) push('letters', row.id, 'id', hit.reason);
+  });
   ((after && after.letters) || []).forEach(row => {
     checkRow(row, priorLetters, 'letters', letterSend);
     const tied = letterTiedReason(row);

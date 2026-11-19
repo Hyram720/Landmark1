@@ -2211,3 +2211,107 @@ test('the browser adopts the saved workspace and does not mint pay tokens', () =
   assert.doesNotMatch(voidAct, /Voided invoice/);
   assert.match(appJs, /Store\.get\.client\(clientId\)/);
 });
+
+test('a cleared dispute cannot take a held client letter and be marked sent', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-letterid@guard.test', status: 'active' });
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-letterid@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    built.db.data.workspace.disputes = [{ id: 'clear-d', clientId: 'clear', recipient: 'Equifax', status: 'draft', letterId: null, items: [] }];
+    built.db.data.workspace.letters = [{ id: 'held-l', clientId: 'held', disputeId: null, text: 'Held letter', status: 'approved' }];
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-letterid@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    const dispute = sent.disputes.find(row => row.id === 'clear-d');
+    dispute.letterId = 'held-l';
+    dispute.status = 'sent';
+    dispute.sentAt = '2026-11-18';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    const fields = denied.body.refused.filter(row => row.key === 'disputes' && row.id === 'clear-d').map(row => row.field);
+    assert.ok(fields.includes('letterId'));
+    assert.ok(fields.includes('status'));
+    const after = await owner('GET', '/api/workspace');
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'clear-d').letterId, null);
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'clear-d').status, 'draft');
+    const quiet = JSON.parse(JSON.stringify(before.body.data));
+    quiet.disputes.find(row => row.id === 'clear-d').letterId = 'held-l';
+    const onlyLink = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: quiet });
+    assert.strictEqual(onlyLink.status, 409, JSON.stringify(onlyLink.body));
+    const planted = JSON.parse(JSON.stringify(before.body.data));
+    planted.disputes.find(row => row.id === 'clear-d').letterId = 'held-l';
+    built.db.data.workspace.disputes.find(row => row.id === 'clear-d').letterId = 'held-l';
+    const blocked = await staff('POST', '/api/disputes/clear-d/mail', {});
+    assert.strictEqual(blocked.status, 409, JSON.stringify(blocked.body));
+    assert.match(blocked.body.error, /Held Client/);
+  });
+});
+
+test('deleting a held client in the same save cannot mark that dispute sent', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-delete@guard.test', status: 'lead' });
+    built.db.data.workspace.disputes = [{ id: 'held-d', clientId: 'held', recipient: 'Equifax', status: 'draft', items: [] }];
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-delete-held@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.clients = sent.clients.filter(row => row.id !== 'held');
+    sent.disputes.find(row => row.id === 'held-d').status = 'sent';
+    sent.disputes.find(row => row.id === 'held-d').sentAt = '2026-11-18';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.id === 'held-d' && row.field === 'status'));
+    const after = await owner('GET', '/api/workspace');
+    assert.ok(after.body.data.clients.some(row => row.id === 'held'));
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'held-d').status, 'draft');
+  });
+});
+
+test('a dispute id removed from a held client cannot be recreated on a cleared client', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-tomb@guard.test', status: 'active' });
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-tomb@guard.test', status: 'lead' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    built.db.data.workspace.disputes = [{ id: 'tomb-d', clientId: 'held', recipient: 'Equifax', status: 'draft', items: [] }];
+    const before = await owner('GET', '/api/workspace');
+    const dropped = JSON.parse(JSON.stringify(before.body.data));
+    dropped.disputes = dropped.disputes.filter(row => row.id !== 'tomb-d');
+    const removed = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: dropped });
+    assert.strictEqual(removed.status, 200, JSON.stringify(removed.body));
+    assert.ok(!(removed.body.data.disputes || []).some(row => row && row.id === 'tomb-d'));
+    const again = JSON.parse(JSON.stringify(removed.body.data));
+    again.disputes = again.disputes || [];
+    again.disputes.push({ id: 'tomb-d', clientId: 'clear', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-18', items: [] });
+    const reborn = await owner('PUT', '/api/workspace', { baseVersion: removed.body.version, data: again });
+    assert.strictEqual(reborn.status, 409, JSON.stringify(reborn.body));
+    assert.ok(reborn.body.refused.some(row => row.key === 'disputes' && row.id === 'tomb-d' && row.field === 'id'));
+    const stored = await owner('GET', '/api/workspace');
+    assert.ok(!(stored.body.data.disputes || []).some(row => row && row.id === 'tomb-d'));
+  });
+});
+
+test('a held letter cannot be pointed at another dispute by itself', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-retarget@guard.test', status: 'lead' });
+    built.db.data.workspace.disputes = [
+      { id: 'd1', clientId: 'held', recipient: 'Equifax', status: 'draft', items: [] },
+      { id: 'd2', clientId: 'held', recipient: 'Experian', status: 'draft', items: [] }
+    ];
+    built.db.data.workspace.letters = [{ id: 'held-l', clientId: 'held', disputeId: 'd1', text: 'Letter', status: 'draft' }];
+    const before = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.letters.find(row => row.id === 'held-l').disputeId = 'd2';
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'letters' && row.id === 'held-l' && row.field === 'disputeId'));
+    const notes = JSON.parse(JSON.stringify(before.body.data));
+    notes.letters.find(row => row.id === 'held-l').notes = 'A note is not a mailing step';
+    const noted = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: notes });
+    assert.strictEqual(noted.status, 200, JSON.stringify(noted.body));
+    assert.strictEqual(noted.body.data.letters.find(row => row.id === 'held-l').disputeId, 'd1');
+    assert.strictEqual(noted.body.data.letters.find(row => row.id === 'held-l').notes, 'A note is not a mailing step');
+  });
+});
