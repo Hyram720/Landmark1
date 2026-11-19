@@ -301,8 +301,10 @@
     return 'other';
   }
   function serverFilledField(field, sentValue, remoteValue) {
+    const objectFill = field === 'onboarding' || (remoteValue && typeof remoteValue === 'object' && !Array.isArray(remoteValue));
+    if (!objectFill) return false;
     if (blankValue(sentValue)) return true;
-    if (field !== 'onboarding' || !sentValue || typeof sentValue !== 'object' || !remoteValue || typeof remoteValue !== 'object') return false;
+    if (!sentValue || typeof sentValue !== 'object' || !remoteValue || typeof remoteValue !== 'object') return false;
     return Object.keys(sentValue).every(key => blankValue(sentValue[key]) || sameJson(sentValue[key], remoteValue[key]));
   }
   function changedFields(left, right) {
@@ -385,6 +387,12 @@
         const sentUser = userShape(key, sentRow) || {};
         const localUser = userShape(key, localRow) || {};
         const baseUser = userShape(key, kept) || {};
+        if (!remoteRow || !localRow) {
+          const reason = refusal && refusal.reasons.length ? refusal.reasons.join(' ') : label;
+          refused.push(reason);
+          setBase(key, id, remoteRow);
+          return;
+        }
         const named = refusal && refusal.fields.size ? refusal.fields : null;
         const droppedFields = [];
         changedFields(sentUser, baseUser).forEach(field => {
