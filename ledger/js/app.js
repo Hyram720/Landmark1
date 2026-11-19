@@ -81,6 +81,33 @@
     el.textContent = { saving: 'Saving…', saved: 'Saved', offline: 'Offline — retrying', conflict: 'Reloaded' }[state] || '';
     el.className = 'badge plain ' + (state === 'saved' ? 'b-ok' : state === 'offline' ? 'b-high' : 'b-low');
   }
+  function droppedEdits(local, remote) {
+    const skip = { payToken: 1, paidAt: 1, transId: 1, paidVia: 1, signupSource: 1 };
+    const names = [];
+    Object.keys(local || {}).forEach(key => {
+      if (!Array.isArray(local[key])) return;
+      const remoteRows = Array.isArray(remote && remote[key]) ? remote[key] : [];
+      const byId = rows => {
+        const map = new Map();
+        (rows || []).forEach(row => { if (row && row.id) map.set(row.id, row); });
+        return map;
+      };
+      const localMap = byId(local[key]);
+      const remoteMap = byId(remoteRows);
+      localMap.forEach((row, id) => {
+        const other = remoteMap.get(id);
+        const label = row.name || row.recipient || row.description || id;
+        if (!other) { names.push(String(label)); return; }
+        const fields = [];
+        Object.keys(row).forEach(field => {
+          if (skip[field]) return;
+          if (JSON.stringify(row[field]) !== JSON.stringify(other[field])) fields.push(field);
+        });
+        if (fields.length) names.push(label + ' (' + fields.join(', ') + ')');
+      });
+    });
+    return names.slice(0, 8);
+  }
   const Remote = {
     version: 0, timer: null, pending: false, sending: false, savedWaiters: [], user: null,
     afterSave(fn) { this.savedWaiters.push(fn); },
@@ -123,8 +150,14 @@
           this.pending = false;
           requeue = false;
           const reasons = Array.isArray(e.body && e.body.refused) ? e.body.refused.map(row => row && row.reason).filter(Boolean) : [];
-          toast(reasons.length ? 'Not allowed: ' + reasons.join('; ') : ((e.body && e.body.error) || 'Change refused.'));
+          const reasonText = reasons.length ? reasons.join('; ') : ((e.body && e.body.error) || 'Change refused.');
+          const localSnap = JSON.parse(JSON.stringify(Store.state));
+          setSync('conflict');
+          const syncEl = document.getElementById('sync');
+          if (syncEl) syncEl.textContent = 'Not allowed: ' + reasonText;
           try { await this.reload(); } catch (err) { setSync('conflict'); }
+          const dropped = droppedEdits(localSnap, Store.state);
+          toast(dropped.length ? 'Not allowed: ' + reasonText + ' Dropped: ' + dropped.join('; ') + '.' : 'Not allowed: ' + reasonText);
         } else if (e.status === 401) location.reload();
         else if (!e.status || e.status >= 500) { setSync('offline'); this.pending = true; this.timer = setTimeout(() => this.flush(), 5000); }
         else { this.pending = false; requeue = false; setSync('conflict'); toast((e.body && e.body.error) || 'Change refused.'); await this.reload(); }

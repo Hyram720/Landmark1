@@ -366,16 +366,23 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
     const before = D().workspace;
     const idRequired = ['clients', 'reports', 'disputes', 'letters', 'tasks', 'invoices', 'referrals', 'activity', 'offers', 'partnerReferrals', 'signatures', 'messages', 'documents', 'sequences', 'pendingImports', 'automations'];
-    const sameRow = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-    for (const key of listKeys) {
+    const stableValue = (value) => {
+      if (Array.isArray(value)) return '[' + value.map(stableValue).join(',') + ']';
+      if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableValue(value[key])).join(',') + '}';
+      return JSON.stringify(value);
+    };
+    const sameRow = (a, b) => stableValue(a) === stableValue(b);
+    const isRecord = row => !!(row && typeof row === 'object' && !Array.isArray(row));
+    const rowLists = ['clients'].concat(listKeys);
+    for (const key of rowLists) {
       const rows = data[key];
       if (!Array.isArray(rows)) continue;
       const priorRows = Array.isArray(before && before[key]) ? before[key] : [];
-      const usedNulls = new Set();
+      const usedBad = new Set();
       for (const row of rows) {
-        if (row != null) continue;
-        const match = priorRows.findIndex((old, index) => !usedNulls.has(index) && old == null);
-        if (match >= 0) { usedNulls.add(match); continue; }
+        if (isRecord(row)) continue;
+        const match = priorRows.findIndex((old, index) => !usedBad.has(index) && !isRecord(old) && sameRow(old, row));
+        if (match >= 0) { usedBad.add(match); continue; }
         return reject(422, 'A ' + key + ' list contains an empty row.', [{ key, id: '', field: '', reason: 'A ' + key + ' list contains an empty row.' }]);
       }
     }
@@ -399,10 +406,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         return reject(422, 'A violations record is missing an id.', [{ key: 'violations', id: '', field: 'id', reason: 'A violations record is missing an id.' }]);
       }
     }
-    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
+    const priorClients = new Map(((before && before.clients) || []).filter(c => isRecord(c) && String(c.id || '').trim()).map(c => [c.id, c]));
     const pendingAudits = [];
     for (const c of data.clients || []) {
-      if (!c) continue;
+      if (!isRecord(c)) continue;
       const old = priorClients.get(c.id);
       if (old) {
         if (Object.prototype.hasOwnProperty.call(old, 'signupSource')) c.signupSource = old.signupSource;
@@ -446,7 +453,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const old of priorClients.values()) rememberClient(old);
     for (const c of data.clients || []) rememberClient(c);
     for (const c of data.clients || []) {
-      if (!c) continue;
+      if (!isRecord(c)) continue;
       const old = priorClients.get(c.id);
       if (old && old.businessMatchApproval) c.businessMatchApproval = JSON.parse(JSON.stringify(old.businessMatchApproval));
       else delete c.businessMatchApproval;
@@ -491,8 +498,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (contractIsSigned(old)) return reject(409, 'The contract is already signed. Price and Schedule A cannot be changed.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'The contract is already signed. Price and Schedule A cannot be changed.' }]);
       return reject(400, 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.', [{ key: 'clients', id: c.id, field: 'pricePerResult', reason: 'Change the price and Schedule A with PUT /api/clients/:id/enrollment-terms.' }]);
     }
-    for (const c of data.clients) applySignupStatus(c);
-    for (const c of data.clients) if (c && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
+    for (const c of data.clients) if (isRecord(c)) applySignupStatus(c);
+    for (const c of data.clients) if (isRecord(c) && c.onboarding && c.onboarding.cancelledAt) c.status = 'cancelled';
     for (const entry of pendingAudits) db.audit(entry);
     D().workspace = data;
     commitWorkspace(req.user.email, 'workspace.save', `${data.clients.length} clients`);
@@ -505,7 +512,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function restoreServerOwnedEnrollment(data, before, priorClients) {
     data.signatures = JSON.parse(JSON.stringify((before && before.signatures) || []));
     for (const c of data.clients || []) {
-      if (!c) continue;
+      if (!c || typeof c !== 'object' || Array.isArray(c)) continue;
       const old = priorClients.get(c.id);
       const switchingToPersonal = !!(old && old.kind === 'business' && c.kind !== 'business');
       const personal = switchingToPersonal || (old ? old.kind !== 'business' : c.kind !== 'business');

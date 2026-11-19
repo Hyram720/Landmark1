@@ -67,7 +67,7 @@ function workspaceShapeReport(ws) {
     if (workspace[key] == null) return;
     if (!Array.isArray(workspace[key])) { shapeErrors.push({ key, id: '', reason: key + ' must be a list.' }); return; }
     workspace[key].forEach(row => {
-      if (row == null) shapeErrors.push({ key, id: '', reason: key + ' contains an empty row.' });
+      if (row == null || typeof row !== 'object' || Array.isArray(row)) shapeErrors.push({ key, id: '', reason: key + ' contains an empty row.' });
     });
     if (!needsId.includes(key)) return;
     workspace[key].forEach(row => {

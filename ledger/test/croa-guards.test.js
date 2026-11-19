@@ -1972,19 +1972,23 @@ test('a held client dispute cannot be moved to a cleared client and marked sent'
     dispute.sentAt = '2026-11-18';
     const letter = sent.letters.find(row => row.id === 'held-l');
     letter.clientId = 'clear';
-    letter.status = 'sent';
-    letter.text = 'Sent now';
+    letter.status = 'approved';
+    letter.approvedAt = '2026-11-18';
+    letter.text = 'Rewritten';
     const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
     assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
     const fields = (key, id) => denied.body.refused.filter(row => row.key === key && row.id === id).map(row => row.field);
     assert.ok(fields('disputes', 'held-d').includes('clientId'));
     assert.ok(fields('disputes', 'held-d').includes('status'));
     assert.ok(fields('letters', 'held-l').includes('clientId'));
+    assert.ok(fields('letters', 'held-l').includes('status'));
+    assert.ok(fields('letters', 'held-l').includes('approvedAt'));
     assert.ok(fields('letters', 'held-l').includes('text'));
     const after = await owner('GET', '/api/workspace');
     assert.strictEqual(after.body.data.disputes.find(row => row.id === 'held-d').clientId, 'held');
     assert.strictEqual(after.body.data.disputes.find(row => row.id === 'held-d').status, 'draft');
     assert.strictEqual(after.body.data.letters.find(row => row.id === 'held-l').clientId, 'held');
+    assert.strictEqual(after.body.data.letters.find(row => row.id === 'held-l').status, 'draft');
     const moveOnly = JSON.parse(JSON.stringify(before.body.data));
     moveOnly.disputes.find(row => row.id === 'held-d').clientId = 'clear';
     const moved = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: moveOnly });
@@ -2040,6 +2044,7 @@ test('a held dispute outcome and a letter tied to that dispute cannot advance', 
     dispute.respondedAt = '2026-11-18';
     dispute.dueAt = '2026-12-18';
     dispute.mail = { lobId: 'ltr_1' };
+    dispute.letterId = 'other-l';
     const letter = sent.letters.find(row => row.id === 'tied-l');
     letter.status = 'approved';
     letter.approvedAt = '2026-11-18';
@@ -2051,6 +2056,7 @@ test('a held dispute outcome and a letter tied to that dispute cannot advance', 
     assert.ok(fields('disputes', 'held-d').includes('respondedAt'));
     assert.ok(fields('disputes', 'held-d').includes('dueAt'));
     assert.ok(fields('disputes', 'held-d').includes('mail'));
+    assert.ok(fields('disputes', 'held-d').includes('letterId'));
     assert.ok(fields('letters', 'tied-l').includes('text'));
     assert.ok(fields('letters', 'tied-l').includes('approvedAt'));
     assert.ok(fields('letters', 'tied-l').includes('status'));
@@ -2062,5 +2068,146 @@ test('a held dispute outcome and a letter tied to that dispute cannot advance', 
     assert.strictEqual(noted.body.data.disputes.find(row => row.id === 'held-d').outcome, null);
     assert.strictEqual(noted.body.data.letters.find(row => row.id === 'tied-l').text, 'Letter');
     assert.strictEqual(noted.body.data.disputes.find(row => row.id === 'held-d').notes, 'Still a draft');
+    assert.strictEqual(noted.body.data.disputes.find(row => row.id === 'held-d').letterId, 'tied-l');
   });
+});
+
+test('a 409 keeps the other user city and dispute recipient instead of re-saving', () => {
+  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
+  const conflict = flush.slice(flush.indexOf('e.status === 409 && e.body && e.body.data'), flush.indexOf('else if (refused)'));
+  assert.match(conflict, /Store\.adopt\(e\.body\.data\)/);
+  assert.match(conflict, /Someone else updated this\. Redo your last change\./);
+  assert.match(conflict, /this\.pending = false/);
+  assert.match(conflict, /requeue = false/);
+  assert.doesNotMatch(conflict, /applyServerSave/);
+  assert.doesNotMatch(conflict, /this\.pending = true/);
+});
+
+test('a refusal leaves Not allowed on the status and names the other dropped edits', () => {
+  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
+  const refused = flush.slice(flush.indexOf('else if (refused)'), flush.indexOf('else if (e.status === 401)'));
+  assert.match(refused, /setSync\('conflict'\)/);
+  assert.match(refused, /Not allowed: /);
+  assert.match(refused, /Dropped: /);
+  assert.match(refused, /droppedEdits\(/);
+  assert.doesNotMatch(refused, /setSync\('saving'\)/);
+});
+
+test('a null client row is refused when new and a stored one can be removed', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada-null-client@guard.test', status: 'active', zip: '' });
+    const g = await owner('GET', '/api/workspace');
+    const added = JSON.parse(JSON.stringify(g.body.data));
+    added.clients.push(null);
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: added });
+    assert.strictEqual(denied.status, 422, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'clients' && /empty row/.test(row.reason)));
+    built.db.data.workspace.clients.push(null);
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-null-client@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const current = await staff('GET', '/api/workspace');
+    const edit = JSON.parse(JSON.stringify(current.body.data));
+    edit.clients.find(row => row && row.id === 'ada').zip = '08002';
+    const saved = await staff('PUT', '/api/workspace', { baseVersion: current.body.version, data: edit });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.ok(saved.body.data.clients.includes(null));
+    const remove = JSON.parse(JSON.stringify(saved.body.data));
+    remove.clients = remove.clients.filter(row => row && row.id);
+    const cleared = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: remove });
+    assert.strictEqual(cleared.status, 200, JSON.stringify(cleared.body));
+    assert.ok(!cleared.body.data.clients.some(row => row == null));
+    const again = await owner('GET', '/api/workspace');
+    again.body.data.clients.find(row => row.id === 'ada').zip = '08003';
+    const next = await owner('PUT', '/api/workspace', { baseVersion: again.body.version, data: again.body.data });
+    assert.strictEqual(next.status, 200, JSON.stringify(next.body));
+    assert.strictEqual(next.body.data.clients.find(row => row.id === 'ada').zip, '08003');
+  });
+});
+
+test('a non-object row in a list is refused and a stored one stays a deploy-gate error', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada-bad-row@guard.test', status: 'active', zip: '' });
+    const g = await owner('GET', '/api/workspace');
+    for (const bad of [null, '', 0, false, [], 'note']) {
+      const sent = JSON.parse(JSON.stringify(g.body.data));
+      sent.disputes = [bad];
+      const denied = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: sent });
+      assert.strictEqual(denied.status, 422, JSON.stringify(bad) + ' ' + JSON.stringify(denied.body));
+      assert.ok(denied.body.refused.some(row => row.key === 'disputes' && /empty row/.test(row.reason)));
+    }
+    built.db.data.workspace.letters = ['legacy'];
+    const current = await owner('GET', '/api/workspace');
+    const edit = JSON.parse(JSON.stringify(current.body.data));
+    edit.clients.find(row => row.id === 'ada').zip = '08002';
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: edit });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.ok(saved.body.data.letters.includes('legacy'));
+    edit.letters = ['legacy', 'new'];
+    const extra = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: edit });
+    assert.strictEqual(extra.status, 422, JSON.stringify(extra.body));
+  });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-bad-row-'));
+  const file = path.join(dir, 'ledger-db.json');
+  const body = JSON.stringify({ workspace: { invoices: [{ id: 'ok', status: 'draft' }], disputes: [null, '', 0, false, [], 'note'] } });
+  fs.writeFileSync(file, body);
+  const out = JSON.parse(spawnSync(process.execPath, [path.join(import.meta.dirname, '../server/count-invoice-statuses.js'), file], { encoding: 'utf8' }).stdout);
+  assert.ok(out.shapeErrors.filter(row => row.key === 'disputes' && /empty row/.test(row.reason)).length >= 6);
+  assert.strictEqual(out.deployGate.ready, false);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), body);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('reordering keys of a stored id-less row is not a change', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada-order@guard.test', status: 'active', zip: '' });
+    built.db.data.workspace.activity = [{ text: 'Legacy', clientId: 'ada', at: '2020-01-01T00:00:00.000Z' }];
+    built.db.data.workspace.violations = { '': { status: 'new', note: 'keep' } };
+    const g = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(g.body.data));
+    sent.activity = [{ clientId: 'ada', at: '2020-01-01T00:00:00.000Z', text: 'Legacy' }];
+    sent.violations = { '': { note: 'keep', status: 'new' } };
+    sent.clients.find(row => row.id === 'ada').zip = '08002';
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: sent });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.strictEqual(saved.body.data.clients.find(row => row.id === 'ada').zip, '08002');
+    assert.ok(saved.body.data.activity.some(row => row && !row.id && row.text === 'Legacy'));
+  });
+});
+
+test('a wrong list shape is a 400 and an id-less violations key is a 422', async () => {
+  await withOwner(async ({ owner }) => {
+    const g = await owner('GET', '/api/workspace');
+    const shaped = JSON.parse(JSON.stringify(g.body.data));
+    shaped.addressBook = { bad: { name: 'North Bank' } };
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: shaped });
+    assert.strictEqual(denied.status, 400, JSON.stringify(denied.body));
+    const hit = denied.body.refused.find(row => row.key === 'addressBook');
+    assert.ok(hit);
+    assert.match(hit.reason, /list/);
+    const again = await owner('GET', '/api/workspace');
+    again.body.data.violations = { '': { status: 'new' } };
+    const violations = await owner('PUT', '/api/workspace', { baseVersion: again.body.version, data: again.body.data });
+    assert.strictEqual(violations.status, 422, JSON.stringify(violations.body));
+    assert.ok(violations.body.refused.some(row => row.key === 'violations' && row.field === 'id'));
+    const stored = await owner('GET', '/api/workspace');
+    assert.ok(!stored.body.data.violations || !Object.prototype.hasOwnProperty.call(stored.body.data.violations, ''));
+  });
+});
+
+test('the browser adopts the saved workspace and does not mint pay tokens', () => {
+  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
+  assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
+  assert.match(flush, /renderWhenSafe\(\)/);
+  assert.match(flush, /e\.body && e\.body\.data/);
+  assert.match(flush, /await this\.reload\(\)/);
+  assert.doesNotMatch(appJs, /Billing\.payToken\(\)/);
+  const voidAct = appJs.slice(appJs.indexOf("'invoice-void'"), appJs.indexOf("'invoice-print'"));
+  assert.match(voidAct, /find\(x => x && x\.id === id\)/);
+  assert.match(voidAct, /logVoidIfSaved/);
+  assert.doesNotMatch(voidAct, /Voided invoice/);
+  assert.match(appJs, /Store\.get\.client\(clientId\)/);
 });

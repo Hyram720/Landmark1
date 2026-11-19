@@ -94,7 +94,7 @@ export function serviceWorkBlocked(before, after) {
     if (c && c.id && clientServiceOnHold(c, undefined, signatures)) heldById.set(c.id, heldReason(c));
   }
   const byId = (list, id) => (list || []).find(row => row && row.id && id && row.id === id);
-  const disputeSend = ['status', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate', 'outcome', 'respondedAt', 'mail', 'dueAt'];
+  const disputeSend = ['status', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate', 'outcome', 'respondedAt', 'mail', 'dueAt', 'letterId'];
   const letterSend = ['status', 'approvedAt', 'text', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate'];
   const refused = [];
   const seen = new Set();
