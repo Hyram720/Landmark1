@@ -384,13 +384,24 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const old of priorClients.values()) rememberClient(old);
     for (const c of data.clients || []) rememberClient(c);
     for (const c of data.clients || []) {
+      if (!c) continue;
+      const old = priorClients.get(c.id);
+      if (old && old.businessMatchApproval) c.businessMatchApproval = JSON.parse(JSON.stringify(old.businessMatchApproval));
+      else delete c.businessMatchApproval;
+    }
+    for (const c of data.clients || []) {
       if (!c || c.kind !== 'business') continue;
+      const old = priorClients.get(c.id);
       const email = normalizeClientEmail(c.email);
       const name = normalizeClientName(c.name);
-      const clash = data.knownClients.some(k => k && k.id !== c.id && ((email && normalizeClientEmail(k.email) === email) || (name && normalizeClientName(k.name) === name)));
-      if (!clash) continue;
+      const identitySame = old && (old.kind || 'personal') === 'business' && normalizeClientEmail(old.email) === email && normalizeClientName(old.name) === name;
+      if (identitySame) continue;
+      delete c.businessMatchApproval;
+      const matched = data.knownClients.filter(k => k && k.id !== c.id && ((email && normalizeClientEmail(k.email) === email) || (name && normalizeClientName(k.name) === name)));
+      if (!matched.length) continue;
       if (req.user.role !== 'owner') return res.status(409).json({ error: 'A client with this email or name already exists. Only the owner can add a business client for that person.' });
-      db.audit({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, email, name }) });
+      c.businessMatchApproval = { user: req.user.email, at: new Date().toISOString(), matchedIds: matched.map(k => k.id), name, email };
+      db.audit({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: c.businessMatchApproval.at, clientId: c.id, email, name, matchedIds: c.businessMatchApproval.matchedIds }) });
     }
     const invoiceGuard = guardIssuedInvoices(before, data, req);
     if (invoiceGuard) return res.status(invoiceGuard.status).json({ error: invoiceGuard.error });
@@ -962,15 +973,31 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     return local + '@' + domain;
   }
+  const INVOICE_STATUSES = new Set(['draft', 'issued', 'paid', 'void']);
   function guardIssuedInvoices(before, data, req) {
+    const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
+    for (const inv of (data && data.invoices) || []) {
+      if (!inv) continue;
+      const prev = prior.get(inv.id);
+      const leavingBilled = prev && (prev.status === 'issued' || prev.status === 'paid') && inv.status !== 'issued' && inv.status !== 'paid';
+      if (!INVOICE_STATUSES.has(inv.status) && !leavingBilled) return { status: 400, error: 'Invoice status must be draft, issued, paid, or void.' };
+    }
     const next = new Map(((data && data.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     for (const prev of (before && before.invoices) || []) {
-      if (!prev || (prev.status !== 'issued' && prev.status !== 'paid')) continue;
+      if (!prev) continue;
       const inv = next.get(prev.id);
+      if (prev.status === 'void') {
+        if (inv && inv.status !== 'void') return { status: 409, error: 'A voided invoice cannot be reopened.' };
+        continue;
+      }
+      if (prev.status !== 'issued' && prev.status !== 'paid') continue;
       if (!inv) return { status: 409, error: 'An issued or paid invoice cannot be deleted.' };
-      if (inv.status !== 'void') continue;
-      if (req.user.role !== 'owner') return { status: 403, error: 'Only the owner can void an issued or paid invoice.' };
+      const leaving = inv.status !== 'issued' && inv.status !== 'paid';
+      if (leaving && req.user.role !== 'owner') return { status: 403, error: 'Only the owner can void an issued or paid invoice.' };
+      if (Number(inv.amount) !== Number(prev.amount)) return { status: 409, error: 'The invoice amount is locked once it is issued.' };
+      if (!leaving) continue;
       if (!String(inv.voidReason || '').trim()) return { status: 400, error: 'A reason is required to void this invoice.' };
+      inv.status = 'void';
       db.audit({ actor: req.user.email, action: 'invoice.void', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), invoiceId: prev.id, clientId: prev.clientId, reason: String(inv.voidReason).trim() }) });
     }
     return null;
