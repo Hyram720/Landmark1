@@ -691,7 +691,7 @@
       let n = 0;
       // 1. Automatic invoices (work already performed only).
       const capBlocked = [];
-      const bills = root.Billing.due(S(), today, capBlocked);
+      const bills = root.Billing.due(S(), today, capBlocked).filter(i => !Store.serviceHold(S(), i.clientId));
       if (capBlocked.length && manual) setTimeout(() => toast(`${capBlocked.length} invoice${capBlocked.length > 1 ? 's' : ''} not issued: ${capBlocked[0].client}: ${capBlocked[0].reason}`), 900);
       bills.forEach(i => { S().invoices.push(i); Store.log(`Invoice issued automatically: ${UI.money(i.amount)} — ${i.description}`, i.clientId); });
       n += bills.length;

@@ -490,6 +490,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     }
     const held = serviceWorkBlocked(before, data);
     if (held) return reject(409, held.error, held.refused);
+    pendingAudits.push(...bureauResponseAudits(before, data, req.user));
     for (const c of data.clients) {
       if (!c || c.kind === 'business') continue;
       const old = priorClients.get(c.id);
@@ -563,6 +564,31 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!prev) return true;
     return ['status', 'itemId', 'disputeId', 'clientId', 'amount', 'serviceCompletedAt', 'issuedAt', 'bureauResultAt', 'reportId', 'documentId'].some(key => invoiceField(prev, key) !== invoiceField(inv, key));
   }
+  function bureauResponseAudits(before, after, user) {
+    const prior = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
+    const clients = (after && after.clients) || [];
+    const signatures = (after && after.signatures) || [];
+    const fields = ['outcome', 'respondedAt', 'receivedDate'];
+    const audits = [];
+    for (const d of (after && after.disputes) || []) {
+      if (!d || !d.id) continue;
+      const old = prior.get(d.id);
+      if (!old) continue;
+      const mailed = !!(old.sentAt || old.sentDate || String(old.status || '') === 'sent');
+      if (!mailed) continue;
+      const changed = fields.filter(name => String(old[name] == null ? '' : old[name]) !== String(d[name] == null ? '' : d[name]));
+      if (!changed.length) continue;
+      const client = clients.find(c => c && c.id === d.clientId);
+      if (client && !clientServiceOnHold(client, undefined, signatures)) continue;
+      const at = new Date().toISOString();
+      audits.push({
+        actor: user.email,
+        action: 'dispute.bureau_response',
+        detail: JSON.stringify({ user: user.email, at, disputeId: d.id, clientId: d.clientId || null, fields: changed, outcome: d.outcome || null, respondedAt: d.respondedAt || null, receivedDate: d.receivedDate || null })
+      });
+    }
+    return audits;
+  }
   function invoiceBillingBlocked(before, data) {
     const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
     const billable = inv => inv && (inv.status === 'issued' || inv.status === 'paid');
@@ -576,7 +602,8 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const prev = prior.get(inv.id);
       if (prev && billable(prev) && !invoiceChanged(prev, inv)) continue;
       const billed = (data.clients || []).find(x => x && x.id === inv.clientId);
-      if (!billed || billed.kind === 'business') continue;
+      if (!billed) return stop(inv, 'clientId', 'An invoice needs a client who is in the workspace.');
+      if (billed.kind === 'business') continue;
       if (clientServiceOnHold(billed, undefined, data.signatures)) return stop(inv, 'clientId', `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`);
       if (serviceDateInsideWindow(billed, inv)) return stop(inv, 'serviceCompletedAt', 'The service date is inside the cancellation window.');
       const item = deletedInvoiceItem(data, inv);
@@ -1409,6 +1436,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!String(body || '').trim()) return res.status(400).json({ error: 'Message is empty' });
     const cfg = commsConfig();
     if (!cfg[channel]) return res.status(501).json({ error: `${channel === 'sms' ? 'SMS' : 'Email'} sending is not configured on the server` });
+    if (clientServiceOnHold(c, undefined, workspace().signatures)) return res.status(409).json({ error: 'This client is on hold. No message is sent.' });
     if (channel === 'sms' && !c.smsConsent) return res.status(400).json({ error: 'No SMS consent on file for this client (TCPA). Record consent first.' });
     const to = channel === 'sms' ? c.phone : c.email;
     if (!to) return res.status(400).json({ error: `Client has no ${channel === 'sms' ? 'phone number' : 'email'}` });

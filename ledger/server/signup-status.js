@@ -90,6 +90,78 @@ function removedHeldClients(ws) {
   return bag.clients.filter(row => row && row.id);
 }
 
+function holdReleased(client, signatures) {
+  if (!client || (client.kind || 'personal') !== 'personal') return false;
+  if (!hasServerSignatures(client, signatures)) return false;
+  return !clientServiceOnHold(client, undefined, signatures);
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).sort().forEach(key => { out[key] = stableValue(value[key]); });
+    return out;
+  }
+  return value;
+}
+
+function fileSnapshot(row) {
+  return JSON.stringify(stableValue({
+    reportId: row && row.reportId ? String(row.reportId) : '',
+    accountId: row && row.accountId ? String(row.accountId) : '',
+    items: (row && row.items) || []
+  }));
+}
+
+function fileChanged(old, row) {
+  if (!old) return true;
+  return fileSnapshot(old) !== fileSnapshot(row);
+}
+
+function indexHeldFiles(reports, reasonFor, tomb) {
+  const reportHeld = new Map();
+  const accountHeld = new Map();
+  (reports || []).forEach(report => {
+    if (!report || !report.id) return;
+    const reason = reasonFor(report.clientId);
+    if (!reason) return;
+    if (!reportHeld.has(report.id)) reportHeld.set(report.id, { reason, clientId: report.clientId });
+    (report.accounts || []).forEach(acct => {
+      if (acct && acct.id && !accountHeld.has(acct.id)) accountHeld.set(acct.id, { reason, clientId: report.clientId, reportId: report.id });
+    });
+  });
+  ((tomb && tomb.reports) || []).forEach(row => {
+    if (row && row.id && !reportHeld.has(row.id)) reportHeld.set(row.id, { reason: row.reason || 'This report belonged to a client who is not active for service work and cannot be recreated.', clientId: '' });
+  });
+  ((tomb && tomb.accounts) || []).forEach(row => {
+    if (row && row.id && !accountHeld.has(row.id)) accountHeld.set(row.id, { reason: row.reason || 'This account belonged to a client who is not active for service work and cannot be recreated.', clientId: '' });
+  });
+  return { reportHeld, accountHeld };
+}
+
+function fileCitation(row, files, owners) {
+  if (!row || typeof row !== 'object') return '';
+  if (row.reportId && files.reportHeld.has(row.reportId)) owners.add(files.reportHeld.get(row.reportId).clientId);
+  if (row.accountId && files.accountHeld.has(row.accountId)) owners.add(files.accountHeld.get(row.accountId).clientId);
+  let reason = '';
+  if (row.reportId && files.reportHeld.has(row.reportId)) reason = files.reportHeld.get(row.reportId).reason;
+  if (!reason && row.accountId && files.accountHeld.has(row.accountId)) reason = files.accountHeld.get(row.accountId).reason;
+  (row.items || []).forEach(item => {
+    const nested = fileCitation(item, files, owners);
+    if (!reason && nested) reason = nested;
+  });
+  return reason;
+}
+
+function foreignCitation(row, files) {
+  const owners = new Set();
+  const reason = fileCitation(row, files, owners);
+  if (!reason) return '';
+  if (owners.size === 1 && row && owners.has(row.clientId)) return '';
+  return reason;
+}
+
 function collectHeld(before, after) {
   const signatures = (after && after.signatures) || (before && before.signatures) || [];
   const heldById = new Map();
@@ -101,7 +173,7 @@ function collectHeld(before, after) {
   removedHeldClients(before).concat(removedHeldClients(after)).forEach(row => {
     const id = String(row.id);
     const live = ((after && after.clients) || []).find(c => c && c.id === id);
-    if (live && !clientServiceOnHold(live, undefined, signatures)) return;
+    if (holdReleased(live, signatures)) return;
     if (!heldById.has(id)) heldById.set(id, row.reason || heldReason({ name: row.name || id }));
   });
   return heldById;
@@ -147,9 +219,14 @@ export function mailingBlocked(ws, dispute) {
   const heldById = collectHeld(ws, ws);
   const reasonFor = id => clientHoldReason(id, ws.clients || [], heldById);
   if (!String(dispute.clientId || '').trim()) return noClientReason();
+  const files = indexHeldFiles(ws.reports, reasonFor, ws.heldServiceIds);
+  const cited = foreignCitation(dispute, files);
+  if (cited) return cited;
   const own = reasonFor(dispute.clientId);
   if (own) return own;
   const letter = ((ws.letters) || []).find(row => row && row.id && row.id === dispute.letterId);
+  const letterCited = letter && foreignCitation(letter, files);
+  if (letterCited) return letterCited;
   return letterHoldReason(letter, letter, ws.disputes || [], reasonFor);
 }
 
@@ -184,13 +261,18 @@ export function serviceWorkBlocked(before, after) {
       const bare = !String(row.clientId || '').trim();
       const reason = nextReason || (bare ? noClientReason() : '');
       if (!reason) return;
-      if (bare) push(key, row.id, 'clientId', reason);
-      else if (nextReason) push(key, row.id, 'clientId', nextReason);
+      if (nextReason) push(key, row.id, 'clientId', nextReason);
+      let advanced = false;
       fields.forEach(field => {
         if (field === 'clientId' || field === 'letterId' || field === 'disputeId') return;
+        if (bare && field === 'text') return;
         if (keepResponse(key, row, field)) return;
-        if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push(key, row.id, field, reason);
+        if (row[field] != null && row[field] !== '' && row[field] !== 'draft') {
+          push(key, row.id, field, reason);
+          advanced = true;
+        }
       });
+      if (bare && advanced) push(key, row.id, 'clientId', reason);
       return;
     }
     if (!String(row.clientId || '').trim()) {
@@ -215,7 +297,9 @@ export function serviceWorkBlocked(before, after) {
   const tomb = {
     disputes: (Array.isArray(priorBag.disputes) ? priorBag.disputes : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') })),
     letters: (Array.isArray(priorBag.letters) ? priorBag.letters : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') })),
-    clients: (Array.isArray(priorBag.clients) ? priorBag.clients : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') }))
+    clients: (Array.isArray(priorBag.clients) ? priorBag.clients : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') })),
+    reports: (Array.isArray(priorBag.reports) ? priorBag.reports : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') })),
+    accounts: (Array.isArray(priorBag.accounts) ? priorBag.accounts : []).filter(row => row && row.id).map(row => ({ id: String(row.id), reason: String(row.reason || '') }))
   };
   const remember = (list, id, reason) => {
     if (!id || list.some(row => row.id === id)) return;
@@ -239,19 +323,38 @@ export function serviceWorkBlocked(before, after) {
     if (!reason) return;
     const stillDisputes = ((after && after.disputes) || []).filter(row => row && row.clientId === c.id);
     const stillLetters = ((after && after.letters) || []).filter(row => row && row.clientId === c.id);
-    if (stillDisputes.length || stillLetters.length) {
-      const names = stillDisputes.map(row => 'dispute ' + (row.id || '')).concat(stillLetters.map(row => 'letter ' + (row.id || '')));
+    const stillReports = ((after && after.reports) || []).filter(row => row && row.clientId === c.id);
+    if (stillDisputes.length || stillLetters.length || stillReports.length) {
+      const names = stillDisputes.map(row => 'dispute ' + (row.id || '')).concat(stillLetters.map(row => 'letter ' + (row.id || '')), stillReports.map(row => 'report ' + (row.id || '')));
       push('clients', c.id, '', reason + ' Remove ' + names.join(', ') + ' before deleting this client.');
       stillDisputes.forEach(row => push('disputes', row.id, 'clientId', reason));
       stillLetters.forEach(row => push('letters', row.id, 'clientId', reason));
+      stillReports.forEach(row => push('reports', row.id, 'clientId', reason));
       return;
     }
     remember(tomb.clients, c.id, reason);
   });
+  const priorReports = (before && before.reports) || [];
+  const afterReportIds = idsOf(after && after.reports);
+  priorReports.forEach(old => {
+    if (!old || !old.id) return;
+    const reason = reasonForClient(old.clientId);
+    if (!reason) return;
+    const kept = ((after && after.reports) || []).find(row => row && row.id === old.id);
+    if (!kept) {
+      if (!afterReportIds.has(old.id)) remember(tomb.reports, old.id, reason);
+      (old.accounts || []).forEach(acct => { if (acct && acct.id) remember(tomb.accounts, acct.id, reason); });
+      return;
+    }
+    const keptAccounts = new Set((kept.accounts || []).filter(acct => acct && acct.id).map(acct => acct.id));
+    (old.accounts || []).forEach(acct => {
+      if (acct && acct.id && !keptAccounts.has(acct.id)) remember(tomb.accounts, acct.id, reason);
+    });
+  });
   const signatures = (after && after.signatures) || (before && before.signatures) || [];
   tomb.clients = tomb.clients.filter(row => {
     const live = afterClients.find(c => c && c.id === row.id);
-    if (live && !clientServiceOnHold(live, undefined, signatures)) return false;
+    if (holdReleased(live, signatures)) return false;
     return true;
   });
   if (after && typeof after === 'object') after.heldServiceIds = tomb;
@@ -290,23 +393,11 @@ export function serviceWorkBlocked(before, after) {
     const old = ((before && before.clients) || []).find(row => row && row.id === c.id);
     if (!old || (old.kind || 'personal') === (c.kind || 'personal')) return;
     if (!heldById.get(c.id)) return;
-    const hasWork = priorDisputes.concat((after && after.disputes) || []).some(row => row && row.clientId === c.id) || priorLetters.concat((after && after.letters) || []).some(row => row && row.clientId === c.id);
+    const hasWork = priorDisputes.concat((after && after.disputes) || []).some(row => row && row.clientId === c.id) || priorLetters.concat((after && after.letters) || []).some(row => row && row.clientId === c.id) || ((before && before.reports) || []).concat((after && after.reports) || []).some(row => row && row.clientId === c.id);
     if (!hasWork) return;
     push('clients', c.id, 'kind', heldById.get(c.id));
   });
-  const reportHeld = new Map();
-  const accountHeld = new Map();
-  const noteReport = (report) => {
-    if (!report || !report.id) return;
-    const reason = reasonForClient(report.clientId);
-    if (!reason) return;
-    if (!reportHeld.has(report.id)) reportHeld.set(report.id, { reason, clientId: report.clientId });
-    (report.accounts || []).forEach(acct => {
-      if (acct && acct.id && !accountHeld.has(acct.id)) accountHeld.set(acct.id, { reason, clientId: report.clientId, reportId: report.id });
-    });
-  };
-  ((before && before.reports) || []).forEach(noteReport);
-  ((after && after.reports) || []).forEach(noteReport);
+  const files = indexHeldFiles(((before && before.reports) || []).concat((after && after.reports) || []), reasonForClient, tomb);
   ((after && after.reports) || []).forEach(report => {
     const old = byId((before && before.reports) || [], report.id);
     if (!old || String(old.clientId || '') === String(report.clientId || '')) return;
@@ -326,42 +417,35 @@ export function serviceWorkBlocked(before, after) {
       if (reason && String(prev.clientId || '') !== String(report.clientId || '')) push('reports', report.id, 'accounts', reason);
     });
   });
-  const fileReason = (row, owners) => {
-    if (!row || typeof row !== 'object') return '';
-    if (row.reportId && reportHeld.has(row.reportId)) owners.add(reportHeld.get(row.reportId).clientId);
-    if (row.accountId && accountHeld.has(row.accountId)) owners.add(accountHeld.get(row.accountId).clientId);
-    let reason = '';
-    if (row.reportId && reportHeld.has(row.reportId)) reason = reportHeld.get(row.reportId).reason;
-    if (!reason && row.accountId && accountHeld.has(row.accountId)) reason = accountHeld.get(row.accountId).reason;
-    (row.items || []).forEach(item => {
-      const nested = fileReason(item, owners);
-      if (!reason && nested) reason = nested;
-    });
-    return reason;
-  };
-  const foreignFile = (row) => {
-    const owners = new Set();
-    const reason = fileReason(row, owners);
-    if (!reason) return '';
-    if (owners.size === 1 && owners.has(row.clientId)) return '';
-    return reason;
-  };
   const blockedDispute = new Map();
   ((after && after.disputes) || []).forEach(row => {
-    const reason = foreignFile(row);
+    const reason = foreignCitation(row, files);
     if (!reason || !row || !row.id) return;
+    const old = byId(priorDisputes, row.id);
+    if (old && !fileChanged(old, row)) return;
     blockedDispute.set(row.id, reason);
     push('disputes', row.id, 'items', reason);
-    const old = byId(priorDisputes, row.id);
     if (old) return;
     disputeSend.forEach(field => {
       if (field === 'letterId') return;
       if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push('disputes', row.id, field, reason);
     });
   });
+  ((after && after.reports) || []).forEach(report => {
+    if (!report || !report.id) return;
+    if (!byId(priorReports, report.id)) {
+      const hit = reused(tomb.reports, report.id);
+      if (hit) push('reports', report.id, 'id', hit.reason);
+    }
+    (report.accounts || []).forEach(acct => {
+      if (!acct || !acct.id || priorAccount.has(acct.id)) return;
+      const acctHit = reused(tomb.accounts, acct.id);
+      if (acctHit) push('reports', report.id, 'accounts', acctHit.reason);
+    });
+  });
   ((after && after.letters) || []).forEach(row => {
     if (!row || typeof row !== 'object') return;
-    let reason = foreignFile(row);
+    let reason = foreignCitation(row, files);
     if (!reason && row.disputeId && blockedDispute.has(row.disputeId)) reason = blockedDispute.get(row.disputeId);
     if (!reason) {
       const linked = ((after && after.disputes) || []).find(item => item && item.letterId && item.letterId === row.id && blockedDispute.has(item.id));
@@ -369,15 +453,15 @@ export function serviceWorkBlocked(before, after) {
     }
     if (!reason) return;
     const old = byId(priorLetters, row.id);
+    if (old && !fileChanged(old, row) && String(old.disputeId || '') === String(row.disputeId || '')) return;
     if (!old) {
       letterSend.forEach(field => {
         if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push('letters', row.id, field, reason);
       });
+      if (!letterSend.some(field => row[field] != null && row[field] !== '' && row[field] !== 'draft')) push('letters', row.id, 'items', reason);
       return;
     }
-    letterSend.forEach(field => {
-      if (valueChanged(old[field], row[field])) push('letters', row.id, field, reason);
-    });
+    push('letters', row.id, 'items', reason);
   });
   ((after && after.letters) || []).forEach(row => {
     checkRow(row, priorLetters, 'letters', letterSend);

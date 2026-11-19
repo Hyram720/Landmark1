@@ -238,6 +238,18 @@
     };
   }
 
+  /** True when a dispute result must stay a record: the client is missing, or still on hold. */
+  function serviceHold(ws, clientId) {
+    const c = ((ws && ws.clients) || []).find(x => x && x.id === clientId);
+    if (!c) return true;
+    if (c.kind === 'business') return false;
+    if (!croaStatus(c).cleared) return true;
+    if (!remote) return false;
+    const sigs = (ws && ws.signatures) || [];
+    const has = doc => sigs.some(s => s && s.clientId === c.id && s.doc === doc);
+    return !(has('disclosure') && has('contract'));
+  }
+
   function disputeState(d, onDate) {
     const t = onDate || today();
     if (d.outcome) return d.outcome;
@@ -245,7 +257,7 @@
     return d.status;
   }
 
-  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, applyServerSave, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, disputeState, onChange: fn => listeners.push(fn), get state() { return state; } };
+  const api = { KEY, uid, now, today, empty, migrate, load, save, replace, adopt, applyServerSave, shouldRedrawAfterSave, logVoidIfSaved, setRemote, get remote() { return remote; }, log, get, croaStatus, serviceHold, disputeState, onChange: fn => listeners.push(fn), get state() { return state; } };
   root.root = root;
   root.Store = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

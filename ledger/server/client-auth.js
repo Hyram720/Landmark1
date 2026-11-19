@@ -11,6 +11,7 @@ import { hashPassword, passwordProblem, rateLimiter } from './auth.js';
 import { sendMail, mailEnabled, mailMode } from './mailer.js';
 import { Business } from './shared.js';
 import { etYmd } from './croa-window.js';
+import { clientServiceOnHold } from './signup-status.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const RESET_TTL = 30 * 60 * 1000, MAGIC_TTL = 15 * 60 * 1000, OTP_TTL = 10 * 60 * 1000;
@@ -180,10 +181,17 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     db.audit({ actor: 'system', action: 'notify', detail: `${key} → ${users.length}` });
   }
 
+  function passiveResponse(d, after) {
+    const client = ((after && after.clients) || []).find(c => c && c.id === d.clientId);
+    if (!client) return true;
+    return clientServiceOnHold(client, undefined, (after && after.signatures) || []);
+  }
+
   /** Called after staff save the workspace: diff disputes and email the affected clients. */
   function onWorkspaceSaved(before, after, req) {
     const old = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
     ((after && after.disputes) || []).filter(d => d && d.id).forEach(d => {
+      if (passiveResponse(d, after)) return;
       const p = old.get(d.id) || { items: [] };
       if (d.outcome && !p.outcome) notifyClient(d.clientId, `resp:${d.id}`, 'Update on your credit file', `A response from ${d.recipient} has been recorded on your file.`, req);
       (d.items || []).forEach((it, i) => {

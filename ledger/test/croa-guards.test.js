@@ -2516,3 +2516,225 @@ test('an already-sent orphan can record a bureau response, and a dispute without
     assert.doesNotMatch(mailed.body.error, /Lob API key/);
   });
 });
+
+test('a no-client draft dispute or letter can be saved, and only a send is refused', async () => {
+  await withOwner(async ({ owner }) => {
+    await addClient(owner, { id: 'other', name: 'Other Client', kind: 'personal', email: 'other-draft@guard.test', status: 'active' });
+    const before = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.disputes = sent.disputes || [];
+    sent.letters = sent.letters || [];
+    sent.disputes.push({ id: 'draft-none', recipient: 'Equifax', status: 'draft', items: [] });
+    sent.letters.push({ id: 'draft-letter', text: 'Draft letter', status: 'draft' });
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.strictEqual(saved.body.data.disputes.find(row => row.id === 'draft-none').status, 'draft');
+    assert.strictEqual(saved.body.data.letters.find(row => row.id === 'draft-letter').text, 'Draft letter');
+    const advance = JSON.parse(JSON.stringify(saved.body.data));
+    advance.disputes.find(row => row.id === 'draft-none').status = 'sent';
+    advance.disputes.find(row => row.id === 'draft-none').sentAt = '2026-11-18';
+    advance.letters.find(row => row.id === 'draft-letter').status = 'approved';
+    advance.letters.find(row => row.id === 'draft-letter').approvedAt = '2026-11-18';
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: advance });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && row.id === 'draft-none' && row.field === 'status' && /needs a client before it can be sent/.test(row.reason)));
+    assert.ok(denied.body.refused.some(row => row.key === 'letters' && row.id === 'draft-letter' && row.field === 'status' && /needs a client before it can be sent/.test(row.reason)));
+  });
+});
+
+test('a held client with only a report cannot be deleted, and a business recreate does not release the hold', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-report@guard.test', status: 'lead' });
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-report@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    built.db.data.workspace.reports = [{ id: 'rep-h', clientId: 'held', bureau: 'Equifax', accounts: [{ id: 'acct-h', creditor: 'North Bank' }] }];
+    const before = await owner('GET', '/api/workspace');
+    const drop = JSON.parse(JSON.stringify(before.body.data));
+    drop.clients = drop.clients.filter(row => row.id !== 'held');
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: drop });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    const named = denied.body.refused.find(row => row.key === 'clients' && row.id === 'held');
+    assert.match(named.reason, /report rep-h/);
+    const kept = await owner('GET', '/api/workspace');
+    const withoutReport = JSON.parse(JSON.stringify(kept.body.data));
+    withoutReport.reports = withoutReport.reports.filter(row => row.id !== 'rep-h');
+    const removedReport = await owner('PUT', '/api/workspace', { baseVersion: kept.body.version, data: withoutReport });
+    assert.strictEqual(removedReport.status, 200, JSON.stringify(removedReport.body));
+    assert.ok((removedReport.body.data.heldServiceIds.reports || []).some(row => row.id === 'rep-h'));
+    assert.ok((removedReport.body.data.heldServiceIds.accounts || []).some(row => row.id === 'acct-h'));
+    const again = JSON.parse(JSON.stringify(removedReport.body.data));
+    again.reports.push({ id: 'rep-h', clientId: 'clear', bureau: 'Equifax', accounts: [{ id: 'acct-h', creditor: 'North Bank' }] });
+    const reborn = await owner('PUT', '/api/workspace', { baseVersion: removedReport.body.version, data: again });
+    assert.strictEqual(reborn.status, 409, JSON.stringify(reborn.body));
+    assert.ok(reborn.body.refused.some(row => row.key === 'reports' && row.id === 'rep-h' && (row.field === 'id' || row.field === 'accounts')));
+    const fresh = await owner('GET', '/api/workspace');
+    const otherReport = JSON.parse(JSON.stringify(fresh.body.data));
+    otherReport.reports.push({ id: 'rep-new', clientId: 'clear', bureau: 'Experian', accounts: [{ id: 'acct-h', creditor: 'North Bank' }] });
+    const accountBack = await owner('PUT', '/api/workspace', { baseVersion: fresh.body.version, data: otherReport });
+    assert.strictEqual(accountBack.status, 409, JSON.stringify(accountBack.body));
+    assert.ok(accountBack.body.refused.some(row => row.key === 'reports' && row.field === 'accounts'));
+    const current = await owner('GET', '/api/workspace');
+    const dropClient = JSON.parse(JSON.stringify(current.body.data));
+    dropClient.clients = dropClient.clients.filter(row => row.id !== 'held');
+    const gone = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: dropClient });
+    assert.strictEqual(gone.status, 200, JSON.stringify(gone.body));
+    assert.ok((gone.body.data.heldServiceIds.clients || []).some(row => row.id === 'held'));
+    const business = JSON.parse(JSON.stringify(gone.body.data));
+    business.clients.push({ id: 'held', name: 'Held Business', kind: 'business', email: 'held-biz@guard.test', status: 'active' });
+    business.disputes = business.disputes || [];
+    business.disputes.push({ id: 'biz-d', clientId: 'held', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-18', items: [{ id: 'item-1', reportId: 'rep-h', accountId: 'acct-h' }] });
+    const sent = await owner('PUT', '/api/workspace', { baseVersion: gone.body.version, data: business });
+    assert.strictEqual(sent.status, 409, JSON.stringify(sent.body));
+    assert.ok((sent.body.refused || []).some(row => row.id === 'biz-d' || row.id === 'held'));
+    const quiet = await owner('GET', '/api/workspace');
+    assert.ok((quiet.body.data.heldServiceIds.clients || []).some(row => row.id === 'held'));
+    assert.ok(!quiet.body.data.clients.some(row => row.id === 'held'));
+  });
+});
+
+test('a held client with a report cannot switch type', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-rep-kind@guard.test', status: 'lead' });
+    built.db.data.workspace.reports = [{ id: 'rep-k', clientId: 'held', bureau: 'Equifax', accounts: [] }];
+    const before = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.clients.find(row => row.id === 'held').kind = 'business';
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'clients' && row.id === 'held' && row.field === 'kind'));
+  });
+});
+
+test('an unchanged dispute that cites a client who later cancels does not block another save', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-later@guard.test', status: 'active' });
+    await addClient(owner, { id: 'later', name: 'Later Cancel', kind: 'personal', email: 'later-cancel@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    seedSignedClient(built.db.data.workspace, 'later');
+    built.db.data.workspace.reports = [{ id: 'rep-later', clientId: 'later', bureau: 'Equifax', accounts: [{ id: 'acct-later', creditor: 'North Bank' }, { id: 'acct-two', creditor: 'South Bank' }] }];
+    const before = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    sent.disputes = [{ id: 'cite-d', clientId: 'clear', recipient: 'Equifax', status: 'draft', items: [{ id: 'item-1', reportId: 'rep-later', accountId: 'acct-later', creditor: 'North Bank' }] }];
+    sent.letters = [{ id: 'cite-l', clientId: 'clear', disputeId: 'cite-d', text: 'Letter', status: 'draft' }];
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    const later = built.db.data.workspace.clients.find(row => row.id === 'later');
+    later.onboarding.cancelledAt = '2026-11-18';
+    later.status = 'cancelled';
+    const current = await owner('GET', '/api/workspace');
+    const notes = JSON.parse(JSON.stringify(current.body.data));
+    notes.clients.find(row => row.id === 'clear').notes = 'Unrelated note';
+    const quiet = await owner('PUT', '/api/workspace', { baseVersion: current.body.version, data: notes });
+    assert.strictEqual(quiet.status, 200, JSON.stringify(quiet.body));
+    assert.strictEqual(quiet.body.data.clients.find(row => row.id === 'clear').notes, 'Unrelated note');
+    const changed = JSON.parse(JSON.stringify(quiet.body.data));
+    changed.disputes.find(row => row.id === 'cite-d').items = [{ id: 'item-1', reportId: 'rep-later', accountId: 'acct-two', creditor: 'South Bank' }];
+    const moved = await owner('PUT', '/api/workspace', { baseVersion: quiet.body.version, data: changed });
+    assert.strictEqual(moved.status, 409, JSON.stringify(moved.body));
+    assert.ok(moved.body.refused.some(row => row.key === 'disputes' && row.id === 'cite-d' && row.field === 'items'));
+    const mailed = await owner('POST', '/api/disputes/cite-d/mail', {});
+    assert.strictEqual(mailed.status, 409, JSON.stringify(mailed.body));
+    assert.match(mailed.body.error, /not active for service work|held|cancellation/i);
+    assert.doesNotMatch(mailed.body.error, /Lob API key/);
+  });
+});
+
+test('recording a bureau response on a held or missing client does not notify, bill, or start work', async () => {
+  const out = [];
+  setTransport(async message => { out.push(message); });
+  try {
+    await withOwner(async ({ built, owner }) => {
+      await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-resp@guard.test', status: 'lead' });
+      await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-resp@guard.test', status: 'active' });
+      seedSignedClient(built.db.data.workspace, 'clear');
+      built.db.data.users.push({ id: 'held-user', name: 'Held Client', email: 'held-resp@guard.test', role: 'client', clientId: 'held', password: 'x', sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
+      built.db.data.users.push({ id: 'clear-user', name: 'Clear Client', email: 'clear-resp@guard.test', role: 'client', clientId: 'clear', password: 'x', sessionEpoch: 1, createdAt: '2026-11-01T00:00:00.000Z', disabled: false });
+      built.db.data.workspace.disputes = [
+        { id: 'held-d', clientId: 'held', recipient: 'TransUnion', status: 'sent', sentAt: '2026-11-01', outcome: null, items: [] },
+        { id: 'gone-d', clientId: 'gone', recipient: 'Equifax', status: 'sent', sentAt: '2026-11-01', outcome: null, items: [] },
+        { id: 'clear-d', clientId: 'clear', recipient: 'Experian', status: 'sent', sentAt: '2026-11-01', outcome: null, items: [] }
+      ];
+      const before = await owner('GET', '/api/workspace');
+      const invoiceCount = (before.body.data.invoices || []).length;
+      const taskCount = (before.body.data.tasks || []).length;
+      const letterCount = (before.body.data.letters || []).length;
+      const sent = JSON.parse(JSON.stringify(before.body.data));
+      sent.disputes.find(row => row.id === 'held-d').outcome = 'deleted';
+      sent.disputes.find(row => row.id === 'held-d').respondedAt = '2026-11-18';
+      sent.disputes.find(row => row.id === 'held-d').receivedDate = '2026-11-18';
+      sent.disputes.find(row => row.id === 'gone-d').outcome = 'deleted';
+      sent.disputes.find(row => row.id === 'gone-d').respondedAt = '2026-11-18';
+      const saved = await owner('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+      assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.ok(!out.some(message => message.to === 'held-resp@guard.test'));
+      assert.strictEqual((saved.body.data.invoices || []).length, invoiceCount);
+      assert.strictEqual((saved.body.data.tasks || []).length, taskCount);
+      assert.strictEqual((saved.body.data.letters || []).length, letterCount);
+      const audit = await owner('GET', '/api/audit');
+      const rows = audit.body.filter(row => row.action === 'dispute.bureau_response');
+      assert.ok(rows.some(row => row.actor === 'owner@guard.test' && row.at && /held-d/.test(row.detail)));
+      assert.ok(rows.some(row => row.actor === 'owner@guard.test' && row.at && /gone-d/.test(row.detail)));
+      const billed = JSON.parse(JSON.stringify(saved.body.data));
+      billed.invoices = billed.invoices || [];
+      billed.invoices.push({ id: 'held-inv', clientId: 'held', disputeId: 'held-d', itemId: 'x', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-18', serviceCompletedAt: '2026-11-18' });
+      const heldBill = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: billed });
+      assert.strictEqual(heldBill.status, 409, JSON.stringify(heldBill.body));
+      const orphanBill = JSON.parse(JSON.stringify(saved.body.data));
+      orphanBill.invoices = orphanBill.invoices || [];
+      orphanBill.invoices.push({ id: 'gone-inv', clientId: 'gone', disputeId: 'gone-d', itemId: 'x', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-18', serviceCompletedAt: '2026-11-18' });
+      const goneBill = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: orphanBill });
+      assert.strictEqual(goneBill.status, 409, JSON.stringify(goneBill.body));
+      assert.match(goneBill.body.error, /client who is in the workspace/);
+      const clearSent = JSON.parse(JSON.stringify(saved.body.data));
+      clearSent.disputes.find(row => row.id === 'clear-d').outcome = 'deleted';
+      clearSent.disputes.find(row => row.id === 'clear-d').respondedAt = '2026-11-18';
+      const cleared = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: clearSent });
+      assert.strictEqual(cleared.status, 200, JSON.stringify(cleared.body));
+      await new Promise(resolve => setTimeout(resolve, 30));
+      assert.ok(out.some(message => message.to === 'clear-resp@guard.test'));
+    });
+  } finally {
+    setTransport(null);
+  }
+});
+
+test('a held client outcome does not schedule a removal message or the next letter', () => {
+  const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Map, Error, URLSearchParams, crypto, navigator: {} };
+  ctx.globalThis = ctx;
+  ctx.self = ctx;
+  ctx.top = ctx;
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  const root = path.join(import.meta.dirname, '../js');
+  for (const file of ['law.js', 'store.js', 'automations.js', 'sequences.js']) {
+    vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), ctx, { filename: file });
+  }
+  const Store = ctx.Store;
+  Store.load();
+  Store.setRemote(true);
+  Store.adopt({
+    version: 2,
+    clients: [
+      { id: 'held', name: 'Held', kind: 'personal', status: 'lead', onboarding: {} },
+      { id: 'clear', name: 'Clear', kind: 'personal', status: 'active', onboarding: { disclosureSignedAt: '2020-01-06', contractSignedAt: '2020-01-06', cancellationWindowEndsAt: '2020-01-09' } }
+    ],
+    signatures: [
+      { id: 'd', clientId: 'clear', doc: 'disclosure' },
+      { id: 'c', clientId: 'clear', doc: 'contract' }
+    ],
+    disputes: [
+      { id: 'held-d', clientId: 'held', seqId: 'sq', type: 'cra_611', recipient: 'Equifax', sentAt: '2026-11-01', outcome: 'verified', respondedAt: '2026-11-18', items: [{ creditor: 'North Bank' }] },
+      { id: 'clear-d', clientId: 'clear', recipient: 'Experian', sentAt: '2026-11-01', outcome: 'deleted', respondedAt: '2026-11-18', items: [{ creditor: 'South Bank' }] }
+    ],
+    sequences: [{ id: 'sq', clientId: 'held', status: 'active', title: 'Round' }],
+    letters: [],
+    automations: [{ id: 'removed', trigger: 'item_removed', delayDays: 0, channel: 'email', subject: 'Good news', body: 'Hi', enabled: true, enabledAt: '2020-01-01' }],
+    automationLog: {},
+    settings: { company: { name: 'Ledger' }, billing: {} }
+  });
+  const removed = ctx.Automations.due(Store.state, '2026-11-19', {});
+  assert.ok(!removed.some(row => row.client && row.client.id === 'held'));
+  assert.ok(removed.some(row => row.client && row.client.id === 'clear'));
+  assert.strictEqual(ctx.Sequences.plan(Store.state, Store.state.sequences[0], '2026-11-19').length, 0);
+});
