@@ -387,7 +387,7 @@ test('an invoice without a dated bureau result is refused', async () => {
     g.body.data.invoices.push({ id: 'nodate-1', clientId: 'nodate', disputeId: 'nd', itemId: 'ni', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2020-06-01', serviceCompletedAt: '2020-06-01' });
     const saved = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data });
     assert.strictEqual(saved.status, 409);
-    assert.match(saved.body.error, /mailed after the cancellation window/);
+    assert.match(saved.body.error, /dated bureau result/);
   });
 });
 
@@ -2862,6 +2862,7 @@ test('held-client templates 1 through 8 use the server text', () => {
   const contract = renderHeldMessage('contract-1679d', { id: 'ada', name: 'Ada Person', firstName: 'Ada' }, {});
   assert.match(contract.text, /Credit Services Agreement/);
   assert.match(contract.text, /\n4\. /);
+  assert.match(contract.text, /Principal business address: 2435 Patton St, Camden, NJ 08104/);
   assert.match(contract.error, /blank fields/);
   const injected = renderHeldMessage('contract-1679d', { id: 'ada', name: '[PRICE PER RESULT: Fred to decide]', pricePerResult: 40, scheduleA: [{ creditor: 'Bank', bureau: 'Equifax' }] }, {});
   assert.match(injected.text, /Client: PRICE PER RESULT Fred to decide/);
@@ -2869,10 +2870,15 @@ test('held-client templates 1 through 8 use the server text', () => {
   const copies = renderHeldMessage('signed-copies', { id: 'ada', name: 'Ada' }, { signatures: [] });
   assert.strictEqual(copies.text, 'No signed documents are on file.');
   const notice = renderHeldMessage('cancellation-1679e', { name: 'Ada' }, { company: { name: 'Ledger Test', address: '1 Main St' } });
-  assert.match(notice.text, /\*\*You may cancel this contract, without any penalty or obligation, at any time before midnight of the 3rd day which begins after the date the contract is signed by you\.\*\*/);
+  assert.doesNotMatch(notice.text, /\*\*/);
+  assert.match(notice.text, /You may cancel this contract, without any penalty or obligation, at any time before midnight of the 3rd day which begins after the date the contract is signed by you\./);
+  assert.match(notice.html, /<strong>You may cancel this contract, without any penalty or obligation, at any time before midnight of the 3rd day which begins after the date the contract is signed by you\.<\/strong>/);
+  assert.doesNotMatch(notice.html, /\*\*/);
   assert.match(notice.text, /Sun Marketing Enterprises LLC at 2435 Patton St, Camden, NJ 08104/);
+  assert.match(notice.html, /Sun Marketing Enterprises LLC at 2435 Patton St, Camden, NJ 08104/);
   assert.doesNotMatch(notice.text, /Ledger Test/);
   assert.strictEqual(notice.text.split('I hereby cancel this transaction').length - 1, 2);
+  assert.strictEqual(notice.html.split('<strong>I hereby cancel this transaction,</strong>').length - 1, 2);
   assert.match(notice.text, /\[purchaser's signature\]/);
   assert.doesNotMatch(notice.text, /client portal/);
   const reminder = renderHeldMessage('cancel-window', { onboarding: { contractSignedAtTs: '2026-10-01T16:00:00.000Z' } }, {});
@@ -2881,7 +2887,10 @@ test('held-client templates 1 through 8 use the server text', () => {
   assert.match(dated.text, /Tuesday, October 6, 2026/);
   assert.doesNotMatch(dated.text, /2026-10-06/);
   const confirmed = renderHeldMessage('cancellation-confirmed', { id: 'ada', onboarding: { cancelledAt: '2026-10-03', cancellationTimely: true } }, { invoices: [{ id: 'i', clientId: 'ada', status: 'paid', amount: 40 }] });
-  assert.match(confirmed.text, /We received your cancellation\. Your contract is cancelled as of 2026-10-03\. The cancellation was timely\. We confirm a refund of \$40\.00 for a payment taken under the contract\./);
+  assert.match(confirmed.text, /We received your cancellation\. Your contract is cancelled as of Saturday, October 3, 2026\. The cancellation was timely\. We confirm a refund of \$40\.00 for a payment taken under the contract\./);
+  const utcCut = renderHeldMessage('cancellation-confirmed', { id: 'ada', onboarding: { cancelledAt: '2026-10-04T02:30:00.000Z', cancellationTimely: false } }, {});
+  assert.match(utcCut.text, /Saturday, October 3, 2026/);
+  assert.doesNotMatch(utcCut.text, /2026-10-04/);
   const late = renderHeldMessage('cancellation-confirmed', { id: 'ada', onboarding: { cancelledAt: '2026-10-09', cancellationTimely: false } }, { invoices: [{ id: 'i', clientId: 'ada', status: 'paid', amount: 40 }] });
   assert.match(late.text, /The cancellation was late\./);
   assert.doesNotMatch(late.text, /refund/);
@@ -2976,7 +2985,8 @@ test('a deletion recorded during the hold and a dispute mailed before the contra
     during.invoices = [{ id: 'hold-inv', clientId: 'bill', disputeId: 'during', itemId: 'di', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-18', serviceCompletedAt: '2026-11-18', bureauResultAt: '2026-11-18' }];
     const heldBill = await owner('PUT', '/api/workspace', { baseVersion: after.body.version, data: during });
     assert.strictEqual(heldBill.status, 409, JSON.stringify(heldBill.body));
-    assert.match(heldBill.body.error, /recorded while the client was on hold/);
+    assert.match(heldBill.body.error, /after the cancellation window/);
+    assert.ok(after.body.data.heldOutcomes.some(row => row.key === 'bill\nequifax' && row.onHold));
     const current = await owner('GET', '/api/workspace');
     const renamed = JSON.parse(JSON.stringify(current.body.data));
     renamed.disputes.find(d => d.id === 'during').items[0].id = 'di-renamed';
@@ -3067,6 +3077,8 @@ test('startup migration binds existing logins, and a stale save cannot restore a
     await addClient(owner, { id: 'bea', name: 'Bea', kind: 'personal', email: 'bea@guard.test', status: 'lead' });
     first.db.data.users.push({ id: 'ada-login', name: 'Ada', email: 'ada@guard.test', role: 'client', clientId: 'ada', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' });
     for (const row of first.db.data.workspace.clients) delete row.identity;
+    delete first.db.data.portalIdentityMigration;
+    first.db.data.audit = first.db.data.audit.filter(row => row.action !== 'portal.identity.migrate');
     first.db.persist();
   } finally {
     live.server.close();
@@ -3232,6 +3244,132 @@ test('a staff save on a held client records a skipped notice', async () => {
     const saved = await staff('PUT', '/api/workspace', { baseVersion: book.body.version, data: book.body.data });
     assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
     const audit = await owner('GET', '/api/audit');
-    assert.ok(audit.body.some(row => row.action === 'notify.skipped' && row.actor === 'staff-skip@guard.test'));
+    assert.ok(audit.body.some(row => row.action === 'notify.skipped' && row.actor === 'staff-skip@guard.test' && /Good news on your credit file/.test(row.detail) && !/resp:/.test(row.detail)));
+  });
+});
+
+test('a bureau hold survives spelling changes and dispute deletes until the owner clears it', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'bill', name: 'Bea Bill', kind: 'personal', email: 'spell-bill@guard.test', status: 'active', pricePerResult: 20 });
+    seedSignedClient(built.db.data.workspace, 'bill', { onboarding: { disclosureSignedAt: '2026-10-01', disclosureAcknowledgedAt: '2026-10-01T15:00:00.000Z', contractSignedAt: '2026-10-01', contractSignedAtTs: '2026-10-01T16:00:00.000Z', cancellationWindowEndsAt: '2026-10-06', cancellationWindowEndsAtTs: '2026-10-07T03:59:59.999Z' } });
+    const open = await owner('GET', '/api/workspace');
+    open.body.data.disputes = [{ id: 'old', clientId: 'bill', status: 'sent', sentAt: '2026-11-01', recipient: 'Experian Information Solutions', items: [{ id: 'one', creditor: 'Hold Bank, N.A.', bureau: 'Experian Information Solutions' }] }];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: open.body.version, data: open.body.data })).status, 200);
+    assert.strictEqual((await owner('POST', '/api/clients/bill/cancel', { method: 'email', receivedAt: '2026-10-04' })).status, 200);
+    const held = await owner('GET', '/api/workspace');
+    held.body.data.disputes.find(d => d.id === 'old').outcome = 'deleted';
+    const recorded = await owner('PUT', '/api/workspace', { baseVersion: held.body.version, data: held.body.data });
+    assert.strictEqual(recorded.status, 200, JSON.stringify(recorded.body));
+    assert.ok(recorded.body.data.heldOutcomes.some(row => row.key === 'bill\nexperian' && row.onHold));
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAt = null;
+    built.db.data.workspace.clients.find(c => c.id === 'bill').onboarding.cancelledAtTs = null;
+    const after = await owner('GET', '/api/workspace');
+    const renamed = JSON.parse(JSON.stringify(after.body.data));
+    renamed.disputes = [{ id: 'fresh', clientId: 'bill', status: 'sent', sentAt: '2026-11-02', recipient: 'Experian', items: [{ id: 'two', creditor: 'HOLD BANK NA', accountNumber: '999', bureau: 'EXPERIAN', result: 'deleted', bureauResultAt: '2026-11-18' }] }];
+    renamed.invoices = [{ id: 'spell', clientId: 'bill', disputeId: 'fresh', itemId: 'two', bureau: 'Experian', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-11-18', serviceCompletedAt: '2026-11-18' }];
+    const blocked = await owner('PUT', '/api/workspace', { baseVersion: after.body.version, data: renamed });
+    assert.strictEqual(blocked.status, 409, JSON.stringify(blocked.body));
+    assert.match(blocked.body.error, /recorded while the client was on hold/);
+    const wiped = await owner('GET', '/api/workspace');
+    const again = JSON.parse(JSON.stringify(wiped.body.data));
+    again.disputes = [];
+    again.heldOutcomes = [];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: wiped.body.version, data: again })).status, 200);
+    const restored = await owner('GET', '/api/workspace');
+    const rebilled = JSON.parse(JSON.stringify(restored.body.data));
+    rebilled.disputes = renamed.disputes;
+    rebilled.invoices = renamed.invoices;
+    const still = await owner('PUT', '/api/workspace', { baseVersion: restored.body.version, data: rebilled });
+    assert.strictEqual(still.status, 409, JSON.stringify(still.body));
+    assert.match(still.body.error, /recorded while the client was on hold/);
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-hold@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    assert.strictEqual((await staff('POST', '/api/clients/bill/bureau-hold/clear', { bureau: 'Experian', reason: 'Staff cannot clear this.' })).status, 403);
+    const cleared = await owner('POST', '/api/clients/bill/bureau-hold/clear', { bureau: 'Experian Information Solutions', reason: 'The window mail was a test file.' });
+    assert.strictEqual(cleared.status, 200, JSON.stringify(cleared.body));
+    const audit = await owner('GET', '/api/audit');
+    assert.ok(audit.body.some(row => row.action === 'bureau.hold.clear' && row.actor === 'owner@guard.test' && /test file/.test(row.detail)));
+    const ready = await owner('GET', '/api/workspace');
+    const bill = JSON.parse(JSON.stringify(ready.body.data));
+    bill.disputes = renamed.disputes;
+    bill.invoices = renamed.invoices;
+    const issued = await owner('PUT', '/api/workspace', { baseVersion: ready.body.version, data: bill });
+    assert.strictEqual(issued.status, 200, JSON.stringify(issued.body));
+  });
+});
+
+test('portal identity migration runs once, and a reused id does not inherit a login', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-migrate-once-'));
+  const boot = { dataDir: dir, encryptionKey: 'guard-key-not-a-secret-00', selfSignupEnabled: false, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' } };
+  const first = createApp(boot);
+  try {
+    first.db.data.workspace = { clients: [{ id: 'ada', name: 'Bea', kind: 'personal', email: 'bea@guard.test', status: 'lead' }], disputes: [], letters: [], reports: [], invoices: [], signatures: [], settings: { company: {} } };
+    first.db.data.users.push(
+      { id: 'alice', name: 'Alice', email: 'alice@guard.test', role: 'client', clientId: 'ada', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'match', name: 'Bea', email: 'bea@guard.test', role: 'client', clientId: 'ada', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'gone', name: 'Gone', email: 'gone@guard.test', role: 'client', clientId: 'missing', password: hashPassword('portal password 1'), sessionEpoch: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+    );
+    delete first.db.data.portalIdentityMigration;
+    first.db.data.audit = (first.db.data.audit || []).filter(row => row.action !== 'portal.identity.migrate');
+    first.db.persist();
+  } finally { first.shutdown(); }
+  const second = createApp(boot);
+  try {
+    const bea = second.db.data.workspace.clients.find(row => row.id === 'ada');
+    const alice = second.db.data.users.find(row => row.id === 'alice');
+    const match = second.db.data.users.find(row => row.id === 'match');
+    const gone = second.db.data.users.find(row => row.id === 'gone');
+    assert.ok(bea.identity);
+    assert.strictEqual(match.clientIdentity, bea.identity);
+    assert.ok(!alice.clientIdentity);
+    assert.strictEqual(alice.portalLinkNeedsInvite, true);
+    assert.ok(!gone.clientIdentity);
+    assert.strictEqual(gone.portalLinkNeedsInvite, true);
+    const detail = second.db.data.audit.find(row => row.action === 'portal.identity.migrate').detail;
+    assert.match(detail, /alice@guard\.test/);
+    assert.match(detail, /gone@guard\.test/);
+    second.db.data.workspace.clients.push({ id: 'missing', name: 'New Person', kind: 'personal', email: 'gone@guard.test', status: 'lead', identity: 'reused-identity' });
+    second.db.persist();
+  } finally { second.shutdown(); }
+  const third = createApp(boot);
+  try {
+    const gone = third.db.data.users.find(row => row.id === 'gone');
+    const alice = third.db.data.users.find(row => row.id === 'alice');
+    assert.ok(!gone.clientIdentity);
+    assert.notStrictEqual(gone.clientIdentity, 'reused-identity');
+    assert.ok(!alice.clientIdentity);
+    assert.strictEqual(third.db.data.audit.filter(row => row.action === 'portal.identity.migrate').length, 1);
+  } finally {
+    third.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a client can delete a report that only their own letter cites', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada File', kind: 'personal', email: 'ada-own@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'ada');
+    const g = await owner('GET', '/api/workspace');
+    g.body.data.reports = [{ id: 'rep-a', clientId: 'ada', bureau: 'Equifax', date: '2026-06-01', accounts: [{ id: 'acct-a', creditor: 'Own Bank' }] }];
+    g.body.data.letters = [{ id: 'l-ada', clientId: 'ada', reportId: 'rep-a', status: 'draft', text: 'Please review this account.' }];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: g.body.data })).status, 200);
+    const drop = await owner('GET', '/api/workspace');
+    drop.body.data.reports = [];
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: drop.body.version, data: drop.body.data });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+  });
+});
+
+test('an invite link uses the configured site address and is not stored', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-link@guard.test', status: 'lead', phone: '5550101' });
+    const sent = await owner('POST', '/api/messages', { clientId: 'held', channel: 'email', template: 'account-admin', admin: 'invite' });
+    assert.strictEqual(sent.status, 501, JSON.stringify(sent.body));
+    const audit = await owner('GET', '/api/audit');
+    const row = audit.body.find(item => item.action === 'invite.create');
+    assert.match(row.detail, /http:\/\/127\.0\.0\.1:4100/);
+    assert.doesNotMatch(row.detail, new RegExp(':' + live.server.address().port + '(/|$)'));
+    assert.doesNotMatch(JSON.stringify(built.db.data), /#invite=/);
   });
 });

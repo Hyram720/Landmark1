@@ -193,7 +193,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
     if (!client || heldDispute) {
       sent()[key] = new Date().toISOString();
       if (who) {
-        db.audit({ actor: who, action: 'notify.skipped', detail: key + (!client ? ' client missing' : ' client on hold') });
+        db.audit({ actor: who, action: 'notify.skipped', detail: (subject || 'Notice') + (!client ? ' client missing' : ' client on hold') });
         db.persist();
       }
       return;
@@ -222,7 +222,15 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
       });
       if (passiveResponse(d, after)) {
         const who = (req && req.user && req.user.email) || '';
-        if (wouldMail && who) db.audit({ actor: who, action: 'notify.skipped', detail: `resp:${d.id} client on hold` });
+        if (wouldMail && who) {
+          const notices = [];
+          if (d.outcome && !p.outcome) notices.push('Update on your credit file');
+          (d.items || []).forEach((it, i) => {
+            const was = (p.items || [])[i] || {};
+            if (['deleted', 'corrected'].includes(it.result) && it.result !== was.result) notices.push('Good news on your credit file');
+          });
+          db.audit({ actor: who, action: 'notify.skipped', detail: (notices.filter((name, index) => notices.indexOf(name) === index).join('; ') || 'Notice') + ' client on hold' });
+        }
         return;
       }
       if (d.outcome && !p.outcome) notifyClient(d.clientId, `resp:${d.id}`, 'Update on your credit file', `A response from ${d.recipient} has been recorded on your file.`, req);
@@ -252,11 +260,11 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   const timer = setInterval(deadlineSweep, 60 * 60 * 1000);
   timer.unref();
 
-  function issuePortalLink(kind, u, req) {
+  function issuePortalLink(kind, u, base) {
     const tokenKind = kind === 'verify' ? 'verify' : 'reset';
     const ttl = tokenKind === 'reset' ? 30 * 60 * 1000 : 24 * 60 * 60 * 1000;
     const { raw } = issue(tokenKind, u, ttl);
-    return `${origin(req)}/portal#${tokenKind}=${raw}`;
+    return `${String(base || '').replace(/\/$/, '')}/portal#${tokenKind}=${raw}`;
   }
 
   return { otpRequired, startOtp, onWorkspaceSaved, deadlineSweep, notifyClient, issuePortalLink, stop: () => clearInterval(timer) };

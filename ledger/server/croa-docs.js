@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { cancellationWindow, formatDeadlineDateEt, formatDocumentTimeEt } from './croa-window.js';
+import { LEGAL_COMPANY_ADDRESS } from './email-footer.js';
 
 const dir = path.resolve(new URL('../legal/', import.meta.url).pathname);
 
@@ -145,6 +146,7 @@ export function fillPerClientText(text, client) {
   let out = String(text || '')
     .replace(/\[CLIENT FULL NAME\]/g, name)
     .replace(/\[CLIENT ADDRESS\]/g, address || '[CLIENT ADDRESS]')
+    .replace(/\[STREET ADDRESS[^\]]*\]/g, LEGAL_COMPANY_ADDRESS)
     .replace(/\[DATE SIGNED[^\]]*\]/g, UNSIGNED_DATE_SIGNED)
     .replace(/\[ITEM \/ CREDITOR NAME \/ ACCOUNT ENDING IN LAST 4 ONLY \/ BUREAU\(S\)\]/g, scheduleAText(c))
     .replace(/\[DATE:[^\]]*\]/g, UNSIGNED_CANCEL_DEADLINE)

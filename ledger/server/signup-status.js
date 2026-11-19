@@ -326,8 +326,9 @@ export function serviceWorkBlocked(before, after) {
       if (!row) return false;
       return [row].concat(row.items || []).some(node => node && ((node.reportId && reportIds.has(node.reportId)) || (node.accountId && accountIds.has(node.accountId))));
     };
-    const citingReport = ((after && after.disputes) || []).filter(citesReport).map(row => 'dispute ' + (row.id || ''))
-      .concat(((after && after.letters) || []).filter(citesReport).map(row => 'letter ' + (row.id || '')));
+    const anotherClient = row => row && row.clientId !== report.clientId;
+    const citingReport = ((after && after.disputes) || []).filter(citesReport).filter(anotherClient).map(row => 'dispute ' + (row.id || ''))
+      .concat(((after && after.letters) || []).filter(citesReport).filter(anotherClient).map(row => 'letter ' + (row.id || '')));
     if (citingReport.length) push('reports', report.id, '', 'Another record cites this report. Remove ' + citingReport.join(', ') + ' before deleting this report.');
   });
   const afterIds = new Set(afterClients.filter(c => c && c.id).map(c => c.id));

@@ -89,25 +89,35 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
   const fileKey = encryptionKey ? crypto.createHash('sha256').update('files:' + encryptionKey).digest() : null;
   const D = () => db.data;
+  const PORTAL_IDENTITY_MIGRATION = 1;
   (function migratePortalIdentity() {
+    if (D().portalIdentityMigration === PORTAL_IDENTITY_MIGRATION) return;
     const ws = D().workspace;
-    if (!ws || !Array.isArray(ws.clients)) return;
-    const notes = [];
-    for (const c of ws.clients) {
-      if (!c || !c.id || c.identity) continue;
-      c.identity = uid();
-      notes.push('client ' + c.id);
+    const bound = [];
+    const unbound = [];
+    if (ws && Array.isArray(ws.clients)) {
+      for (const c of ws.clients) {
+        if (!c || !c.id || c.identity) continue;
+        c.identity = uid();
+        bound.push('client ' + c.id);
+      }
+      const byId = new Map(ws.clients.filter(c => c && c.id).map(c => [c.id, c]));
+      for (const u of D().users || []) {
+        if (!u || u.role !== 'client' || u.clientIdentity || !u.clientId) continue;
+        const c = byId.get(u.clientId);
+        const loginEmail = String(u.email || '').toLowerCase().trim();
+        const clientEmail = c ? String(c.email || '').toLowerCase().trim() : '';
+        if (c && c.identity && loginEmail && loginEmail === clientEmail) {
+          u.clientIdentity = c.identity;
+          bound.push('login ' + loginEmail);
+        } else {
+          u.portalLinkNeedsInvite = true;
+          unbound.push(loginEmail || u.id || u.clientId);
+        }
+      }
     }
-    const byId = new Map(ws.clients.filter(c => c && c.id).map(c => [c.id, c]));
-    for (const u of D().users || []) {
-      if (!u || u.role !== 'client' || u.clientIdentity || !u.clientId) continue;
-      const c = byId.get(u.clientId);
-      if (!c || !c.identity) continue;
-      u.clientIdentity = c.identity;
-      notes.push('login ' + (u.email || u.id));
-    }
-    if (!notes.length) return;
-    db.audit({ actor: 'system:migrate', action: 'portal.identity.migrate', detail: notes.join(', ').slice(0, 800) });
+    D().portalIdentityMigration = PORTAL_IDENTITY_MIGRATION;
+    db.audit({ actor: 'system:migrate', action: 'portal.identity.migrate', detail: JSON.stringify({ bound, unbound }).slice(0, 2000) });
     db.persist();
   })();
   setKeyProvider(() => (db.data.secrets && db.data.secrets.anthropicKey) || '');
@@ -613,11 +623,59 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const days = (values || []).map(recordedDay).filter(Boolean).sort();
     return days[0] || '';
   }
-  function itemAccountKey(clientId, item) {
-    const bureau = String((item && item.bureau) || '').trim().toLowerCase();
-    const account = String((item && (item.accountNumber || item.accountId || item.creditor)) || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!clientId || (!bureau && !account)) return '';
-    return String(clientId) + '\n' + bureau + '\n' + account;
+  function bureauEnum(value) {
+    const raw = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (!raw) return '';
+    if (raw === 'exp' || raw.startsWith('experian')) return 'experian';
+    if (raw === 'efx' || raw === 'eq' || raw.startsWith('equifax')) return 'equifax';
+    if (raw === 'tu' || raw.startsWith('transunion')) return 'transunion';
+    return null;
+  }
+  function holdKey(clientId, bureau) {
+    return String(clientId || '') + '\n' + bureau;
+  }
+  function windowEndDay(client) {
+    const o = (client && client.onboarding) || {};
+    const end = String(o.cancellationWindowEndsAt || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(end)) return end;
+    const signedAt = o.contractSignedAtTs || o.contractSignedAt;
+    if (!signedAt) return '';
+    return cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
+  }
+  function disputeBureaus(d) {
+    const known = [];
+    const bad = [];
+    const add = (value, required) => {
+      if (value == null || value === '') return;
+      const mapped = bureauEnum(value);
+      if (mapped == null) {
+        if (required) bad.push(String(value));
+        return;
+      }
+      if (mapped && !known.includes(mapped)) known.push(mapped);
+    };
+    for (const item of (d && d.items) || []) if (item && typeof item === 'object') add(item.bureau, true);
+    add(d && d.bureau, true);
+    add(d && d.recipient, false);
+    return { known, bad };
+  }
+  function rememberHold(outcomes, clientId, bureau, at, why) {
+    if (!clientId || !bureau) return;
+    const key = holdKey(clientId, bureau);
+    const prior = outcomes.get(key);
+    if (prior && prior.cleared) return;
+    outcomes.set(key, {
+      key,
+      clientId: String(clientId),
+      bureau,
+      at: earliestDay([prior && prior.at, at]) || at || '',
+      onHold: true,
+      reason: (prior && prior.reason) || why || '',
+      cleared: false,
+      clearedAt: prior && prior.clearedAt || null,
+      clearedBy: prior && prior.clearedBy || null,
+      clearReason: prior && prior.clearReason || ''
+    });
   }
   function recordedResultDay(item) {
     return item ? recordedDay(item.serverResultAt) : '';
@@ -635,7 +693,18 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const outcomes = new Map();
     for (const row of (before && before.heldOutcomes) || []) {
       if (!row || !row.key) continue;
-      outcomes.set(row.key, { key: row.key, clientId: row.clientId || '', outcome: row.outcome || '', at: recordedDay(row.at), onHold: !!row.onHold });
+      outcomes.set(row.key, {
+        key: row.key,
+        clientId: row.clientId || String(row.key).split('\n')[0] || '',
+        bureau: row.bureau || String(row.key).split('\n')[1] || '',
+        at: recordedDay(row.at),
+        onHold: !!row.onHold && !row.cleared,
+        reason: row.reason || row.outcome || '',
+        cleared: !!row.cleared,
+        clearedAt: row.clearedAt || null,
+        clearedBy: row.clearedBy || null,
+        clearReason: row.clearReason || ''
+      });
     }
     for (const d of data.disputes || []) {
       if (!d || !d.id) continue;
@@ -664,38 +733,41 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
         const locked = oldItem.result === 'deleted' || oldItem.result === 'corrected' || oldItem.resultRecordedOnHold || oldItem.serverResultAt;
         if (locked && !nextIds.has(String(oldItem.id))) push(d.id, 'items', 'A deleted item cannot change its id.');
       }
+      let resultDuring = false;
       for (const item of d.items || []) {
         if (!item || typeof item !== 'object') continue;
         const oldItem = oldItems.find(it => it && String(it.id) === String(item.id));
-        const key = itemAccountKey(d.clientId, item);
-        const priorOutcome = key ? outcomes.get(key) : null;
         const typed = earliestDay([
           item.bureauResultAt, item.resultAt, item.resultDate,
-          oldItem && oldItem.bureauResultAt, oldItem && oldItem.resultAt, oldItem && oldItem.resultDate,
-          priorOutcome && priorOutcome.at
+          oldItem && oldItem.bureauResultAt, oldItem && oldItem.resultAt, oldItem && oldItem.resultDate
         ]);
-        const held = !!((oldItem && oldItem.resultRecordedOnHold) || (priorOutcome && priorOutcome.onHold) || ((item.result === 'deleted' || item.result === 'corrected') && onHold));
-        if (held) item.resultRecordedOnHold = true;
+        const resulted = item.result === 'deleted' || item.result === 'corrected' || (oldItem && (oldItem.result === 'deleted' || oldItem.result === 'corrected'));
+        if (oldItem && oldItem.serverResultAt) item.serverResultAt = earliestDay([oldItem.serverResultAt, typed]) || oldItem.serverResultAt;
+        else if (resulted && typed) item.serverResultAt = typed < today ? typed : today;
+        else delete item.serverResultAt;
+        const day = recordedDay(item.serverResultAt);
+        const end = windowEndDay(client);
+        if (resulted && (onHold || (end && day && day <= end))) resultDuring = true;
+      }
+      const end = windowEndDay(client);
+      const outcomeDay = earliestDay([d.respondedAt, d.receivedDate, d.outcomeAt]);
+      const mailedDuring = wasSent(d) && (onHold || (end && d.serverSentAt && d.serverSentAt <= end));
+      const outcomeDuring = !!d.outcome && (onHold || (end && outcomeDay && outcomeDay <= end));
+      const { known, bad } = disputeBureaus(d);
+      if ((mailedDuring || outcomeDuring || resultDuring) && (bad.length || !known.length)) {
+        push(d.id, 'bureau', 'Name the bureau as Equifax, Experian, or TransUnion.');
+      }
+      if (mailedDuring || outcomeDuring || resultDuring) {
+        const why = outcomeDuring ? 'outcome' : (resultDuring ? 'result' : 'mailed');
+        const at = earliestDay([d.serverSentAt, outcomeDay]) || '';
+        for (const bureau of known) rememberHold(outcomes, d.clientId, bureau, at, why);
+      }
+      for (const item of d.items || []) {
+        if (!item || typeof item !== 'object') continue;
+        const bureau = bureauEnum(item.bureau);
+        const row = bureau ? outcomes.get(holdKey(d.clientId, bureau)) : null;
+        if (row && row.onHold && !row.cleared) item.resultRecordedOnHold = true;
         else delete item.resultRecordedOnHold;
-        if (oldItem && oldItem.serverResultAt) {
-          item.serverResultAt = earliestDay([oldItem.serverResultAt, typed]) || oldItem.serverResultAt;
-        } else if (item.result === 'deleted' || item.result === 'corrected' || (oldItem && (oldItem.result === 'deleted' || oldItem.result === 'corrected' || oldItem.resultRecordedOnHold)) || (priorOutcome && priorOutcome.at)) {
-          item.serverResultAt = typed && typed < today ? typed : today;
-        } else {
-          delete item.serverResultAt;
-        }
-        if (key && (item.result === 'deleted' || item.result === 'corrected' || item.resultRecordedOnHold)) {
-          const at = earliestDay([item.serverResultAt, priorOutcome && priorOutcome.at, typed]) || today;
-          outcomes.set(key, {
-            key,
-            clientId: d.clientId || '',
-            outcome: (priorOutcome && priorOutcome.outcome) || item.result || '',
-            at,
-            onHold: !!(item.resultRecordedOnHold || (priorOutcome && priorOutcome.onHold))
-          });
-          if (outcomes.get(key).onHold) item.resultRecordedOnHold = true;
-          item.serverResultAt = earliestDay([item.serverResultAt, at]) || at;
-        }
       }
     }
     data.heldOutcomes = Array.from(outcomes.values());
@@ -766,18 +838,20 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const item = deletedInvoiceItem(data, inv);
       if (!item) return stop(inv, 'itemId', 'An invoice must name the deleted item and its bureau.');
       if (item.result !== 'deleted') return stop(inv, 'itemId', 'An invoice can be issued only for a deleted item, not a correction.');
-      if (inv.bureau && String(inv.bureau).trim().toLowerCase() !== String(item.bureau).trim().toLowerCase()) return stop(inv, 'bureau', 'The invoice bureau does not match the deleted item.');
-      const heldOutcome = (data.heldOutcomes || []).find(row => row && row.key === itemAccountKey(inv.clientId, item) && row.onHold);
+      const itemBureau = bureauEnum(item.bureau);
+      if (itemBureau == null) return stop(inv, 'bureau', 'Name the bureau as Equifax, Experian, or TransUnion.');
+      if (inv.bureau && bureauEnum(inv.bureau) !== itemBureau) return stop(inv, 'bureau', 'The invoice bureau does not match the deleted item.');
+      const heldOutcome = (data.heldOutcomes || []).find(row => row && row.key === holdKey(inv.clientId, itemBureau) && row.onHold && !row.cleared);
       const currentDispute = (data.disputes || []).find(d => d && d.id === inv.disputeId);
       const resultDay = recordedResultDay(item);
       const mailedDay = recordedMailedDay(currentDispute);
-      if (item.resultRecordedOnHold || heldOutcome) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
       if (!resultDay) return stop(inv, 'bureauResultAt', 'An invoice must name the dated bureau result for the deleted item.');
       const signedAt = billed.onboarding && (billed.onboarding.contractSignedAtTs || billed.onboarding.contractSignedAt);
       let deadline = String((billed.onboarding && billed.onboarding.cancellationWindowEndsAt) || '');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) && signedAt) deadline = cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
       if (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && resultDay <= deadline) return stop(inv, 'bureauResultAt', 'The bureau result date must be after the cancellation window.');
       if (resultDay > todayEtYmd()) return stop(inv, 'bureauResultAt', 'The bureau result date cannot be after today.');
+      if (item.resultRecordedOnHold || heldOutcome) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
       if (!mailedDay || (/^\d{4}-\d{2}-\d{2}$/.test(deadline) && mailedDay <= deadline)) return stop(inv, 'sentAt', 'The dispute must have been mailed after the cancellation window.');
       const price = Number(billed.pricePerResult);
       if (!(price > 0) || Number(inv.amount) !== price) return stop(inv, 'amount', 'The invoice amount must equal the price per result.');
@@ -946,6 +1020,26 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     db.audit({ actor: req.user.email, action: 'portal.link', detail: `${email} -> ${c.id}` });
     db.persist();
     res.json({ ok: true, clientId: c.id });
+  });
+  app.post('/api/clients/:id/bureau-hold/clear', need('owner'), (req, res) => {
+    const c = workspace().clients.find(row => row && row.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    const bureau = bureauEnum((req.body || {}).bureau);
+    const reason = String((req.body || {}).reason || '').trim().slice(0, 500);
+    if (bureau == null || !bureau) return res.status(400).json({ error: 'Name the bureau as Equifax, Experian, or TransUnion.' });
+    if (!reason) return res.status(400).json({ error: 'A written reason is required.' });
+    const ws = workspace();
+    ws.heldOutcomes = Array.isArray(ws.heldOutcomes) ? ws.heldOutcomes : [];
+    const row = ws.heldOutcomes.find(item => item && item.key === holdKey(c.id, bureau));
+    if (!row || !row.onHold || row.cleared) return res.status(409).json({ error: 'No hold is recorded for that bureau.' });
+    row.onHold = false;
+    row.cleared = true;
+    row.clearedAt = new Date().toISOString();
+    row.clearedBy = req.user.email;
+    row.clearReason = reason;
+    db.audit({ actor: req.user.email, action: 'bureau.hold.clear', detail: JSON.stringify({ clientId: c.id, bureau, reason }) });
+    commitWorkspace(req.user.email, 'bureau.hold.clear', c.id);
+    res.json({ ok: true, bureau });
   });
   function croaClient(c) { return !!(c && c.kind !== 'business'); }
   function signingStatus(c, pack) {
@@ -1615,6 +1709,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const { clientId, channel, template } = req.body || {};
     let subject = (req.body || {}).subject;
     let body = (req.body || {}).body;
+    let html = '';
     const c = workspace().clients.find(x => x.id === clientId);
     if (!c) return res.status(404).json({ error: 'Client not found' });
     const held = clientServiceOnHold(c, undefined, workspace().signatures);
@@ -1627,17 +1722,16 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       let link = '';
       const admin = String((req.body || {}).admin || '');
       if (template === 'account-admin') {
-        const host = `${req.protocol}://${req.get('host')}`;
-        if (admin === 'login') link = host + '/portal';
+        if (admin === 'login') link = publicOrigin.replace(/\/$/, '') + '/portal';
         else if (admin === 'invite') {
           const token = crypto.randomBytes(24).toString('base64url');
           D().invites.push({ hash: sha(token), role: 'client', clientId: c.id, referralId: null, name: c.name || '', email: String(c.email || '').toLowerCase(), expiresAt: Date.now() + INVITE_TTL_MS, usedAt: null });
-          db.audit({ actor: req.user.email, action: 'invite.create', detail: `client ${c.name || c.id}` });
+          db.audit({ actor: req.user.email, action: 'invite.create', detail: `client ${c.id} ${publicOrigin}` });
           db.persist();
-          link = host + '/portal#invite=' + token;
+          link = publicOrigin.replace(/\/$/, '') + '/portal#invite=' + token;
         } else if ((admin === 'reset' || admin === 'verify') && auth) {
           const user = D().users.find(row => row && row.role === 'client' && row.clientId === c.id && !row.disabled);
-          if (user) link = auth.issuePortalLink(admin, user, req);
+          if (user) link = auth.issuePortalLink(admin, user, publicOrigin);
         }
       }
       const rendered = renderHeldMessage(template, c, {
@@ -1651,6 +1745,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       if (rendered.error) return res.status(409).json({ error: rendered.error });
       subject = rendered.subject;
       body = rendered.text;
+      html = rendered.html || '';
     }
     if (!String(body || '').trim()) return res.status(400).json({ error: 'Message is empty' });
     const cfg = commsConfig();
@@ -1659,10 +1754,11 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const to = channel === 'sms' ? c.phone : c.email;
     if (!to) return res.status(400).json({ error: `Client has no ${channel === 'sms' ? 'phone number' : 'email'}` });
     try {
-      const providerId = channel === 'sms' ? await sendSms({ to, text: body }) : await sendEmail({ to, subject: subject || 'Update on your credit file', text: body });
+      const providerId = channel === 'sms' ? await sendSms({ to, text: body }) : await sendEmail({ to, subject: subject || 'Update on your credit file', text: body, html });
+      const loggedBody = String(body || '').replace(/https?:\/\/\S*#(invite|reset|verify)=\S+/gi, '[link]');
       const ws = workspace();
       ws.messages = ws.messages || [];
-      ws.messages.unshift({ id: uid(), clientId, channel, to, subject: subject || '', body, at: new Date().toISOString(), by: req.user.email, status: 'sent', providerId });
+      ws.messages.unshift({ id: uid(), clientId, channel, to, subject: subject || '', body: loggedBody, at: new Date().toISOString(), by: req.user.email, status: 'sent', providerId });
       commitWorkspace(req.user.email, 'message.send', `${channel} to ${clientId}`);
       res.json({ ok: true, version: D().workspaceVersion });
     } catch (e) { res.status(502).json({ error: e.message }); }

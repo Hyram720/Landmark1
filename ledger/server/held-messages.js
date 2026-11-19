@@ -80,7 +80,7 @@ export function statutoryDisclosure() {
   return statutoryPart(croaDocs().disclosure);
 }
 
-export function statutoryCancellation(deadline) {
+function cancellationSource(deadline) {
   const src = statutoryPart(croaDocs().cancellation, true);
   const name = LEGAL_COMPANY_NAME;
   const address = LEGAL_COMPANY_ADDRESS;
@@ -89,6 +89,18 @@ export function statutoryCancellation(deadline) {
     .replace(/\[LEGAL NAME:[^\]]*\]/g, name)
     .replace(/\[ADDRESS FOR CANCELLATION NOTICES:[^\]]*\]/g, address)
     .replace(/\[DATE:[^\]]*\]/g, when);
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function statutoryCancellation(deadline) {
+  return cancellationSource(deadline).replace(/\*\*/g, '');
+}
+
+export function statutoryCancellationHtml(deadline) {
+  return escapeHtml(cancellationSource(deadline)).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>\n');
 }
 
 function deadlineLabel(client) {
@@ -108,8 +120,11 @@ function money(n) {
 }
 
 function safeWhen(value) {
-  const day = String(value || '').slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : 'the date we received it';
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return weekdayFromYmd(raw);
+  const parsed = Date.parse(raw);
+  if (!Number.isNaN(parsed)) return formatDeadlineDateEt(new Date(parsed));
+  return 'the date we received it';
 }
 
 export function renderHeldMessage(id, client, ctx) {
@@ -152,7 +167,8 @@ export function renderHeldMessage(id, client, ctx) {
   }
   if (id === 'cancellation-1679e') {
     const form = statutoryCancellation(deadlineLabel(c));
-    return { subject: 'Notice of Cancellation', text: form + '\n\n' + form };
+    const htmlForm = statutoryCancellationHtml(deadlineLabel(c));
+    return { subject: 'Notice of Cancellation', text: form + '\n\n' + form, html: htmlForm + '<br><br>\n' + htmlForm };
   }
   if (id === 'cancel-window') {
     const date = deadlineLabel(c);
