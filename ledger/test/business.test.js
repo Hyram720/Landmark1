@@ -123,6 +123,8 @@ test('setup: owner, two business clients with portal logins, one personal client
   const A = bizClient('ba', { businessReports: [bizReport('ba')] });
   const B = bizClient('bb', { creditPlan: { startedAt: addDays(today, -1) } });
   ws.clients.push(A, B, Object.assign({}, personalClient, { kind: 'personal', status: 'active', email: 'pat@biz.test', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } }));
+  ws.signatures = ws.signatures || [];
+  ws.signatures.push({ id: 'sig-pa-d', clientId: 'pa', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-pa-c', clientId: 'pa', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
   ws.reports.push(personalReport);
   assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
   for (const [c, id, pw] of [[bizA, 'ba', 'business a password'], [bizB, 'bb', 'business b password']]) {

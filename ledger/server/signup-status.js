@@ -49,28 +49,34 @@ export function applySignupStatus(c, onDate) {
   return c.status !== beforeStatus || (o.cancellationWindowEndsAtTs || null) !== beforeEnd;
 }
 
-/** Self-signup uses the Eastern instant. Every other CROA client is held while Store.croaStatus is required and not cleared. */
+/** Self-signup uses the Eastern instant. Every other personal client is held while CROA is required and not cleared. onDate is the moment used for the window. */
 export function clientServiceOnHold(c, onDate) {
-  if (!c) return false;
-  if (c.signupSource === 'self' && !selfSignupCleared(c, onDate)) return true;
-  const when = onDate instanceof Date ? undefined : onDate;
+  if (!c || c.kind === 'business') return false;
+  if (c.signupSource === 'self') return !selfSignupCleared(c, onDate);
+  const o = c.onboarding || {};
+  const now = asOf(onDate);
+  if (o.cancellationWindowEndsAtTs) {
+    const open = now.getTime() <= Date.parse(o.cancellationWindowEndsAtTs);
+    const order = !o.disclosureSignedAt || !o.contractSignedAt || String(o.disclosureSignedAt) <= String(o.contractSignedAt);
+    const done = !!(o.disclosureSignedAt && o.contractSignedAt && order && !open && !o.cancelledAt);
+    return !done;
+  }
+  const when = typeof onDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(onDate) ? onDate : undefined;
   const cs = Store.croaStatus(c, when);
   return !!(cs.required && !cs.cleared);
 }
 
-/** New disputes for a self-signup client who is not active yet. */
+/** New letters or disputes for a personal client who is still inside CROA onboarding. */
 export function serviceWorkBlocked(before, after) {
   const priorDisputes = (before && before.disputes) || [];
+  const priorLetters = (before && before.letters) || [];
   for (const c of (after && after.clients) || []) {
-    if (c.signupSource !== 'self') continue;
-    const o = c.onboarding || {};
-    if (o.cancelledAt) continue;
-    if (selfSignupCleared(c)) continue;
+    if (!clientServiceOnHold(c)) continue;
     const id = c.id;
     const count = (list) => (list || []).filter(d => d && d.clientId === id).length;
     const held = `${c.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
     if (count(after.disputes) > count(priorDisputes)) return held;
-    if (count(after.letters) > count((before && before.letters) || [])) return held;
+    if (count(after.letters) > count(priorLetters)) return held;
   }
   return null;
 }

@@ -165,6 +165,8 @@ test('upload and Scan with AI stay visible until the result or the exact error',
   const g = await owner('GET', '/api/workspace');
   const ws = g.body.data;
   ws.clients.push({ id: 'cscan', name: 'Casey Report', firstName: 'Casey', lastName: 'Report', kind: 'personal', email: 'casey@example.test', status: 'active', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } });
+  ws.signatures = ws.signatures || [];
+  ws.signatures.push({ id: 'sig-cscan-d', clientId: 'cscan', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-cscan-c', clientId: 'cscan', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
   assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
   const html = '<table><tr><td>Creditor</td><td>Example Bank</td></tr><tr><td>Balance</td><td>$100</td></tr></table>';
   const report = await owner('POST', '/api/clients/cscan/files', formFile('bureau.html', Buffer.from(html), 'text/html'));

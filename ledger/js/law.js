@@ -135,39 +135,36 @@ Federal Trade Commission
 Washington, D.C. 20580`;
 
   function cancellationNotice(company, deadline) {
-    return `NOTICE OF CANCELLATION
+    const when = deadline || '[DATE: Weekday, Month D, YYYY]';
+    return `Notice of Cancellation
 
 You may cancel this contract, without any penalty or obligation, at any time before midnight of the 3rd day which begins after the date the contract is signed by you.
 
-To cancel this contract, mail or deliver a signed, dated copy of this cancellation notice, or any other written notice to ${company.name || '[name of credit repair organization]'} at ${(company.address || '[address of credit repair organization]').replace(/\n/g, ', ')} before midnight on ${deadline || '[date]'}.
+To cancel this contract, mail or deliver a signed, dated copy of this cancellation notice, or any other written notice to ${company.name || '[LEGAL NAME: Fred to confirm]'} at ${(company.address || '[ADDRESS FOR CANCELLATION NOTICES: Fred to provide]').replace(/\n/g, ', ')} before midnight on ${when}.
 
 I hereby cancel this transaction,
 
-______________________ [date]
+[date]
 
-______________________ [purchaser’s signature]`;
+[purchaser's signature]
+
+You can also cancel in your client portal, or by email to ${company.email || '[EMAIL]'}, before midnight Eastern Time on the date above.`;
   }
 
   function contractTerms(company, client, fee) {
-    return `CREDIT SERVICES AGREEMENT
+    const price = fee || (client && client.pricePerResult) || '[PRICE PER RESULT: Fred to decide]';
+    return `Credit Services Agreement
 
-Between ${company.name || '[Company]'} (“we”) and ${client.name} (“you”).
+Date of this agreement: [DATE SIGNED, filled automatically]
 
-1. Services. We will review your consumer reports with you, identify information you believe is inaccurate, incomplete or unverifiable, prepare written disputes for your review and signature, track statutory response deadlines, and report results to you.
+Client: ${client && client.name ? client.name : '[CLIENT FULL NAME]'}
+Client mailing address: ${(client && client.address) || '[CLIENT ADDRESS]'}
 
-2. Terms and conditions of payment. ${fee || '[Describe fee]'}. We will not charge or receive any payment for a service until that service is fully performed (15 U.S.C. § 1679b(b)). The total amount you may pay is stated above.
+Price per result: ${price}
 
-3. Estimated time to perform services. Disputes are typically prepared within 10 business days after the cancellation period ends. Bureaus generally have 30 days (up to 45) to respond to each dispute.
+You may cancel this contract without penalty or obligation at any time before midnight of the 3rd business day after the date on which you signed the contract. See the attached notice of cancellation form for an explanation of this right.
 
-4. No guarantee. We cannot and do not promise any particular result, score increase or removal. Accurate, current and verifiable information cannot be removed from your report.
-
-5. Your rights. You may cancel this contract within 3 business days of signing — see the attached Notice of Cancellation. You have also received the separate statement “Consumer Credit File Rights Under State and Federal Law.” No services will be performed until the cancellation period ends (15 U.S.C. § 1679d(a)(2)).
-
-Company: ${company.name || ''} · ${(company.address || '').replace(/\n/g, ', ')}
-
-YOU MAY CANCEL THIS CONTRACT WITHOUT PENALTY OR OBLIGATION AT ANY TIME BEFORE MIDNIGHT OF THE 3RD BUSINESS DAY AFTER THE DATE ON WHICH YOU SIGNED THE CONTRACT. SEE THE ATTACHED NOTICE OF CANCELLATION FORM FOR AN EXPLANATION OF THIS RIGHT.
-
-Signed: ______________________   Date: __________`;
+The signed PDF, when one is stored, is the copy the client signed.`;
   }
 
   // Phrases that create CROA § 1679b(a) / FTC Act risk in letters or marketing.

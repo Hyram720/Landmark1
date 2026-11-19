@@ -910,13 +910,23 @@
     });
   }
 
-  function printClientDoc(kind, cid) {
+  async function printClientDoc(kind, cid) {
+    const titles = { disclosure: 'Consumer Credit File Rights', contract: 'Credit services agreement', cancel: 'Notice of Cancellation' };
+    if (Store.remote && cid) {
+      const pack = await api('GET', '/api/clients/' + encodeURIComponent(cid) + '/croa-documents');
+      if ((kind === 'contract' || kind === 'cancel') && pack.contractPdfId) {
+        window.open('/api/clients/' + encodeURIComponent(cid) + '/signed-agreement', '_blank', 'noopener');
+        return;
+      }
+      const text = kind === 'disclosure' ? pack.disclosure : kind === 'contract' ? pack.contract : pack.cancellation + '\n\n' + pack.cancellation;
+      return UI.printDoc(titles[kind] || 'Document', text);
+    }
     const co = S().settings.company;
     const c = cid ? Store.get.client(cid) : { name: '[Client name]', onboarding: {} };
     const cs = cid ? Store.croaStatus(c) : {};
-    if (kind === 'disclosure') return UI.printDoc('Consumer Credit File Rights', Law.CROA_DISCLOSURE);
-    if (kind === 'contract') return UI.printDoc('Credit services agreement', Law.contractTerms(co, c, S().settings.defaultFee));
-    if (kind === 'cancel') { const n = Law.cancellationNotice(co, cs.deadline ? UI.date(cs.deadline) : null); return UI.printDoc('Notice of Cancellation', n + '\n\n\n— — — — — — — — — — duplicate copy — — — — — — — — — —\n\n' + n); }
+    if (kind === 'disclosure') return UI.printDoc(titles.disclosure, Law.CROA_DISCLOSURE);
+    if (kind === 'contract') return UI.printDoc(titles.contract, Law.contractTerms(co, c, (c && c.pricePerResult) || S().settings.defaultFee));
+    if (kind === 'cancel') { const n = Law.cancellationNotice(co, cs.deadline ? UI.date(cs.deadline) : null); return UI.printDoc(titles.cancel, n + '\n\n' + n); }
   }
 
   function progressReport(cid) { UI.printHtml(root.Reports.progress(S(), cid, T())); Store.log('Printed progress report', cid); }

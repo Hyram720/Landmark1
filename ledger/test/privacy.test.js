@@ -90,6 +90,8 @@ test('setup a client file full of identifiers', async () => {
   ws.clients.push({ id: 'cp', name: 'Jordan Sample', firstName: 'Jordan', lastName: 'Sample', kind: 'both', status: 'active', email: PII.email, phone: PII.phone, address: PII.street, city: 'Dallas', state: 'TX', zip: '75201', dob: PII.dobIso, ssnLast4: '6789', ssn: PII.ssn, notes: `SSN ${PII.ssn}, DOB ${PII.dob}, call ${PII.phone}, lives at ${PII.street}`, onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' },
     business: { legalName: 'Jordan Sample Holdings LLC', ein: PII.ein, entityType: 'LLC', phone: PII.phone, address: PII.street },
     vendorAccounts: [{ id: 'v1', vendor: 'Uline', terms: `Net 30, acct ${PII.acct}`, limit: 1000, balance: 100, status: 'current' }] });
+  ws.signatures = ws.signatures || [];
+  ws.signatures.push({ id: 'sig-cp-d', clientId: 'cp', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-cp-c', clientId: 'cp', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
   ws.reports.push({ id: 'rp', clientId: 'cp', bureau: 'Experian', date: '2026-10-01', accounts: [
     { id: 'ta', creditor: 'CAPITAL ONE', accountNumber: PII.acct, type: 'R', status: '11', balance: 1200, pastDue: 100, limit: 2000, issue: `Card ${PII.cardSpaced} isn't late; my SSN is ${PII.ssn}`, evidence: `statement mailed to ${PII.street}` },
     { id: 'tb', creditor: 'CHASE', accountNumber: PII.card, type: 'R', status: '97', balance: 900, dofd: '2021-06-01' }] });

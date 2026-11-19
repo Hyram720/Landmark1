@@ -360,11 +360,21 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       return res.status(422).json({ error: `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`, violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })) });
     }
     // TODO(billing): signup does not create or collect invoices. Cap checks above stay in billing.js.
+    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
+    restoreServerOwnedEnrollment(data, priorClients);
+    const priorInvoiceIds = new Set(((before && before.invoices) || []).filter(Boolean).map(i => i.id));
+    for (const inv of data.invoices || []) {
+      if (!inv || priorInvoiceIds.has(inv.id) || inv.status !== 'issued') continue;
+      const billed = (data.clients || []).find(x => x.id === inv.clientId);
+      if (billed && clientServiceOnHold(billed)) return res.status(409).json({ error: `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.` });
+      const disputes = (data.disputes || []).filter(d => d && d.clientId === inv.clientId && (!inv.disputeId || d.id === inv.disputeId));
+      const result = disputes.some(d => ['deleted', 'corrected'].includes(d.outcome) || (d.items || []).some(it => it && (it.result === 'deleted' || it.result === 'corrected')));
+      if (!result) return res.status(409).json({ error: 'An invoice can be issued only after a result is documented.' });
+    }
     const held = serviceWorkBlocked(before, data);
     if (held) return res.status(409).json({ error: held });
-    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
     for (const c of data.clients) {
-      if (!c || c.signupSource !== 'self') continue;
+      if (!c || c.kind === 'business') continue;
       const old = priorClients.get(c.id);
       if (!old || enrollmentSnapshot(old) === enrollmentSnapshot(c)) continue;
       if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the price and Schedule A.' });
@@ -378,6 +388,34 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ version: D().workspaceVersion });
   });
 
+  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt'];
+  function restoreServerOwnedEnrollment(data, priorClients) {
+    const sigs = data.signatures || [];
+    for (const c of data.clients || []) {
+      if (!c || c.kind === 'business') continue;
+      c.onboarding = c.onboarding || {};
+      const old = priorClients.get(c.id);
+      if (old) {
+        const prev = old.onboarding || {};
+        for (const key of SERVER_OWNED_ONBOARDING) c.onboarding[key] = prev[key] == null ? null : prev[key];
+        continue;
+      }
+      const signedDoc = doc => sigs.some(s => s && s.clientId === c.id && s.doc === doc);
+      if (!signedDoc('disclosure')) {
+        c.onboarding.disclosureSignedAt = null;
+        c.onboarding.disclosureAcknowledgedAt = null;
+      }
+      if (!signedDoc('contract')) {
+        c.onboarding.contractSignedAt = null;
+        c.onboarding.contractSignedAtTs = null;
+        c.onboarding.cancellationWindowEndsAt = null;
+        c.onboarding.cancellationWindowEndsAtTs = null;
+        c.onboarding.cancellationRule = null;
+        c.onboarding.contractPdfId = null;
+        c.onboarding.contractPdfSha256 = null;
+      }
+    }
+  }
   function invalidateContractView(onboarding) {
     if (!onboarding) return;
     if (onboarding.contractViewedAt || onboarding.contractViewedSha256) onboarding.contractViewStale = true;
@@ -488,16 +526,21 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   function croaClient(c) { return !!(c && c.kind !== 'business'); }
   function signingStatus(c, pack) {
     if (!croaClient(c)) return { code: '', message: '' };
-    return enrollmentStatus(c, pack, { requireAddress: c.signupSource === 'self' });
+    return enrollmentStatus(c, pack, { requireAddress: true });
   }
   function documentsFor(c) {
     return personalizeCroaDocs(croaDocsOverride || croaDocs(), c, now());
+  }
+  function alreadySigned(c) {
+    const o = (c && c.onboarding) || {};
+    return !!(o.disclosureSignedAt || o.contractSignedAt || o.contractSignedAtTs);
   }
   function documentsForPortal(c) {
     const docs = documentsFor(c);
     if (!croaClient(c)) return docs;
     if (c.signupSource === 'self' && !mailingAddress(c)) return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
-    const consented = !!(c.onboarding || {}).esignConsentAt && !(c.onboarding || {}).esignWithdrawnAt;
+    const o = c.onboarding || {};
+    const consented = (!!o.esignConsentAt && !o.esignWithdrawnAt) || alreadySigned(c);
     if (consented) return docs;
     return { esign: docs.esign || '', disclosure: '', contract: '', cancellation: '' };
   }
@@ -570,7 +613,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!portalVerified(req, res)) return;
     const c = portalClient(req);
     if (!c) return res.status(404).json({ error: 'Not found' });
-    if (c.signupSource !== 'self') return res.status(400).json({ error: 'This address step is for self-signup accounts.' });
+    if (!croaClient(c)) return res.status(400).json({ error: 'This address step is for personal clients.' });
     if (contractIsSigned(c)) return res.status(409).json({ error: 'The contract is already signed.' });
     const b = req.body || {};
     const next = {
@@ -737,6 +780,21 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     activity(`${c.name} signed the ${doc === 'disclosure' ? 'rights disclosure' : 'services agreement'}`, c.id);
     commitWorkspace(req.user.email, 'portal.sign', `${doc} ${sig.documentSha256.slice(0, 12)}`);
     res.json({ ok: true, signature: sig });
+  });
+
+  app.get('/api/clients/:id/croa-documents', need('owner', 'staff'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: 'Client not found' });
+    const pack = documentsFor(c);
+    res.json({ disclosure: pack.disclosure, contract: pack.contract, cancellation: pack.cancellation, contractPdfId: (c.onboarding || {}).contractPdfId || null });
+  });
+  app.get('/api/clients/:id/signed-agreement', need('owner', 'staff'), (req, res) => {
+    const c = workspace().clients.find(x => x.id === req.params.id);
+    const pdfId = c && c.onboarding && c.onboarding.contractPdfId;
+    if (!pdfId) return res.status(404).json({ error: 'Not found' });
+    const file = path.join(filesDir, 'signed', pdfId + '.pdf');
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Not found' });
+    res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store' }).send(fs.readFileSync(file));
   });
 
   app.get('/api/portal/signed/:id', need('client'), (req, res) => {

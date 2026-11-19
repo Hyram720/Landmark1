@@ -7,7 +7,13 @@ import path from 'node:path';
 import { createApp } from '../server/app.js';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-test-'));
-const { app, db } = createApp({ dataDir: dir, encryptionKey: 'test-key' });
+const openInviteDocs = {
+  disclosure: 'Consumer Credit File Rights Under State and Federal Law\n\nBankruptcy information can be reported for 10 years.\n',
+  contract: 'Credit Services Agreement\n\nClient: [CLIENT FULL NAME]\nDate of this agreement: [DATE SIGNED, filled automatically]\nSchedule A\n[ITEM / CREDITOR NAME / ACCOUNT ENDING IN LAST 4 ONLY / BUREAU(S)]\nThe most you can owe is $[PRICE] times [NUMBER OF ITEM AND BUREAU ENTRIES IN SCHEDULE A], which is $[MAXIMUM TOTAL].\n',
+  cancellation: '**Notice of Cancellation**\n\nbefore midnight on [DATE: Weekday, Month D, YYYY]\n\n[date]\n\n[purchaser\'s signature]\n\nYou can also cancel before midnight Eastern Time on the date above.\n',
+  esign: 'Consent to Electronic Records\n\nOpen [LINK TO SAMPLE PDF]. Code [______]\n\n[ ] I agree.\n'
+};
+const { app, db } = createApp({ dataDir: dir, encryptionKey: 'test-key', croaDocs: openInviteDocs });
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 test.after(() => { server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -30,13 +36,16 @@ let ws, clientId;
 function clearDemoCroa() {
   const c = db.data.workspace.clients.find(x => x.id === clientId);
   const signed = '2020-01-06';
+  c.status = 'active';
   c.onboarding = Object.assign({}, c.onboarding, {
     disclosureSignedAt: signed,
     disclosureAcknowledgedAt: signed + 'T00:00:00.000Z',
     contractSignedAt: signed,
     contractSignedAtTs: signed + 'T15:00:00.000Z',
     cancellationWindowEndsAt: '2020-01-09',
-    cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z'
+    cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z',
+    cancelledAt: null,
+    cancelledAtTs: null
   });
 }
 
@@ -87,11 +96,30 @@ test('client portal invite, CROA e-sign order, cancellation', async () => {
   const me = await portal('GET', '/api/portal/me');
   assert.strictEqual(me.body.client.name, 'Jordan Sample');
   assert.match(me.body.documents.esign, /Consent to Electronic Records/);
-  assert.strictEqual(me.body.documents.disclosure, '');
   assert.doesNotMatch(JSON.stringify(me.body.documents), /up to 10 years/);
   assert.strictEqual(me.body.recommendations[0].url, '/go/r1');
-  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'jordan sample', agree: true })).status, 503);
-  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true })).status, 503);
+  assert.strictEqual((await portal('POST', '/api/portal/address', { address: '1 Main St', city: 'Newark', state: 'NJ', zip: '07102' })).status, 200);
+  assert.strictEqual((await owner('PUT', '/api/clients/' + clientId + '/enrollment-terms', { pricePerResult: 20, scheduleA: [{ item: 'Late fee', creditor: 'North Bank', bureau: 'Equifax', last4: '4242' }] })).status, 200);
+  const sample = await portal('GET', '/api/portal/esign/sample');
+  const code = sample.body.match(/Your code is ([A-F0-9]{6})/)[1];
+  assert.strictEqual((await portal('POST', '/api/portal/esign/consent', { agree: true, code })).status, 200);
+  const shown = await portal('GET', '/api/portal/me');
+  assert.match(shown.body.documents.disclosure, /reported for 10 years/);
+  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true })).status, 400, 'contract before disclosure is refused');
+  assert.strictEqual((await portal('POST', '/api/portal/disclosure-view')).status, 200);
+  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'Someone Else', agree: true })).status, 400);
+  assert.strictEqual((await portal('POST', '/api/portal/sign', { doc: 'disclosure', typedName: 'jordan sample', agree: true })).status, 200);
+  assert.strictEqual((await portal('POST', '/api/portal/contract-view')).status, 200);
+  const c = await portal('POST', '/api/portal/sign', { doc: 'contract', typedName: 'Jordan Sample', agree: true });
+  assert.strictEqual(c.status, 200);
+  assert.match(c.body.signature.documentSha256, /^[0-9a-f]{64}$/);
+  const me2 = await portal('GET', '/api/portal/me');
+  assert.strictEqual(me2.body.croa.inWindow, true);
+  await portal('POST', '/api/portal/cancel');
+  const g = await owner('GET', '/api/workspace');
+  const jc = g.body.data.clients.find(x => x.id === clientId);
+  assert.strictEqual(jc.status, 'cancelled');
+  assert.ok(g.body.data.signatures.length >= 2);
 });
 
 test('tracked referral link redirects and records the click', async () => {
@@ -113,7 +141,7 @@ test('staff invites are owner-only and audit log records actions', async () => {
   assert.strictEqual((await staff('POST', '/api/invites', { role: 'staff', email: 'x@example.test' })).status, 403);
   assert.strictEqual((await staff('GET', '/api/audit')).status, 403);
   const audit = await owner('GET', '/api/audit');
-  ['setup', 'workspace.save', 'intake', 'invite.accept', 'referral.click'].forEach(a => assert.ok(audit.body.some(x => x.action === a), a));
+  ['setup', 'workspace.save', 'intake', 'portal.sign', 'portal.cancel', 'invite.accept', 'referral.click'].forEach(a => assert.ok(audit.body.some(x => x.action === a), a));
 });
 
 test('login rejects wrong password and static pages are served', async () => {
@@ -153,7 +181,11 @@ test('the server refuses invoices over the 12-month term / $1,188 cap', async ()
   const w = g.body.data;
   const signed = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
   const day = new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10);
-  w.clients.push({ id: 'capc', name: 'Casey Cap', firstName: 'Casey', lastName: 'Cap', kind: 'personal', email: 'cap@example.test', status: 'active', onboarding: { disclosureSignedAt: signed, contractSignedAt: signed } });
+  w.clients.push({ id: 'capc', name: 'Casey Cap', firstName: 'Casey', lastName: 'Cap', kind: 'personal', email: 'cap@example.test', status: 'active', onboarding: { disclosureSignedAt: signed, contractSignedAt: signed, cancellationWindowEndsAtTs: new Date(Date.now() - 40 * 864e5).toISOString() } });
+  w.signatures = w.signatures || [];
+  w.signatures.push({ id: 'sig-cap-d', clientId: 'capc', doc: 'disclosure', at: signed + 'T15:00:00.000Z' }, { id: 'sig-cap-c', clientId: 'capc', doc: 'contract', at: signed + 'T16:00:00.000Z' });
+  w.disputes = w.disputes || [];
+  w.disputes.push({ id: 'cap-d', clientId: 'capc', outcome: 'deleted', items: [{ creditor: 'North Bank', result: 'deleted' }] });
   w.invoices.push({ id: 'capi1', clientId: 'capc', description: 'Service', amount: 1100, status: 'issued', issuedAt: day, serviceCompletedAt: day });
   const ok = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w });
   assert.strictEqual(ok.status, 200);
@@ -286,9 +318,11 @@ test('online mailing through Lob is gated, then mails an approved letter and tra
     const g = await owner('GET', '/api/workspace');
     const w = g.body.data;
     const signed = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-    w.clients.push({ id: 'c9', name: 'Morgan Mailer', firstName: 'Morgan', lastName: 'Mailer', kind: 'personal', email: 'm@example.test', address: '12 Example Rd', city: 'Austin', state: 'TX', zip: '78701', status: 'active', onboarding: { disclosureSignedAt: signed, contractSignedAt: signed } });
+    w.clients.push({ id: 'c9', name: 'Morgan Mailer', firstName: 'Morgan', lastName: 'Mailer', kind: 'personal', email: 'm@example.test', address: '12 Example Rd', city: 'Austin', state: 'TX', zip: '78701', status: 'active', onboarding: { disclosureSignedAt: signed, contractSignedAt: signed, cancellationWindowEndsAtTs: new Date(Date.now() - 20 * 864e5).toISOString() } });
+    w.signatures = w.signatures || [];
+    w.signatures.push({ id: 'sig-c9-d', clientId: 'c9', doc: 'disclosure', at: signed + 'T15:00:00.000Z' }, { id: 'sig-c9-c', clientId: 'c9', doc: 'contract', at: signed + 'T16:00:00.000Z' });
     w.letters.push({ id: 'l9', clientId: 'c9', disputeId: 'd9', type: 'cra_611', status: 'approved', text: 'Morgan Mailer\n12 Example Rd\n\nRe: dispute\n\nPlease correct the balance.' });
-    w.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ creditor: 'Example Bank', discrepancy: 'Balance should be zero — paid in full.' }], letterId: 'l9', sentAt: null });
+    w.disputes.push({ id: 'd9', clientId: 'c9', type: 'cra_611', round: 1, recipient: 'Experian', status: 'ready', items: [{ creditor: 'Example Bank', discrepancy: 'Balance should be zero — paid in full.', result: 'corrected' }], letterId: 'l9', sentAt: null });
     w.invoices.push({ id: 'inv9abc', clientId: 'c9', description: 'Letter mailed', amount: 49, status: 'issued', issuedAt: signed, serviceCompletedAt: signed, payToken: 'paytokentest123' });
     w.referrals = w.referrals || [];
     w.referrals.push({ id: 'ref9', name: 'Pat Partner', email: 'pat@example.test', commissionType: 'flat', commissionAmount: 25 });

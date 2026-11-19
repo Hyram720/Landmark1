@@ -55,6 +55,8 @@ test('setup + seed two synthetic clients with reports', async () => {
     const cleared = { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' };
     ws.clients.push({ id: 'ca', name: 'Alice Example', firstName: 'Alice', lastName: 'Example', kind: 'personal', email: 'alice@qa.test', dob: '1980-02-03', ssnLast4: '6789', address: '1 Test St\nTrenton, NJ 08601', status: 'active', onboarding: cleared });
     ws.clients.push({ id: 'cb', name: 'Bob Example', firstName: 'Bob', lastName: 'Example', kind: 'personal', email: 'bob@qa.test', status: 'active', onboarding: Object.assign({}, cleared) });
+    ws.signatures = ws.signatures || [];
+    ws.signatures.push({ id: 'sig-ca-d', clientId: 'ca', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-ca-c', clientId: 'ca', doc: 'contract', at: '2020-01-06T16:00:00.000Z' }, { id: 'sig-cb-d', clientId: 'cb', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-cb-c', clientId: 'cb', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
     ws.reports = ws.reports || [];
     ws.reports.push({ id: 'rep-a', clientId: 'ca', bureau: 'Experian', date: '2026-10-01', accounts: [
       { id: 'ta1', creditor: 'Example Card Co', accountNumber: '4111222233334444', status: '11', balance: 240, pastDue: 75 },
