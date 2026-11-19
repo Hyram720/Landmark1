@@ -139,10 +139,12 @@ export function stampCancellationDeadline(text, instant) {
 /** Replace blanks that belong to this client. Owner blanks are left in place. The clock is not used here. */
 export function fillPerClientText(text, client) {
   const c = client || {};
-  const name = String(c.name || '').trim() || 'Client';
+  const plain = value => String(value || '').replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim();
+  const name = plain(c.name) || 'Client';
+  const address = plain(clientAddress(c));
   let out = String(text || '')
     .replace(/\[CLIENT FULL NAME\]/g, name)
-    .replace(/\[CLIENT ADDRESS\]/g, clientAddress(c) || '[CLIENT ADDRESS]')
+    .replace(/\[CLIENT ADDRESS\]/g, address || '[CLIENT ADDRESS]')
     .replace(/\[DATE SIGNED[^\]]*\]/g, UNSIGNED_DATE_SIGNED)
     .replace(/\[ITEM \/ CREDITOR NAME \/ ACCOUNT ENDING IN LAST 4 ONLY \/ BUREAU\(S\)\]/g, scheduleAText(c))
     .replace(/\[DATE:[^\]]*\]/g, UNSIGNED_CANCEL_DEADLINE)

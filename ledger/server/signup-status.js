@@ -316,6 +316,20 @@ export function serviceWorkBlocked(before, after) {
     if (!old || !old.id || afterLetterIds.has(old.id)) return;
     if (heldById.get(old.clientId)) remember(tomb.letters, old.id, heldById.get(old.clientId));
   });
+  ((before && before.reports) || []).forEach(report => {
+    if (!report || !report.id) return;
+    if (((after && after.reports) || []).some(row => row && row.id === report.id)) return;
+    const reportIds = new Set([report.id]);
+    const accountIds = new Set();
+    (report.accounts || []).forEach(acct => { if (acct && acct.id) accountIds.add(acct.id); });
+    const citesReport = row => {
+      if (!row) return false;
+      return [row].concat(row.items || []).some(node => node && ((node.reportId && reportIds.has(node.reportId)) || (node.accountId && accountIds.has(node.accountId))));
+    };
+    const citingReport = ((after && after.disputes) || []).filter(citesReport).map(row => 'dispute ' + (row.id || ''))
+      .concat(((after && after.letters) || []).filter(citesReport).map(row => 'letter ' + (row.id || '')));
+    if (citingReport.length) push('reports', report.id, '', 'Another record cites this report. Remove ' + citingReport.join(', ') + ' before deleting this report.');
+  });
   const afterIds = new Set(afterClients.filter(c => c && c.id).map(c => c.id));
   ((before && before.clients) || []).forEach(c => {
     if (!c || !c.id || afterIds.has(c.id)) return;
@@ -433,11 +447,14 @@ export function serviceWorkBlocked(before, after) {
   });
   const blockedDispute = new Map();
   ((after && after.disputes) || []).forEach(row => {
-    const reason = foreignCitation(row, files);
+    if (!row || !row.id) return;
+    const old = byId(priorDisputes, row.id);
+    const currentReason = foreignCitation(row, files);
+    const priorReason = old ? foreignCitation(old, files) : '';
+    const reason = currentReason || priorReason;
     if (!reason || !row || !row.id) return;
     blockedDispute.set(row.id, reason);
-    const old = byId(priorDisputes, row.id);
-    if (!old || fileChanged(old, row)) push('disputes', row.id, 'items', reason);
+    if (currentReason && (!old || fileChanged(old, row))) push('disputes', row.id, 'items', reason);
     if (!old) {
       disputeSend.forEach(field => {
         if (field === 'letterId') return;
@@ -471,9 +488,10 @@ export function serviceWorkBlocked(before, after) {
       const linked = ((after && after.disputes) || []).find(item => item && item.letterId && item.letterId === row.id && blockedDispute.has(item.id));
       if (linked) reason = blockedDispute.get(linked.id);
     }
+    const oldLetter = byId(priorLetters, row.id);
+    if (!reason) reason = oldLetter ? foreignCitation(oldLetter, files) : '';
     if (!reason) return;
-    const old = byId(priorLetters, row.id);
-    if (old && !fileChanged(old, row) && String(old.disputeId || '') === String(row.disputeId || '')) return;
+    const old = oldLetter;
     if (!old) {
       letterSend.forEach(field => {
         if (row[field] != null && row[field] !== '' && row[field] !== 'draft') push('letters', row.id, field, reason);
@@ -481,7 +499,11 @@ export function serviceWorkBlocked(before, after) {
       if (!letterSend.some(field => row[field] != null && row[field] !== '' && row[field] !== 'draft')) push('letters', row.id, 'items', reason);
       return;
     }
-    push('letters', row.id, 'items', reason);
+    letterSend.forEach(field => {
+      if (keepResponse('letters', old, field)) return;
+      if (valueChanged(old[field], row[field])) push('letters', row.id, field, reason);
+    });
+    if (fileChanged(old, row) || valueChanged(old.disputeId, row.disputeId)) push('letters', row.id, 'items', reason);
   });
   ((after && after.letters) || []).forEach(row => {
     checkRow(row, priorLetters, 'letters', letterSend);

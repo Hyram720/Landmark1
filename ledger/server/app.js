@@ -609,6 +609,16 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const day = String(value || '').slice(0, 10);
     return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
   }
+  function earliestDay(values) {
+    const days = (values || []).map(recordedDay).filter(Boolean).sort();
+    return days[0] || '';
+  }
+  function itemAccountKey(clientId, item) {
+    const bureau = String((item && item.bureau) || '').trim().toLowerCase();
+    const account = String((item && (item.accountNumber || item.accountId || item.creditor)) || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!clientId || (!bureau && !account)) return '';
+    return String(clientId) + '\n' + bureau + '\n' + account;
+  }
   function recordedResultDay(item) {
     return item ? recordedDay(item.serverResultAt) : '';
   }
@@ -622,20 +632,28 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const prior = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
     const refused = [];
     const push = (id, field, reason) => refused.push({ key: 'disputes', id: id || '', field, reason });
+    const outcomes = new Map();
+    for (const row of (before && before.heldOutcomes) || []) {
+      if (!row || !row.key) continue;
+      outcomes.set(row.key, { key: row.key, clientId: row.clientId || '', outcome: row.outcome || '', at: recordedDay(row.at), onHold: !!row.onHold });
+    }
     for (const d of data.disputes || []) {
       if (!d || !d.id) continue;
       const old = prior.get(d.id);
       const client = (data.clients || []).find(c => c && c.id === d.clientId);
       const onHold = !!(client && client.kind !== 'business' && clientServiceOnHold(client, undefined, data.signatures));
       if (old && wasSent(old)) {
-        d.serverSentAt = old.serverSentAt || recordedDay(old.sentAt) || recordedDay(old.sentDate) || today;
-        if (recordedDay(d.sentAt) !== recordedDay(old.sentAt) || recordedDay(d.sentDate) !== recordedDay(old.sentDate)) {
+        const previous = earliestDay([old.serverSentAt, old.sentAt, old.sentDate]) || today;
+        const submitted = earliestDay([d.sentAt, d.sentDate, d.serverSentAt]);
+        if ((submitted && submitted !== previous) || recordedDay(d.sentAt) !== recordedDay(old.sentAt) || recordedDay(d.sentDate) !== recordedDay(old.sentDate)) {
           push(d.id, 'sentAt', 'The mailed date cannot be changed after the dispute is sent.');
         }
         d.sentAt = old.sentAt == null ? null : old.sentAt;
         d.sentDate = old.sentDate == null ? null : old.sentDate;
+        d.serverSentAt = previous;
       } else if (wasSent(d)) {
-        d.serverSentAt = today;
+        const typed = earliestDay([d.sentAt, d.sentDate]);
+        d.serverSentAt = typed && typed < today ? typed : today;
       } else {
         delete d.serverSentAt;
       }
@@ -643,27 +661,44 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const nextIds = new Set((d.items || []).filter(it => it && it.id).map(it => String(it.id)));
       for (const oldItem of oldItems) {
         if (!oldItem || !oldItem.id) continue;
-        const locked = oldItem.result === 'deleted' || oldItem.resultRecordedOnHold || oldItem.serverResultAt;
+        const locked = oldItem.result === 'deleted' || oldItem.result === 'corrected' || oldItem.resultRecordedOnHold || oldItem.serverResultAt;
         if (locked && !nextIds.has(String(oldItem.id))) push(d.id, 'items', 'A deleted item cannot change its id.');
       }
       for (const item of d.items || []) {
         if (!item || typeof item !== 'object') continue;
         const oldItem = oldItems.find(it => it && String(it.id) === String(item.id));
-        if (oldItem && oldItem.resultRecordedOnHold) item.resultRecordedOnHold = true;
-        else if (item.result === 'deleted' && onHold) item.resultRecordedOnHold = true;
+        const key = itemAccountKey(d.clientId, item);
+        const priorOutcome = key ? outcomes.get(key) : null;
+        const typed = earliestDay([
+          item.bureauResultAt, item.resultAt, item.resultDate,
+          oldItem && oldItem.bureauResultAt, oldItem && oldItem.resultAt, oldItem && oldItem.resultDate,
+          priorOutcome && priorOutcome.at
+        ]);
+        const held = !!((oldItem && oldItem.resultRecordedOnHold) || (priorOutcome && priorOutcome.onHold) || ((item.result === 'deleted' || item.result === 'corrected') && onHold));
+        if (held) item.resultRecordedOnHold = true;
         else delete item.resultRecordedOnHold;
         if (oldItem && oldItem.serverResultAt) {
-          if (item.serverResultAt && recordedDay(item.serverResultAt) !== recordedDay(oldItem.serverResultAt)) {
-            push(d.id, 'serverResultAt', 'The recorded result date cannot be changed.');
-          }
-          item.serverResultAt = oldItem.serverResultAt;
-        } else if (item.result === 'deleted' || (oldItem && (oldItem.result === 'deleted' || oldItem.resultRecordedOnHold))) {
-          item.serverResultAt = today;
+          item.serverResultAt = earliestDay([oldItem.serverResultAt, typed]) || oldItem.serverResultAt;
+        } else if (item.result === 'deleted' || item.result === 'corrected' || (oldItem && (oldItem.result === 'deleted' || oldItem.result === 'corrected' || oldItem.resultRecordedOnHold)) || (priorOutcome && priorOutcome.at)) {
+          item.serverResultAt = typed && typed < today ? typed : today;
         } else {
           delete item.serverResultAt;
         }
+        if (key && (item.result === 'deleted' || item.result === 'corrected' || item.resultRecordedOnHold)) {
+          const at = earliestDay([item.serverResultAt, priorOutcome && priorOutcome.at, typed]) || today;
+          outcomes.set(key, {
+            key,
+            clientId: d.clientId || '',
+            outcome: (priorOutcome && priorOutcome.outcome) || item.result || '',
+            at,
+            onHold: !!(item.resultRecordedOnHold || (priorOutcome && priorOutcome.onHold))
+          });
+          if (outcomes.get(key).onHold) item.resultRecordedOnHold = true;
+          item.serverResultAt = earliestDay([item.serverResultAt, at]) || at;
+        }
       }
     }
+    data.heldOutcomes = Array.from(outcomes.values());
     if (!refused.length) return null;
     return { error: refused[0].reason, refused };
   }
@@ -731,10 +766,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const item = deletedInvoiceItem(data, inv);
       if (!item) return stop(inv, 'itemId', 'An invoice must name the deleted item and its bureau.');
       if (item.result !== 'deleted') return stop(inv, 'itemId', 'An invoice can be issued only for a deleted item, not a correction.');
+      if (inv.bureau && String(inv.bureau).trim().toLowerCase() !== String(item.bureau).trim().toLowerCase()) return stop(inv, 'bureau', 'The invoice bureau does not match the deleted item.');
+      const heldOutcome = (data.heldOutcomes || []).find(row => row && row.key === itemAccountKey(inv.clientId, item) && row.onHold);
       const currentDispute = (data.disputes || []).find(d => d && d.id === inv.disputeId);
       const resultDay = recordedResultDay(item);
       const mailedDay = recordedMailedDay(currentDispute);
-      if (item.resultRecordedOnHold) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
+      if (item.resultRecordedOnHold || heldOutcome) return stop(inv, 'itemId', 'This deletion was recorded while the client was on hold.');
       if (!resultDay) return stop(inv, 'bureauResultAt', 'An invoice must name the dated bureau result for the deleted item.');
       const signedAt = billed.onboarding && (billed.onboarding.contractSignedAtTs || billed.onboarding.contractSignedAt);
       let deadline = String((billed.onboarding && billed.onboarding.cancellationWindowEndsAt) || '');
@@ -901,12 +938,12 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const u = D().users.find(row => row && row.role === 'client' && row.email === email);
     if (!u) return res.status(404).json({ error: 'No portal login uses that email' });
     const clientEmail = String(c.email || '').toLowerCase().trim();
-    const confirm = (req.body || {}).confirm === true;
-    const reason = String((req.body || {}).reason || '').trim().slice(0, 300);
-    if (email !== clientEmail && !(confirm && reason)) return res.status(409).json({ error: 'The login email does not match this client. Confirm with a reason to link a different email.' });
+    const live = u.clientId && workspace().clients.find(row => row && row.id === u.clientId);
+    if (live && live.id !== c.id) return res.status(409).json({ error: 'This login still belongs to a client in the workspace. Send a new invitation instead.' });
+    if (email !== clientEmail) return res.status(409).json({ error: 'The login email does not match this client. Send a new invitation instead.' });
     u.clientId = c.id;
     u.clientIdentity = c.identity;
-    db.audit({ actor: req.user.email, action: 'portal.link', detail: email === clientEmail ? `${email} -> ${c.id}` : JSON.stringify({ email, clientId: c.id, clientEmail, reason }) });
+    db.audit({ actor: req.user.email, action: 'portal.link', detail: `${email} -> ${c.id}` });
     db.persist();
     res.json({ ok: true, clientId: c.id });
   });
@@ -1581,15 +1618,34 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const c = workspace().clients.find(x => x.id === clientId);
     if (!c) return res.status(404).json({ error: 'Client not found' });
     const held = clientServiceOnHold(c, undefined, workspace().signatures);
+    if (channel === 'sms' && (template === 'disclosure-1679c' || template === 'cancellation-1679e')) {
+      return res.status(409).json({ error: 'This notice can be sent by email or the portal only, not by text message.' });
+    }
     if (held) {
       const supplied = String(subject || '').trim() || String(body || '').trim() || String((req.body || {}).purpose || '').trim();
       if (supplied || !HELD_TEMPLATE_IDS.includes(template)) return res.status(409).json({ error: 'This client is on hold. Only a server template can be sent, with no message text.' });
+      let link = '';
+      const admin = String((req.body || {}).admin || '');
+      if (template === 'account-admin') {
+        const host = `${req.protocol}://${req.get('host')}`;
+        if (admin === 'login') link = host + '/portal';
+        else if (admin === 'invite') {
+          const token = crypto.randomBytes(24).toString('base64url');
+          D().invites.push({ hash: sha(token), role: 'client', clientId: c.id, referralId: null, name: c.name || '', email: String(c.email || '').toLowerCase(), expiresAt: Date.now() + INVITE_TTL_MS, usedAt: null });
+          db.audit({ actor: req.user.email, action: 'invite.create', detail: `client ${c.name || c.id}` });
+          db.persist();
+          link = host + '/portal#invite=' + token;
+        } else if ((admin === 'reset' || admin === 'verify') && auth) {
+          const user = D().users.find(row => row && row.role === 'client' && row.clientId === c.id && !row.disabled);
+          if (user) link = auth.issuePortalLink(admin, user, req);
+        }
+      }
       const rendered = renderHeldMessage(template, c, {
-        company: company(),
         docs: croaDocsOverride || croaDocs(),
         signatures: workspace().signatures || [],
         invoices: workspace().invoices || [],
-        admin: (req.body || {}).admin,
+        admin,
+        link,
         outcome: (req.body || {}).outcome
       });
       if (rendered.error) return res.status(409).json({ error: rendered.error });

@@ -4,6 +4,7 @@
 // Template 2 is the existing contract from croa-docs. Contract section 4 is not edited here.
 import { croaDocs, personalizeCroaDocs, stampCancellationDeadline, stampContractSignedAt } from './croa-docs.js';
 import { cancellationWindow, formatDeadlineDateEt } from './croa-window.js';
+import { LEGAL_COMPANY_ADDRESS, LEGAL_COMPANY_NAME } from './email-footer.js';
 
 export const HELD_TEMPLATE_IDS = [
   'disclosure-1679c',
@@ -59,19 +60,30 @@ export function templateCompany(company) {
   };
 }
 
-function statutoryPart(text) {
-  return String(text || '').split(/\n---\n/)[0].replace(/\*\*/g, '').trim();
+function statutoryPart(text, keepBold) {
+  const body = String(text || '').split(/\n---\n/)[0].trim();
+  return keepBold ? body : body.replace(/\*\*/g, '');
+}
+
+function unfinished(text) {
+  const stripped = String(text || '').replace(/\[date\]/gi, '').replace(/\[purchaser's signature\]/gi, '');
+  return /\[[^\]]+\]/.test(stripped);
+}
+
+function weekdayFromYmd(day) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return '';
+  const [year, month, date] = String(day).split('-').map(Number);
+  return formatDeadlineDateEt(new Date(Date.UTC(year, month - 1, date, 17, 0, 0)));
 }
 
 export function statutoryDisclosure() {
   return statutoryPart(croaDocs().disclosure);
 }
 
-export function statutoryCancellation(company, deadline) {
-  const src = statutoryPart(croaDocs().cancellation);
-  const safe = templateCompany(company);
-  const name = safe.name || '[LEGAL NAME: Fred to confirm]';
-  const address = safe.address || '[ADDRESS FOR CANCELLATION NOTICES: Fred to provide]';
+export function statutoryCancellation(deadline) {
+  const src = statutoryPart(croaDocs().cancellation, true);
+  const name = LEGAL_COMPANY_NAME;
+  const address = LEGAL_COMPANY_ADDRESS;
   const when = deadline || '[DATE: Weekday, Month D, YYYY]';
   return src
     .replace(/\[LEGAL NAME:[^\]]*\]/g, name)
@@ -87,7 +99,7 @@ function deadlineLabel(client) {
     return formatDeadlineDateEt(win.deadlineInstant);
   }
   const end = String(o.cancellationWindowEndsAt || '');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(end)) return end;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(end)) return weekdayFromYmd(end);
   return 'the date in your Notice of Cancellation';
 }
 
@@ -103,14 +115,15 @@ function safeWhen(value) {
 export function renderHeldMessage(id, client, ctx) {
   const c = templateClient(client);
   const context = ctx || {};
-  const company = templateCompany(context.company);
   if (!HELD_TEMPLATE_IDS.includes(id)) return { error: 'That message is not available while this client is on hold.' };
   if (id === 'disclosure-1679c') {
     return { subject: 'Consumer Credit File Rights Under State and Federal Law', text: statutoryDisclosure() };
   }
   if (id === 'contract-1679d') {
     const docs = personalizeCroaDocs(context.docs || croaDocs(), c);
-    return { subject: 'Credit Services Agreement for your signature', text: docs.contract };
+    const text = docs.contract;
+    if (unfinished(text)) return { error: 'This document still has blank fields, so it cannot be sent.', subject: 'Credit Services Agreement for your signature', text };
+    return { subject: 'Credit Services Agreement for your signature', text };
   }
   if (id === 'signed-copies') {
     const docs = personalizeCroaDocs(context.docs || croaDocs(), c);
@@ -132,12 +145,14 @@ export function renderHeldMessage(id, client, ctx) {
       parts.push(text);
     }
     if (o.esignConsentAt && !o.esignWithdrawnAt) parts.push(docs.esign);
-    if (sigs.some(row => row.doc === 'cancellation')) parts.push(statutoryCancellation(company, deadlineLabel(c)));
+    if (sigs.some(row => row.doc === 'cancellation')) parts.push(statutoryCancellation(deadlineLabel(c)));
     const text = parts.length ? parts.join('\n\n----\n\n') : 'No signed documents are on file.';
+    if (parts.length && unfinished(text)) return { error: 'This document still has blank fields, so it cannot be sent.', subject: 'Copies of the documents you signed', text };
     return { subject: 'Copies of the documents you signed', text };
   }
   if (id === 'cancellation-1679e') {
-    return { subject: 'Notice of Cancellation', text: statutoryCancellation(company, deadlineLabel(c)) };
+    const form = statutoryCancellation(deadlineLabel(c));
+    return { subject: 'Notice of Cancellation', text: form + '\n\n' + form };
   }
   if (id === 'cancel-window') {
     const date = deadlineLabel(c);
@@ -153,7 +168,7 @@ export function renderHeldMessage(id, client, ctx) {
     if (o.cancellationTimely === true) text += ' The cancellation was timely.';
     if (o.cancellationTimely === false) text += ' The cancellation was late.';
     const paid = (context.invoices || []).filter(row => row && row.clientId === c.id && row.status === 'paid');
-    if (paid.length) {
+    if (o.cancellationTimely === true && paid.length) {
       const total = paid.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
       text += ' We confirm a refund of ' + money(total) + ' for a payment taken under the contract.';
     }
@@ -169,7 +184,8 @@ export function renderHeldMessage(id, client, ctx) {
       reset: 'Use this link to reset your password. This message does not include anything from your file.',
       verify: 'Use this link to confirm your email. This message does not include anything from your file.'
     };
-    return { subject: 'Your account', text: lines[admin] + (link ? '\n' + link : '') };
+    if (!link) return { error: 'The server could not build the account link.' };
+    return { subject: 'Your account', text: lines[admin] + '\n' + link };
   }
   if (id === 'postmark-review') {
     const outcome = String(context.outcome || '');

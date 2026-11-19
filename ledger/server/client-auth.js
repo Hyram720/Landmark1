@@ -215,8 +215,16 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   function onWorkspaceSaved(before, after, req) {
     const old = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
     ((after && after.disputes) || []).filter(d => d && d.id).forEach(d => {
-      if (passiveResponse(d, after)) return;
       const p = old.get(d.id) || { items: [] };
+      const wouldMail = (d.outcome && !p.outcome) || (d.items || []).some((it, i) => {
+        const was = (p.items || [])[i] || {};
+        return ['deleted', 'corrected'].includes(it.result) && it.result !== was.result;
+      });
+      if (passiveResponse(d, after)) {
+        const who = (req && req.user && req.user.email) || '';
+        if (wouldMail && who) db.audit({ actor: who, action: 'notify.skipped', detail: `resp:${d.id} client on hold` });
+        return;
+      }
       if (d.outcome && !p.outcome) notifyClient(d.clientId, `resp:${d.id}`, 'Update on your credit file', `A response from ${d.recipient} has been recorded on your file.`, req);
       (d.items || []).forEach((it, i) => {
         const was = (p.items || [])[i] || {};
@@ -244,5 +252,12 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   const timer = setInterval(deadlineSweep, 60 * 60 * 1000);
   timer.unref();
 
-  return { otpRequired, startOtp, onWorkspaceSaved, deadlineSweep, notifyClient, stop: () => clearInterval(timer) };
+  function issuePortalLink(kind, u, req) {
+    const tokenKind = kind === 'verify' ? 'verify' : 'reset';
+    const ttl = tokenKind === 'reset' ? 30 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const { raw } = issue(tokenKind, u, ttl);
+    return `${origin(req)}/portal#${tokenKind}=${raw}`;
+  }
+
+  return { otpRequired, startOtp, onWorkspaceSaved, deadlineSweep, notifyClient, issuePortalLink, stop: () => clearInterval(timer) };
 }
