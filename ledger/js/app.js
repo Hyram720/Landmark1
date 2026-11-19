@@ -1114,6 +1114,18 @@
     'invoice-print': el => { const i = S().invoices.find(x => x.id === el.dataset.id); const c = Store.get.client(i.clientId); const co = S().settings.company; UI.printDoc('Invoice', `${co.name}\n${co.address}\n\nINVOICE\n\nBill to: ${c.name}\n${c.address || ''}\n\nIssued: ${i.issuedAt}\nService completed: ${i.serviceCompletedAt}\n\n${i.description}\n\nAmount: ${UI.money(i.amount)}\nStatus: ${i.status}\n\nThis invoice is for services already performed. No fees are charged in advance of services (15 U.S.C. § 1679b(b)).`); },
     'export-invoices': () => UI.download(`ledger-invoices-${T()}.csv`, 'client,description,serviceCompletedAt,issuedAt,status,amount,paidAt\n' + S().invoices.map(i => [Store.get.client(i.clientId) ? Store.get.client(i.clientId).name : '', i.description, i.serviceCompletedAt, i.issuedAt, i.status, i.amount, i.paidAt || ''].map(v => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\n'), 'text/csv'),
     'print-doc': el => printClientDoc(el.dataset.doc, el.dataset.id),
+    'record-cancel': el => {
+      const id = el.dataset.id;
+      modal({
+        title: 'Record a written cancellation',
+        body: `<div class="form-grid">${field('How it arrived', 'method', 'mail', { type: 'select', options: [['mail', 'Mail'], ['email', 'Email'], ['other', 'Other']] })}${field('Date received', 'receivedAt', T(), { type: 'date', required: true })}${field('Postmark or sent date', 'postmarkAt', '', { type: 'date' })}</div>`,
+        onSubmit: d => {
+          if (!Store.remote) { toast('Recording a written cancellation needs the Ledger server.'); return false; }
+          api('POST', '/api/clients/' + encodeURIComponent(id) + '/cancel', { method: d.method, receivedAt: d.receivedAt, postmarkAt: d.postmarkAt || '' })
+            .then(r => Remote.reload().then(() => toast(r.refundTask ? 'Cancellation recorded. A refund task was added.' : (r.timely ? 'Timely cancellation recorded.' : 'Cancellation recorded.'))), e => toast(e.message));
+        }
+      });
+    },
     'progress-report': el => progressReport(el.dataset.id),
     'lint': () => {
       const res = Law.lintText(document.getElementById('lint-in').value);

@@ -282,6 +282,7 @@
   function clientCompliance(c, cs) {
     const o = c.onboarding || {};
     const co = S().settings.company;
+    const cancelButton = o.cancelledAt ? '' : '<div class="row" style="margin-top:12px"><button type="button" class="btn" data-act="record-cancel" data-id="' + c.id + '">Record a written cancellation</button></div>';
     return `<div class="grid g2"><div class="stack">
       ${card('Agreement record', `<form data-form="onboarding" data-id="${c.id}"><div class="form-grid">
         ${UI.field('Disclosure acknowledged', 'disclosureSignedAt', o.disclosureSignedAt, { type: 'date', help: 'Must be given as a separate document before the contract' })}
@@ -290,7 +291,7 @@
         ${UI.field('Cancelled on', 'cancelledAt', o.cancelledAt, { type: 'date', help: 'If cancelled, confirm no invoice was issued' })}
         ${UI.field('Photo ID received', 'idReceived', o.idReceived, { type: 'date' })}
         ${UI.field('Proof of address received', 'addressProofReceived', o.addressProofReceived, { type: 'date' })}
-      </div><div class="row" style="margin-top:14px"><button class="btn primary">Save record</button>${cs.retainUntil ? `<span class="small muted">Retain signed disclosure until ${date(cs.retainUntil)} (§ 1679c(c))</span>` : ''}</div></form>`)}
+      </div><div class="row" style="margin-top:14px"><button class="btn primary">Save record</button>${cs.retainUntil ? `<span class="small muted">Retain signed disclosure until ${date(cs.retainUntil)} (§ 1679c(c))</span>` : ''}</div></form>` + cancelButton)}
       ${!cs.disclosureOrder ? `<div class="callout bad"><b>Order problem</b>The disclosure must be provided before the contract is executed.</div>` : ''}
     </div><div class="stack">
       ${card('Client documents', `<ul class="list">

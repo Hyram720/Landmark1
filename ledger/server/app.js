@@ -372,6 +372,27 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const c of data.clients) {
       if (c && !priorClients.has(c.id) && data.retiredClientIds.includes(c.id)) return res.status(409).json({ error: 'This client id was retired and cannot be recreated.' });
     }
+    data.knownClients = JSON.parse(JSON.stringify((before && before.knownClients) || []));
+    const rememberClient = (c) => {
+      if (!c || !c.id) return;
+      const email = String(c.email || '').trim().toLowerCase();
+      const name = String(c.name || '').trim().toLowerCase();
+      const row = data.knownClients.find(k => k && k.id === c.id);
+      if (row) { row.email = email; row.name = name; }
+      else data.knownClients.push({ id: c.id, email, name });
+    };
+    for (const old of priorClients.values()) rememberClient(old);
+    for (const c of data.clients || []) rememberClient(c);
+    for (const c of data.clients || []) {
+      if (!c || priorClients.has(c.id) || c.kind !== 'business') continue;
+      const email = String(c.email || '').trim().toLowerCase();
+      const name = String(c.name || '').trim().toLowerCase();
+      const clash = data.knownClients.some(k => k && k.id !== c.id && ((email && k.email === email) || (name && k.name === name)));
+      if (!clash) continue;
+      if (req.user.role !== 'owner') return res.status(409).json({ error: 'A client with this email or name already exists. Only the owner can add a business client for that person.' });
+      db.audit({ actor: req.user.email, action: 'client.business_match', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, email, name }) });
+    }
+    lockInvoicedDisputeItems(before, data);
     const billingBlock = invoiceBillingBlocked(before, data);
     if (billingBlock) return res.status(409).json({ error: billingBlock });
     // 12-month term / total cap per client agreement (Billing.capCheck): reject any new or increased
@@ -400,7 +421,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ version: D().workspaceVersion });
   });
 
-  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs', 'cancellationMethod', 'cancellationReceivedAt'];
+  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs', 'cancellationMethod', 'cancellationReceivedAt', 'cancellationPostmarkAt', 'cancellationTimely'];
   const ENROLLMENT_FIELDS = SERVER_OWNED_ONBOARDING.concat(['disclosureViewedAt', 'contractViewedAt', 'contractViewedSha256', 'contractViewStale', 'authorizationAt', 'esignDemoPassed', 'esignIp', 'esignUserAgent', 'paperRequestedAt']);
   function restoreServerOwnedEnrollment(data, before, priorClients) {
     data.signatures = JSON.parse(JSON.stringify((before && before.signatures) || []));
@@ -473,12 +494,45 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       const report = (item.reportId || inv.reportId) && (data.reports || []).find(r => r && r.id === (item.reportId || inv.reportId) && r.clientId === inv.clientId && r.date);
       const doc = (item.documentId || inv.documentId) && (data.documents || []).find(d => d && d.id === (item.documentId || inv.documentId) && d.clientId === inv.clientId && (d.uploadedAt || d.date));
       if (!(stamp && /^\d{4}-\d{2}-\d{2}/.test(String(stamp))) && !report && !doc) return 'An invoice must name the dated bureau result for the deleted item.';
+      const signedDay = String((billed.onboarding && (billed.onboarding.contractSignedAt || billed.onboarding.contractSignedAtTs)) || '').slice(0, 10);
+      const resultDay = String(stamp || (report && report.date) || (doc && (doc.date || doc.uploadedAt)) || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(signedDay) && /^\d{4}-\d{2}-\d{2}$/.test(resultDay) && resultDay < signedDay) return 'The bureau result date cannot be before the contract was signed.';
       const price = Number(billed.pricePerResult);
       if (!(price > 0) || Number(inv.amount) !== price) return 'The invoice amount must equal the price per result.';
       const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
       if (dup) return 'Only one invoice can be issued for each deleted item and bureau.';
     }
     return null;
+  }
+  function lockInvoicedDisputeItems(before, data) {
+    const seen = new Set();
+    const locked = [];
+    for (const inv of [].concat((before && before.invoices) || [], data.invoices || [])) {
+      if (!inv || (inv.status !== 'issued' && inv.status !== 'paid') || !inv.disputeId || !inv.itemId) continue;
+      const key = inv.disputeId + '\0' + inv.itemId;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      locked.push(inv);
+    }
+    const priorDispute = new Map(((before && before.disputes) || []).filter(Boolean).map(d => [d.id, d]));
+    for (const inv of locked) {
+      const oldDispute = priorDispute.get(inv.disputeId);
+      const oldItem = oldDispute && (oldDispute.items || []).find(it => it && it.id === inv.itemId);
+      if (!oldItem) continue;
+      data.disputes = data.disputes || [];
+      let dispute = data.disputes.find(d => d && d.id === inv.disputeId);
+      if (!dispute) {
+        dispute = { id: inv.disputeId, clientId: inv.clientId || oldDispute.clientId, items: [] };
+        data.disputes.push(dispute);
+      }
+      dispute.items = dispute.items || [];
+      let item = dispute.items.find(it => it && it.id === inv.itemId);
+      if (!item) {
+        dispute.items.push(JSON.parse(JSON.stringify(oldItem)));
+        continue;
+      }
+      for (const key of ['item', 'creditor', 'bureau', 'result', 'bureauResultAt', 'resultDate']) item[key] = oldItem[key] == null ? null : oldItem[key];
+    }
   }
   function invalidateContractView(onboarding) {
     if (!onboarding) return;
@@ -889,15 +943,27 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const receivedAt = String((req.body || {}).receivedAt || '');
     if (!['mail', 'email', 'other'].includes(method)) return res.status(400).json({ error: 'Say how the written notice arrived: mail, email, or other.' });
     if (!receivedOnOrBeforeToday(receivedAt)) return res.status(400).json({ error: 'Enter the date the written notice was received. It cannot be after today.' });
+    const signedDay = String(c.onboarding.contractSignedAt || c.onboarding.contractSignedAtTs || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(signedDay) && receivedAt < signedDay) return res.status(400).json({ error: 'The notice cannot be received before the contract was signed.' });
+    const postmarkAt = String((req.body || {}).postmarkAt || (req.body || {}).sentAt || '').trim();
+    if (postmarkAt && !receivedOnOrBeforeToday(postmarkAt)) return res.status(400).json({ error: 'The postmark or sent date cannot be after today.' });
+    const compared = postmarkAt || receivedAt;
+    let timely = false;
+    const signedAt = c.onboarding.contractSignedAtTs || c.onboarding.contractSignedAt;
+    if (signedAt) timely = compared <= cancellationWindow(signedAt, new Date(signedAt)).deadlineDateEt;
     c.onboarding.cancelledAt = receivedAt;
     c.onboarding.cancelledAtTs = new Date().toISOString();
     c.onboarding.cancellationMethod = method;
     c.onboarding.cancellationReceivedAt = receivedAt;
+    c.onboarding.cancellationPostmarkAt = postmarkAt || null;
+    c.onboarding.cancellationTimely = timely;
     c.status = 'cancelled';
-    db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt }) });
-    activity(`${c.name} cancelled by ${method}. Confirm no invoice was issued.`, c.id);
+    const refund = timely && (workspace().invoices || []).some(i => i && i.clientId === c.id && (i.status === 'issued' || i.status === 'paid'));
+    if (refund) workspace().tasks.push({ id: uid(), clientId: c.id, title: `Refund ${c.name}. The cancellation was timely and an invoice was already issued.`, due: today(), done: false, createdAt: new Date().toISOString() });
+    db.audit({ actor: req.user.email, action: 'client.cancel', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, method, receivedAt, postmarkAt: postmarkAt || null, timely, refund }) });
+    activity(`${c.name} cancelled by ${method}. ${timely ? 'Timely.' : 'Late.'}${refund ? ' Refund task created.' : ''}`, c.id);
     commitWorkspace(req.user.email, 'client.cancel', c.id);
-    res.json({ ok: true, cancelledAt: receivedAt, method });
+    res.json({ ok: true, cancelledAt: receivedAt, method, timely, refundTask: refund });
   });
 
   app.post('/api/portal/cancel', need('client'), (req, res) => {
@@ -1524,6 +1590,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const inv = (ws.invoices || []).find(i => i.id === req.params.id);
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
     const c = ws.clients.find(x => x.id === inv.clientId);
+    if (c && ((c.onboarding && c.onboarding.cancelledAt) || clientServiceOnHold(c, undefined, ws.signatures))) return res.status(409).json({ error: 'This client is cancelled or on hold. The invoice cannot be emailed.' });
     const to = String((req.body || {}).to || (c && c.email) || '').trim();
     if (!/^\S+@\S+\.\S+$/.test(to)) return res.status(400).json({ error: 'The client has no email address. Add one on their profile.' });
     if (!commsConfig().email) return res.status(501).json({ error: 'Email sending is not set up on the server (Resend). Download the PDF and attach it to your own email instead.' });
