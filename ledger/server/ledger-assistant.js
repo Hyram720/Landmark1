@@ -15,6 +15,7 @@ import { Law, Metro2, Store, Letters, KB, DisputeReasons, FileCheck, Business, A
 import { redact, lastFour, redactPayload, assertNoSensitive } from './redact.js';
 import { rateLimiter } from './auth.js';
 import { clientServiceOnHold } from './signup-status.js';
+import { etYmd } from './croa-window.js';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 let fetchImpl = (...a) => fetch(...a);
@@ -67,7 +68,7 @@ function deadlinesFor(ws, clientId, today) {
 }
 
 /** Redacted, structured view of one client for the model (no names, contact data or full numbers). */
-export function clientDigest(ws, clientId, today = new Date().toISOString().slice(0, 10)) {
+export function clientDigest(ws, clientId, today = etYmd(new Date())) {
   const c = (ws.clients || []).find(x => x.id === clientId);
   if (!c) return null;
   const cs = Store.croaStatus(c);
@@ -88,7 +89,7 @@ export function clientDigest(ws, clientId, today = new Date().toISOString().slic
 }
 
 /** Business-credit section of the digest (business / both clients). Every free-text value is redacted. */
-export function businessDigest(c, ws, today = new Date().toISOString().slice(0, 10)) {
+export function businessDigest(c, ws, today = etYmd(new Date())) {
   const b = c.business || {};
   const L = [`\nBusiness file: ${redact(b.entityType || 'entity ?')} formed ${b.formedOn || '?'} in ${b.stateOfFormation || '?'}; NAICS ${b.naics || '?'}${b.sic ? ', SIC ' + b.sic : ''}; D-U-N-S ${b.duns ? 'on file' : 'not on file'}; EIN ${b.einLast4 ? 'on file' : 'not on file'}.`];
   const fu = Business.fundability(c);
@@ -165,7 +166,8 @@ const sessionKey = (req) => {
   return raw ? raw[1] : null;
 };
 
-export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
+export function mountLedgerAssistant(app, { need, workspace, db, uid, now }) {
+  const today = () => etYmd(typeof now === 'function' ? now() : new Date());
   const staffLimit = rateLimiter(120, 60 * 60 * 1000);
   const letterLimit = rateLimiter(Number(process.env.LEDGER_AI_LETTERS_PER_HOUR || 300), 60 * 60 * 1000);
   const publicSessionLimit = rateLimiter(20, 60 * 60 * 1000);
@@ -186,7 +188,7 @@ export function mountLedgerAssistant(app, { need, workspace, db, uid }) {
     if (clientId && clientServiceOnHold(held, undefined, ws.signatures)) {
       return res.status(409).json({ error: 'On hold until the contract is signed and the cancellation window ends.' });
     }
-    const dig = clientId ? clientDigest(ws, clientId) : null;
+    const dig = clientId ? clientDigest(ws, clientId, today()) : null;
     if (clientId && !dig) return res.status(404).json({ error: 'Client not found' });
     const cfg = aiConfig();
     if (!cfg.enabled) { meta(req.user.email, 'assistant.staff', `${clientId || 'general'} offline`); return res.json({ mode: 'offline', text: offlineStaffAnswer(dig), suggestions: dig ? dig.suggestions : [], deadlines: dig ? dig.deadlines : [] }); }

@@ -1914,14 +1914,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       commission: { type: r.commissionType || 'none', amount: r.commissionAmount || '', terms: r.commission || '', earned: com.earned, paid: com.paid, owed: com.owed, payouts: r.payouts || [] } });
   });
 
-  mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit, enabled: signupOn, publicBaseUrl: publicOrigin });
+  mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit, enabled: signupOn, publicBaseUrl: publicOrigin, now });
   mountNewsletter(app, { db });
   auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod, portalVerified });
 
   // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
-  mountLedgerAssistant(app, { need, workspace, db, D, uid });
+  mountLedgerAssistant(app, { need, workspace, db, D, uid, now });
   mountPartnerLinks(app, { need, workspace, db, D, currentUser });
-  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity, portalVerified });
+  mountCoach(app, { need, workspace, db, commit: commitWorkspace, activity, portalVerified, now });
 
   // ---------- static ----------
   // Pages are served with a build stamp on every script and stylesheet so browsers never mix an old

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import vm from 'node:vm';
 import { createApp } from '../server/app.js';
 import { cancellationWindow } from '../server/croa-window.js';
 import { seedSignedClient } from './seed-croa.js';
@@ -1606,10 +1607,16 @@ test('the save response returns the server pay token and a later save can use it
 test('the browser adopts the saved workspace and does not mint pay tokens', () => {
   const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
   const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
-  assert.match(flush, /if \(r\.data\) Store\.adopt\(r\.data\)/);
+  assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
+  assert.match(flush, /renderWhenSafe\(\)/);
   assert.match(flush, /e\.body && e\.body\.data/);
   assert.match(flush, /await this\.reload\(\)/);
   assert.doesNotMatch(appJs, /Billing\.payToken\(\)/);
+  const voidAct = appJs.slice(appJs.indexOf("'invoice-void'"), appJs.indexOf("'invoice-print'"));
+  assert.match(voidAct, /find\(x => x && x\.id === id\)/);
+  assert.match(voidAct, /logVoidIfSaved/);
+  assert.doesNotMatch(voidAct, /Voided invoice/);
+  assert.match(appJs, /Store\.get\.client\(clientId\)/);
 });
 
 test('staff cannot close or delete a server review task', async () => {
@@ -1670,6 +1677,97 @@ test('the invoice migration preview reads and does not write', () => {
   assert.ok(!ran.stdout.includes('shared'));
   assert.strictEqual(fs.readFileSync(file, 'utf8'), body);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+function loadStore() {
+  const ctx = { console, Date, Math, JSON, Number, String, Object, Array, Set, Map, Error, URLSearchParams, crypto, navigator: {} };
+  ctx.globalThis = ctx;
+  ctx.self = ctx;
+  ctx.top = ctx;
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  const root = path.join(import.meta.dirname, '../js');
+  for (const f of ['law.js', 'store.js']) vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), ctx, { filename: f });
+  ctx.Store.load();
+  return ctx.Store;
+}
+
+test('an edit made while a save is in flight is kept and the server pay token is merged', () => {
+  const Store = loadStore();
+  const state = Store.state;
+  state.clients = [{ id: 'c', name: 'Ada', zip: '' }];
+  state.invoices = [{ id: 'i', clientId: 'c', description: 'Deletion', status: 'issued', payToken: 'browser-token' }];
+  const sent = JSON.parse(JSON.stringify(state));
+  state.clients[0].zip = '08002';
+  const server = JSON.parse(JSON.stringify(sent));
+  server.invoices[0].payToken = 'server-token';
+  server.invoices[0].paidAt = '2026-11-18';
+  server.clients[0].zip = '';
+  assert.strictEqual(Store.applyServerSave(server, sent), true);
+  assert.strictEqual(state.clients[0].zip, '08002');
+  assert.strictEqual(state.invoices[0].payToken, 'server-token');
+  assert.strictEqual(state.invoices[0].paidAt, '2026-11-18');
+  assert.strictEqual(state.invoices[0].status, 'issued');
+});
+
+test('a void dialog looks up the live invoice and logs the void only after it is saved', () => {
+  const Store = loadStore();
+  const state = Store.state;
+  state.clients = [{ id: 'c', name: 'Ada' }];
+  state.invoices = [{ id: 'i', clientId: 'c', description: 'Deletion', status: 'issued' }];
+  const stale = { id: 'i', clientId: 'c', description: 'Deletion', status: 'issued' };
+  stale.status = 'void';
+  stale.voidReason = 'typed into a detached invoice';
+  assert.strictEqual(state.invoices[0].status, 'issued');
+  assert.strictEqual(Store.logVoidIfSaved('i', 'Deletion', 'c'), false);
+  assert.strictEqual((state.activity || []).filter(row => /Voided invoice/.test(row.text)).length, 0);
+  const live = state.invoices.find(row => row.id === 'i');
+  live.status = 'void';
+  live.voidReason = 'duplicate charge';
+  assert.strictEqual(Store.logVoidIfSaved('i', 'Deletion', 'c'), true);
+  assert.strictEqual(state.activity[0].text, 'Voided invoice: Deletion');
+  assert.strictEqual(Store.logVoidIfSaved('i', 'Deletion', 'c'), false);
+});
+
+test('a save does not redraw while a dialog is open or an input is focused', () => {
+  const Store = loadStore();
+  assert.strictEqual(Store.shouldRedrawAfterSave({ overlay: false, activeTag: 'DIV' }), true);
+  assert.strictEqual(Store.shouldRedrawAfterSave({ overlay: true, activeTag: 'DIV' }), false);
+  assert.strictEqual(Store.shouldRedrawAfterSave({ overlay: false, activeTag: 'INPUT' }), false);
+  assert.strictEqual(Store.shouldRedrawAfterSave({ overlay: false, activeTag: 'TEXTAREA' }), false);
+});
+
+test('duplicate signup, coach, and assistant dates use the Eastern calendar', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-et-days-'));
+  const built = createApp({ dataDir: dir, encryptionKey: 'et-days-key-not-a-secret', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, now: () => new Date('2026-11-19T01:44:00.000Z') });
+  const live = listen(built.app);
+  const owner = live.client();
+  const anon = live.client();
+  try {
+    assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner-etdays@guard.test', password: 'owner password 1' })).status, 200);
+    await addClient(owner, { id: 'existing-et', name: 'Existing ET', kind: 'personal', email: 'dup-et@guard.test', status: 'active', onboarding: {} });
+    const signup = await anon('POST', '/api/signup', { firstName: 'New', lastName: 'Person', email: 'dup-et@guard.test', password: 'signup password 1', acceptAccountTerms: true, state: 'NJ', njResident: true });
+    assert.strictEqual(signup.status, 200);
+    const task = (await owner('GET', '/api/workspace')).body.data.tasks.find(row => row.kind === 'possible_duplicate');
+    assert.strictEqual(task.due, '2026-11-18');
+    await addClient(owner, { id: 'biz-et', name: 'ET Biz', kind: 'business', email: 'biz-et@guard.test', status: 'active', business: { legalName: 'ET Biz LLC' } });
+    assert.strictEqual((await owner('POST', '/api/coach/biz-et/start', {})).status, 200);
+    const plan = (await owner('GET', '/api/workspace')).body.data.clients.find(row => row.id === 'biz-et').creditPlan;
+    assert.strictEqual(plan.startedAt, '2026-11-18');
+    const ws = await owner('GET', '/api/workspace');
+    ws.body.data.disputes = [{ id: 'd-et', clientId: 'biz-et', type: 'cra_611', round: 1, recipient: 'Experian', status: 'sent', sentAt: '2026-11-01', dueAt: '2026-11-18', outcome: null, items: [] }];
+    assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ws.body.version, data: ws.body.data })).status, 200);
+    const chat = await owner('POST', '/api/assistant/staff', { clientId: 'biz-et', history: [{ role: 'user', content: 'What is due?' }] });
+    assert.strictEqual(chat.status, 200, JSON.stringify(chat.body));
+    const due = (chat.body.deadlines || []).find(row => row.dueAt === '2026-11-18');
+    assert.ok(due);
+    assert.strictEqual(due.daysLeft, 0);
+    assert.strictEqual(due.overdue, false);
+  } finally {
+    live.server.close();
+    built.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 

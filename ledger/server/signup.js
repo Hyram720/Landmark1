@@ -8,6 +8,7 @@ import { sendMail, mailMode } from './mailer.js';
 import { clientAuthMethod } from './auth-method.js';
 import { postKitForm } from './kit-hook.js';
 import { mailingAddress, enrollmentStatus } from './croa-docs.js';
+import { etYmd } from './croa-window.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -35,7 +36,8 @@ export function selfSignupEnabled(env = process.env, override) {
 }
 
 export function mountSignup(app, deps) {
-  const { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod, signupRateLimit, enabled, publicBaseUrl: baseOverride } = deps;
+  const { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod, signupRateLimit, enabled, publicBaseUrl: baseOverride, now } = deps;
+  const today = () => etYmd(typeof now === 'function' ? now() : new Date());
   const method = () => clientAuthMethod(typeof authMethod === 'function' ? authMethod() : authMethod);
   const limit = rateLimiter(signupRateLimit || 8, 15 * 60 * 1000);
   const origin = () => String(baseOverride || '').replace(/\/+$/, '');
@@ -143,7 +145,7 @@ export function mountSignup(app, deps) {
     workspace().clients.push(client);
     if (matchedClient) {
       workspace().tasks = workspace().tasks || [];
-      workspace().tasks.push({ id: uid(), clientId, title: `Review a possible duplicate signup for ${client.name} and merge it with the existing client if they are the same person.`, due: new Date().toISOString().slice(0, 10), done: false, createdAt: now, kind: 'possible_duplicate', matchedClientId: matchedClient.id });
+      workspace().tasks.push({ id: uid(), clientId, title: `Review a possible duplicate signup for ${client.name} and merge it with the existing client if they are the same person.`, due: today(), done: false, createdAt: now, kind: 'possible_duplicate', matchedClientId: matchedClient.id });
     }
     D().users.push(user);
     const raw = issueVerify(user);
