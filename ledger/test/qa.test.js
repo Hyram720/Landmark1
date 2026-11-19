@@ -10,6 +10,7 @@ import { createApp } from '../server/app.js';
 import { setAiFetch } from '../server/ledger-assistant.js';
 import { setTransport } from '../server/mailer.js';
 import { redact } from '../server/redact.js';
+import { seedSignedClient } from './seed-croa.js';
 
 for (const k of ['OPENAI_API_KEY', 'LEDGER_AI_ENABLED', 'LEDGER_MAIL_MODE', 'ANTHROPIC_API_KEY', 'LEDGER_SETUP_CODE']) delete process.env[k];
 
@@ -52,11 +53,8 @@ async function saveWs(mutate) {
 test('setup + seed two synthetic clients with reports', async () => {
   assert.strictEqual((await owner('POST', '/api/setup', { name: 'QA Owner', email: 'owner@qa.test', password: 'qa owner password 1' })).status, 200);
   await saveWs(ws => {
-    const cleared = { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' };
-    ws.clients.push({ id: 'ca', name: 'Alice Example', firstName: 'Alice', lastName: 'Example', kind: 'personal', email: 'alice@qa.test', dob: '1980-02-03', ssnLast4: '6789', address: '1 Test St\nTrenton, NJ 08601', status: 'active', onboarding: cleared });
-    ws.clients.push({ id: 'cb', name: 'Bob Example', firstName: 'Bob', lastName: 'Example', kind: 'personal', email: 'bob@qa.test', status: 'active', onboarding: Object.assign({}, cleared) });
-    ws.signatures = ws.signatures || [];
-    ws.signatures.push({ id: 'sig-ca-d', clientId: 'ca', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-ca-c', clientId: 'ca', doc: 'contract', at: '2020-01-06T16:00:00.000Z' }, { id: 'sig-cb-d', clientId: 'cb', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-cb-c', clientId: 'cb', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
+    ws.clients.push({ id: 'ca', name: 'Alice Example', firstName: 'Alice', lastName: 'Example', kind: 'personal', email: 'alice@qa.test', dob: '1980-02-03', ssnLast4: '6789', address: '1 Test St\nTrenton, NJ 08601', status: 'active', onboarding: {} });
+    ws.clients.push({ id: 'cb', name: 'Bob Example', firstName: 'Bob', lastName: 'Example', kind: 'personal', email: 'bob@qa.test', status: 'active', onboarding: {} });
     ws.reports = ws.reports || [];
     ws.reports.push({ id: 'rep-a', clientId: 'ca', bureau: 'Experian', date: '2026-10-01', accounts: [
       { id: 'ta1', creditor: 'Example Card Co', accountNumber: '4111222233334444', status: '11', balance: 240, pastDue: 75 },
@@ -66,6 +64,8 @@ test('setup + seed two synthetic clients with reports', async () => {
     ws.partnerReferrals.push({ id: 'ref-b', clientId: 'cb', offerId: 'offer-creditstrong', status: 'recommended', clicks: 0 });
     ws.offers.find(o => o.key === 'creditstrong').affiliateUrl = 'https://www.creditstrong.com/?ref=qa';
   });
+  seedSignedClient(db.data.workspace, 'ca');
+  seedSignedClient(db.data.workspace, 'cb');
   for (const [c, who, pw] of [[alice, 'ca', 'alice password 1'], [bob, 'cb', 'bob password 12']]) {
     const inv = await owner('POST', '/api/invites', { role: 'client', clientId: who });
     assert.strictEqual((await c('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: pw })).status, 200);

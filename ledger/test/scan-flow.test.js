@@ -7,9 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/app.js';
 import { setAnthropicFactory } from '../server/assistant.js';
+import { seedSignedClient } from './seed-croa.js';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-scan-'));
-const { app } = createApp({ dataDir: dir, encryptionKey: 'scan-flow-test-key-00' });
+const { app, db } = createApp({ dataDir: dir, encryptionKey: 'scan-flow-test-key-00' });
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -73,10 +74,9 @@ test('report upload accepts a mislabeled PDF, rejects non-files, and enforces 15
   assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner@scan.test', password: 'scan owner pass 1' })).status, 200);
   const g = await owner('GET', '/api/workspace');
   const ws = g.body.data;
-  ws.clients.push({ id: 'c1', name: 'Jordan Sample', firstName: 'Jordan', lastName: 'Sample', kind: 'personal', email: 'jordan@example.test', status: 'active', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } });
-  ws.signatures = ws.signatures || [];
-  ws.signatures.push({ id: 'sig-c1-d', clientId: 'c1', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-c1-c', clientId: 'c1', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
+  ws.clients.push({ id: 'c1', name: 'Jordan Sample', firstName: 'Jordan', lastName: 'Sample', kind: 'personal', email: 'jordan@example.test', status: 'active', onboarding: {} });
   assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
+  seedSignedClient(db.data.workspace, 'c1');
 
   const pdf = await owner('POST', '/api/clients/c1/files', formFile('equifax.pdf', Buffer.from('%PDF-1.4\nreport text'), 'application/octet-stream'));
   assert.strictEqual(pdf.status, 200, JSON.stringify(pdf.body));

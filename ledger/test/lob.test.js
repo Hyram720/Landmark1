@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import { createApp } from '../server/app.js';
 import { verifyLobWebhook, LOB_WEBHOOK_PATH } from '../server/mail.js';
 import { Law } from '../server/shared.js';
+import { seedSignedClient } from './seed-croa.js';
 
 const SECRET = 'webhook-secret-test-ABCD';
 const realFetch = globalThis.fetch;
@@ -111,20 +112,22 @@ test('setup disputes that were mailed through Lob', async () => {
   assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner@lob.test', password: 'correct horse battery' })).status, 200);
   const g = await owner('GET', '/api/workspace');
   const w = g.body.data;
-  w.clients.push({ id: 'c-lob', name: 'Ada Letter', firstName: 'Ada', lastName: 'Letter', kind: 'personal', status: 'active', email: 'ada@lob.test', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } });
-  w.signatures = w.signatures || [];
-  w.signatures.push({ id: 'sig-lob-d', clientId: 'c-lob', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-lob-c', clientId: 'c-lob', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
+  w.clients.push({ id: 'c-lob', name: 'Ada Letter', firstName: 'Ada', lastName: 'Letter', kind: 'personal', status: 'active', email: 'ada@lob.test', onboarding: {} });
+  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w })).status, 200);
+  seedSignedClient(db.data.workspace, 'c-lob');
+  const g2 = await owner('GET', '/api/workspace');
+  const book = g2.body.data;
   const kinds = [];
   for (const prefix of ['letter', 'letter.certified']) {
     for (const suffix of ['mailed', 'in_transit', 'delivered', 're-routed', 'returned_to_sender']) {
       const slug = `${prefix}_${suffix}`.replace(/[^a-z0-9_]/gi, '_');
       kinds.push(slug);
-      w.disputes.push(dispute('d_' + slug, 'ltr_' + slug));
+      book.disputes.push(dispute('d_' + slug, 'ltr_' + slug));
     }
   }
-  w.disputes.push(dispute('d_dup', 'ltr_dup'));
-  w.disputes.push(dispute('d_sig', 'ltr_sig'));
-  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: w })).status, 200);
+  book.disputes.push(dispute('d_dup', 'ltr_dup'));
+  book.disputes.push(dispute('d_sig', 'ltr_sig'));
+  assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g2.body.version, data: book })).status, 200);
   assert.ok(kinds.length === 10);
 });
 

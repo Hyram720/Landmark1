@@ -9,6 +9,7 @@ import { createApp } from '../server/app.js';
 import { setAiFetch, clientDigest } from '../server/ledger-assistant.js';
 import { setTransport } from '../server/mailer.js';
 import { FileCheck, Business, DisputeReasons, Law, KB, Letters } from '../server/shared.js';
+import { seedSignedClient } from './seed-croa.js';
 
 for (const k of ['OPENAI_API_KEY', 'LEDGER_AI_ENABLED', 'LEDGER_MAIL_MODE', 'LEDGER_SETUP_CODE']) delete process.env[k];
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-biz-'));
@@ -122,11 +123,10 @@ test('setup: owner, two business clients with portal logins, one personal client
   const ws = g.body.data;
   const A = bizClient('ba', { businessReports: [bizReport('ba')] });
   const B = bizClient('bb', { creditPlan: { startedAt: addDays(today, -1) } });
-  ws.clients.push(A, B, Object.assign({}, personalClient, { kind: 'personal', status: 'active', email: 'pat@biz.test', onboarding: { disclosureSignedAt: '2020-01-06', disclosureAcknowledgedAt: '2020-01-06T15:00:00.000Z', contractSignedAt: '2020-01-06', contractSignedAtTs: '2020-01-06T16:00:00.000Z', cancellationWindowEndsAt: '2020-01-09', cancellationWindowEndsAtTs: '2020-01-10T04:59:59.999Z' } }));
-  ws.signatures = ws.signatures || [];
-  ws.signatures.push({ id: 'sig-pa-d', clientId: 'pa', doc: 'disclosure', at: '2020-01-06T15:00:00.000Z' }, { id: 'sig-pa-c', clientId: 'pa', doc: 'contract', at: '2020-01-06T16:00:00.000Z' });
+  ws.clients.push(A, B, Object.assign({}, personalClient, { kind: 'personal', status: 'active', email: 'pat@biz.test', onboarding: {} }));
   ws.reports.push(personalReport);
   assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: ws })).status, 200);
+  seedSignedClient(db.data.workspace, 'pa');
   for (const [c, id, pw] of [[bizA, 'ba', 'business a password'], [bizB, 'bb', 'business b password']]) {
     const inv = await owner('POST', '/api/invites', { role: 'client', clientId: id });
     assert.strictEqual((await c('POST', '/api/invites/accept', { token: inv.body.url.split('invite=')[1], password: pw })).status, 200);

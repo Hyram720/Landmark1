@@ -921,12 +921,8 @@
       const text = kind === 'disclosure' ? pack.disclosure : kind === 'contract' ? pack.contract : pack.cancellation + '\n\n' + pack.cancellation;
       return UI.printDoc(titles[kind] || 'Document', text);
     }
-    const co = S().settings.company;
-    const c = cid ? Store.get.client(cid) : { name: '[Client name]', onboarding: {} };
-    const cs = cid ? Store.croaStatus(c) : {};
     if (kind === 'disclosure') return UI.printDoc(titles.disclosure, Law.CROA_DISCLOSURE);
-    if (kind === 'contract') return UI.printDoc(titles.contract, Law.contractTerms(co, c, (c && c.pricePerResult) || S().settings.defaultFee));
-    if (kind === 'cancel') { const n = Law.cancellationNotice(co, cs.deadline ? UI.date(cs.deadline) : null); return UI.printDoc(titles.cancel, n + '\n\n' + n); }
+    toast('The agreement and cancellation notice are printed from the signed file. This browser copy cannot print them.');
   }
 
   function progressReport(cid) { UI.printHtml(root.Reports.progress(S(), cid, T())); Store.log('Printed progress report', cid); }

@@ -151,20 +151,8 @@ I hereby cancel this transaction,
 You can also cancel in your client portal, or by email to ${company.email || '[EMAIL]'}, before midnight Eastern Time on the date above.`;
   }
 
-  function contractTerms(company, client, fee) {
-    const price = fee || (client && client.pricePerResult) || '[PRICE PER RESULT: Fred to decide]';
-    return `Credit Services Agreement
-
-Date of this agreement: [DATE SIGNED, filled automatically]
-
-Client: ${client && client.name ? client.name : '[CLIENT FULL NAME]'}
-Client mailing address: ${(client && client.address) || '[CLIENT ADDRESS]'}
-
-Price per result: ${price}
-
-You may cancel this contract without penalty or obligation at any time before midnight of the 3rd business day after the date on which you signed the contract. See the attached notice of cancellation form for an explanation of this right.
-
-The signed PDF, when one is stored, is the copy the client signed.`;
+  function contractTerms() {
+    return 'The agreement and cancellation notice are printed from the signed file. This browser copy cannot print them.';
   }
 
   // Phrases that create CROA § 1679b(a) / FTC Act risk in letters or marketing.

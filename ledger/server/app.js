@@ -352,6 +352,17 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     if (!data || data.version !== 2 || !Array.isArray(data.clients)) return res.status(400).json({ error: 'Invalid workspace' });
     if (baseVersion !== D().workspaceVersion) return res.status(409).json({ error: 'Workspace changed elsewhere', version: D().workspaceVersion, data: workspace() });
     const before = D().workspace;
+    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
+    restoreServerOwnedEnrollment(data, before, priorClients);
+    for (const c of data.clients) {
+      const old = priorClients.get(c && c.id);
+      if (!old || old.kind === 'business' || (old.kind || 'personal') === (c.kind || 'personal')) continue;
+      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the owner can change the client type.' });
+      if (inCancellationWindow(old) || enrollmentOpenOrSigned(old, data.signatures)) return res.status(409).json({ error: 'The client type cannot change during enrollment or after the agreement is signed.' });
+      db.audit({ actor: req.user.email, action: 'client.kind', detail: JSON.stringify({ user: req.user.email, at: new Date().toISOString(), clientId: c.id, old: old.kind || 'personal', new: c.kind || 'personal' }) });
+    }
+    const billingBlock = invoiceBillingBlocked(before, data);
+    if (billingBlock) return res.status(409).json({ error: billingBlock });
     // 12-month term / total cap per client agreement (Billing.capCheck): reject any new or increased
     // invoice that would push a client's total for the term over the cap, or bill after the term ends.
     const over = Billing.capViolations(before, data);
@@ -360,17 +371,6 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
       return res.status(422).json({ error: `Invoice blocked for ${over[0].client.name}: ${over[0].reason}.`, violations: over.map(v => ({ invoiceId: v.invoice.id, clientId: v.client.id, reason: v.reason })) });
     }
     // TODO(billing): signup does not create or collect invoices. Cap checks above stay in billing.js.
-    const priorClients = new Map(((before && before.clients) || []).map(c => [c.id, c]));
-    restoreServerOwnedEnrollment(data, priorClients);
-    const priorInvoiceIds = new Set(((before && before.invoices) || []).filter(Boolean).map(i => i.id));
-    for (const inv of data.invoices || []) {
-      if (!inv || priorInvoiceIds.has(inv.id) || inv.status !== 'issued') continue;
-      const billed = (data.clients || []).find(x => x.id === inv.clientId);
-      if (billed && clientServiceOnHold(billed)) return res.status(409).json({ error: `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.` });
-      const disputes = (data.disputes || []).filter(d => d && d.clientId === inv.clientId && (!inv.disputeId || d.id === inv.disputeId));
-      const result = disputes.some(d => ['deleted', 'corrected'].includes(d.outcome) || (d.items || []).some(it => it && (it.result === 'deleted' || it.result === 'corrected')));
-      if (!result) return res.status(409).json({ error: 'An invoice can be issued only after a result is documented.' });
-    }
     const held = serviceWorkBlocked(before, data);
     if (held) return res.status(409).json({ error: held });
     for (const c of data.clients) {
@@ -388,33 +388,69 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.json({ version: D().workspaceVersion });
   });
 
-  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt'];
-  function restoreServerOwnedEnrollment(data, priorClients) {
-    const sigs = data.signatures || [];
+  const SERVER_OWNED_ONBOARDING = ['disclosureSignedAt', 'disclosureAcknowledgedAt', 'contractSignedAt', 'contractSignedAtTs', 'cancellationWindowEndsAt', 'cancellationWindowEndsAtTs', 'cancellationRule', 'contractPdfId', 'contractPdfSha256', 'retainUntil', 'esignConsentAt', 'esignConsentSha256', 'esignWithdrawnAt', 'cancelledAt', 'cancelledAtTs'];
+  function restoreServerOwnedEnrollment(data, before, priorClients) {
+    data.signatures = JSON.parse(JSON.stringify((before && before.signatures) || []));
     for (const c of data.clients || []) {
-      if (!c || c.kind === 'business') continue;
-      c.onboarding = c.onboarding || {};
+      if (!c) continue;
       const old = priorClients.get(c.id);
-      if (old) {
-        const prev = old.onboarding || {};
-        for (const key of SERVER_OWNED_ONBOARDING) c.onboarding[key] = prev[key] == null ? null : prev[key];
-        continue;
-      }
-      const signedDoc = doc => sigs.some(s => s && s.clientId === c.id && s.doc === doc);
-      if (!signedDoc('disclosure')) {
-        c.onboarding.disclosureSignedAt = null;
-        c.onboarding.disclosureAcknowledgedAt = null;
-      }
-      if (!signedDoc('contract')) {
-        c.onboarding.contractSignedAt = null;
-        c.onboarding.contractSignedAtTs = null;
-        c.onboarding.cancellationWindowEndsAt = null;
-        c.onboarding.cancellationWindowEndsAtTs = null;
-        c.onboarding.cancellationRule = null;
-        c.onboarding.contractPdfId = null;
-        c.onboarding.contractPdfSha256 = null;
-      }
+      const personal = old ? old.kind !== 'business' : c.kind !== 'business';
+      if (!personal) continue;
+      c.onboarding = c.onboarding || {};
+      const prev = old && old.onboarding || {};
+      for (const key of SERVER_OWNED_ONBOARDING) c.onboarding[key] = !old || prev[key] == null ? null : prev[key];
     }
+  }
+  function inCancellationWindow(c) {
+    const o = (c && c.onboarding) || {};
+    if (o.cancelledAt || (!o.contractSignedAt && !o.contractSignedAtTs)) return false;
+    if (o.cancellationWindowEndsAtTs) return Date.now() <= Date.parse(o.cancellationWindowEndsAtTs);
+    return true;
+  }
+  function enrollmentOpenOrSigned(c, signatures) {
+    const o = (c && c.onboarding) || {};
+    if (o.esignConsentAt || o.disclosureViewedAt || o.disclosureSignedAt || o.disclosureAcknowledgedAt || o.contractViewedAt || o.contractSignedAt || o.contractSignedAtTs || o.cancellationWindowEndsAtTs) return true;
+    return (signatures || []).some(s => s && s.clientId === c.id && (s.doc === 'disclosure' || s.doc === 'contract'));
+  }
+  function serviceDateInsideWindow(client, inv) {
+    const o = (client && client.onboarding) || {};
+    const raw = inv.serviceCompletedAt || inv.issuedAt;
+    if (!raw) return false;
+    const day = String(raw).slice(0, 10);
+    if (o.cancellationWindowEndsAt && day <= o.cancellationWindowEndsAt) return true;
+    if (o.cancellationWindowEndsAtTs) {
+      const end = Date.parse(o.cancellationWindowEndsAtTs);
+      const svc = Date.parse(String(raw).length > 10 ? raw : day + 'T12:00:00.000Z');
+      if (!Number.isNaN(end) && !Number.isNaN(svc) && svc <= end) return true;
+    }
+    return false;
+  }
+  function deletedInvoiceItem(data, inv) {
+    if (!inv || !inv.disputeId || !inv.itemId) return null;
+    const dispute = (data.disputes || []).find(d => d && d.id === inv.disputeId && d.clientId === inv.clientId);
+    if (!dispute) return null;
+    return (dispute.items || []).find(it => it && it.id === inv.itemId && it.bureau) || null;
+  }
+  function invoiceBillingBlocked(before, data) {
+    const prior = new Map(((before && before.invoices) || []).filter(Boolean).map(i => [i.id, i]));
+    const billable = inv => inv && (inv.status === 'issued' || inv.status === 'paid');
+    const transitioning = (data.invoices || []).filter(inv => {
+      if (!billable(inv)) return false;
+      const prev = prior.get(inv.id);
+      return !prev || (prev.status !== 'issued' && prev.status !== 'paid');
+    });
+    for (const inv of transitioning) {
+      const billed = (data.clients || []).find(x => x && x.id === inv.clientId);
+      if (!billed || billed.kind === 'business') continue;
+      if (clientServiceOnHold(billed)) return `${billed.name || 'This client'} cannot be invoiced until the cancellation window ends.`;
+      if (serviceDateInsideWindow(billed, inv)) return 'The service date is inside the cancellation window.';
+      const item = deletedInvoiceItem(data, inv);
+      if (!item) return 'An invoice must name the deleted item and its bureau.';
+      if (item.result !== 'deleted') return 'An invoice can be issued only for a deleted item, not a correction.';
+      const dup = (data.invoices || []).some(other => other && other.id !== inv.id && billable(other) && other.itemId === inv.itemId && deletedInvoiceItem(data, other) && deletedInvoiceItem(data, other).bureau === item.bureau);
+      if (dup) return 'Only one invoice can be issued for each deleted item and bureau.';
+    }
+    return null;
   }
   function invalidateContractView(onboarding) {
     if (!onboarding) return;

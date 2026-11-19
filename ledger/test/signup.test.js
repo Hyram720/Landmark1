@@ -915,7 +915,7 @@ test('Eastern document times, staff enrollment terms, address, and the signature
 
 test('invited clients use the final CROA texts, the bracket gate, and the cancellation hold', async () => {
     assert.doesNotMatch(read('js/law.js'), /up to 10 years/);
-    assert.strictEqual(CAN_SPAM_POSTAL_ADDRESS, 'Credit Ledger, 2230 Route 70 W Ste 2 PMB 1194, Cherry Hill, NJ 08002');
+    assert.strictEqual(CAN_SPAM_POSTAL_ADDRESS, 'Sun Marketing Enterprises LLC, d/b/a Credit Ledger, 2230 Route 70 W Ste 2 PMB 1194, Cherry Hill, NJ 08002');
     const dated = { kind: 'personal', onboarding: { disclosureSignedAt: '2026-11-25', contractSignedAt: '2026-11-25', cancellationWindowEndsAtTs: '2026-12-02T04:59:59.999Z' } };
     assert.strictEqual(clientServiceOnHold(dated, new Date('2026-11-26T02:00:00.000Z')), true);
     assert.strictEqual(clientServiceOnHold(dated, new Date('2026-12-03T05:00:00.000Z')), false);
@@ -1051,11 +1051,11 @@ test('invited clients use the final CROA texts, the bracket gate, and the cancel
     noResult.invoices.push({ id: 'no-result', clientId: 'inv-open', description: 'No result', amount: 20, status: 'issued', issuedAt: '2026-12-03', serviceCompletedAt: '2026-12-03' });
     const noResultSave = await owner('PUT', '/api/workspace', { baseVersion: later.body.version, data: noResult });
     assert.strictEqual(noResultSave.status, 409);
-    assert.match(noResultSave.body.error, /result is documented/);
+    assert.match(noResultSave.body.error, /deleted item/);
     const ready = await owner('GET', '/api/workspace');
     const withResult = JSON.parse(JSON.stringify(ready.body.data));
-    withResult.disputes.push({ id: 'result-d', clientId: 'inv-open', outcome: 'deleted', items: [{ creditor: 'North Bank', result: 'deleted' }] });
-    withResult.invoices.push({ id: 'after-result', clientId: 'inv-open', disputeId: 'result-d', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-12-03', serviceCompletedAt: '2026-12-03' });
+    withResult.disputes.push({ id: 'result-d', clientId: 'inv-open', items: [{ id: 'result-i', creditor: 'North Bank', bureau: 'Equifax', result: 'deleted' }] });
+    withResult.invoices.push({ id: 'after-result', clientId: 'inv-open', disputeId: 'result-d', itemId: 'result-i', description: 'Deletion', amount: 20, status: 'issued', issuedAt: '2026-12-03', serviceCompletedAt: '2026-12-03' });
     assert.strictEqual((await owner('PUT', '/api/workspace', { baseVersion: ready.body.version, data: withResult })).status, 200);
     const fd = new FormData();
     fd.append('type', 'report');
