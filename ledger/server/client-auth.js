@@ -10,13 +10,15 @@ import crypto from 'node:crypto';
 import { hashPassword, passwordProblem, rateLimiter } from './auth.js';
 import { sendMail, mailEnabled, mailMode } from './mailer.js';
 import { Business } from './shared.js';
+import { etYmd } from './croa-window.js';
 
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const RESET_TTL = 30 * 60 * 1000, MAGIC_TTL = 15 * 60 * 1000, OTP_TTL = 10 * 60 * 1000;
 const NEUTRAL = 'If an account exists for that email, we sent a link. It expires soon and works once.';
 const pageFor = role => (role === 'client' ? 'portal' : role === 'partner' ? 'partner' : 'app');
 
-export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds, authMethod, portalVerified }) {
+export function mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds, authMethod, portalVerified, now }) {
+  const today = () => etYmd(typeof now === 'function' ? now() : new Date());
   const ipLimit = rateLimiter(10, 15 * 60 * 1000);
   const emailLimit = rateLimiter(5, 60 * 60 * 1000);
   const otpLimit = rateLimiter(10, 15 * 60 * 1000);
@@ -199,7 +201,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
       if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`);
     });
     // Business credit plan: remind the client when a step is due within 2 days (once per step and due date).
-    const t0 = new Date().toISOString().slice(0, 10);
+    const t0 = today();
     ((workspace().clients) || []).filter(c => c.kind !== 'personal' && c.creditPlan && c.creditPlan.startedAt).forEach(c => {
       const cur = Business.coachState(c, workspace(), t0).current;
       if (cur && Date.parse(cur.due) <= Date.now() + 2 * 86400000 && !(c.creditPlan.clientConfirmed || {})[cur.key]) notifyClient(c.id, `step:${c.id}:${cur.key}:${cur.due}`, 'Your next business credit step', `Your next business credit plan step is due ${cur.due}: ${cur.title.split(':')[0]}. Sign in to your portal to see how to do it, and tap “I’ve done this” when it’s finished.`);

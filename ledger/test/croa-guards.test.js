@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 import { createApp } from '../server/app.js';
+import { setTransport } from '../server/mailer.js';
 import { cancellationWindow } from '../server/croa-window.js';
 import { seedSignedClient } from './seed-croa.js';
 
@@ -1737,9 +1738,9 @@ test('a save does not redraw while a dialog is open or an input is focused', () 
   assert.strictEqual(Store.shouldRedrawAfterSave({ overlay: false, activeTag: 'TEXTAREA' }), false);
 });
 
-test('duplicate signup, coach, and assistant dates use the Eastern calendar', async () => {
+test('a duplicate signup at 8:55 PM ET on Nov 18 is due that Eastern date', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-et-days-'));
-  const built = createApp({ dataDir: dir, encryptionKey: 'et-days-key-not-a-secret', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, now: () => new Date('2026-11-19T01:44:00.000Z') });
+  const built = createApp({ dataDir: dir, encryptionKey: 'et-days-key-not-a-secret', selfSignupEnabled: true, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, now: () => new Date('2026-11-19T01:55:00.000Z') });
   const live = listen(built.app);
   const owner = live.client();
   const anon = live.client();
@@ -1764,6 +1765,67 @@ test('duplicate signup, coach, and assistant dates use the Eastern calendar', as
     assert.strictEqual(due.daysLeft, 0);
     assert.strictEqual(due.overdue, false);
   } finally {
+    live.server.close();
+    built.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a staff save cannot clone a server review task by changing its kind', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'kindlock', name: 'Kind Lock', kind: 'personal', email: 'kindlock@guard.test', status: 'active', onboarding: {} });
+    seedSignedClient(built.db.data.workspace, 'kindlock');
+    const deadline = cancellationWindow('2020-01-06T16:00:00.000Z').deadlineDateEt;
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-kindlock@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    assert.strictEqual((await staff('POST', '/api/clients/kindlock/cancel', { method: 'mail', receivedAt: '2020-12-02', postmarkAt: deadline })).status, 200);
+    built.db.data.workspace.tasks.push({ id: 'dup-kind', clientId: 'kindlock', title: 'Review a possible duplicate signup', due: '2020-06-01', done: false, createdAt: '2020-06-01T00:00:00.000Z', kind: 'possible_duplicate', matchedClientId: 'other' });
+    const marked = await owner('GET', '/api/workspace');
+    const postmark = marked.body.data.tasks.find(t => t.kind === 'postmark_needs_owner_review');
+    const postmarkId = postmark.id;
+    postmark.kind = 'task';
+    postmark.done = true;
+    postmark.title = 'Closed by staff';
+    const dup = marked.body.data.tasks.find(t => t.id === 'dup-kind');
+    dup.kind = 'task';
+    dup.done = true;
+    dup.title = 'Merged already';
+    assert.strictEqual((await staff('PUT', '/api/workspace', { baseVersion: marked.body.version, data: marked.body.data })).status, 200);
+    const kept = await owner('GET', '/api/workspace');
+    const postmarks = kept.body.data.tasks.filter(t => t.id === postmarkId);
+    assert.strictEqual(postmarks.length, 1);
+    assert.strictEqual(postmarks[0].kind, 'postmark_needs_owner_review');
+    assert.strictEqual(postmarks[0].done, false);
+    assert.match(postmarks[0].title, /Review the postmark/);
+    const dups = kept.body.data.tasks.filter(t => t.id === 'dup-kind');
+    assert.strictEqual(dups.length, 1);
+    assert.strictEqual(dups[0].kind, 'possible_duplicate');
+    assert.strictEqual(dups[0].done, false);
+    assert.match(dups[0].title, /possible duplicate/);
+  });
+});
+
+test('a coach reminder at 8:55 PM ET uses that Eastern date', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-et-remind-'));
+  const built = createApp({ dataDir: dir, encryptionKey: 'et-remind-key-not-a-secret', selfSignupEnabled: false, publicBaseUrl: 'http://127.0.0.1:4100', env: { NODE_ENV: 'test' }, now: () => new Date('2026-11-19T01:55:00.000Z') });
+  const live = listen(built.app);
+  const owner = live.client();
+  const out = [];
+  setTransport(async message => { out.push(message); });
+  try {
+    assert.strictEqual((await owner('POST', '/api/setup', { name: 'Owner', email: 'owner-remind@guard.test', password: 'owner password 1' })).status, 200);
+    await addClient(owner, { id: 'biz-remind', name: 'Remind Biz', kind: 'business', email: 'remind@guard.test', status: 'active', business: { legalName: 'Remind Biz LLC' } });
+    const client = built.db.data.workspace.clients.find(row => row.id === 'biz-remind');
+    client.creditPlan = { startedAt: '2026-11-18', done: {} };
+    built.db.data.users.push({ id: 'remind-user', name: 'Remind Biz', email: 'remind@guard.test', role: 'client', clientId: 'biz-remind', password: 'x', sessionEpoch: 1, createdAt: '2026-11-18T00:00:00.000Z', disabled: false });
+    await built.auth.deadlineSweep();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const mail = out.find(message => message.to === 'remind@guard.test');
+    assert.ok(mail, JSON.stringify(out.map(message => message.to)));
+    assert.match(mail.text, /due 2026-11-18/);
+  } finally {
+    setTransport(null);
     live.server.close();
     built.shutdown();
     fs.rmSync(dir, { recursive: true, force: true });

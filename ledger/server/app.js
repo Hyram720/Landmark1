@@ -1006,8 +1006,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   const SERVER_TASK_KINDS = new Set(['postmark_needs_owner_review', 'possible_duplicate']);
   function restoreServerTasks(before, data) {
     const prior = ((before && before.tasks) || []).filter(t => t && SERVER_TASK_KINDS.has(t.kind));
+    const ownedIds = new Set(prior.map(t => t && t.id).filter(Boolean));
     const incoming = Array.isArray(data.tasks) ? data.tasks : [];
-    const ordinary = incoming.filter(t => t && !SERVER_TASK_KINDS.has(t.kind));
+    const ordinary = incoming.filter(t => t && !SERVER_TASK_KINDS.has(t.kind) && !ownedIds.has(t.id));
     data.tasks = prior.map(t => JSON.parse(JSON.stringify(t))).concat(ordinary);
   }
   const INVOICE_STATUSES = new Set(['draft', 'issued', 'paid', 'void']);
@@ -1916,7 +1917,7 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
 
   mountSignup(app, { D, db, workspace, startSession, uid, activity, commitWorkspace, authMethod: () => resolvedAuthMethod, signupRateLimit, enabled: signupOn, publicBaseUrl: publicOrigin, now });
   mountNewsletter(app, { db });
-  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod, portalVerified });
+  auth = mountClientAuth(app, { D, db, need, startSession, publicUser, workspace, rememberSeconds: () => sessionDurations().remember, authMethod: () => resolvedAuthMethod, portalVerified, now });
 
   // ---------- Ledger Assistant (OpenAI, off unless LEDGER_AI_ENABLED) & partner links ----------
   mountLedgerAssistant(app, { need, workspace, db, D, uid, now });
