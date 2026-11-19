@@ -370,7 +370,14 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     for (const key of listKeys) {
       const rows = data[key];
       if (!Array.isArray(rows)) continue;
-      if (rows.some(row => row == null)) return reject(422, 'A ' + key + ' list contains an empty row.', [{ key, id: '', field: '', reason: 'A ' + key + ' list contains an empty row.' }]);
+      const priorRows = Array.isArray(before && before[key]) ? before[key] : [];
+      const usedNulls = new Set();
+      for (const row of rows) {
+        if (row != null) continue;
+        const match = priorRows.findIndex((old, index) => !usedNulls.has(index) && old == null);
+        if (match >= 0) { usedNulls.add(match); continue; }
+        return reject(422, 'A ' + key + ' list contains an empty row.', [{ key, id: '', field: '', reason: 'A ' + key + ' list contains an empty row.' }]);
+      }
     }
     for (const key of idRequired) {
       const rows = data[key];

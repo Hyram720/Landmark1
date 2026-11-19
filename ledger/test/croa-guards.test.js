@@ -1941,3 +1941,126 @@ test('the browser names a structured refusal and does not retry it as offline', 
   assert.match(voidAct, /find\(x => x && x\.id === id\)/);
   assert.match(views, /ledgerUser && root\.ledgerUser\.role === 'owner'/);
 });
+
+test('a 409 with data adopts the server copy and does not re-save over a new client or task', () => {
+  const appJs = fs.readFileSync(path.join(import.meta.dirname, '../js/app.js'), 'utf8');
+  const flush = appJs.slice(appJs.indexOf('async flush()'), appJs.indexOf('async poll()'));
+  const conflict = flush.slice(flush.indexOf('e.status === 409 && e.body && e.body.data'), flush.indexOf('else if (refused)'));
+  assert.match(conflict, /Store\.adopt\(e\.body\.data\)/);
+  assert.match(conflict, /Someone else updated this\. Redo your last change\./);
+  assert.match(conflict, /requeue = false/);
+  assert.match(conflict, /this\.pending = false/);
+  assert.doesNotMatch(conflict, /applyServerSave/);
+  assert.match(flush, /Store\.applyServerSave\(r\.data, sent\)/);
+});
+
+test('a held client dispute cannot be moved to a cleared client and marked sent', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-bypass@guard.test', status: 'active' });
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-bypass@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    built.db.data.workspace.disputes = [{ id: 'held-d', clientId: 'held', recipient: 'Equifax', status: 'draft', items: [] }];
+    built.db.data.workspace.letters = [{ id: 'held-l', clientId: 'held', text: 'Letter', status: 'draft' }];
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-bypass@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    const dispute = sent.disputes.find(row => row.id === 'held-d');
+    dispute.clientId = 'clear';
+    dispute.status = 'sent';
+    dispute.sentAt = '2026-11-18';
+    const letter = sent.letters.find(row => row.id === 'held-l');
+    letter.clientId = 'clear';
+    letter.status = 'sent';
+    letter.text = 'Sent now';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    const fields = (key, id) => denied.body.refused.filter(row => row.key === key && row.id === id).map(row => row.field);
+    assert.ok(fields('disputes', 'held-d').includes('clientId'));
+    assert.ok(fields('disputes', 'held-d').includes('status'));
+    assert.ok(fields('letters', 'held-l').includes('clientId'));
+    assert.ok(fields('letters', 'held-l').includes('text'));
+    const after = await owner('GET', '/api/workspace');
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'held-d').clientId, 'held');
+    assert.strictEqual(after.body.data.disputes.find(row => row.id === 'held-d').status, 'draft');
+    assert.strictEqual(after.body.data.letters.find(row => row.id === 'held-l').clientId, 'held');
+    const moveOnly = JSON.parse(JSON.stringify(before.body.data));
+    moveOnly.disputes.find(row => row.id === 'held-d').clientId = 'clear';
+    const moved = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: moveOnly });
+    assert.strictEqual(moved.status, 409, JSON.stringify(moved.body));
+    assert.ok(moved.body.refused.some(row => row.key === 'disputes' && row.id === 'held-d' && row.field === 'clientId'));
+    const still = await owner('GET', '/api/workspace');
+    assert.strictEqual(still.body.data.disputes.find(row => row.id === 'held-d').clientId, 'held');
+    assert.strictEqual(still.body.data.disputes.find(row => row.id === 'held-d').status, 'draft');
+  });
+});
+
+test('a stored null row does not block a later edit and a new null row is refused', async () => {
+  await withOwner(async ({ built, owner }) => {
+    await addClient(owner, { id: 'ada', name: 'Ada', kind: 'personal', email: 'ada-null@guard.test', status: 'active', zip: '' });
+    built.db.data.workspace.disputes = [null];
+    const g = await owner('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(g.body.data));
+    sent.clients.find(row => row.id === 'ada').zip = '08002';
+    const saved = await owner('PUT', '/api/workspace', { baseVersion: g.body.version, data: sent });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.strictEqual(saved.body.data.clients.find(row => row.id === 'ada').zip, '08002');
+    assert.ok(saved.body.data.disputes.includes(null));
+    sent.disputes = [null, null];
+    const denied = await owner('PUT', '/api/workspace', { baseVersion: saved.body.version, data: sent });
+    assert.strictEqual(denied.status, 422, JSON.stringify(denied.body));
+    assert.ok(denied.body.refused.some(row => row.key === 'disputes' && /empty row/.test(row.reason)));
+  });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-null-'));
+  const file = path.join(dir, 'ledger-db.json');
+  const body = JSON.stringify({ workspace: { invoices: [{ id: 'ok', status: 'draft' }], disputes: [null] } });
+  fs.writeFileSync(file, body);
+  const out = JSON.parse(spawnSync(process.execPath, [path.join(import.meta.dirname, '../server/count-invoice-statuses.js'), file], { encoding: 'utf8' }).stdout);
+  assert.ok(out.shapeErrors.some(row => row.key === 'disputes' && /empty row/.test(row.reason)));
+  assert.strictEqual(out.deployGate.ready, false);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), body);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a held dispute outcome and a letter tied to that dispute cannot advance', async () => {
+  await withOwner(async ({ built, owner, live }) => {
+    await addClient(owner, { id: 'clear', name: 'Clear Client', kind: 'personal', email: 'clear-tied@guard.test', status: 'active' });
+    await addClient(owner, { id: 'held', name: 'Held Client', kind: 'personal', email: 'held-tied@guard.test', status: 'active' });
+    seedSignedClient(built.db.data.workspace, 'clear');
+    built.db.data.workspace.disputes = [{ id: 'held-d', clientId: 'held', recipient: 'Equifax', status: 'draft', outcome: null, respondedAt: null, dueAt: null, mail: null, letterId: 'tied-l', items: [] }];
+    built.db.data.workspace.letters = [{ id: 'tied-l', clientId: 'clear', disputeId: 'held-d', text: 'Letter', status: 'draft' }];
+    const staff = live.client();
+    const invite = await owner('POST', '/api/invites', { role: 'staff', name: 'Staff', email: 'staff-tied@guard.test' });
+    assert.strictEqual((await staff('POST', '/api/invites/accept', { token: invite.body.url.split('invite=')[1], password: 'staff password 1' })).status, 200);
+    const before = await staff('GET', '/api/workspace');
+    const sent = JSON.parse(JSON.stringify(before.body.data));
+    const dispute = sent.disputes.find(row => row.id === 'held-d');
+    dispute.outcome = 'deleted';
+    dispute.respondedAt = '2026-11-18';
+    dispute.dueAt = '2026-12-18';
+    dispute.mail = { lobId: 'ltr_1' };
+    const letter = sent.letters.find(row => row.id === 'tied-l');
+    letter.status = 'approved';
+    letter.approvedAt = '2026-11-18';
+    letter.text = 'Rewritten letter';
+    const denied = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: sent });
+    assert.strictEqual(denied.status, 409, JSON.stringify(denied.body));
+    const fields = (key, id) => denied.body.refused.filter(row => row.key === key && row.id === id).map(row => row.field);
+    assert.ok(fields('disputes', 'held-d').includes('outcome'));
+    assert.ok(fields('disputes', 'held-d').includes('respondedAt'));
+    assert.ok(fields('disputes', 'held-d').includes('dueAt'));
+    assert.ok(fields('disputes', 'held-d').includes('mail'));
+    assert.ok(fields('letters', 'tied-l').includes('text'));
+    assert.ok(fields('letters', 'tied-l').includes('approvedAt'));
+    assert.ok(fields('letters', 'tied-l').includes('status'));
+    const notes = JSON.parse(JSON.stringify(before.body.data));
+    notes.disputes.find(row => row.id === 'held-d').notes = 'Still a draft';
+    notes.letters.find(row => row.id === 'tied-l').notes = 'A note is not a mailing step';
+    const noted = await staff('PUT', '/api/workspace', { baseVersion: before.body.version, data: notes });
+    assert.strictEqual(noted.status, 200, JSON.stringify(noted.body));
+    assert.strictEqual(noted.body.data.disputes.find(row => row.id === 'held-d').outcome, null);
+    assert.strictEqual(noted.body.data.letters.find(row => row.id === 'tied-l').text, 'Letter');
+    assert.strictEqual(noted.body.data.disputes.find(row => row.id === 'held-d').notes, 'Still a draft');
+  });
+});

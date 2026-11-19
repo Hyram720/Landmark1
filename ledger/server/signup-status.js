@@ -73,38 +73,88 @@ export function clientServiceOnHold(c, onDate, signatures) {
   return !!(cs.required && !cs.cleared);
 }
 
-/** New letters or disputes for a personal client who is still inside CROA onboarding. */
+function valueChanged(before, after) {
+  const beforeObject = before && typeof before === 'object';
+  const afterObject = after && typeof after === 'object';
+  if (beforeObject || afterObject) return JSON.stringify(before == null ? null : before) !== JSON.stringify(after == null ? null : after);
+  return String(before == null ? '' : before) !== String(after == null ? '' : after);
+}
+
+function heldReason(client) {
+  return `${client.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
+}
+
+/** New letters or disputes, and any step toward sending, while a personal client is still inside CROA onboarding. */
 export function serviceWorkBlocked(before, after) {
   const priorDisputes = (before && before.disputes) || [];
   const priorLetters = (before && before.letters) || [];
   const signatures = (after && after.signatures) || [];
-  const refused = [];
+  const heldById = new Map();
   for (const c of (after && after.clients) || []) {
-    if (!clientServiceOnHold(c, undefined, signatures)) continue;
-    const id = c.id;
-    const held = `${c.name || 'This client'} is not active for service work until the written contract is signed and the 3-business-day cancellation window ends without a cancellation.`;
-    const onThisClient = (prior, row) => (prior || []).some(old => old && old.id && row.id && old.id === row.id && old.clientId === id);
-    const added = (list, prior, key) => (list || []).filter(row => row && row.clientId === id && !onThisClient(prior, row)).map(row => ({ key, id: row.id || '', field: 'clientId', reason: held }));
-    const sendFields = { disputes: ['status', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate'], letters: ['status', 'approvedAt', 'text', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate'] };
-    const changedSend = (list, prior, key) => {
-      const out = [];
-      (list || []).forEach(row => {
-        if (!row || row.clientId !== id) return;
-        const old = (prior || []).find(item => item && item.id && row.id && item.id === row.id && item.clientId === id);
-        if (!old) return;
-        sendFields[key].forEach(field => {
-          const before = old[field] == null ? '' : old[field];
-          const afterValue = row[field] == null ? '' : row[field];
-          if (String(before) !== String(afterValue)) out.push({ key, id: row.id, field, reason: held });
-        });
-      });
-      return out;
-    };
-    refused.push(...added(after.disputes, priorDisputes, 'disputes'));
-    refused.push(...added(after.letters, priorLetters, 'letters'));
-    refused.push(...changedSend(after.disputes, priorDisputes, 'disputes'));
-    refused.push(...changedSend(after.letters, priorLetters, 'letters'));
+    if (c && c.id && clientServiceOnHold(c, undefined, signatures)) heldById.set(c.id, heldReason(c));
   }
+  const byId = (list, id) => (list || []).find(row => row && row.id && id && row.id === id);
+  const disputeSend = ['status', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate', 'outcome', 'respondedAt', 'mail', 'dueAt'];
+  const letterSend = ['status', 'approvedAt', 'text', 'sentAt', 'sentDate', 'tracking', 'receivedAt', 'receivedDate'];
+  const refused = [];
+  const seen = new Set();
+  const push = (key, id, field, reason) => {
+    const token = key + '/' + (id || '') + '/' + field;
+    if (!reason || seen.has(token)) return;
+    seen.add(token);
+    refused.push({ key, id: id || '', field, reason });
+  };
+  const reasonForClient = id => (id && heldById.get(id)) || '';
+  const disputeHeldReason = disputeId => {
+    const prior = byId(priorDisputes, disputeId);
+    const next = byId(after && after.disputes, disputeId);
+    return reasonForClient(prior && prior.clientId) || reasonForClient(next && next.clientId);
+  };
+  const letterTiedReason = letter => {
+    const prior = byId(priorLetters, letter && letter.id);
+    const ids = [];
+    if (letter && letter.disputeId) ids.push(letter.disputeId);
+    if (prior && prior.disputeId) ids.push(prior.disputeId);
+    priorDisputes.concat((after && after.disputes) || []).forEach(row => {
+      if (row && row.letterId && letter && row.letterId === letter.id) ids.push(row.id);
+    });
+    for (const id of ids) {
+      const reason = disputeHeldReason(id);
+      if (reason) return reason;
+    }
+    return '';
+  };
+  const checkRow = (row, priorList, key, fields) => {
+    if (!row || typeof row !== 'object') return;
+    const old = byId(priorList, row.id);
+    const prevReason = reasonForClient(old && old.clientId);
+    const nextReason = reasonForClient(row.clientId);
+    if (!old) {
+      if (nextReason) push(key, row.id, 'clientId', nextReason);
+      return;
+    }
+    if (String(old.clientId || '') !== String(row.clientId || '')) {
+      if (prevReason) push(key, row.id, 'clientId', prevReason);
+      else if (nextReason) push(key, row.id, 'clientId', nextReason);
+    }
+    if (prevReason || nextReason) {
+      const reason = prevReason || nextReason;
+      fields.forEach(field => {
+        if (valueChanged(old[field], row[field])) push(key, row.id, field, reason);
+      });
+    }
+  };
+  ((after && after.disputes) || []).forEach(row => checkRow(row, priorDisputes, 'disputes', disputeSend));
+  ((after && after.letters) || []).forEach(row => {
+    checkRow(row, priorLetters, 'letters', letterSend);
+    const tied = letterTiedReason(row);
+    if (!tied) return;
+    const old = byId(priorLetters, row.id);
+    if (!old) { push('letters', row.id, 'disputeId', tied); return; }
+    letterSend.forEach(field => {
+      if (valueChanged(old[field], row[field])) push('letters', row.id, field, tied);
+    });
+  });
   if (!refused.length) return null;
   return { error: refused[0].reason, refused };
 }

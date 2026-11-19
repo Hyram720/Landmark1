@@ -182,8 +182,8 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
 
   /** Called after staff save the workspace: diff disputes and email the affected clients. */
   function onWorkspaceSaved(before, after, req) {
-    const old = new Map(((before && before.disputes) || []).map(d => [d.id, d]));
-    ((after && after.disputes) || []).forEach(d => {
+    const old = new Map(((before && before.disputes) || []).filter(d => d && d.id).map(d => [d.id, d]));
+    ((after && after.disputes) || []).filter(d => d && d.id).forEach(d => {
       const p = old.get(d.id) || { items: [] };
       if (d.outcome && !p.outcome) notifyClient(d.clientId, `resp:${d.id}`, 'Update on your credit file', `A response from ${d.recipient} has been recorded on your file.`, req);
       (d.items || []).forEach((it, i) => {
@@ -197,7 +197,7 @@ export function mountClientAuth(app, { D, db, need, startSession, publicUser, wo
   /** Hourly: email clients when a bureau response is due within 3 days. */
   function deadlineSweep() {
     const soon = Date.now() + 3 * 86400000;
-    ((workspace().disputes) || []).forEach(d => {
+    ((workspace().disputes) || []).filter(d => d && d.id).forEach(d => {
       if (d.sentAt && !d.outcome && d.dueAt && Date.parse(d.dueAt) <= soon && Date.parse(d.dueAt) >= Date.now() - 86400000) notifyClient(d.clientId, `due:${d.id}`, 'A dispute deadline is coming up', `${d.recipient}’s response to your dispute is due by ${d.dueAt}. We’ll follow up if it doesn’t arrive.`);
     });
     // Business credit plan: remind the client when a step is due within 2 days (once per step and due date).

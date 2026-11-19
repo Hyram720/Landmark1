@@ -113,14 +113,12 @@
         const refused = e.status === 400 || e.status === 403 || e.status === 422 || (e.status === 409 && !(e.body && e.body.data));
         if (e.status === 409 && e.body && e.body.data) {
           this.version = e.body.version;
-          requeue = Store.applyServerSave(e.body.data, sent);
-          if (requeue) { this.pending = true; setSync('saving'); }
-          else {
-            this.pending = false;
-            setSync('conflict');
-            toast('Someone else updated the workspace. Loaded the latest version. Please redo your last change.');
-            renderWhenSafe();
-          }
+          Store.adopt(e.body.data);
+          this.pending = false;
+          requeue = false;
+          setSync('conflict');
+          toast('Someone else updated this. Redo your last change.');
+          renderWhenSafe();
         } else if (refused) {
           this.pending = false;
           requeue = false;
