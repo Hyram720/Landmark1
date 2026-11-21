@@ -28,12 +28,33 @@ export function getOrder(id) {
   }
 }
 
-export function saveOrder(order) {
+function persistOrder(order, createOnly) {
   order.updatedAt = new Date().toISOString();
   const file = fileFor(order.id);
-  fs.writeFileSync(`${file}.tmp`, JSON.stringify(order, null, 2));
-  fs.renameSync(`${file}.tmp`, file);
-  return order;
+  const temporary = file + '.' + crypto.randomUUID() + '.tmp';
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(order, null, 2), { flag: 'wx' });
+    if (createOnly) fs.linkSync(temporary, file);
+    else fs.renameSync(temporary, file);
+    return order;
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+export function saveOrder(order) {
+  return persistOrder(order, false);
+}
+
+export function reserveOrder(order) {
+  try {
+    return { order: persistOrder(order, true), created: true };
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const existing = getOrder(order.id);
+    if (!existing) throw error;
+    return { order: existing, created: false };
+  }
 }
 
 export function updateOrder(id, patch) {

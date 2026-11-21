@@ -1,14 +1,16 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
 import config, { STYLES, PRODUCTS } from './config.js';
-import { newOrderId, getOrder, saveOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
+import { newOrderId, getOrder, saveOrder, reserveOrder, updateOrder, listOrders, uploadsDir, outputDir } from './store.js';
 import { createCheckoutSession, verifyWebhook } from './stripe.js';
-import { enqueue, selectForPrint, requestRepaint, repaintStatus, resumePending, startRetryScheduler, enhanceExistingOrders, renameOrder } from './pipeline.js';
+import { enqueue, selectForPrint, resumePending, startRetryScheduler, enhanceExistingOrders, renameOrder } from './pipeline.js';
 import { cleanName } from './nameplate.js';
 import { renderStatic } from './render.js';
-import { breedPage, occasionPage, sitemap, robots } from './seo.js';
+import { breedPage, occasionPage, dogPortraitPage, sitemap, robots } from './seo.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
 import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
@@ -21,10 +23,13 @@ import { runPrintfulPreflight } from './printful-preflight.js';
 import { PROMO_VIDEO_SOURCE, promoVideoPath, promoVideoCached, cachePromoVideo } from './promo-video.js';
 
 let stripeSetupStatus = 'pending';
+const localSmoke = process.env.NODE_ENV === 'test';
+const checkoutInFlight = new Map();
+const resumeOrder = (id) => { if (!localSmoke) enqueue(id); };
 
 const app = express();
 app.set('trust proxy', true); // Railway terminates TLS; use X-Forwarded-* for host/protocol
-const publicDir = new URL('../public', import.meta.url).pathname;
+const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 
 const ALLOWED_MIME = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
 const upload = multer({
@@ -65,7 +70,7 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, re
   } catch (err) {
     return res.status(400).send(`Webhook error: ${err.message}`);
   }
-  if (event.type === 'checkout.session.completed') {
+  if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
     const session = event.data.object;
     // API checkout puts the id in metadata; Payment Links carry it as client_reference_id.
     // Other apps on the same Stripe account send events here too, so unknown ids are ignored.
@@ -77,7 +82,7 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, re
       const viaLink = !session.metadata?.order_id;
       if (viaLink && (session.metadata?.product !== order.product || session.amount_subtotal < product.price)) {
         updateOrder(id, { status: 'payment_mismatch', stripeSessionId: session.id, amountPaid: session.amount_total });
-        alertOwner(`Payment mismatch on order ${id}`, `Paid for ${session.metadata?.product} (${session.amount_subtotal}) but ordered ${order.product}. Refund or fulfil manually.`);
+        alertOwner(`Payment mismatch on order ${id}`, `Paid for ${session.metadata?.product} (${session.amount_subtotal}) but ordered ${order.product}. Review the payment in Stripe before taking any action.`);
         return res.json({ received: true });
       }
       const details = session.collected_information?.shipping_details || session.shipping_details;
@@ -89,7 +94,9 @@ app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), (req, re
         email: session.customer_details?.email || order.email,
         shipping: details ? { ...details, phone: session.customer_details?.phone } : null,
       });
-      enqueue(id);
+      resumeOrder(id);
+    } else if (order && session.payment_status === 'paid' && order.stripeSessionId === session.id && order.status === 'paid') {
+      resumeOrder(id);
     }
   }
   res.json({ received: true });
@@ -135,11 +142,26 @@ const catalogJson = () => ({
     products: Object.fromEntries(Object.entries(PRODUCTS).map(([k, p]) => [k, { name: p.name, price: p.price }])),
 });
 app.get('/api/catalog', (req, res) => res.json(catalogJson()));
+app.get('/analytics.js', (_req, res) => {
+  const ga = /^G-[A-Z0-9]+$/.test(process.env.GA_MEASUREMENT_ID || '') ? process.env.GA_MEASUREMENT_ID : '';
+  const meta = /^[0-9]{5,25}$/.test(process.env.META_PIXEL_ID || '') ? process.env.META_PIXEL_ID : '';
+  const script = [
+    ga && "window.dataLayer = window.dataLayer || []; window.gtag = function(){dataLayer.push(arguments)}; gtag('js', new Date()); gtag('config', " + JSON.stringify(ga) + "); var gaScript = document.createElement('script'); gaScript.async = true; gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=" + ga + "'; document.head.append(gaScript);",
+    meta && "window.fbq = window.fbq || function(){fbq.callMethod ? fbq.callMethod.apply(fbq, arguments) : fbq.queue.push(arguments)}; fbq.queue = fbq.queue || []; fbq.push = fbq; fbq.loaded = true; fbq.version = '2.0'; var pixel = document.createElement('script'); pixel.async = true; pixel.src = 'https://connect.facebook.net/en_US/fbevents.js'; document.head.append(pixel); fbq('init', " + JSON.stringify(meta) + "); fbq('track', 'PageView');",
+  ].filter(Boolean).join('\n');
+  res.type('application/javascript').set('Cache-Control', 'no-store').send(script);
+});
+app.get('/portraits/dog-from-photo', (_req, res) => res.send(dogPortraitPage()));
+app.get('/llms.txt', (_req, res) => res.type('text/plain').send([
+  '# Custom Pet Portrait Studio', '', '> Custom dog and cat portraits made from one photo. Digital and optional gallery canvas.',
+  '', '## Public pages', ...['/', '/portraits/dog-from-photo', '/gifts/pet-memorial', '/gifts/christmas-gift'].map((url) => '- ' + config.baseUrl + url),
+].join('\n') + '\n'));
+
 
 // Homepage and /offer with prices, gallery, banner dates and links in the HTML (src/render.js).
 const renderOr500 = (file) => (req, res, next) => {
   try {
-    res.type('html').set('Cache-Control', 'no-cache').send(renderStatic(publicDir, file, { catalog: catalogJson(), showcase: listShowcase() }));
+    res.type('html').set('Cache-Control', 'no-cache').send(renderStatic(publicDir, file, { catalog: catalogJson(), showcase: listShowcase(), growthPreview: process.env.PORTRAIT_GROWTH_PREVIEW === 'true' }));
   } catch (err) {
     console.error('render', file, err.message);
     next(); // fall back to the plain static file
@@ -150,48 +172,78 @@ app.get('/offer', renderOr500('offer.html'));
 app.use(express.static(publicDir, { extensions: ['html'], index: 'index.html' }));
 
 app.post('/api/orders', upload.single('photo'), async (req, res) => {
-  // Don't take money until Stripe can also tell us about it (webhook secret in place).
-  if (!checkoutReady()) {
-    return res.status(503).json({ error: "We're opening very soon — please check back shortly!" });
-  }
+  let retained = false;
   try {
+  // Don't take money until Stripe can also tell us about it (webhook secret in place).
+    if (!checkoutReady()) {
+      return res.status(503).json({ error: "We're opening very soon — please check back shortly!" });
+    }
     const { email, petName = '', style, product: productKey } = req.body;
     const product = PRODUCTS[productKey];
     if (!req.file) return res.status(400).json({ error: 'Please upload a JPG, PNG or WEBP photo.' });
     if (!STYLES[style] || !product) return res.status(400).json({ error: 'Pick a style and a product.' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) return res.status(400).json({ error: 'Enter a valid email.' });
 
-    const order = saveOrder({
-      id: newOrderId(),
-      createdAt: new Date().toISOString(),
-      status: 'pending_payment',
-      email: email.trim(),
-      petName: cleanName(petName),
-      style,
-      product: productKey,
-      physical: product.physical,
-      photo: req.file.filename,
-      photoMime: req.file.mimetype,
-      source: String(req.body.source || '').slice(0, 100), // utm/ad attribution
-    });
+    const key = String(req.get('Idempotency-Key') || '');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(key)) {
+      return res.status(400).json({ error: 'Reload the page and try checkout again.' });
+    }
+    const id = crypto.createHash('sha256').update(key.toLowerCase()).digest('hex').slice(0, 32);
+    const fingerprint = crypto.createHash('sha256')
+      .update(JSON.stringify([email.trim(), cleanName(petName), style, productKey, req.file.mimetype]))
+      .update(fs.readFileSync(req.file.path)).digest('hex');
+    let order = findOrder(id);
+    if (!order) {
+      const reserved = reserveOrder({
+        id,
+        checkoutFingerprint: fingerprint,
+        createdAt: new Date().toISOString(),
+        status: 'pending_payment',
+        email: email.trim(),
+        petName: cleanName(petName),
+        style,
+        product: productKey,
+        physical: product.physical,
+        photo: req.file.filename,
+        photoMime: req.file.mimetype,
+        source: String(req.body.source || '').slice(0, 100), // utm/ad attribution
+      });
+      order = reserved.order;
+      retained = reserved.created;
+    }
+    if (order.checkoutFingerprint !== fingerprint) {
+      return res.status(409).json({ error: 'The order changed. Start a new checkout.' });
+    }
+    if (order.status !== 'pending_payment') return res.json({ url: '/o/' + order.id });
+    if (order.checkoutUrl) return res.json({ url: order.checkoutUrl });
 
     if (config.devSkipPayment) {
       updateOrder(order.id, { status: 'paid', paidAt: new Date().toISOString(), amountPaid: 0 });
-      enqueue(order.id);
+      resumeOrder(order.id);
       return res.json({ url: `/o/${order.id}` });
     }
     const link = linkFor(productKey);
     if (link) {
       const promo = launchOffer();
       const url = `${link}?client_reference_id=${order.id}&prefilled_email=${encodeURIComponent(order.email)}${promo ? `&prefilled_promo_code=${encodeURIComponent(promo.code)}` : ''}`;
+      updateOrder(order.id, { checkoutUrl: url });
       return res.json({ url });
     }
-    const session = await createCheckoutSession({ order, product });
-    updateOrder(order.id, { stripeSessionId: session.id });
-    res.json({ url: session.url });
+    if (!checkoutInFlight.has(order.id)) {
+      checkoutInFlight.set(order.id, createCheckoutSession({ order, product })
+        .then((session) => {
+          updateOrder(order.id, { stripeSessionId: session.id, checkoutUrl: session.url });
+          return session.url;
+        }).finally(() => checkoutInFlight.delete(order.id)));
+    }
+    res.json({ url: await checkoutInFlight.get(order.id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Something went wrong starting checkout. Please try again.' });
+  } finally {
+    if (req.file && !retained) fs.rm(req.file.path, { force: true }, (error) => {
+      if (error) console.error('Could not clean up unused checkout upload.');
+    });
   }
 });
 
@@ -208,7 +260,6 @@ const publicOrder = (o) => ({
   previousImages: o.previousImages || [],
   styleKey: o.style,
   channel: o.channel || 'web',
-  repaint: repaintStatus(o),
   supportEmail: config.supportEmail,
 });
 
@@ -230,17 +281,6 @@ app.post('/api/orders/:id/select', async (req, res) => {
   }
 });
 
-// One free, self-serve repaint (optionally in a different style).
-app.post('/api/orders/:id/repaint', (req, res) => {
-  const order = findOrder(req.params.id);
-  if (!order) return res.status(404).json({ error: 'not found' });
-  try {
-    requestRepaint(order.id, String(req.body.style || ''));
-    res.json(publicOrder(getOrder(order.id)));
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
 
 // Customer fixes the spelling (or removes) the name on the nameplate. Free and instant.
 app.post('/api/orders/:id/name', async (req, res) => {
@@ -269,8 +309,8 @@ app.get('/checkout/done', (req, res) => {
   if (order) return res.redirect(`/o/${order.id}?paid=1`);
   res.send(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="2"><link rel="stylesheet" href="/styles.css">
-<section class="block center"><div class="spinner"></div><p>Payment received — opening your gallery…</p>
-<p style="color:#7d6b5a;font-size:14px">We've also emailed you a link.</p></section>`);
+<section class="block center"><div class="spinner"></div><p>Waiting for Stripe to confirm your payment…</p>
+<p style="color:#7d6b5a;font-size:14px">Keep this page open while confirmation arrives. If it does not update, contact studio support before trying checkout again.</p></section>`);
 });
 
 app.get('/o/:id', (req, res) => res.sendFile(path.join(publicDir, 'order.html')));
@@ -448,6 +488,7 @@ app.post('/admin/retry/:id', requireAdmin, (req, res) => {
 if (!fs.existsSync(path.join(publicDir, 'index.html'))) console.warn('public/index.html missing');
 
 app.listen(config.port, () => {
+  if (localSmoke) return;
   console.log(`${config.brandName} listening on ${config.baseUrl}`);
   if (config.devSkipPayment) console.warn('DEV_SKIP_PAYMENT is on — orders are not charged.');
   enhanceExistingOrders()

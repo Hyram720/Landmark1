@@ -25,7 +25,7 @@ function faqLd(html) {
 }
 
 const cache = new Map();
-export function renderStatic(publicDir, file, { catalog, showcase }) {
+export function renderStatic(publicDir, file, { catalog, showcase, growthPreview = false }) {
   if (!cache.has(file)) cache.set(file, fs.readFileSync(path.join(publicDir, file), 'utf8'));
   let html = cache.get(file);
   html = fill(html, 'banner', bannerHtml(catalog.launch));
@@ -34,14 +34,20 @@ export function renderStatic(publicDir, file, { catalog, showcase }) {
   if (/id="footer"/.test(html)) html = fill(html, 'footer', footerHtml());
   if (showcase.length) {
     const hero = heroPick(showcase);
-    html = html.replace(/<img id="heroImg" alt=""/, `<img id="heroImg" src="/showcase/${hero.key}.webp?w=900" alt="${esc(heroAlt(hero))}"`);
+    html = html.replace(/<img id="heroImg" alt=""/, `<img id="heroImg" src="/showcase/${hero.key}.webp?w=480" srcset="/showcase/${hero.key}.webp?w=480 480w, /showcase/${hero.key}.webp?w=900 900w" sizes="(max-width: 700px) 90vw, 450px" alt="${esc(heroAlt(hero))}"`);
     html = unhide(html, 'heroFrame');
     const ba = beforeAfterHtml(showcase);
-    if (ba) html = unhide(fill(html, 'beforeAfter', ba), 'beforeAfterSection');
+    if (ba) {
+      html = unhide(fill(html, 'beforeAfter', ba), 'beforeAfterSection');
+      if (file === 'index.html') html = html.replace('<a href="#pricing-section">See all prices</a>', '<a href="#beforeAfterSection">See photo-to-portrait examples</a>');
+    }
     const gal = galleryHtml(showcase);
     if (gal) html = unhide(fill(html, 'gallery', gal), 'gallerySection');
   }
   if (catalog.promoVideo) html = unhide(html, 'videoSection');
-  if (file === 'index.html') html = html.replace('</head>', faqLd(html));
+  if (growthPreview && file === 'index.html') {
+    html = html.replace('<p id="support"', '<section class="block"><h2>Offer concepts</h2><p>For review only. These options are not available at checkout.</p><ul><li>Second pet</li><li>Multiple styles</li><li>Printful print or canvas</li><li>Gift-ready Christmas option</li></ul></section><p id="support"');
+  }
+  html = html.replace('</head>', faqLd(html));
   return html;
 }

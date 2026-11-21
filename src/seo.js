@@ -56,7 +56,7 @@ export const BREEDS = BREED_DATA.map(([name, kind, hook, style]) => ({
 
 export const OCCASIONS = [
   {
-    slug: 'christmas-gift', title: 'Custom Pet Portrait Christmas Gift', style: 'holiday',
+    slug: 'christmas-gift', title: 'Christmas Pet Portrait Gift from a Photo', style: 'holiday',
     h1: 'Hard to shop for a pet lover? Give them their best friend, as a portrait.',
     intro: 'Send one phone photo of their dog or cat. We create 4 museum-style portraits in minutes, and you can add a gallery canvas shipped to their door.',
     // Real 2026 order-by dates only (Printful US standard cutoff is Dec 11; we use Dec 10 to leave time to pick).
@@ -68,7 +68,7 @@ export const OCCASIONS = [
 <section><h2>Getting a photo without spoiling the surprise</h2><p>Most people already have one: check the pet parent's social posts, a group chat, or a holiday card from last year. Any clear, well-lit photo where the eyes are visible works.</p></section>` : '',
   },
   {
-    slug: 'pet-memorial', title: 'Pet Memorial Portrait', style: 'watercolor',
+    slug: 'pet-memorial', title: 'Pet Memorial Portrait from a Photo', style: 'watercolor',
     h1: 'A loving memorial portrait of the pet you miss',
     intro: 'Honor a best friend with a timeless portrait made from your favorite photo. A gentle, beautiful way to keep them close — and a deeply meaningful sympathy gift.',
   },
@@ -115,7 +115,7 @@ function layout({ title, description, path, body, jsonLd, ogImage = 'bella-golde
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 ${jsonLd.map((j) => `<script type="application/ld+json">${JSON.stringify(j)}</script>`).join('\n')}
-</head><body>
+<script defer src="/analytics.js"></script></head><body>
 <header class="nav"><a href="/" class="logo">👑 ${esc(config.brandName)}</a><a href="/#order" class="btn small">Create yours</a></header>
 <main class="seo">${body}</main>
 <footer>${seoFooterLinks()}${config.supportEmail ? `<p>Questions? Email <a href="mailto:${esc(config.supportEmail)}">${esc(config.supportEmail)}</a></p>` : ''}<p>© ${new Date().getFullYear()} ${esc(config.brandName)}</p></footer>
@@ -137,7 +137,7 @@ function faq(subject) {
     ['How fast will I get it?', 'Digital portraits are usually delivered within minutes. Canvas prints ship in about 3–5 business days after you choose your favorite.'],
     ['What photo works best?', 'A well-lit, front-facing photo where the eyes are clearly visible. Phone photos are perfect.'],
     ...(christmasSeason() ? [['Is there a Christmas deadline?', 'For a canvas delivered in the US before Christmas, order by December 10 and choose your favorite portrait the same day. Digital portraits usually arrive within minutes.']] : []),
-    ['What if I don\'t love it?', 'You get 4 versions to choose from. If none feel right, use your one free repaint from your gallery within 7 days (before printing) for 4 new versions.'],
+    ['What if a digital file is defective or missing?', 'Digital files are final sale. Contact studio support for a replacement if a file is defective or was not delivered.'],
     ['Can I fix the name on the nameplate?', 'Yes. The nameplate shows the name exactly as you type it, and you can correct the spelling on your gallery page at any time before your canvas is printed.'],
   ];
 }
@@ -208,12 +208,24 @@ ${faqHtml(items)}
   return layout({ title: o.title, description, path: `/gifts/${o.slug}`, body, jsonLd: [productLd(o.title, description), faqLd(items), breadcrumbLd([['Home', '/'], [o.title, `/gifts/${o.slug}`]])] });
 }
 
-export const sitePaths = () => ['/', '/offer', '/royal', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
+export function dogPortraitPage() {
+  const title = 'Dog Portrait from Photo';
+  const description = 'Turn one dog photo into four custom digital portraits, with an optional gallery canvas.';
+  const items = faq('dog');
+  return layout({
+    title, description, path: '/portraits/dog-from-photo',
+    body: '<section class="hero-seo"><h1>Dog portrait from a photo</h1><p>' + description
+      + '</p><a class="btn" href="/#order">Create my dog portrait</a></section>' + faqHtml(items),
+    jsonLd: [productLd(title, description), faqLd(items)],
+  });
+}
+
+export const sitePaths = () => ['/', '/offer', '/royal', '/portraits/dog-from-photo', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
 
 // Real last-edit dates (not the request date, which teaches Google to ignore lastmod).
 // Bump the matching entry whenever a page's content changes.
 const CONTENT_UPDATED = { '/': '2026-10-24', '/offer': '2026-10-24', '/gifts/christmas-gift': '2026-10-22', '/royal': '2026-10-23' };
-const TEMPLATE_UPDATED = '2026-10-22'; // breed and gift template (FAQ, og:image, breadcrumbs)
+const TEMPLATE_UPDATED = '2026-11-21'; // breed and gift template (FAQ, og:image, breadcrumbs)
 const lastmod = (u) => CONTENT_UPDATED[u] || TEMPLATE_UPDATED;
 
 export function sitemap() {
