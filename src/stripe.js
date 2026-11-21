@@ -16,13 +16,14 @@ function formEncode(obj, prefix = '', out = new URLSearchParams()) {
 // Pin the API version so Stripe changes can't silently alter request/response shapes.
 export const STRIPE_API_VERSION = '2024-06-20';
 
-export async function stripeRequest(method, path, params) {
+export async function stripeRequest(method, path, params, idempotencyKey) {
   const res = await fetch(`https://api.stripe.com/v1${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${config.stripe.secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
       'Stripe-Version': STRIPE_API_VERSION,
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
     body: params ? formEncode(params) : undefined,
   });
@@ -61,11 +62,12 @@ export async function createCheckoutSession({ order, product }) {
     params.phone_number_collection = { enabled: true };
   }
 
-  return stripeRequest('POST', '/checkout/sessions', params);
+  return stripeRequest('POST', '/checkout/sessions', params, 'portrait-checkout-' + order.id);
 }
 
 // Verifies the Stripe-Signature header against the raw request body.
 export function verifyWebhook(rawBody, header, toleranceSec = 300) {
+  if (!config.stripe.webhookSecret) throw new Error('webhook not configured');
   if (!header) throw new Error('missing Stripe-Signature');
   const parts = Object.fromEntries(
     header.split(',').map((p) => {

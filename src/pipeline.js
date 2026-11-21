@@ -79,24 +79,7 @@ async function processOrder(id) {
   }
 }
 
-// --- One free repaint per order: self-serve from the gallery, no human involved ---
-// Allowed once, within config.repaintDays of delivery, and only before anything is printed.
-export function repaintStatus(order) {
-  if (!order?.images?.length || !['delivered', 'awaiting_selection'].includes(order.status)) return { allowed: false };
-  if (order.repaintedAt || order.repaint) return { allowed: false, used: true };
-  const until = Date.parse(order.deliveredAt || order.updatedAt) + config.repaintDays * 86400_000;
-  if (Date.now() > until) return { allowed: false, expired: true };
-  return { allowed: true, until: new Date(until).toISOString() };
-}
-
-export function requestRepaint(id, styleKey) {
-  const order = getOrder(id);
-  if (!repaintStatus(order).allowed) throw new Error('This order has already used its free repaint, or the repaint window has passed.');
-  const style = styleKey && STYLES[styleKey] ? styleKey : order.style;
-  updateOrder(id, { status: 'repainting', repaint: { style, requestedAt: new Date().toISOString(), returnStatus: order.status } });
-  enqueue(id);
-}
-
+// Finish any replacement work already in flight before the policy update.
 async function processRepaint(order) {
   const { style, returnStatus } = order.repaint;
   const outDir = path.join(outputDir, order.id);

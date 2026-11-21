@@ -57,7 +57,7 @@ export function galleryHtml(showcase) {
 
 // Pricing cards: what's included, from real catalog prices and the stated policies.
 const PERKS = {
-  digital: ['4 portraits of your pet', '300 DPI files (2400×3600 px)', 'Usually delivered in minutes', 'Name on a gold nameplate (optional)', 'One free repaint within 7 days'],
+  digital: ['4 portraits of your pet', '300 DPI files (2400×3600 px)', 'Usually delivered in minutes', 'Name on a gold nameplate (optional)'],
   canvas_small: ['Everything in Digital', 'Your favorite printed on a 12×18" gallery canvas', 'Ships in 3–5 business days after you pick', 'US & Canada'],
   canvas_large: ['Everything in Digital', 'Your favorite printed on a 16×24" gallery canvas', 'Ships in 3–5 business days after you pick', 'US & Canada'],
 };
@@ -101,7 +101,7 @@ export async function loadSite() {
 
   if ($('heroImg') && showcase.length) {
     const hero = heroPick(showcase);
-    $('heroImg').src = img(hero.key);
+    if (!$('heroImg').getAttribute('src')) $('heroImg').src = img(hero.key, '', 480);
     $('heroImg').alt = heroAlt(hero);
     $('heroFrame').hidden = false;
   }
