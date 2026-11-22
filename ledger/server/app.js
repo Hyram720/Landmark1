@@ -32,7 +32,7 @@ import { checkCredentials, hostedPaymentToken, findPayment, PAY_PAGE } from './p
 
 const SESSION_COOKIE = 'ledger_session';
 const INVITE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
-const ledgerDir = path.resolve(new URL('..', import.meta.url).pathname);
+const ledgerDir = path.resolve(import.meta.dirname, '..');
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 // 16×16 teal icon. Browsers request /favicon.ico even when a page has an inline icon.
@@ -185,6 +185,10 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     const writable = db.writable();
     res.status(writable ? 200 : 503).set('Cache-Control', 'no-store').json({ ok: writable, uptimeSeconds: Math.round((Date.now() - startedAt) / 1000), build: BUILD, encrypted: db.encrypted, storage: writable ? 'writable' : 'NOT writable' });
   };
+  app.use(['/app', '/portal', '/partner', '/api', '/checkout', '/apply', '/signup', '/pay', '/go', '/healthz'], (req, res, next) => {
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    next();
+  });
   app.get(['/api/health', '/healthz'], health);
 
   // ---------- helpers ----------
@@ -1427,16 +1431,18 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
   // file with a new one after an update.
   const pageCache = {};
   const page = (f) => (req, res) => {
-    if (!pageCache[f]) pageCache[f] = fs.readFileSync(path.join(ledgerDir, f), 'utf8').replace(/(src|href)="((?:js|css)\/[\w.-]+\.(?:js|css))"/g, `$1="$2?v=${BUILD}"`);
+    if (!pageCache[f]) pageCache[f] = fs.readFileSync(path.join(ledgerDir, f), 'utf8').replace(/(src|href)="((?:js|css)\/[\w.-]+\.(?:js|css))"/g, `$1="/$2?v=${BUILD}"`);
     res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).send(pageCache[f]);
   };
-  app.get('/robots.txt', (req, res) => {
-    res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }).send('User-agent: *\nDisallow: /\n');
-  });
+  for (const [file, type] of Object.entries({ 'robots.txt': 'text/plain', 'sitemap.xml': 'application/xml' })) {
+    const content = fs.readFileSync(path.join(ledgerDir, 'site', file), 'utf8');
+    app.get('/' + file, (req, res) => res.type(type).set('Cache-Control', 'public, max-age=3600').send(content));
+  }
   app.get('/favicon.ico', (req, res) => {
     res.set({ 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=86400' }).send(faviconIco());
   });
-  app.get(['/', '/app'], page('index.html'));
+  app.get('/', page(path.join('site', 'home.html')));
+  app.get('/app', page('index.html'));
   app.get('/portal', page('portal.html'));
   app.get('/apply', page('apply.html'));
   app.get('/signup', (req, res) => {
@@ -1449,13 +1455,9 @@ export function createApp({ dataDir, encryptionKey, clientAuthMethod: authMethod
     res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' }).send(text);
   });
   app.get('/partner', page('partner.html'));
-  // Public business pages (pricing, policies, enrollment). Still DRAFT: each page carries a DRAFT
-  // banner and noindex until the owner approves publishing. Phone, contact email and effective date are filled in.
   const SITE_PAGES = { '/pricing': 'pricing.html', '/refund-policy': 'refund-policy.html', '/terms': 'terms.html', '/privacy': 'privacy.html', '/checkout': 'checkout.html' };
-  for (const [route, file] of Object.entries(SITE_PAGES)) {
-    const serve = page(path.join('site', file));
-    app.get(route, (req, res) => { res.set('X-Robots-Tag', 'noindex, nofollow'); serve(req, res); });
-  }
+  for (const [route, file] of Object.entries(SITE_PAGES)) app.get(route, page(path.join('site', file)));
+  app.use('/site-images', express.static(path.join(ledgerDir, 'site', 'images'), { maxAge: '1d' }));
   // Pages link assets with ?v=<build>, so a stamped request can be cached for a year; an
   // unstamped one is revalidated every time.
   const fresh = { setHeaders: res => res.set('Cache-Control', res.req && res.req.query && res.req.query.v === BUILD ? 'public, max-age=31536000, immutable' : 'no-cache') };

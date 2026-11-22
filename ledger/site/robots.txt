@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /portal
+Disallow: /partner
+Disallow: /api
+Disallow: /checkout
+Disallow: /signup
+Disallow: /healthz
+Disallow: /pay
+Disallow: /go
+
+Sitemap: https://myledgercredit.com/sitemap.xml

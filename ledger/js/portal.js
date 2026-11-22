@@ -171,7 +171,7 @@
     if (magic && !s.user) { try { await api('POST', '/api/auth/magic/verify', { token: magic }); location.hash = ''; location.reload(); } catch (e) { authForm('login', null, e.message); } return; }
     if (invite && !s.user) return authForm('invite', invite);
     if (!s.user) return authForm('login');
-    if (s.user.role !== 'client') { location.href = s.user.role === 'partner' ? '/partner' : '/'; return; }
+    if (s.user.role !== 'client') { location.href = s.user.role === 'partner' ? '/partner' : '/app'; return; }
     document.getElementById('portal-user').innerHTML = `<span class="small" style="color:var(--side-ink)">${esc(s.user.email)}</span><button class="btn sm" id="logout">Sign out</button>`;
     document.getElementById('logout').onclick = async () => { await api('POST', '/api/logout'); location.reload(); };
     load();
