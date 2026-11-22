@@ -29,7 +29,8 @@ footer{max-width:860px;margin:0 auto 2rem;padding:0 1.25rem;color:var(--muted);f
     <li><strong>Strict SSN / DOB Prohibition on Public Forms:</strong> Prospective clients are instructed <strong>not</strong> to submit their Social Security number (SSN), date of birth (DOB), credit card number, or full financial account numbers on <a href="/apply">/apply</a> or <a href="/checkout">/checkout</a>.</li>
   </ul>
 </li>
-<li><strong>B. Encrypted Client Portal (<a href="/portal">/portal</a> — after enrollment &amp; disclosures):</strong>
+<li><strong>B. Encrypted Client Portal (<a href="/portal">/portal</a>, after enrollment and disclosures):</strong>
+    <li>When you sign a document, we keep the IP address, browser user-agent, and the time of that signature, plus the hash of the agreement text viewed, plus hash of the signed PDF.</li>
   <ul>
     <li><strong>Truncated Identifier Storage Only:</strong> Your client profile in our database stores <strong>only the last 4 digits of your SSN</strong> (and last 4 digits of your EIN for business clients). Full Social Security numbers and dates of birth are <strong>never</strong> stored in our profile database.</li>
     <li><strong>Uploaded Verification Documents &amp; Credit Reports:</strong> To process consumer disputes with Equifax, Experian, TransUnion, and creditors, you upload your government-issued photo ID, proof of current mailing address (such as a utility bill or bank statement), and 3-bureau credit reports (from AnnualCreditReport.com, IdentityIQ, MyFreeScoreNow, or SmartCredit) directly into your encrypted client portal. Every uploaded file is encrypted at rest using <strong>AES-256-GCM</strong>.</li>

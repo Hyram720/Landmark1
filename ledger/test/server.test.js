@@ -422,9 +422,9 @@ test('invoices can be emailed with the PDF attached', async () => {
 });
 
 test('pages stamp scripts with a build version and are never cached', async () => {
-  const r = await anon('GET', '/');
-  assert.match(r.body, /src="js\/app\.js\?v=[\w-]+"/);
-  assert.match(r.body, /href="css\/app\.css\?v=[\w-]+"/);
+  const r = await anon('GET', '/app');
+  assert.match(r.body, /src="\/js\/app\.js\?v=[\w-]+"/);
+  assert.match(r.body, /href="\/css\/app\.css\?v=[\w-]+"/);
   assert.strictEqual(r.headers.get('cache-control'), 'no-store');
   const js = await anon('GET', '/js/app.js?v=x');
   assert.strictEqual(js.status, 200);

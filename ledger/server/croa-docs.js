@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { cancellationWindow, formatDeadlineDateEt, formatDocumentTimeEt } from './croa-window.js';
 
-const dir = path.resolve(new URL('../legal/', import.meta.url).pathname);
+const dir = path.resolve(import.meta.dirname, '../legal');
 
 function read(name) {
   return fs.readFileSync(path.join(dir, name), 'utf8').replace(/^\uFEFF/, '');

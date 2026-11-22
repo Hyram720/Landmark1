@@ -19,7 +19,7 @@ import { cancellationWindow } from '../server/croa-window.js';
 delete process.env.KIT_API_KEY;
 delete process.env.LEDGER_MAIL_MODE;
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(import.meta.dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 
 test('final CROA texts are served as written and still block signing on owner brackets', () => {
