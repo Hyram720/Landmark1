@@ -44,7 +44,7 @@ export function portraitsReadyEmail(order, { repaint = false } = {}) {
         <p>We painted ${config.image.variants} versions of ${order.petName || 'your pet'}. Download them all in full resolution:</p>
         <p><a href="${link}" style="background:#7a1f1f;color:#fff;padding:12px 22px;border-radius:6px;text-decoration:none">View &amp; download</a></p>
         ${printLine}
-        ${repaint ? '<p>Your first set is still in your gallery too, so you can download or print any of them.</p>' : `<p>Not quite right? Your gallery has a <strong>one-time free repaint</strong> button (available for ${config.repaintDays} days, before printing). You can even switch styles.</p>`}
+        <p>Digital files are final sale. Contact studio support for a replacement if a file is defective or missing.</p>
         <p>Please check the spelling on the nameplate — if anything is off, fix it on your gallery page and all portraits update instantly.</p>
         <p style="color:#7d6b5a;font-size:13px">Keep this email — the link is your private gallery.${config.supportEmail ? ` Questions? Just reply or email ${config.supportEmail}.` : ''}</p>
       </div>`,

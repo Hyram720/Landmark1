@@ -7,19 +7,17 @@ export const money = (cents) => `$${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`
 const img = (key, kind = '', w = 900) => `/showcase/${key}${kind}.webp?w=${w}`;
 export const discountedFor = (launch) => (cents) => (launch ? Math.round(cents * (1 - launch.percent / 100)) : cents);
 
-// Real dates only: the launch offer end (from the catalog) and the Dec 10 US canvas cutoff for
-// Christmas (Printful's US standard cutoff is Dec 11). Copy from the holiday campaign spec.
+// Only verified dates from the catalog belong in the banner.
 export function bannerHtml(launch, now = new Date()) {
   const y = now.getFullYear();
-  const cutoff = new Date(y, 11, 10, 23, 59);
   const inSeason = now.getMonth() >= 9 && now <= new Date(y, 11, 25);
   const launchEnd = launch?.ends ? new Date(`${launch.ends}T12:00:00`) : null;
   const endsLong = launchEnd ? launchEnd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }) : '';
   const offer = launch ? `${launch.percent}% launch offer${endsLong ? ` through ${endsLong}` : ''}, no code needed` : '';
-  if (inSeason && now <= cutoff) {
-    return `<strong>Holiday dates:</strong> ${offer ? `${offer} · ` : ''}Canvas for Christmas: order and pick your favorite by Thu Dec 10 (US) · Digital arrives in minutes, any day.`;
+  if (inSeason) {
+    const holiday = 'Digital portraits usually arrive in minutes. Christmas canvas cutoff pending confirmation.';
+    return offer ? offer + ' · ' + holiday : holiday;
   }
-  if (inSeason) return `Too late for canvas? A digital portrait still arrives in minutes, ready to print or frame.${offer ? ` · ${offer}` : ''}`;
   return offer ? `🎉 <strong>${offer}</strong>` : '⚡ Digital portraits usually arrive in minutes';
 }
 
@@ -57,7 +55,7 @@ export function galleryHtml(showcase) {
 
 // Pricing cards: what's included, from real catalog prices and the stated policies.
 const PERKS = {
-  digital: ['4 portraits of your pet', '300 DPI files (2400×3600 px)', 'Usually delivered in minutes', 'Name on a gold nameplate (optional)', 'One free repaint within 7 days'],
+  digital: ['4 portraits of your pet', '300 DPI files (2400×3600 px)', 'Usually delivered in minutes', 'Name on a gold nameplate (optional)'],
   canvas_small: ['Everything in Digital', 'Your favorite printed on a 12×18" gallery canvas', 'Ships in 3–5 business days after you pick', 'US & Canada'],
   canvas_large: ['Everything in Digital', 'Your favorite printed on a 16×24" gallery canvas', 'Ships in 3–5 business days after you pick', 'US & Canada'],
 };
@@ -74,6 +72,18 @@ export function pricingHtml(catalog) {
           ${PERKS[k] ? `<ul class="perks">${PERKS[k].map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
           <a class="btn" href="/?product=${k}#order">Choose ${k === 'digital' ? 'Digital' : 'this canvas'}</a></div>`)
     .join('');
+}
+
+// Concise pre-checkout FAQ: one-photo ordering + tier prices (base only; launch discount noted separately).
+export function checkoutInfoHtml(catalog) {
+  const basePrices = Object.values(catalog.products)
+    .map((p) => `${esc(p.name)}: ${money(p.price)}`)
+    .join(' · ');
+  const promoNote = catalog.launch
+    ? ` A ${catalog.launch.percent}% launch discount is applied at checkout — no code needed.`
+    : '';
+  return `<details><summary>Do I need more than one photo?</summary><p>No. Upload one clear photo of your pet and our studio creates 4 portraits from it. Each portrait applies the style differently — you keep all four. One pet per portrait set.</p></details>
+<details><summary>How much does it cost?</summary><p>${basePrices}.${promoNote} Canvas ships to US and Canada.</p></details>`;
 }
 
 export const supportHtml = (email) =>
@@ -101,7 +111,7 @@ export async function loadSite() {
 
   if ($('heroImg') && showcase.length) {
     const hero = heroPick(showcase);
-    $('heroImg').src = img(hero.key);
+    if (!$('heroImg').getAttribute('src')) $('heroImg').src = img(hero.key, '', 480);
     $('heroImg').alt = heroAlt(hero);
     $('heroFrame').hidden = false;
   }
@@ -120,6 +130,7 @@ export async function loadSite() {
   if ($('gallery') && gal) { $('gallery').innerHTML = gal; $('gallerySection').hidden = false; }
 
   if ($('pricing')) $('pricing').innerHTML = pricingHtml(catalog);
+  if ($('checkoutInfo')) $('checkoutInfo').innerHTML = checkoutInfoHtml(catalog);
   if ($('support') && catalog.supportEmail) $('support').innerHTML = supportHtml(catalog.supportEmail);
 
   return { catalog, showcase, launch, discounted, money };

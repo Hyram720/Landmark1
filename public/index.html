@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Custom Pet Portraits from Your Photo | Royal Dog &amp; Cat Portraits | Custom Pet Portrait Studio</title>
-  <meta name="description" content="Turn one photo of your dog or cat into 4 royal-style portraits, usually emailed in minutes. Digital from $29, gallery canvas from $89. One free repaint.">
+  <title>Custom Pet Portrait from Photo | Custom Pet Portrait Studio</title>
+  <meta name="description" content="Turn one photo of your dog or cat into 4 royal-style portraits, usually emailed in minutes. Digital from $29, gallery canvas from $89.">
   <link rel="canonical" href="https://www.custompetportraitstudio.com/">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://www.custompetportraitstudio.com/">
@@ -27,33 +27,33 @@
       {"@type":"Offer","name":"16x24\" Gallery Canvas + Digital","price":"129.00","priceCurrency":"USD","sku":"canvas_large","availability":"https://schema.org/InStock","url":"https://www.custompetportraitstudio.com/?product=canvas_large#order"}]}
   ]}
   </script>
+  <script defer src="/analytics.js"></script>
 </head>
 <body>
-  <div class="banner" id="banner">Holiday dates: Canvas for Christmas: order by Thu Dec 10 (US) · Digital arrives in minutes, any day.</div>
+  <div class="banner" id="banner">Digital portraits usually arrive in minutes. Christmas canvas cutoff pending confirmation.</div>
   <header class="nav"><a href="/" class="logo">👑 <span class="logo-text">Custom Pet Portrait Studio</span></a><span class="nav-links"><a href="/royal" class="nav-link">👑 Royal<span class="hide-sm"> portraits</span></a><a href="#order" class="btn small">Start</a></span></header>
 
   <section class="hero2">
     <div class="hero-copy">
       <p class="eyebrow">Custom dog &amp; cat portraits</p>
-      <h1>Your pet as a royal masterpiece, from one phone photo.</h1>
+      <h1>Turn one pet photo into four custom portraits.</h1>
       <p>Upload a photo, pick a style, and get <strong>4 portraits of your dog or cat</strong> by email, usually within minutes. Keep the digital files or have your favorite printed on a gallery canvas and shipped.</p>
       <a href="#order" class="btn big" id="heroCta">Create my pet's portrait →</a>
       <p class="hero-sub-link">Digital from <strong id="heroFrom">$29</strong> · <a href="#pricing-section">See all prices</a></p>
       <ul class="trust">
         <li>⚡ Usually delivered in minutes</li>
         <li>🖼️ 4 portraits, 300 DPI</li>
-        <li>🔁 One free repaint within 7 days</li>
         <li>🔒 Secure Stripe checkout</li>
       </ul>
     </div>
-    <div class="hero-frame" id="heroFrame" hidden><img id="heroImg" alt="" width="600" height="900"></div>
+    <div class="hero-frame" id="heroFrame" hidden><img id="heroImg" alt="" fetchpriority="high" decoding="async" width="600" height="900"></div>
   </section>
 
   <section class="block" id="how">
     <h2 class="center">How it works</h2>
     <div class="steps">
       <div class="step"><b>1</b><h3>Upload a photo</h3><p>Any clear phone photo where you can see your pet's face and eyes. Pick one of 6 styles and add their name for the nameplate if you like.</p></div>
-      <div class="step"><b>2</b><h3>Review your 4 portraits</h3><p>Your private gallery link arrives by email, usually within minutes. Not right? Use your free repaint for 4 new ones, and fix the name spelling any time before printing.</p></div>
+      <div class="step"><b>2</b><h3>Review your 4 portraits</h3><p>Your private gallery link arrives by email, usually within minutes. Check the name spelling before selecting a canvas.</p></div>
       <div class="step"><b>3</b><h3>Download or hang it</h3><p>Download the 300 DPI files right away. Ordered a canvas? Tap your favorite in the gallery and it ships to you in 3–5 business days.</p></div>
     </div>
     <p class="center"><a href="#order" class="btn">Create my pet's portrait →</a></p>
@@ -370,7 +370,7 @@
 
   <section class="block" id="pricing-section">
     <h2 class="center">Pricing</h2>
-    <p class="center sub" id="pricingSub">Every order includes 4 digital portraits and one free repaint.</p>
+    <p class="center sub" id="pricingSub">Every order includes 4 digital portraits.</p>
     <div id="pricing" class="pricing"></div>
     <p class="center fine">Canvas orders ship to the US and Canada. Prices in USD.</p>
   </section>
@@ -408,11 +408,13 @@
   <section class="block gift" id="gifts">
     <h2 class="center">A gift for the pet lover in your life</h2>
     <div class="gift-grid">
-      <div><h3>🎄 Christmas</h3><p>Digital portraits usually arrive within minutes, so they work even as a last-minute gift. For a canvas delivered in the US before Christmas, order and pick your favorite by <strong>Thu Dec 10</strong>. <a href="/gifts/christmas-gift">See holiday order-by dates</a></p></div>
+      <div><h3>🎄 Christmas</h3><p>Digital portraits usually arrive within minutes — perfect for a last-minute gift. For a canvas, see our <a href="/gifts/christmas-gift">holiday order-by dates</a> for the current canvas cutoff. Carrier delivery is not guaranteed.</p></div>
       <div><h3>🎁 Sending it to someone else</h3><p>Use your own email so the surprise stays a surprise, then forward the gallery link. For a canvas, enter their shipping address at checkout.</p></div>
       <div><h3>🕯️ Memorial portraits</h3><p>Remembering a pet this season? Any clear photo works, even an older one. Watercolor Classic is a soft choice for a memorial portrait.</p></div>
     </div>
   </section>
+
+  <div id="checkoutInfo" class="block checkout-faq"></div>
 
   <section class="block" id="order">
     <h2 class="center">Create your portrait</h2>
@@ -434,24 +436,21 @@
       <p class="launch-note" id="launchNote" hidden></p>
       <p class="error" id="error" role="alert"></p>
       <button class="btn big" id="submit" type="submit">Continue to secure checkout →</button>
-      <p class="fine">🔒 Secure checkout by Stripe. Cards, Apple Pay and Google Pay accepted. Includes one free repaint within 7 days.</p>
+      <p class="fine">🔒 Secure checkout by Stripe. Cards, Apple Pay and Google Pay accepted. </p>
     </form>
   </section>
 
-  <section class="block guarantee">
-    <h2>Not quite right? One free repaint</h2>
-    <p>Every order includes 4 portraits to choose from. If none of them capture your pet, tap <strong>Repaint</strong> in your gallery within 7 days for 4 brand-new portraits, free (once per order, before printing). You can even switch styles. The name on the nameplate can be edited from your gallery any time before printing.</p>
-  </section>
+  <section class="block guarantee"><h2>Digital delivery policy</h2><p>Digital files are final sale. Contact studio support for a replacement if a file is defective or was not delivered.</p></section>
 
   <section class="block faq" id="faq">
     <h2>Questions</h2>
     <details><summary>How fast will I get my portrait?</summary><p>Digital portraits usually arrive by email within minutes of checkout. Canvas prints ship in 3–5 business days after you choose your favorite in your gallery.</p></details>
     <details><summary>How does the canvas order work?</summary><p>You pay for the canvas at checkout, and the 4 digital portraits are included. When they're ready, open your private gallery and tap the one you want printed. We send that one to print and ship it to the address you gave at checkout (US and Canada).</p></details>
-    <details><summary>What if I don't love it?</summary><p>You get 4 portraits to choose from. If none feel right, use your one free repaint from your gallery within 7 days (before printing) and we'll make 4 new ones, in the same style or a different one.</p></details>
+    <details><summary>What if a digital file is defective or missing?</summary><p>Digital files are final sale. Contact studio support for a replacement if a file is defective or was not delivered.</p></details>
     <details><summary>What if the name is misspelled?</summary><p>The nameplate shows the name exactly as you type it. If you made a typo, fix it on your gallery page and all portraits update in seconds, any time before printing.</p></details>
     <details><summary>What resolution are the files?</summary><p>Every portrait is 2400×3600 pixels at 300 DPI (8×12 inches). Canvas prints are produced at the exact canvas size at 300 DPI.</p></details>
     <details><summary>Can I order as a gift?</summary><p>Yes. Use your own email, then forward the gallery link, or ship the canvas straight to them by entering their address at checkout.</p></details>
-    <details><summary>What's the Christmas deadline?</summary><p>For a canvas delivered in the US before Christmas, order by December 10 and choose your favorite portrait the same day. Digital portraits usually arrive within minutes, so there's no deadline for those.</p></details>
+    <details><summary>What's the Christmas deadline?</summary><p>Digital portraits usually arrive by email within minutes. Canvas prints usually ship 3–5 business days after you choose a portrait. Carrier arrival varies. The Christmas canvas order-by date is pending fulfillment confirmation.</p></details>
     <details><summary>Do you do memorial portraits?</summary><p>Yes. Many customers honor a pet who has passed. Any clear photo works, even an older one.</p></details>
     <details><summary>How do I get the launch discount?</summary><p>While the launch offer runs, it's applied for you when you check out from this site. There's no code to type.</p></details>
   </section>
@@ -530,21 +529,25 @@
       const dt = new DataTransfer();
       dt.items.add(f);
       $('photo').files = dt.files;
+      checkoutKey = crypto.randomUUID();
       $('error').textContent = '';
       showPreview();
     });
 
+    let checkoutKey = crypto.randomUUID();
+    $('orderForm').addEventListener('change', () => { checkoutKey = crypto.randomUUID(); });
     $('orderForm').addEventListener('submit', async (e) => {
       e.preventDefault();
+      if ($('submit').disabled) return;
       $('error').textContent = '';
       if (!$('photo').files[0]) return ($('error').textContent = 'Please upload a photo of your pet.');
       const data = new FormData($('orderForm'));
-      // Attribution: which ad / page sent this buyer.
+      // Attribution for the originating campaign.
       data.append('source', [params.get('utm_source'), params.get('utm_campaign'), params.get('breed'), document.referrer && new URL(document.referrer).pathname].filter(Boolean).join('|'));
       $('submit').disabled = true;
       $('submit').textContent = 'Uploading…';
       try {
-        const res = await fetch('/api/orders', { method: 'POST', body: data });
+        const res = await fetch('/api/orders', { method: 'POST', headers: { 'Idempotency-Key': checkoutKey }, body: data });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Something went wrong.');
         if (window.fbq) fbq('track', 'InitiateCheckout');

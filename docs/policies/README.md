@@ -6,9 +6,9 @@ complete them (ideally with legal advice) before any /shipping, /returns, /priva
 
 Facts the site already states (safe to reuse):
 - Digital: 4 portraits, 2400×3600 px at 300 DPI, usually delivered by email within minutes.
-- One free repaint per order within 7 days of delivery, before printing; style can change.
+- Digital files are final sale. Contact studio support for a replacement if a file is defective or was not delivered.
 - Nameplate name editable from the gallery any time before printing.
 - Canvas: customer picks a favorite in the private gallery; ships 3–5 business days after the pick.
 - Canvas shipping countries at checkout: US and Canada (src/stripe.js; confirm the payment links match).
 - Checkout by Stripe (cards, Apple Pay, Google Pay). Support: sunmarketingllc@gmail.com, reply within one business day.
-- Christmas: canvas order-by Thu Dec 10, 2026 for US delivery (Printful US standard cutoff is Dec 11).
+- Christmas canvas order-by date: pending fulfillment confirmation. Canvas dispatch and carrier delivery are separate.

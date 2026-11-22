@@ -16,7 +16,7 @@ None of the images mention the website. Etsy doesn't allow listings to point buy
 | Separate listings for the **memorial** buyer, who is emotional and buys the canvas | "Pet Loss" in best-seller titles | A dedicated memorial listing in the gentle watercolor style |
 | Clear AI disclosure (Etsy allows AI pet portraits as "Designed by seller") | Etsy Creativity Standards | Disclosure line in every description |
 
-**Why our prices sit where they do:** Etsy's cheap end is flooded with $2–9 AI portraits, so we **don't compete there**. We sell the **canvas** and price the digital as a premium option, justified by 4 versions, the engraved name, 300 DPI and the free repaint.
+**Why our prices sit where they do:** Etsy's cheap end is flooded with $2–9 AI portraits, so we **don't compete there**. We sell the **canvas** and price the digital as a premium option, justified by 4 versions, the engraved name, and 300 DPI.
 
 | Option | Etsy price | Your cost | You keep (about) |
 |---|---|---|---|
@@ -31,7 +31,7 @@ None of the images mention the website. Etsy doesn't allow listings to point buy
 1. **Shop name:** `CustomPetPortraitCo`. Etsy allows no spaces and up to 20 characters. If it's taken, try `RoyalPetPortraitCo`.
 2. **Shop policies:**
    - Processing time: digital in 1 business day; canvas 3–5 business days to print, plus shipping.
-   - Returns: custom items can't be returned, but every order includes one free repaint, and damaged canvases are replaced.
+   - Digital files are final sale. Contact studio support for a replacement if a file is defective or missing.
 3. **Shipping profile "Free shipping US & Canada":** $0 shipping, processing 3–5 business days, origin ZIP 08107.
 4. **About section and every listing must include this AI disclosure:**
    > Each portrait is designed by our studio using AI tools, guided by your photo, then finished, checked and nameplated by us.
@@ -74,7 +74,7 @@ Turn your dog or cat into a museum-style royal portrait, painted from one phone 
 • 4 different portraits of your pet to choose from
 • High-resolution 300 DPI files (print-ready)
 • Your pet's name on the nameplate, spelled exactly as you type it
-• ONE FREE REPAINT: if none of the 4 feel right, we paint 4 brand-new ones (same or different style)
+• DIGITAL FILES: final sale. Contact studio support for a replacement if a file is defective or missing.
 • Canvas option: gallery-wrapped canvas, ready to hang, FREE shipping to the US & Canada
 
 ★ HOW TO ORDER
@@ -146,7 +146,7 @@ Honor a beloved pet with a gentle, heirloom portrait, painted from any photo you
    - Note: `Etsy #<order number>`
 4. **Copy the gallery link** that appears and send it in Etsy Messages:
    > Your portraits are ready! 👑 Here is your private gallery with all 4 versions: [link]
-   > Download any (or all) of them. **Canvas orders:** tap "Print this one" on your favorite and we'll print and ship it. If none feel right, use the free Repaint button in your gallery.
+   > Download any (or all) of them. **Canvas orders:** tap "Print this one" on your favorite and we'll print and ship it.
 5. **Digital orders:** mark the order **Complete** in Etsy.
    **Canvas orders:** after they pick, the print order goes to Printful. When Printful ships, copy the **tracking number** from Printful (Orders) into the Etsy order and mark it shipped.
 
