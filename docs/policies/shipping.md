@@ -5,4 +5,4 @@
 - Shipping cost: **[FRED: included in the price, or charged at checkout? amount?]**
 - Transit time after shipping: **[FRED: carrier/method from Printful, typical days]**
 - Tracking: **[FRED: is tracking emailed to customers?]**
-- Holiday: order a canvas and pick your favorite by Thu Dec 10 for US delivery before Christmas. Delivery dates are carrier estimates, not guarantees.
+- Christmas canvas order-by date: pending fulfillment confirmation. Canvas dispatch and carrier delivery are separate.

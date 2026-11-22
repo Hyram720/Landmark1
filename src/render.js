@@ -4,7 +4,7 @@
 // re-renders the same sections with the same builders from public/site.js.
 import fs from 'node:fs';
 import path from 'node:path';
-import { bannerHtml, beforeAfterHtml, galleryHtml, pricingHtml, supportHtml, footerHtml, heroPick, heroAlt } from '../public/site.js';
+import { bannerHtml, beforeAfterHtml, galleryHtml, pricingHtml, supportHtml, footerHtml, checkoutInfoHtml, heroPick, heroAlt } from '../public/site.js';
 
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const strip = (h) => h.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
@@ -30,6 +30,7 @@ export function renderStatic(publicDir, file, { catalog, showcase, growthPreview
   let html = cache.get(file);
   html = fill(html, 'banner', bannerHtml(catalog.launch));
   html = fill(html, 'pricing', pricingHtml(catalog));
+  html = fill(html, 'checkoutInfo', checkoutInfoHtml(catalog));
   if (catalog.supportEmail) html = fill(html, 'support', supportHtml(catalog.supportEmail));
   if (/id="footer"/.test(html)) html = fill(html, 'footer', footerHtml());
   if (showcase.length) {

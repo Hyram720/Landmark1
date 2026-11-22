@@ -59,13 +59,9 @@ export const OCCASIONS = [
     slug: 'christmas-gift', title: 'Christmas Pet Portrait Gift from a Photo', style: 'holiday',
     h1: 'Hard to shop for a pet lover? Give them their best friend, as a portrait.',
     intro: 'Send one phone photo of their dog or cat. We create 4 museum-style portraits in minutes, and you can add a gallery canvas shipped to their door.',
-    // Real 2026 order-by dates only (Printful US standard cutoff is Dec 11; we use Dec 10 to leave time to pick).
-    extra: () => christmasSeason() ? `<section><h2>Holiday order-by dates</h2>
-<table class="dates"><thead><tr><th>Gift</th><th>Order by</th><th>Arrives</th></tr></thead><tbody>
-<tr><td>Canvas, US, for Christmas</td><td>Thu Dec 10 (order and pick your favorite)</td><td>Before Dec 25 on Printful's standard schedule</td></tr>
-<tr><td>Digital portrait</td><td>Any time</td><td>Usually within minutes</td></tr></tbody></table>
-<p class="fine left">Delivery dates are carrier estimates, not guarantees.</p></section>
-<section><h2>Getting a photo without spoiling the surprise</h2><p>Most people already have one: check the pet parent's social posts, a group chat, or a holiday card from last year. Any clear, well-lit photo where the eyes are visible works.</p></section>` : '',
+    extra: () => `<section><h2>Holiday delivery</h2>
+<p>Digital portraits usually arrive by email within minutes. Canvas prints usually ship 3–5 business days after you choose a portrait. Carrier arrival varies. The Christmas canvas order-by date is pending fulfillment confirmation.</p></section>
+<section><h2>Getting a photo without spoiling the surprise</h2><p>Most people already have one: check the pet parent's social posts, a group chat, or a holiday card from last year. Any clear, well-lit photo where the eyes are visible works.</p></section>`,
   },
   {
     slug: 'pet-memorial', title: 'Pet Memorial Portrait from a Photo', style: 'watercolor',
@@ -128,15 +124,12 @@ function seoFooterLinks() {
   return `<nav class="seo-links"><p><a href="/royal">Royal pet portraits &amp; canvas</a> · ${occ}</p><p>${breeds}</p></nav>`;
 }
 
-// Oct 1 through Dec 10: show the canvas Christmas cutoff (Printful's US standard-shipping cutoff is Dec 11).
-const christmasSeason = (d = new Date()) => d.getMonth() >= 9 && d <= new Date(d.getFullYear(), 11, 10, 23, 59);
-
 function faq(subject) {
   return [
     ['How does it work?', `Upload a clear photo of your ${subject}, pick a style, and check out. Our studio paints ${config.image.variants} versions and emails you a private gallery link.`],
     ['How fast will I get it?', 'Digital portraits are usually delivered within minutes. Canvas prints ship in about 3–5 business days after you choose your favorite.'],
     ['What photo works best?', 'A well-lit, front-facing photo where the eyes are clearly visible. Phone photos are perfect.'],
-    ...(christmasSeason() ? [['Is there a Christmas deadline?', 'For a canvas delivered in the US before Christmas, order by December 10 and choose your favorite portrait the same day. Digital portraits usually arrive within minutes.']] : []),
+    ['Is there a Christmas deadline?', 'Digital portraits usually arrive by email within minutes. Canvas prints usually ship 3–5 business days after you choose a portrait. Carrier arrival varies. The Christmas canvas order-by date is pending fulfillment confirmation.'],
     ['What if a digital file is defective or missing?', 'Digital files are final sale. Contact studio support for a replacement if a file is defective or was not delivered.'],
     ['Can I fix the name on the nameplate?', 'Yes. The nameplate shows the name exactly as you type it, and you can correct the spelling on your gallery page at any time before your canvas is printed.'],
   ];

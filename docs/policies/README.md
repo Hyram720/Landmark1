@@ -11,4 +11,4 @@ Facts the site already states (safe to reuse):
 - Canvas: customer picks a favorite in the private gallery; ships 3–5 business days after the pick.
 - Canvas shipping countries at checkout: US and Canada (src/stripe.js; confirm the payment links match).
 - Checkout by Stripe (cards, Apple Pay, Google Pay). Support: sunmarketingllc@gmail.com, reply within one business day.
-- Christmas: canvas order-by Thu Dec 10, 2026 for US delivery (Printful US standard cutoff is Dec 11).
+- Christmas canvas order-by date: pending fulfillment confirmation. Canvas dispatch and carrier delivery are separate.
