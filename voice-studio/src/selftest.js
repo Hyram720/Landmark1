@@ -10,7 +10,7 @@ const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'voice-test-'));
 const port = 5099;
 const srv = spawn(process.execPath, ['src/server.js'], {
   cwd: root,
-  env: { ...process.env, PORT: String(port), TTS_PROVIDER: 'mock', OPENAI_API_KEY: '', DATA_DIR: dataDir, VOICE_API_KEY: '' },
+  env: { ...process.env, PORT: String(port), TTS_PROVIDER: 'mock', OPENAI_API_KEY: '', DATA_DIR: dataDir, VOICE_API_KEY: '', PHONIC_API_KEY: '' },
   stdio: ['ignore', 'pipe', 'inherit'],
 });
 const base = `http://localhost:${port}`;
@@ -52,6 +52,14 @@ try {
   check(burst.every((r) => r.ok), '12 bots asking at the same time all succeed');
   const hist2 = await (await fetch(base + '/api/history')).json();
   check(hist2.length === 13, 'history keeps every parallel request');
+
+  const ag = await (await fetch(base + '/api/agents')).json();
+  check(ag.agents.length >= 3 && ag.voices.length > 30 && ag.configured === false, 'live agents listed with Phonic voices');
+  const noKey = await fetch(base + '/api/agents/sun-receptionist/session', { method: 'POST' });
+  check(noKey.status === 503 && /PHONIC_API_KEY/.test((await noKey.json()).error), 'live call without a Phonic key explains what to add');
+  const { agentToConfig } = await import('./phonic.js');
+  const agentCfg = agentToConfig(ag.agents[0]);
+  check(agentCfg.type === 'config' && agentCfg.model === 'phonic-1' && agentCfg.input_format === 'pcm_44100', 'agent config targets Phonic-1');
 
   const { chunkText } = await import('./providers.js');
   const long = 'This is a sentence. '.repeat(500);

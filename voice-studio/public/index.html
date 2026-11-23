@@ -10,6 +10,7 @@
   <header class="top">
     <div class="brand"><span class="sun" aria-hidden="true"></span>Sun Voice Studio</div>
     <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="live">Live Agent</button>
       <button role="tab" data-tab="speak" aria-selected="true">Speak</button>
       <button role="tab" data-tab="reader">Reader</button>
       <button role="tab" data-tab="narrate">Narration</button>
@@ -20,6 +21,65 @@
   </header>
 
   <main>
+    <!-- LIVE AGENT -->
+    <section id="tab-live" class="panel" hidden>
+      <p id="live-setup" class="card notice" hidden>
+        Live agents run on <b>Phonic-1</b>, a speech-to-speech model that hears you and answers out loud in real time.
+        To turn them on, create a key at <a href="https://phonic.ai" target="_blank" rel="noopener">phonic.ai</a>, add
+        <code>PHONIC_API_KEY=...</code> to <code>.env</code>, and restart the studio. You can set up agents below meanwhile.
+      </p>
+      <div class="grid2">
+        <div class="card call">
+          <label for="live-agent">Agent</label>
+          <select id="live-agent"></select>
+          <div class="orb-wrap">
+            <div id="orb" class="orb" data-state="idle" aria-hidden="true"></div>
+          </div>
+          <p id="live-status" class="status center" role="status">Ready when you are.</p>
+          <div class="row center-row">
+            <button id="live-start" class="primary big">Start talking</button>
+            <button id="live-mute" hidden>Mute</button>
+            <button id="live-end" class="danger" hidden>End call</button>
+          </div>
+          <p class="muted small center">Use headphones for the most natural back-and-forth. You can interrupt the agent any time, just like a real call.</p>
+          <ol id="live-transcript" class="transcript" aria-live="polite"></ol>
+        </div>
+        <form id="agent-form" class="card">
+          <h3 id="agent-form-title">Edit agent</h3>
+          <input type="hidden" id="ag-id">
+          <label for="ag-name">Name</label>
+          <input id="ag-name" required>
+          <label for="ag-voice">Voice</label>
+          <select id="ag-voice"></select>
+          <label for="ag-turn">Response timing</label>
+          <select id="ag-turn">
+            <option value="eager">Eager: jumps in fastest</option>
+            <option value="standard">Standard</option>
+            <option value="relaxed">Relaxed</option>
+            <option value="measured">Measured</option>
+            <option value="patient">Patient: lets people finish</option>
+            <option value="very_patient">Very patient</option>
+          </select>
+          <label for="ag-welcome">Greeting <span class="muted">(first thing it says)</span></label>
+          <input id="ag-welcome">
+          <label for="ag-prompt">Personality and instructions</label>
+          <textarea id="ag-prompt" rows="9" required></textarea>
+          <div class="row">
+            <button type="button" id="ag-new">New agent</button>
+            <span class="grow"></span>
+            <button type="button" id="ag-delete" class="danger">Delete</button>
+            <button type="submit" class="primary">Save agent</button>
+          </div>
+          <p id="ag-status" class="status" role="status"></p>
+          <details>
+            <summary>Put this agent on another page (Sun Marketing Console)</summary>
+            <p class="small muted">Paste this where the console should show a "talk to us" voice widget:</p>
+            <pre><code id="ag-embed"></code></pre>
+          </details>
+        </form>
+      </div>
+    </section>
+
     <!-- SPEAK -->
     <section id="tab-speak" class="panel">
       <div class="grid2">
@@ -182,6 +242,7 @@ Sales Bot: And ours starts today!"></textarea>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="/live-agent.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

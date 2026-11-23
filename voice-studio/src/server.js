@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { providers, getProvider, defaultProviderName, chunkText } from './providers.js';
+import { PHONIC_VOICES, TURN_TAKING, DEFAULT_AGENTS, phonicConfigured, createSessionToken, agentToConfig, cleanAgent } from './phonic.js';
 
 try { process.loadEnvFile?.(); } catch { /* no .env file: use real env vars */ }
 
@@ -13,6 +14,7 @@ const DATA_DIR = path.resolve(ROOT, process.env.DATA_DIR || './data');
 const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
 const MAX_TEXT = 100_000;
 
 const DEFAULT_PROFILES = [
@@ -47,6 +49,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/config', (_req, res) => {
   res.json({
     defaultProvider: defaultProviderName(),
+    liveAgents: phonicConfigured(),
     keyRequired: Boolean(process.env.VOICE_API_KEY),
     providers: Object.fromEntries(Object.entries(providers).map(([id, p]) => [id, {
       label: p.label, voices: p.voices, available: p.available(),
@@ -108,6 +111,44 @@ app.all('/api/tts', async (req, res) => {
     res.sendFile(path.join(AUDIO_DIR, result.file));
   } catch (err) {
     console.error('[tts]', err.message);
+    res.status(err.status || 502).json({ error: err.message });
+  }
+});
+
+// ---------- Live voice agents (Phonic-1) ----------
+app.get('/api/agents', async (_req, res) => res.json({
+  configured: phonicConfigured(), voices: PHONIC_VOICES, turnTaking: TURN_TAKING, agents: await loadAgents(),
+}));
+
+app.post('/api/agents', (req, res) => serial(AGENTS_FILE, async () => {
+  const agent = cleanAgent(req.body);
+  if (!agent.name) return res.status(400).json({ error: 'Give the agent a name.' });
+  if (!agent.system_prompt.trim()) return res.status(400).json({ error: 'Describe how the agent should behave.' });
+  const agents = await loadAgents();
+  agent.id = agent.id || slug(agent.name) || crypto.randomUUID().slice(0, 8);
+  const i = agents.findIndex((a) => a.id === agent.id);
+  if (i >= 0) agents[i] = agent; else agents.push(agent);
+  await writeJson(AGENTS_FILE, agents);
+  res.json(agent);
+}));
+
+app.delete('/api/agents/:id', (req, res) => serial(AGENTS_FILE, async () => {
+  await writeJson(AGENTS_FILE, (await loadAgents()).filter((a) => a.id !== req.params.id));
+  res.json({ ok: true });
+}));
+
+// Start a live conversation: returns a short-lived token + the agent's config.
+app.post('/api/agents/:id/session', async (req, res) => {
+  try {
+    if (!phonicConfigured()) {
+      return res.status(503).json({ error: 'Live agents need a Phonic key. Add PHONIC_API_KEY to .env and restart.' });
+    }
+    const agent = (await loadAgents()).find((a) => a.id === req.params.id);
+    if (!agent) return res.status(404).json({ error: `No agent called "${req.params.id}".` });
+    const token = await createSessionToken();
+    res.json({ ...token, config: agentToConfig(agent), agent: { id: agent.id, name: agent.name } });
+  } catch (err) {
+    console.error('[agent]', err.message);
     res.status(err.status || 502).json({ error: err.message });
   }
 });
@@ -178,6 +219,13 @@ async function loadProfiles() {
   if (saved) return saved;
   await writeJson(PROFILES_FILE, DEFAULT_PROFILES);
   return structuredClone(DEFAULT_PROFILES);
+}
+
+async function loadAgents() {
+  const saved = await readJson(AGENTS_FILE, null);
+  if (saved) return saved;
+  await writeJson(AGENTS_FILE, DEFAULT_AGENTS);
+  return structuredClone(DEFAULT_AGENTS);
 }
 
 // History is a nice-to-have: never let it break speech generation.

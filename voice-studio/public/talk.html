@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Talk to us</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { min-height: 100vh; display: grid; place-items: center; }
+    .call { width: min(380px, 100%); margin: 0; text-align: center; }
+    .call h1 { font-size: 18px; margin: 0 0 4px; }
+  </style>
+</head>
+<body>
+  <div class="card call">
+    <h1 id="t-name">Talk to us</h1>
+    <p class="muted small">Tap the button and just start speaking.</p>
+    <div class="orb-wrap"><div id="orb" class="orb" data-state="idle" aria-hidden="true"></div></div>
+    <p id="t-status" class="status center" role="status"></p>
+    <div class="row center-row">
+      <button id="t-start" class="primary big">Start talking</button>
+      <button id="t-end" class="danger" hidden>End call</button>
+    </div>
+    <ol id="t-transcript" class="transcript" aria-live="polite"></ol>
+  </div>
+  <script src="/live-agent.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const agentId = params.get('agent') || 'sun-receptionist';
+    const key = params.get('key');
+    const $ = (s) => document.querySelector(s);
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const orb = $('#orb');
+    let name = 'Agent';
+    fetch('/api/agents', { headers: key ? { 'x-api-key': key } : {} }).then((r) => r.json()).then((d) => {
+      const a = d.agents?.find((x) => x.id === agentId);
+      if (a) { name = a.name; $('#t-name').textContent = a.name; document.title = a.name; }
+    }).catch(() => {});
+    const ui = (live) => { $('#t-start').hidden = live; $('#t-end').hidden = !live; };
+    const call = new LiveAgent({
+      headers: () => (key ? { 'x-api-key': key } : {}),
+      onStatus: (state, detail) => {
+        const live = state === 'live' || state === 'connecting';
+        orb.dataset.state = detail === 'you-speaking' ? 'you' : state;
+        ui(live);
+        const words = { connecting: 'Connecting…', 'agent-speaking': 'Talking…', listening: 'Listening…', 'you-speaking': 'Hearing you…', thinking: 'Thinking…' };
+        $('#t-status').textContent = live ? (words[detail] || words[state] || 'Say hello!') : (detail || '');
+        $('#t-status').classList.toggle('error', state === 'error');
+      },
+      onLevel: (who, v) => {
+        if ((who === 'you') === (orb.dataset.state === 'you') || v === 0) orb.style.setProperty('--lvl', Math.min(1, v * 4).toFixed(3));
+      },
+      onTranscript: (items) => {
+        const list = $('#t-transcript');
+        list.innerHTML = items.filter((i) => i.text).map((i) => `<li class="${i.role}"><b>${i.role === 'you' ? 'You' : esc(name)}</b>${esc(i.text)}</li>`).join('');
+        list.scrollTop = list.scrollHeight;
+      },
+    });
+    $('#t-start').onclick = () => call.start(agentId);
+    $('#t-end').onclick = () => call.stop();
+  </script>
+</body>
+</html>

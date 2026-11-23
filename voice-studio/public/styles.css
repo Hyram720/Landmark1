@@ -9,6 +9,7 @@
     --border: #2f2d2a; --accent: #f29b26; --accent-ink: #1a1306; --accent-soft: #3a2a12; color-scheme: dark; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .top { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
@@ -70,3 +71,25 @@ details { margin-top: 12px; } summary { cursor: pointer; color: var(--muted); fo
 dialog { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); width: min(640px, 92vw); }
 dialog::backdrop { background: rgb(0 0 0 / .4); }
 @media (max-width: 600px) { .engine { margin-left: 0; width: 100%; } }
+
+/* Live agent */
+.notice { border-color: var(--accent); background: var(--accent-soft); }
+.notice a { color: inherit; }
+.center { text-align: center; }
+.center-row { justify-content: center; }
+button.big { padding: 12px 28px; font-size: 16px; border-radius: 999px; }
+.orb-wrap { display: grid; place-items: center; height: 220px; }
+.orb { --lvl: 0; width: 150px; height: 150px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffd79a, var(--accent) 55%, #b5590a);
+  transform: scale(calc(1 + var(--lvl) * 0.35)); transition: transform 90ms linear, filter 300ms, opacity 300ms;
+  box-shadow: 0 0 calc(20px + var(--lvl) * 80px) color-mix(in srgb, var(--accent) 60%, transparent); }
+.orb[data-state="idle"], .orb[data-state="ended"], .orb[data-state="error"] { filter: grayscale(.85); opacity: .55; }
+.orb[data-state="connecting"] { animation: pulse 1.2s ease-in-out infinite; }
+.orb[data-state="you"] { background: radial-gradient(circle at 35% 30%, #d6f0ff, #3d8fd6 55%, #1d5590); box-shadow: 0 0 calc(20px + var(--lvl) * 80px) rgb(61 143 214 / .55); }
+@keyframes pulse { 50% { transform: scale(.92); opacity: .7; } }
+@media (prefers-reduced-motion: reduce) { .orb { transition: none; animation: none !important; } }
+.transcript { list-style: none; padding: 0; margin: 16px 0 0; max-height: 340px; overflow-y: auto; }
+.transcript li { padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; font-size: 14px; }
+.transcript li.agent { background: var(--accent-soft); }
+.transcript li.you { background: var(--bg); text-align: right; }
+.transcript li b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }

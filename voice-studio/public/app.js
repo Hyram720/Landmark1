@@ -68,7 +68,8 @@ function showTab(name) {
   loadHistory();
   initReaderEngines();
   restoreReader();
-  showTab(store.get('tab', 'speak'));
+  showTab(store.get('tab', 'live'));
+  initLive();
 })();
 
 function profileOptions(sel, selected) {
@@ -630,3 +631,107 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function fmtDur(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.round(s % 60)).padStart(2, '0')}`; }
+
+// ---------------- LIVE AGENT (Phonic-1) ----------------
+const L = { agents: [], voices: [], configured: false, call: null };
+
+async function initLive() {
+  try {
+    const d = await api('/api/agents');
+    Object.assign(L, { agents: d.agents, voices: d.voices, configured: d.configured });
+  } catch (e) { setStatus($('#live-status'), e.message, true); return; }
+  $('#live-setup').hidden = L.configured;
+  $('#ag-voice').innerHTML = L.voices.map((v) => `<option value="${esc(v.id)}">${esc(v.name)} (${esc(v.gender)}): ${esc(v.style)}</option>`).join('');
+  renderAgentSelect(store.get('liveAgent'));
+  editAgent(currentAgent());
+}
+
+function currentAgent() { return L.agents.find((a) => a.id === $('#live-agent').value) || L.agents[0]; }
+function renderAgentSelect(selected) {
+  const sel = $('#live-agent');
+  sel.innerHTML = L.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+  if (selected && L.agents.some((a) => a.id === selected)) sel.value = selected;
+}
+$('#live-agent').addEventListener('change', (e) => { store.set('liveAgent', e.target.value); editAgent(currentAgent()); });
+
+function editAgent(a) {
+  $('#agent-form-title').textContent = a ? `Edit: ${a.name}` : 'New agent';
+  $('#ag-id').value = a?.id || '';
+  $('#ag-name').value = a?.name || '';
+  $('#ag-voice').value = a?.voice_id || 'sabrina';
+  $('#ag-turn').value = a?.turn_taking || 'standard';
+  $('#ag-welcome').value = a?.welcome_message || '';
+  $('#ag-prompt').value = a?.system_prompt || '';
+  $('#ag-delete').hidden = !a;
+  setStatus($('#ag-status'), '');
+  const id = a?.id || 'your-agent-id';
+  $('#ag-embed').textContent = `<iframe src="${location.origin}/talk.html?agent=${id}"\n  allow="microphone" style="width:360px;height:520px;border:0"></iframe>`;
+}
+$('#ag-new').addEventListener('click', () => editAgent(null));
+$('#agent-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const saved = await api('/api/agents', { method: 'POST', body: {
+      id: $('#ag-id').value || undefined, name: $('#ag-name').value, voice_id: $('#ag-voice').value,
+      turn_taking: $('#ag-turn').value, welcome_message: $('#ag-welcome').value, system_prompt: $('#ag-prompt').value,
+    } });
+    L.agents = (await api('/api/agents')).agents;
+    renderAgentSelect(saved.id); store.set('liveAgent', saved.id); editAgent(saved);
+    setStatus($('#ag-status'), 'Saved. Changes apply to the next call.');
+  } catch (err) { setStatus($('#ag-status'), err.message, true); }
+});
+$('#ag-delete').addEventListener('click', async () => {
+  const a = L.agents.find((x) => x.id === $('#ag-id').value);
+  if (!a || !confirm(`Delete the agent "${a.name}"?`)) return;
+  await api(`/api/agents/${encodeURIComponent(a.id)}`, { method: 'DELETE' });
+  L.agents = (await api('/api/agents')).agents;
+  renderAgentSelect(); editAgent(currentAgent());
+});
+
+const orb = $('#orb');
+const STATUS_TEXT = {
+  connecting: 'Connecting…', 'agent-speaking': 'Agent is talking…', listening: 'Listening…',
+  'you-speaking': 'Hearing you…', thinking: 'Thinking…',
+};
+function liveUi(active) {
+  $('#live-start').hidden = active;
+  $('#live-mute').hidden = !active;
+  $('#live-end').hidden = !active;
+  $('#live-agent').disabled = active;
+  $('#live-mute').textContent = 'Mute';
+}
+$('#live-start').addEventListener('click', async () => {
+  const a = currentAgent();
+  if (!a) return;
+  if (!L.configured) return setStatus($('#live-status'), 'Add PHONIC_API_KEY to .env and restart the studio to start live calls.', true);
+  liveUi(true);
+  L.call = new LiveAgent({
+    headers: () => (store.get('apiKey') ? { 'x-api-key': store.get('apiKey') } : {}),
+    onStatus: (state, detail) => {
+      if (state === 'live' || state === 'connecting') {
+        const text = STATUS_TEXT[detail] || STATUS_TEXT[state] || 'Live: say hello!';
+        setStatus($('#live-status'), text);
+        orb.dataset.state = detail === 'you-speaking' ? 'you' : state;
+      } else {
+        orb.dataset.state = state;
+        setStatus($('#live-status'), detail || 'Call ended.', state === 'error');
+        liveUi(false);
+      }
+    },
+    onLevel: (who, v) => {
+      if ((who === 'you') === (orb.dataset.state === 'you') || v === 0) orb.style.setProperty('--lvl', Math.min(1, v * 4).toFixed(3));
+    },
+    onTranscript: (items) => {
+      const list = $('#live-transcript');
+      list.innerHTML = items.filter((i) => i.text).map((i) => `<li class="${i.role}"><b>${i.role === 'you' ? 'You' : esc(a.name)}</b>${esc(i.text)}</li>`).join('');
+      list.scrollTop = list.scrollHeight;
+    },
+  });
+  await L.call.start(a.id);
+});
+$('#live-end').addEventListener('click', () => L.call?.stop());
+$('#live-mute').addEventListener('click', () => {
+  if (!L.call) return;
+  L.call.setMuted(!L.call.muted);
+  $('#live-mute').textContent = L.call.muted ? 'Unmute' : 'Mute';
+});
