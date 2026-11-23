@@ -120,13 +120,17 @@ test('login rejects wrong password and static pages are served', async () => {
   assert.strictEqual((await anon('GET', '/test/server.test.js')).status, 404);
 });
 
-test('public business pages are served as drafts (noindex) and linked from the public pages', async () => {
+test('public business pages have canonical metadata and checkout stays noindex', async () => {
   for (const p of ['/pricing', '/refund-policy', '/terms', '/privacy', '/checkout']) {
     const r = await anon('GET', p);
     assert.strictEqual(r.status, 200, p);
-    assert.match(r.headers.get('x-robots-tag') || '', /noindex/, p);
-    assert.ok(r.body.includes('name="robots" content="noindex"'), p + ' meta noindex');
-    assert.ok(r.body.includes('class="draft"'), p + ' draft banner');
+    if (p === '/checkout') {
+      assert.equal(r.headers.get('x-robots-tag'), 'noindex, nofollow');
+      assert.match(r.body, /<meta name="robots" content="noindex">/);
+    } else {
+      assert.equal(r.headers.get('x-robots-tag'), null);
+      assert.ok(r.body.includes('<link rel="canonical" href="https://myledgercredit.com' + p + '">'));
+    }
     assert.ok(r.body.includes('2435 Patton St, Camden, NJ 08104'), p + ' business address');
     assert.ok(!/href="[a-z-]+\.html"/.test(r.body), p + ' links use routes, not .html files');
   }
@@ -143,6 +147,32 @@ test('public business pages are served as drafts (noindex) and linked from the p
   assert.ok(apply.body.includes('href="/terms"'), '/apply links /terms');
   assert.ok(apply.body.includes('href="/privacy"'), '/apply links /privacy');
   assert.ok(!apply.body.includes('href="/pricing"') && !apply.body.includes('href="/refund-policy"') && !apply.body.includes('href="/checkout"'), '/apply does not link pricing, refunds, or checkout');
+});
+
+test('landing page is public while staff data and transactional pages remain protected', async () => {
+  const home = await anon('GET', '/');
+  assert.match(home.body, /Credit report review for New Jersey residents/);
+  assert.equal(home.headers.get('x-robots-tag'), null);
+  for (const name of ['credit-review.webp', 'credit-review-640.webp', 'new-jersey-neighborhood.webp']) {
+    const image = await realFetch(base + '/site-images/' + name);
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get('content-type'), 'image/webp');
+    await image.arrayBuffer();
+  }
+  for (const route of ['/app', '/portal', '/partner', '/checkout']) {
+    const response = await anon('GET', route);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow');
+  }
+  for (const route of ['/api/workspace', '/api/portal/me', '/api/partner/me']) {
+    const response = await anon('GET', route);
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow');
+  }
+  const sitemap = await anon('GET', '/sitemap.xml');
+  assert.deepEqual([...sitemap.body.matchAll(/<loc>(.*?)<\/loc>/g)].map(m => m[1]), [
+    '/', '/pricing', '/terms', '/privacy', '/refund-policy'
+  ].map(route => 'https://myledgercredit.com' + route));
 });
 
 test('the server refuses invoices over the 12-month term / $1,188 cap', async () => {
@@ -392,9 +422,9 @@ test('invoices can be emailed with the PDF attached', async () => {
 });
 
 test('pages stamp scripts with a build version and are never cached', async () => {
-  const r = await anon('GET', '/');
-  assert.match(r.body, /src="js\/app\.js\?v=[\w-]+"/);
-  assert.match(r.body, /href="css\/app\.css\?v=[\w-]+"/);
+  const r = await anon('GET', '/app');
+  assert.match(r.body, /src="\/js\/app\.js\?v=[\w-]+"/);
+  assert.match(r.body, /href="\/css\/app\.css\?v=[\w-]+"/);
   assert.strictEqual(r.headers.get('cache-control'), 'no-store');
   const js = await anon('GET', '/js/app.js?v=x');
   assert.strictEqual(js.status, 200);

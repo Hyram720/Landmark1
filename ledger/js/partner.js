@@ -57,7 +57,7 @@
     if (reset) return authForm('reset', reset);
     if (invite && !s.user) return authForm('invite', invite);
     if (!s.user) return authForm('login');
-    if (s.user.role !== 'partner') { location.href = s.user.role === 'client' ? '/portal' : '/'; return; }
+    if (s.user.role !== 'partner') { location.href = s.user.role === 'client' ? '/portal' : '/app'; return; }
     document.getElementById('portal-user').innerHTML = `<span class="small" style="color:var(--side-ink)">${esc(s.user.email)}</span><button class="btn sm" id="logout">Sign out</button>`;
     document.getElementById('logout').onclick = async () => { await api('POST', '/api/logout'); location.reload(); };
     try { render(await api('GET', '/api/partner/me')); } catch (e) { root.innerHTML = `<div class="callout bad"><b>We couldn’t load your account</b>${esc(e.message)}</div>`; }
