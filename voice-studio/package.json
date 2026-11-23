@@ -1,0 +1,19 @@
+{
+  "name": "sun-voice-studio",
+  "version": "1.0.0",
+  "description": "Personal voice studio: bot voices API, book reader, and video narration",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "TTS_PROVIDER=mock node --watch src/server.js",
+    "test": "node src/selftest.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "ISC"
+}

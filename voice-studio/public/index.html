@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sun Voice Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="sun" aria-hidden="true"></span>Sun Voice Studio</div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="speak" aria-selected="true">Speak</button>
+      <button role="tab" data-tab="reader">Reader</button>
+      <button role="tab" data-tab="narrate">Narration</button>
+      <button role="tab" data-tab="voices">Voices</button>
+      <button role="tab" data-tab="bots">Bot API</button>
+    </nav>
+    <div id="engine" class="engine" title="Speech engine the server is using"></div>
+  </header>
+
+  <main>
+    <!-- SPEAK -->
+    <section id="tab-speak" class="panel">
+      <div class="grid2">
+        <div class="card">
+          <label for="speak-text">Text</label>
+          <textarea id="speak-text" rows="12" placeholder="Type or paste anything to hear it spoken…"></textarea>
+          <div class="row">
+            <span id="speak-count" class="muted">0 characters</span>
+            <span class="grow"></span>
+            <button id="speak-go" class="primary">Generate speech</button>
+          </div>
+          <p id="speak-status" class="status" role="status"></p>
+          <audio id="speak-audio" controls hidden></audio>
+          <a id="speak-download" class="btn" hidden download>Download audio</a>
+        </div>
+        <div class="card">
+          <label for="speak-profile">Voice</label>
+          <select id="speak-profile"></select>
+          <details>
+            <summary>Adjust for this clip</summary>
+            <label for="speak-speed">Speed <span id="speak-speed-val">1.00×</span></label>
+            <input id="speak-speed" type="range" min="0.5" max="2" step="0.05" value="1">
+            <label for="speak-style">Delivery notes</label>
+            <textarea id="speak-style" rows="3" placeholder="Leave blank to use the voice's own notes"></textarea>
+          </details>
+          <h3>Recent</h3>
+          <ul id="history" class="history"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- READER -->
+    <section id="tab-reader" class="panel" hidden>
+      <div class="card reader-bar">
+        <label class="btn">Open book or file
+          <input id="reader-file" type="file" accept=".txt,.md,.html,.htm,.epub,.pdf" hidden>
+        </label>
+        <button id="reader-paste">Paste text</button>
+        <span id="reader-title" class="title muted">No book open</span>
+        <span class="grow"></span>
+        <label for="reader-engine" class="inline">Read with</label>
+        <select id="reader-engine"></select>
+        <label for="reader-speed" class="inline">Speed</label>
+        <select id="reader-speed">
+          <option value="0.8">0.8×</option><option value="0.9">0.9×</option>
+          <option value="1" selected>1×</option><option value="1.15">1.15×</option>
+          <option value="1.3">1.3×</option><option value="1.5">1.5×</option>
+          <option value="1.75">1.75×</option><option value="2">2×</option>
+        </select>
+      </div>
+      <div class="card reader-controls">
+        <button id="reader-prev" title="Previous paragraph" aria-label="Previous paragraph">⏮</button>
+        <button id="reader-play" class="primary">Play</button>
+        <button id="reader-next" title="Next paragraph" aria-label="Next paragraph">⏭</button>
+        <progress id="reader-progress" value="0" max="1"></progress>
+        <span id="reader-pos" class="muted"></span>
+      </div>
+      <p class="muted small">Tip: click any paragraph to start reading from there. Your place is saved.</p>
+      <article id="reader-text" class="reader-text"></article>
+    </section>
+
+    <!-- NARRATION -->
+    <section id="tab-narrate" class="panel" hidden>
+      <div class="grid2">
+        <div class="card">
+          <label for="narr-script">Script</label>
+          <textarea id="narr-script" rows="16" spellcheck="true" placeholder="One line per caption. Blank line = longer pause.
+
+To switch voices, start a line with the voice name:
+Narrator: Every great brand starts with a story.
+Sales Bot: And ours starts today!"></textarea>
+          <div class="row">
+            <label for="narr-default" class="inline">Default voice</label>
+            <select id="narr-default"></select>
+            <label for="narr-gap" class="inline">Pause</label>
+            <select id="narr-gap">
+              <option value="150">Short</option><option value="350" selected>Normal</option><option value="700">Long</option>
+            </select>
+            <span class="grow"></span>
+            <button id="narr-go" class="primary">Build narration</button>
+          </div>
+          <p id="narr-status" class="status" role="status"></p>
+        </div>
+        <div class="card">
+          <h3>Result</h3>
+          <audio id="narr-audio" controls hidden></audio>
+          <div class="row">
+            <a id="narr-wav" class="btn" hidden download="narration.wav">Download audio (WAV)</a>
+            <a id="narr-srt" class="btn" hidden download="narration.srt">Download captions (SRT)</a>
+          </div>
+          <ol id="narr-lines" class="lines"></ol>
+          <p class="muted small">Drop the WAV and SRT into any video editor (CapCut, Premiere, DaVinci) and the captions line up with the voice.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- VOICES -->
+    <section id="tab-voices" class="panel" hidden>
+      <div class="grid2">
+        <div class="card">
+          <h3>Your voices</h3>
+          <ul id="profile-list" class="profiles"></ul>
+          <button id="profile-new">New voice</button>
+        </div>
+        <form id="profile-form" class="card">
+          <h3 id="profile-form-title">New voice</h3>
+          <input type="hidden" id="pf-id">
+          <label for="pf-name">Name</label>
+          <input id="pf-name" required placeholder="e.g. Sunny (support bot)">
+          <label for="pf-provider">Engine</label>
+          <select id="pf-provider"></select>
+          <label for="pf-voice">Base voice</label>
+          <select id="pf-voice"></select>
+          <label for="pf-speed">Speed <span id="pf-speed-val">1.00×</span></label>
+          <input id="pf-speed" type="range" min="0.5" max="2" step="0.05" value="1">
+          <label for="pf-instructions">Delivery notes <span class="muted">(accent, mood, pacing, character)</span></label>
+          <textarea id="pf-instructions" rows="4" placeholder="Friendly Southern accent, relaxed and warm, smiles while talking."></textarea>
+          <label for="pf-sample">Test line</label>
+          <input id="pf-sample" value="Hi! Thanks for reaching out to Sun Marketing. How can I help you today?">
+          <div class="row">
+            <button type="button" id="pf-test">Hear it</button>
+            <span class="grow"></span>
+            <button type="button" id="pf-delete" class="danger" hidden>Delete</button>
+            <button type="submit" class="primary">Save voice</button>
+          </div>
+          <p id="pf-status" class="status" role="status"></p>
+          <audio id="pf-audio" controls hidden></audio>
+        </form>
+      </div>
+    </section>
+
+    <!-- BOT API -->
+    <section id="tab-bots" class="panel" hidden>
+      <div class="card prose">
+        <h3>Give your Sun Marketing Console bots a voice</h3>
+        <p>Any bot can ask this studio for speech. Pick a voice from the <b>Voices</b> tab and use its ID.</p>
+        <h4>Simplest: a link that returns audio</h4>
+        <pre><code id="api-get"></code></pre>
+        <h4>From code (JavaScript)</h4>
+        <pre><code id="api-js"></code></pre>
+        <h4>Get a link instead of the audio</h4>
+        <pre><code id="api-json"></code></pre>
+        <h4>Voice IDs</h4>
+        <ul id="api-ids"></ul>
+        <p class="muted small">Same text + same voice is cached, so repeated bot phrases (greetings, hold messages) cost nothing after the first time.
+          If the console runs on another machine, set <code>VOICE_API_KEY</code> in <code>.env</code> and send it as the <code>x-api-key</code> header.</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="paste-dialog">
+    <form method="dialog">
+      <label for="paste-title">Title</label>
+      <input id="paste-title" placeholder="Untitled">
+      <label for="paste-body">Text</label>
+      <textarea id="paste-body" rows="14"></textarea>
+      <div class="row"><span class="grow"></span><button value="cancel">Cancel</button><button value="ok" class="primary">Open in reader</button></div>
+    </form>
+  </dialog>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
