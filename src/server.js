@@ -330,6 +330,8 @@ const requireAdmin = (req, res, next) =>
 
 // Short links to say out loud in videos / put in a bio; they keep TikTok attribution.
 for (const p of ['/tiktok', '/tt']) app.get(p, (req, res) => res.redirect(302, '/offer?utm_source=tiktok&utm_campaign=bio'));
+// Short-drama series ("The Pound Prince"): same idea for the YouTube channel and its pinned comments.
+for (const p of ['/biscuit', '/yt']) app.get(p, (req, res) => res.redirect(302, '/offer?utm_source=youtube&utm_campaign=pound-prince'));
 
 // Manual orders: Etsy sales (paid on Etsy) and gifts (giveaway winners, creators). Same paint →
 // gallery → print pipeline as a website order, without Stripe. Email is optional: for Etsy the
