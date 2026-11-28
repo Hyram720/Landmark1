@@ -339,7 +339,7 @@ app.get('/showcase/:file', async (req, res) => {
 });
 app.get('/samples', (req, res) => {
   const items = listShowcase()
-    .map((s) => `<figure style="margin:0"><img src="/showcase/${s.key}.webp" style="width:100%;border-radius:8px"><figcaption style="text-align:center;padding:6px"><b>${s.styleName}</b> · ${s.name} · <a href="/samples/${s.key}.png">full 300 DPI</a></figcaption></figure>`)
+    .map((s) => `<figure style="margin:0"><img src="/showcase/${s.key}.webp" style="width:100%;border-radius:8px"><figcaption style="text-align:center;padding:6px"><b>${s.styleName}</b> · ${s.name} · <a href="/samples/${s.key}.png">full-size file</a></figcaption></figure>`)
     .join('');
   res.send(`<!doctype html><meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Showcase review</title><body style="font-family:sans-serif;margin:16px;background:#fbf7f0">

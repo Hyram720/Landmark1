@@ -55,7 +55,7 @@ export function galleryHtml(showcase) {
 
 // Pricing cards: what's included, from real catalog prices and the stated policies.
 const PERKS = {
-  digital: ['4 portraits of your pet', '300 DPI files (2400×3600 px)', 'Usually delivered in minutes', 'Name on a gold nameplate (optional)'],
+  digital: ['4 portraits of your pet', 'PNG files, painted at 1024×1536 px', 'Usually delivered in minutes', 'Name on a gold nameplate (optional)'],
   canvas_small: ['Everything in Digital', 'Your favorite printed on a 12×18" gallery canvas', 'Ships in 3–5 business days after you pick', 'US & Canada'],
   canvas_large: ['Everything in Digital', 'Your favorite printed on a 16×24" gallery canvas', 'Ships in 3–5 business days after you pick', 'US & Canada'],
 };

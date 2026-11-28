@@ -88,7 +88,7 @@ export const STYLES = {
 // before shipping. Override via env to use other sizes (GET https://api.printful.com/products/3).
 export const PRODUCTS = {
   digital: {
-    name: 'Digital Portrait (4 hi-res versions)',
+    name: 'Digital Portrait (4 versions)',
     price: Number(env.PRICE_DIGITAL || 2900),
     physical: false,
   },

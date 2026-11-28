@@ -16,7 +16,7 @@ None of the images mention the website. Etsy doesn't allow listings to point buy
 | Separate listings for the **memorial** buyer, who is emotional and buys the canvas | "Pet Loss" in best-seller titles | A dedicated memorial listing in the gentle watercolor style |
 | Clear AI disclosure (Etsy allows AI pet portraits as "Designed by seller") | Etsy Creativity Standards | Disclosure line in every description |
 
-**Why our prices sit where they do:** Etsy's cheap end is flooded with $2–9 AI portraits, so we **don't compete there**. We sell the **canvas** and price the digital as a premium option, justified by 4 versions, the engraved name, and 300 DPI.
+**Why our prices sit where they do:** Etsy's cheap end is flooded with $2–9 AI portraits, so we **don't compete there**. We sell the **canvas** and price the digital as a premium option, justified by 4 versions and the engraved name.
 
 | Option | Etsy price | Your cost | You keep (about) |
 |---|---|---|---|
@@ -72,7 +72,7 @@ Turn your dog or cat into a museum-style royal portrait, painted from one phone 
 
 ★ WHAT YOU GET
 • 4 different portraits of your pet to choose from
-• High-resolution 300 DPI files (print-ready)
+• PNG files, painted at 1024×1536 px and upscaled for print; sharpest at small sizes
 • Your pet's name on the nameplate, spelled exactly as you type it
 • DIGITAL FILES: final sale. Contact studio support for a replacement if a file is defective or missing.
 • Canvas option: gallery-wrapped canvas, ready to hang, FREE shipping to the US & Canada

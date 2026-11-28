@@ -5,7 +5,7 @@ complete them (ideally with legal advice) before any /shipping, /returns, /priva
 /contact page goes live. Items marked **[FRED: ...]** are unknown today and must not be guessed.
 
 Facts the site already states (safe to reuse):
-- Digital: 4 portraits, 2400×3600 px at 300 DPI, usually delivered by email within minutes.
+- Digital: 4 portraits, painted at 1024×1536 px and upscaled for download and print, usually delivered by email within minutes.
 - Digital files are final sale. Contact studio support for a replacement if a file is defective or was not delivered.
 - Nameplate name editable from the gallery any time before printing.
 - Canvas: customer picks a favorite in the private gallery; ships 3–5 business days after the pick.
