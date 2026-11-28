@@ -32,6 +32,8 @@ export function renderStatic(publicDir, file, { catalog, showcase, growthPreview
   html = fill(html, 'pricing', pricingHtml(catalog));
   html = fill(html, 'checkoutInfo', checkoutInfoHtml(catalog));
   if (catalog.supportEmail) html = fill(html, 'support', supportHtml(catalog.supportEmail));
+  // The structured data in the static HTML carries the support email; keep it equal to the configured one.
+  if (catalog.supportEmail) html = html.replaceAll('sunmarketingllc@gmail.com', catalog.supportEmail);
   if (/id="footer"/.test(html)) html = fill(html, 'footer', footerHtml());
   if (showcase.length) {
     const hero = heroPick(showcase);

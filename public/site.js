@@ -80,9 +80,9 @@ export function checkoutInfoHtml(catalog) {
     .map((p) => `${esc(p.name)}: ${money(p.price)}`)
     .join(' · ');
   const promoNote = catalog.launch
-    ? ` A ${catalog.launch.percent}% launch discount is applied at checkout — no code needed.`
+    ? ` A ${catalog.launch.percent}% launch discount is applied at checkout, no code needed.`
     : '';
-  return `<details><summary>Do I need more than one photo?</summary><p>No. Upload one clear photo of your pet and our studio creates 4 portraits from it. Each portrait applies the style differently — you keep all four. One pet per portrait set.</p></details>
+  return `<details><summary>Do I need more than one photo?</summary><p>No. Upload one clear photo of your pet and our studio creates 4 portraits from it. Each portrait applies the style differently, and you keep all four. One pet per portrait set.</p></details>
 <details><summary>How much does it cost?</summary><p>${basePrices}.${promoNote} Canvas ships to US and Canada.</p></details>`;
 }
 
@@ -91,7 +91,7 @@ export const supportHtml = (email) =>
 
 // Internal links to SEO pages help them get crawled and ranked.
 export const footerHtml = (year = new Date().getFullYear()) => `<nav class="seo-links"><p>
-      <a href="/#how">How it works</a> · <a href="/#pricing-section">Pricing</a> · <a href="/#faq">FAQ</a> · <a href="/offer">Launch offer</a></p><p>
+      <a href="/#how">How it works</a> · <a href="/#pricing-section">Pricing</a> · <a href="/faq">FAQ</a> · <a href="/about">About</a> · <a href="/contact">Contact</a> · <a href="/policies">Policies</a> · <a href="/offer">Launch offer</a> · <a href="/shop">Shop</a></p><p>
       <a href="/royal">Royal pet portraits &amp; canvas</a> · <a href="/gifts/christmas-gift">Christmas pet portraits</a> · <a href="/gifts/pet-memorial">Pet memorial portraits</a> ·
       <a href="/gifts/gifts-for-dog-lovers">Gifts for dog lovers</a> · <a href="/gifts/gifts-for-cat-lovers">Gifts for cat lovers</a> ·
       <a href="/portraits/golden-retriever">Golden Retriever</a> · <a href="/portraits/french-bulldog">French Bulldog</a> ·

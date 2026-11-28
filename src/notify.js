@@ -41,12 +41,12 @@ export function portraitsReadyEmail(order, { repaint = false } = {}) {
     html: `
       <div style="font-family:Georgia,serif;max-width:560px;margin:auto;color:#2b2118">
         <h1 style="color:#7a1f1f">${repaint ? 'Your repainted portraits are ready!' : 'Your portraits are ready!'}</h1>
-        <p>We painted ${config.image.variants} versions of ${order.petName || 'your pet'}. Download them all in full resolution:</p>
+        <p>We painted ${config.image.variants} versions of ${order.petName || 'your pet'}. Download them all from your private gallery:</p>
         <p><a href="${link}" style="background:#7a1f1f;color:#fff;padding:12px 22px;border-radius:6px;text-decoration:none">View &amp; download</a></p>
         ${printLine}
         <p>Digital files are final sale. Contact studio support for a replacement if a file is defective or missing.</p>
-        <p>Please check the spelling on the nameplate — if anything is off, fix it on your gallery page and all portraits update instantly.</p>
-        <p style="color:#7d6b5a;font-size:13px">Keep this email — the link is your private gallery.${config.supportEmail ? ` Questions? Just reply or email ${config.supportEmail}.` : ''}</p>
+        <p>Please check the spelling on the nameplate. If anything is off, fix it on your gallery page and all portraits update.</p>
+        <p style="color:#7d6b5a;font-size:13px">Keep this email. The link is your private gallery.${config.supportEmail ? ` Questions? Just reply or email ${config.supportEmail}.` : ''}</p>
       </div>`,
   };
 }

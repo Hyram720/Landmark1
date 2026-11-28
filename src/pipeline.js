@@ -120,7 +120,7 @@ export async function selectForPrint(id, imageName) {
     if (!config.printful.token || !product.printfulVariantId) {
       throw new Error('Printful is not configured (PRINTFUL_TOKEN / variant id)');
     }
-    // Exact canvas size at 300 DPI (e.g. 16x24 -> 4800x7200 px).
+    // Exact canvas pixel size for Printful (e.g. 16x24 -> 4800x7200 px). Upscaled, so not 300 DPI of real detail.
     const { w, h } = product.printInches;
     const printFile = `print-${w}x${h}-${imageName.replace(/\.png$/, '')}.jpg`;
     const outDir = path.join(outputDir, id);

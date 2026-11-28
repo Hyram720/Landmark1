@@ -11,6 +11,7 @@ import { enqueue, selectForPrint, resumePending, startRetryScheduler, enhanceExi
 import { cleanName } from './nameplate.js';
 import { renderStatic } from './render.js';
 import { breedPage, occasionPage, dogPortraitPage, sitemap, robots } from './seo.js';
+import { trustRoutes, FAQ_ITEMS } from './trust-pages.js';
 import { startFollowupScheduler } from './followups.js';
 import { setupStripe } from './stripe-setup.js';
 import { startEmailDomainSetup, emailDomainStatus } from './email-domain.js';
@@ -123,9 +124,9 @@ app.use((req, res, next) => {
   next();
 });
 // Clean URLs only: /index.html and /offer.html were served as duplicate 200 pages next to / and /offer.
-app.get(['/index.html', '/offer.html', '/order.html'], (req, res) => {
+app.get(['/index.html', '/offer.html', '/order.html', '/shop.html'], (req, res) => {
   const q = req.originalUrl.slice(req.path.length);
-  const to = req.path === '/index.html' ? '/' : req.path === '/offer.html' ? '/offer' : '/';
+  const to = req.path === '/index.html' ? '/' : req.path === '/offer.html' ? '/offer' : req.path === '/shop.html' ? '/shop' : '/';
   res.redirect(301, `${to}${q}`);
 });
 
@@ -152,9 +153,11 @@ app.get('/analytics.js', (_req, res) => {
   res.type('application/javascript').set('Cache-Control', 'no-store').send(script);
 });
 app.get('/portraits/dog-from-photo', (_req, res) => res.send(dogPortraitPage()));
+for (const [route, build] of Object.entries(trustRoutes)) app.get(route, (_req, res) => res.send(build()));
 app.get('/llms.txt', (_req, res) => res.type('text/plain').send([
-  '# Custom Pet Portrait Studio', '', '> Custom dog and cat portraits made from one photo. Digital and optional gallery canvas.',
-  '', '## Public pages', ...['/', '/portraits/dog-from-photo', '/gifts/pet-memorial', '/gifts/christmas-gift'].map((url) => '- ' + config.baseUrl + url),
+  '# Custom Pet Portrait Studio', '', '> Custom dog and cat portraits made from one photo with AI image generation. Digital and optional gallery canvas.',
+  '', '## Public pages', ...['/', '/faq', '/about', '/contact', '/policies', '/portraits/dog-from-photo', '/gifts/pet-memorial', '/gifts/christmas-gift'].map((url) => '- ' + config.baseUrl + url),
+  '', '## Key facts', ...FAQ_ITEMS().slice(0, 5).map(([q, a]) => `- ${q} ${a}`),
 ].join('\n') + '\n'));
 
 
@@ -169,6 +172,7 @@ const renderOr500 = (file) => (req, res, next) => {
 };
 app.get('/', renderOr500('index.html'));
 app.get('/offer', renderOr500('offer.html'));
+app.get('/shop', renderOr500('shop.html'));
 app.use(express.static(publicDir, { extensions: ['html'], index: 'index.html' }));
 
 app.post('/api/orders', upload.single('photo'), async (req, res) => {
@@ -176,7 +180,7 @@ app.post('/api/orders', upload.single('photo'), async (req, res) => {
   try {
   // Don't take money until Stripe can also tell us about it (webhook secret in place).
     if (!checkoutReady()) {
-      return res.status(503).json({ error: "We're opening very soon — please check back shortly!" });
+      return res.status(503).json({ error: "We're opening very soon. Please check back shortly!" });
     }
     const { email, petName = '', style, product: productKey } = req.body;
     const product = PRODUCTS[productKey];

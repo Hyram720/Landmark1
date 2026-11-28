@@ -4,7 +4,7 @@
 import { createRequire } from 'node:module';
 import opentype from 'opentype.js';
 import sharp from 'sharp';
-import { DPI } from './enhance.js';
+import { SCREEN_PPI } from './enhance.js';
 
 const require = createRequire(import.meta.url);
 const font = opentype.loadSync(require.resolve('@fontsource/cinzel/files/cinzel-latin-700-normal.woff'));
@@ -95,7 +95,7 @@ export async function applyNameplate(cleanPng, name, { look = 'brass' } = {}) {
   const svg = look === 'ink' ? inkSvg(width, height, text) : plateSvg(width, height, text);
   return sharp(cleanPng)
     .composite([{ input: Buffer.from(svg) }])
-    .withMetadata({ density: DPI })
+    .withMetadata({ density: SCREEN_PPI })
     .png({ compressionLevel: 8 })
     .toBuffer();
 }

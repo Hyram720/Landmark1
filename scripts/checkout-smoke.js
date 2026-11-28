@@ -31,7 +31,7 @@ try {
     if (ready?.ok) break;
     await wait(100);
   }
-  for (const url of ['/', '/offer', '/royal', '/portraits/dog-from-photo', '/gifts/pet-memorial', '/gifts/christmas-gift', '/robots.txt', '/sitemap.xml', '/llms.txt']) {
+  for (const url of ['/', '/offer', '/royal', '/portraits/dog-from-photo', '/faq', '/about', '/contact', '/policies', '/shop', '/gifts/pet-memorial', '/gifts/christmas-gift', '/robots.txt', '/sitemap.xml', '/llms.txt']) {
     assert.equal((await fetch(origin + url, { redirect: 'manual' })).status, 200, url);
   }
   const homepage = await (await fetch(origin)).text();
@@ -39,6 +39,40 @@ try {
   assert.match(homepage, /"@type":"Product"/);
   assert.match(homepage, /Digital files are final sale/);
   assert.doesNotMatch(homepage, /Offer concepts|free repaint/i);
+  // Trust pages, shop page, homepage cleanup and honest-claims checks (staged cleanup, 2026-11-28).
+  const ldBlocks = (html) => [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
+  const pages = {};
+  for (const url of ['/', '/offer', '/royal', '/faq', '/about', '/contact', '/policies', '/shop', '/portraits/dog-from-photo']) {
+    pages[url] = await (await fetch(origin + url)).text();
+    assert.ok(ldBlocks(pages[url]) !== undefined, 'JSON-LD parses on ' + url);
+    assert.doesNotMatch(pages[url], /300\s?(DPI|PPI)|2400\s?[x\u00d7]\s?3600|hi-?res|high[- ]resolution|full resolution/i, 'old claim on ' + url);
+  }
+  const faqLdNode = ldBlocks(pages['/faq']).find((n) => n['@type'] === 'FAQPage');
+  assert.ok(faqLdNode.mainEntity.length >= 10);
+  for (const q of ['What is a custom pet portrait and how does it work?', 'Are custom pet portraits made with AI?', 'How much does a custom pet portrait cost?', 'How do I get a pet portrait from a photo?', 'What is a good last minute gift for a pet lover?']) {
+    assert.ok(faqLdNode.mainEntity.some((e) => e.name === q), 'FAQ schema is missing: ' + q);
+    assert.ok(pages['/faq'].includes(q), 'FAQ page text is missing: ' + q);
+  }
+  for (const url of ['/faq', '/about', '/contact', '/policies']) {
+    assert.doesNotMatch(pages[url], /[\u2014\u2013]/, 'dash in ' + url);
+    assert.doesNotMatch(pages[url], /money-back|guarantee(?!d)|instant|within minutes|hand-painted/i, 'banned wording in ' + url);
+    assert.match(pages[url], new RegExp('<link rel="canonical" href="' + origin + url + '">'));
+  }
+  assert.match(pages['/policies'], /id="privacy"[\s\S]*id="terms"[\s\S]*id="returns"[\s\S]*id="shipping"/);
+  assert.match(pages['/about'], /made with AI image generation/);
+  const sitemapXml = await (await fetch(origin + '/sitemap.xml')).text();
+  for (const url of ['/faq', '/about', '/contact', '/policies']) assert.ok(sitemapXml.includes('<loc>' + origin + url + '</loc>'), 'sitemap: ' + url);
+  assert.ok(!sitemapXml.includes('/shop'), 'shop stays out of the sitemap');
+  assert.match(pages['/shop'], /name="robots" content="noindex/);
+  assert.doesNotMatch(pages['/shop'], /href="#order"|\.png"/);
+  assert.doesNotMatch(pages['/'], /flagship-apparel|\/tshirts\//);
+  assert.doesNotMatch(pages['/offer'], /flagship-apparel|\/tshirts\//);
+  assert.ok(ldBlocks(pages['/']).flatMap((n) => n['@graph'] || [n]).some((n) => n['@type'] === 'Organization'), 'homepage Organization schema');
+  assert.match(pages['/'], /id="made"[\s\S]*made with AI image generation/);
+  assert.match(pages['/'], /href="\/portraits\/dog-from-photo"/);
+  for (const url of ['/', '/faq', '/portraits/dog-from-photo']) for (const link of ['/faq', '/about', '/contact', '/policies']) assert.ok(pages[url].includes('href="' + link + '"'), `${url} links to ${link}`);
+  const llms = await (await fetch(origin + '/llms.txt')).text();
+  assert.match(llms, /\/faq/);
   const analytics = await (await fetch(origin + '/analytics.js')).text();
   assert.match(analytics, /G-TESTSMOKE/);
   assert.match(analytics, /123456789/);

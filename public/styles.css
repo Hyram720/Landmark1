@@ -217,3 +217,7 @@ table.dates th, table.dates td { border: 1px solid var(--line); padding: 8px 10p
 @media (max-width: 760px) {
   .apparel-grid { grid-template-columns: 1fr; }
 }
+
+/* Honest how-it-is-made block on the homepage */
+.made-copy { max-width: 720px; margin: 0 auto; }
+.made-copy p { margin: 0 0 12px; }

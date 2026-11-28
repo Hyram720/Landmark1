@@ -61,7 +61,7 @@ async function withRetry(fn, attempts = 3) {
   }
 }
 
-// Paints one finished (enhanced, 300 DPI) portrait with no lettering and returns the PNG buffer.
+// Paints one finished (enhanced and upscaled) portrait with no lettering and returns the PNG buffer.
 export async function paintPortrait({ photoPath, mimeType, style, variant = 1 }) {
   const styleDef = STYLES[style];
   if (!styleDef) throw new Error(`unknown style ${style}`);

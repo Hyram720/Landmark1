@@ -81,7 +81,7 @@ export const OCCASIONS = [
   {
     slug: 'birthday-gift', title: 'Pet Portrait Birthday Gift', style: 'royal',
     h1: 'A birthday gift they will never forget',
-    intro: 'Give them their pet as royalty. Upload a phone photo — we handle the rest.',
+    intro: 'Give them their pet as royalty. Upload a phone photo and we handle the rest.',
   },
   {
     slug: 'gifts-for-dog-lovers', title: 'Unique Gifts for Dog Lovers', style: 'royal',
@@ -90,22 +90,25 @@ export const OCCASIONS = [
   },
   {
     slug: 'gifts-for-cat-lovers', title: 'Unique Gifts for Cat Lovers', style: 'duchess',
-    h1: 'Finally — a cat lover gift worthy of the cat',
+    h1: 'Finally, a cat lover gift worthy of the cat',
     intro: 'Cats have always believed they are royalty. Now there is a portrait to prove it.',
   },
 ];
 
-const priceList = () =>
-  Object.values(PRODUCTS).map((p) => `<li>${esc(p.name)} — <strong>${usd(p.price)}</strong></li>`).join('');
+// Trust pages linked from every footer (homepage footer uses the same list in public/site.js).
+const TRUST_LINKS_HTML = '<a href="/faq">FAQ</a> · <a href="/about">About</a> · <a href="/contact">Contact</a> · <a href="/policies">Policies</a>';
 
-function layout({ title, description, path, body, jsonLd, ogImage = 'bella-golden' }) {
+const priceList = () =>
+  Object.values(PRODUCTS).map((p) => `<li>${esc(p.name)}: <strong>${usd(p.price)}</strong></li>`).join('');
+
+export function layout({ title, description, path, body, jsonLd, ogImage = 'bella-golden', robotsMeta = '' }) {
   const url = `${config.baseUrl}${path}`;
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} | ${esc(config.brandName)}</title>
 <meta name="description" content="${esc(description)}">
 <link rel="canonical" href="${url}">
-<meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(description)}">
+${robotsMeta ? `<meta name="robots" content="${robotsMeta}">\n` : ''}<meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${url}"><meta property="og:type" content="website">
 <meta property="og:image" content="${config.baseUrl}/showcase/${ogImage}.webp?w=900"><meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E">
@@ -121,7 +124,7 @@ ${jsonLd.map((j) => `<script type="application/ld+json">${JSON.stringify(j)}</sc
 function seoFooterLinks() {
   const breeds = BREEDS.map((b) => `<a href="/portraits/${b.slug}">${esc(b.name)} portraits</a>`).join(' · ');
   const occ = OCCASIONS.map((o) => `<a href="/gifts/${o.slug}">${esc(o.title)}</a>`).join(' · ');
-  return `<nav class="seo-links"><p><a href="/royal">Royal pet portraits &amp; canvas</a> · ${occ}</p><p>${breeds}</p></nav>`;
+  return `<nav class="seo-links"><p>${TRUST_LINKS_HTML}</p><p><a href="/royal">Royal pet portraits &amp; canvas</a> · ${occ}</p><p>${breeds}</p></nav>`;
 }
 
 function faq(subject) {
@@ -174,11 +177,11 @@ export function breedPage(slug) {
   const body = `
 <section class="hero-seo">
   <h1>Custom ${esc(b.name)} Portraits</h1>
-  <p class="lead">Nobody captures ${esc(b.hook)} like you see it. Upload your favorite photo and we'll paint your ${esc(b.name)} as a timeless work of art — delivered to your inbox in minutes.</p>
+  <p class="lead">Nobody captures ${esc(b.hook)} like you see it. Upload your favorite photo and we'll paint your ${esc(b.name)} as a timeless work of art, delivered to your inbox in minutes.</p>
   <a class="btn" href="/?style=${b.style}&breed=${b.slug}#order">Paint my ${esc(b.name)} →</a>
 </section>
 <section><h2>Our pick for ${esc(plural(b.name))}: ${esc(style.name)}</h2>
-<p>${esc(b.name)} owners love the ${esc(style.name.replace(/^The /, ""))} style — it suits ${esc(b.hook)} perfectly. Prefer something else? Choose from:</p><ul>${others}</ul></section>
+<p>${esc(b.name)} owners love the ${esc(style.name.replace(/^The /, ""))} style. It suits ${esc(b.hook)} perfectly. Prefer something else? Choose from:</p><ul>${others}</ul></section>
 <section><h2>Pricing</h2><ul>${priceList()}</ul><p>Every order includes ${config.image.variants} unique versions so you can pick your favorite.</p></section>
 ${faqHtml(items)}
 <section class="cta"><a class="btn" href="/?style=${b.style}&breed=${b.slug}#order">Start my ${esc(b.name)} portrait</a></section>`;
@@ -213,11 +216,12 @@ export function dogPortraitPage() {
   });
 }
 
-export const sitePaths = () => ['/', '/offer', '/royal', '/portraits/dog-from-photo', ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
+export const TRUST_PATHS = ['/faq', '/about', '/contact', '/policies'];
+export const sitePaths = () => ['/', '/offer', '/royal', '/portraits/dog-from-photo', ...TRUST_PATHS, ...OCCASIONS.map((o) => `/gifts/${o.slug}`), ...BREEDS.map((b) => `/portraits/${b.slug}`)];
 
 // Real last-edit dates (not the request date, which teaches Google to ignore lastmod).
 // Bump the matching entry whenever a page's content changes.
-const CONTENT_UPDATED = { '/': '2026-10-24', '/offer': '2026-10-24', '/gifts/christmas-gift': '2026-10-22', '/royal': '2026-10-23' };
+const CONTENT_UPDATED = { '/': '2026-11-28', '/offer': '2026-11-28', '/faq': '2026-11-28', '/about': '2026-11-28', '/contact': '2026-11-28', '/policies': '2026-11-28', '/gifts/christmas-gift': '2026-10-22', '/royal': '2026-10-23' };
 const TEMPLATE_UPDATED = '2026-11-21'; // breed and gift template (FAQ, og:image, breadcrumbs)
 const lastmod = (u) => CONTENT_UPDATED[u] || TEMPLATE_UPDATED;
 
